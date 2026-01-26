@@ -77,7 +77,7 @@ WSGI_APPLICATION = 'MainBackend.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-USE_SUPABASE = True # Change to true if mag supabase kayo false if not
+USE_SUPABASE = False # Change to true if mag supabase kayo false if not
 
 if USE_SUPABASE:
     DATABASES = {
@@ -95,7 +95,7 @@ else:
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.mysql",
-            "NAME": "local_db",
+            "NAME": "mechconnect_se2",
             "HOST": "127.0.0.1",
             "USER": "root",
             "PASSWORD": "",
