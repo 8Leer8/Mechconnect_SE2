@@ -4,3 +4,16 @@ python -m venv venv
 then run tu
 pip install -r requirements.txt
 dapat nasa backend una if not di tu gagana
+
+if gusto niyo gumamit ng local database
+gawin niyo una instructions sa taas
+gawa kayo database sa xampp name mechconnect_se2
+then punta kayo sa backend/MainBackend/settings.py
+hanapin niyo database settings (yung array na may Database = [])
+then read niyo lng comment sa variable na USE_SUPABASE
+if false mag migrate kayo para ma add tables sa bago database
+commands:
+    python manage.py makemigrations
+    python manage.py migrate
+dapat nasa backend kayo and naka activate ang venv para gagana
+unahin niyo gawin instructions sa taas bago dito
