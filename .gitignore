@@ -1,0 +1,17 @@
+# System
+.DS_Store
+Thumbs.db
+
+# Python / Django
+venv/
+__pycache__/
+*.pyc
+db.sqlite3
+.env
+
+# Node / React / React Native
+node_modules/
+dist/
+build/
+.expo/
+*.log
