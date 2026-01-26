@@ -41,7 +41,7 @@ INSTALLED_APPS = [
     'shops',
     'services',
     'bookings',
-    'notifications',
+    'notification',
 ]
 
 MIDDLEWARE = [
@@ -77,12 +77,31 @@ WSGI_APPLICATION = 'MainBackend.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+USE_SUPABASE = True # Change to true if mag supabase kayo false if not
+
+if USE_SUPABASE:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': 'postgres',
+            'USER': 'postgres.tsokmagrbtfuuzlemufw',
+            'PASSWORD': 'Mechconnect221',
+            'HOST': 'aws-1-ap-southeast-1.pooler.supabase.com',
+            'PORT': '5432',
+        }
     }
-}
+
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.mysql",
+            "NAME": "local_db",
+            "HOST": "127.0.0.1",
+            "USER": "root",
+            "PASSWORD": "",
+            "PORT": "3306",
+        }
+    }
 
 
 # Password validation
@@ -120,3 +139,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+
+# Media files (User uploaded files)
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
