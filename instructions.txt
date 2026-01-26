@@ -1,0 +1,6 @@
+If mag backend kayo add niyo venv
+cd backend
+python -m venv venv
+then run tu
+pip install -r requirements.txt
+dapat nasa backend una if not di tu gagana
