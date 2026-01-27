@@ -15,3 +15,7 @@ dist/
 build/
 .expo/
 *.log
+
+# Security
+.env
+backend/.env

@@ -1,16 +1,34 @@
-If mag backend kayo add niyo venv
+gawin niyo tu sa backend para maka connect sa database, add niyo venv
 cd backend
 python -m venv venv
-then run tu
-pip install -r requirements.txt
+then run 'pip install -r requirements.txt'
 dapat nasa backend una if not di tu gagana
+then maggawa kayo file named '.env' sa backend folder
+then paste nio ang sinend ko sa gc (chat sakin if di makita)
+after neto test nio 'python manage.py migrate' dapat naka venv, if goods na pwede na kayo start
+
+if mag test kayo para ma run activate nio backend
+    cd backend
+    venv\Scripts\activate
+    python manage.py runserver
+    then create new terminal
+    cd ..
+    deactivate ang venv, command: deactivate
+    cd frontend-mobile or frontend-web
+        if frontend-mobile
+            npm install
+            run 'npx expo start' 
+            then scan the qr code from phone (dl nio Expo Go sa playstore) or input ang url binigay (nasa terminal binibigay after i run npx expo)
+        if frontend-web
+            npm install
+            run 'npm run dev'
+            open nio lng local url
+    need nio mag open 2 terminal para ma run ang backend and frontend
 
 if gusto niyo gumamit ng local database
 gawin niyo una instructions sa taas
 gawa kayo database sa xampp name mechconnect_se2
-then punta kayo sa backend/MainBackend/settings.py
-hanapin niyo database settings (yung array na may Database = [])
-then read niyo lng comment sa variable na USE_SUPABASE
+punta kayo sa backend/.env then read niyo lng comment sa variable na USE_SUPABASE 
 if false mag migrate kayo para ma add tables sa bago database
 commands:
     python manage.py makemigrations

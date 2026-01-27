@@ -9,8 +9,9 @@ https://docs.djangoproject.com/en/6.0/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
-
+import os
 from pathlib import Path
+from dotenv import load_dotenv 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -19,6 +20,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
+load_dotenv(os.path.join(BASE_DIR, '.env'))
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = 'django-insecure-usu6oa*21byh_r)bu*k)mjh*-h)qrg+e4k9b8omb^xgtc+k4wd'
 
@@ -77,29 +79,28 @@ WSGI_APPLICATION = 'MainBackend.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-USE_SUPABASE = False # Change to true if mag supabase kayo false if not
+USE_SUPABASE = os.getenv('USE_SUPABASE', 'False') == 'True'
 
 if USE_SUPABASE:
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
-            'NAME': 'postgres',
-            'USER': 'postgres.tsokmagrbtfuuzlemufw',
-            'PASSWORD': 'Mechconnect221',
-            'HOST': 'aws-1-ap-southeast-1.pooler.supabase.com',
-            'PORT': '5432',
+            'NAME': os.getenv('SUPABASE_NAME'),
+            'USER': os.getenv('SUPABASE_USER'),
+            'PASSWORD': os.getenv('SUPABASE_PASSWORD'),
+            'HOST': os.getenv('SUPABASE_HOST'),
+            'PORT': os.getenv('SUPABASE_PORT'),
         }
     }
-
 else:
     DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.mysql",
-            "NAME": "mechconnect_se2",
-            "HOST": "127.0.0.1",
-            "USER": "root",
-            "PASSWORD": "",
-            "PORT": "3306",
+        'default': {
+            'ENGINE': 'django.db.backends.mysql',
+            'NAME': os.getenv('LOCAL_NAME'),
+            'USER': os.getenv('LOCAL_USER'),
+            'PASSWORD': os.getenv('LOCAL_PASSWORD'),
+            'HOST': os.getenv('LOCAL_HOST'),
+            'PORT': os.getenv('LOCAL_PORT'),
         }
     }
 
