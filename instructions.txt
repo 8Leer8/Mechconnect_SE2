@@ -1,4 +1,4 @@
-gawin niyo tu sa backend para maka connect sa database, add niyo venv
+gawin niyo tu sa backend para maka connect sa database, add kayo venv
 cd backend
 python -m venv venv
 then run 'pip install -r requirements.txt'
