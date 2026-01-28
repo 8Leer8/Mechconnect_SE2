@@ -3,12 +3,12 @@ import { StyleSheet, View } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 
-export default function HomeScreen() {
+export default function BookingScreen() {
   return (
     <ThemedView style={styles.container}>
       <View style={styles.content}>
-        <ThemedText style={styles.title}>Home</ThemedText>
-        <ThemedText style={styles.subtitle}>Welcome to MechConnect</ThemedText>
+        <ThemedText style={styles.title}>Booking</ThemedText>
+        <ThemedText style={styles.subtitle}>Your bookings will appear here</ThemedText>
       </View>
     </ThemedView>
   );
