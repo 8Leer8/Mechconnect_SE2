@@ -1,6 +1,7 @@
 gawin niyo tu sa backend para maka connect sa database, add kayo venv
 cd backend
 python -m venv venv
+tas activate nio "venv\Scripts\activate"
 then run 'pip install -r requirements.txt'
 dapat nasa backend una if not di tu gagana
 then maggawa kayo file named '.env' sa backend folder

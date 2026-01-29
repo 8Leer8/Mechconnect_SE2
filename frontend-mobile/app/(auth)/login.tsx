@@ -57,7 +57,7 @@ export default function LoginScreen() {
       if (response.ok) {
         Alert.alert('Success', 'Login successful!');
         // Navigate to main app
-        router.replace('/(tabs)/client/Home/home');
+        router.replace('/(tabs)/client/main/home');
       } else {
         const errorMessage = data.username?.[0] || data.password?.[0] || data.account?.[0] || 'Login failed';
         Alert.alert('Error', errorMessage);
