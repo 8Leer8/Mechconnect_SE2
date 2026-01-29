@@ -36,7 +36,7 @@ export default function LoginScreen() {
       console.log('Login data:', { username });
       
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+      const timeout = setTimeout(() => controller.abort(), 10000); 
       
       const response = await fetch(`${API_URL}/login/`, {
         method: 'POST',

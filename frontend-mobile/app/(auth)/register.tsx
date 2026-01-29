@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -11,22 +11,28 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
+import { Picker } from '@react-native-picker/picker';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useRouter } from 'expo-router';
 
 // For Android Emulator use: http://10.0.2.2:8000/api/users
 // For iOS Simulator use: http://localhost:8000/api/users
 // For Real Device: Get your IP with 'ipconfig' (Windows) or 'ifconfig' (Mac/Linux)
 const API_URL = 'http://192.168.254.113:8000/api/users';
+const PSGC_API_BASE = 'https://psgc.gitlab.io/api';
 
 export default function RegisterScreen() {
   const router = useRouter();
   const [formData, setFormData] = useState({
     firstname: '',
     lastname: '',
+    middlename: '',
     email: '',
     username: '',
     password: '',
     confirm_password: '',
+    date_of_birth: '',
+    gender: '',
     role: 'client',
     street_name: '',
     barangay: '',
@@ -36,12 +42,151 @@ export default function RegisterScreen() {
     contact_number: '',
   });
   const [loading, setLoading] = useState(false);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  
+  // Location data from PSGC API
+  const [regions, setRegions] = useState<any[]>([]);
+  const [provinces, setProvinces] = useState<any[]>([]);
+  const [cities, setCities] = useState<any[]>([]);
+  const [barangays, setBarangays] = useState<any[]>([]);
+  
+  // Selected codes for cascading
+  const [selectedRegionCode, setSelectedRegionCode] = useState('');
+  const [selectedProvinceCode, setSelectedProvinceCode] = useState('');
+  const [selectedCityCode, setSelectedCityCode] = useState('');
+
+  // Fetch regions on component mount
+  useEffect(() => {
+    fetchRegions();
+  }, []);
+
+  // Fetch provinces when region is selected
+  useEffect(() => {
+    if (selectedRegionCode) {
+      fetchProvinces(selectedRegionCode);
+      // Reset dependent fields
+      setProvinces([]);
+      setCities([]);
+      setBarangays([]);
+      setSelectedProvinceCode('');
+      setSelectedCityCode('');
+      updateField('province', '');
+      updateField('city_municipality', '');
+      updateField('barangay', '');
+    }
+  }, [selectedRegionCode]);
+
+  // Fetch cities when province is selected
+  useEffect(() => {
+    if (selectedProvinceCode) {
+      fetchCities(selectedProvinceCode);
+      // Reset dependent fields
+      setCities([]);
+      setBarangays([]);
+      setSelectedCityCode('');
+      updateField('city_municipality', '');
+      updateField('barangay', '');
+    }
+  }, [selectedProvinceCode]);
+
+  // Fetch barangays when city is selected
+  useEffect(() => {
+    if (selectedCityCode) {
+      fetchBarangays(selectedCityCode);
+      // Reset dependent field
+      setBarangays([]);
+      updateField('barangay', '');
+    }
+  }, [selectedCityCode]);
+
+  const fetchRegions = async () => {
+    try {
+      const response = await fetch(`${PSGC_API_BASE}/regions`);
+      const data = await response.json();
+      const sorted = data.sort((a: any, b: any) => a.name.localeCompare(b.name));
+      setRegions(sorted);
+    } catch (error) {
+      console.error('Error fetching regions:', error);
+      Alert.alert('Error', 'Failed to load regions');
+    }
+  };
+
+  const fetchProvinces = async (regionCode: string) => {
+    try {
+      const response = await fetch(`${PSGC_API_BASE}/regions/${regionCode}/provinces`);
+      const data = await response.json();
+      const sorted = data.sort((a: any, b: any) => a.name.localeCompare(b.name));
+      setProvinces(sorted);
+    } catch (error) {
+      console.error('Error fetching provinces:', error);
+      Alert.alert('Error', 'Failed to load provinces');
+    }
+  };
+
+  const fetchCities = async (provinceCode: string) => {
+    try {
+      const response = await fetch(`${PSGC_API_BASE}/provinces/${provinceCode}/cities-municipalities`);
+      const data = await response.json();
+      const sorted = data.sort((a: any, b: any) => a.name.localeCompare(b.name));
+      setCities(sorted);
+    } catch (error) {
+      console.error('Error fetching cities:', error);
+      Alert.alert('Error', 'Failed to load cities/municipalities');
+    }
+  };
+
+  const fetchBarangays = async (cityCode: string) => {
+    try {
+      const response = await fetch(`${PSGC_API_BASE}/cities-municipalities/${cityCode}/barangays`);
+      const data = await response.json();
+      const sorted = data.sort((a: any, b: any) => a.name.localeCompare(b.name));
+      setBarangays(sorted);
+    } catch (error) {
+      console.error('Error fetching barangays:', error);
+      Alert.alert('Error', 'Failed to load barangays');
+    }
+  };
+
+  const handleRegionChange = (name: string, code: string) => {
+    setSelectedRegionCode(code);
+    updateField('region', name);
+  };
+
+  const handleProvinceChange = (name: string, code: string) => {
+    setSelectedProvinceCode(code);
+    updateField('province', name);
+  };
+
+  const handleCityChange = (name: string, code: string) => {
+    setSelectedCityCode(code);
+    updateField('city_municipality', name);
+  };
+
+  const handleBarangayChange = (name: string) => {
+    updateField('barangay', name);
+  };
+
+  const handleDateChange = (event: any, date?: Date) => {
+    setShowDatePicker(Platform.OS === 'ios');
+    if (date) {
+      setSelectedDate(date);
+      const formattedDate = date.toISOString().split('T')[0]; // YYYY-MM-DD format
+      updateField('date_of_birth', formattedDate);
+    }
+  };
 
   const handleRegister = async () => {
     // Basic validation
     if (!formData.firstname || !formData.lastname || !formData.email || 
         !formData.username || !formData.password || !formData.confirm_password) {
       Alert.alert('Error', 'Please fill in all required fields');
+      return;
+    }
+
+    // Location validation
+    if (!formData.region || !formData.province || !formData.city_municipality || !formData.barangay) {
+      Alert.alert('Error', 'Please select your complete address (Region, Province, City/Municipality, and Barangay)');
       return;
     }
 
@@ -120,6 +265,17 @@ export default function RegisterScreen() {
           </View>
 
           <View style={styles.inputContainer}>
+            <Text style={styles.label}>Middle Name</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Enter middle name (optional)"
+              value={formData.middlename}
+              onChangeText={(value) => updateField('middlename', value)}
+              editable={!loading}
+            />
+          </View>
+
+          <View style={styles.inputContainer}>
             <Text style={styles.label}>Email *</Text>
             <TextInput
               style={styles.input}
@@ -183,56 +339,134 @@ export default function RegisterScreen() {
           </View>
 
           <View style={styles.inputContainer}>
+            <Text style={styles.label}>Date of Birth</Text>
+            <TouchableOpacity 
+              style={styles.input} 
+              onPress={() => setShowDatePicker(true)}
+              disabled={loading}
+            >
+              <Text style={formData.date_of_birth ? styles.dateText : styles.placeholderText}>
+                {formData.date_of_birth || 'Select Date of Birth'}
+              </Text>
+            </TouchableOpacity>
+            {showDatePicker && (
+              <DateTimePicker
+                value={selectedDate}
+                mode="date"
+                display="default"
+                onChange={handleDateChange}
+                maximumDate={new Date()}
+              />
+            )}
+          </View>
+
+          <View style={styles.inputContainer}>
+            <Text style={styles.label}>Gender</Text>
+            <View style={styles.pickerContainer}>
+              <Picker
+                selectedValue={formData.gender}
+                onValueChange={(itemValue) => updateField('gender', itemValue)}
+                enabled={!loading}
+                style={styles.picker}
+              >
+                <Picker.Item label="Select Gender" value="" />
+                <Picker.Item label="Male" value="Male" />
+                <Picker.Item label="Female" value="Female" />
+                <Picker.Item label="Others" value="Others" />
+              </Picker>
+            </View>
+          </View>
+
+          <View style={styles.inputContainer}>
+            <Text style={styles.label}>Region *</Text>
+            <View style={styles.pickerContainer}>
+              <Picker
+                selectedValue={selectedRegionCode}
+                onValueChange={(itemValue) => {
+                  const selectedRegion = regions.find(r => r.code === itemValue);
+                  if (selectedRegion) {
+                    handleRegionChange(selectedRegion.name, itemValue);
+                  }
+                }}
+                enabled={!loading}
+                style={styles.picker}
+              >
+                <Picker.Item label="Select Region" value="" />
+                {regions.map((region) => (
+                  <Picker.Item key={region.code} label={region.name} value={region.code} />
+                ))}
+              </Picker>
+            </View>
+          </View>
+
+          <View style={styles.inputContainer}>
+            <Text style={styles.label}>Province *</Text>
+            <View style={styles.pickerContainer}>
+              <Picker
+                selectedValue={selectedProvinceCode}
+                onValueChange={(itemValue) => {
+                  const selectedProvince = provinces.find(p => p.code === itemValue);
+                  if (selectedProvince) {
+                    handleProvinceChange(selectedProvince.name, itemValue);
+                  }
+                }}
+                enabled={!loading && selectedRegionCode !== ''}
+                style={styles.picker}
+              >
+                <Picker.Item label="Select Province" value="" />
+                {provinces.map((province) => (
+                  <Picker.Item key={province.code} label={province.name} value={province.code} />
+                ))}
+              </Picker>
+            </View>
+          </View>
+
+          <View style={styles.inputContainer}>
+            <Text style={styles.label}>City/Municipality *</Text>
+            <View style={styles.pickerContainer}>
+              <Picker
+                selectedValue={selectedCityCode}
+                onValueChange={(itemValue) => {
+                  const selectedCity = cities.find(c => c.code === itemValue);
+                  if (selectedCity) {
+                    handleCityChange(selectedCity.name, itemValue);
+                  }
+                }}
+                enabled={!loading && selectedProvinceCode !== ''}
+                style={styles.picker}
+              >
+                <Picker.Item label="Select City/Municipality" value="" />
+                {cities.map((city) => (
+                  <Picker.Item key={city.code} label={city.name} value={city.code} />
+                ))}
+              </Picker>
+            </View>
+          </View>
+
+          <View style={styles.inputContainer}>
+            <Text style={styles.label}>Barangay *</Text>
+            <View style={styles.pickerContainer}>
+              <Picker
+                selectedValue={formData.barangay}
+                onValueChange={(itemValue) => handleBarangayChange(itemValue)}
+                enabled={!loading && selectedCityCode !== ''}
+                style={styles.picker}
+              >
+                <Picker.Item label="Select Barangay" value="" />
+                {barangays.map((barangay) => (
+                  <Picker.Item key={barangay.code} label={barangay.name} value={barangay.name} />
+                ))}
+              </Picker>
+            </View>
+          </View>
+
+          <View style={styles.inputContainer}>
             <Text style={styles.label}>Street Name</Text>
             <TextInput
               style={styles.input}
               placeholder="Enter street name"
               value={formData.street_name}
               onChangeText={(value) => updateField('street_name', value)}
-              editable={!loading}
-            />
-          </View>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Barangay</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter barangay"
-              value={formData.barangay}
-              onChangeText={(value) => updateField('barangay', value)}
-              editable={!loading}
-            />
-          </View>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>City/Municipality</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter city/municipality"
-              value={formData.city_municipality}
-              onChangeText={(value) => updateField('city_municipality', value)}
-              editable={!loading}
-            />
-          </View>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Province</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter province"
-              value={formData.province}
-              onChangeText={(value) => updateField('province', value)}
-              editable={!loading}
-            />
-          </View>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Region</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter region"
-              value={formData.region}
-              onChangeText={(value) => updateField('region', value)}
               editable={!loading}
             />
           </View>
@@ -304,6 +538,16 @@ const styles = StyleSheet.create({
     color: '#333',
     marginBottom: 6,
   },
+  pickerContainer: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    overflow: 'hidden',
+  },
+  picker: {
+    height: 50,
+  },
   input: {
     borderWidth: 1,
     borderColor: '#ddd',
@@ -311,6 +555,14 @@ const styles = StyleSheet.create({
     padding: 12,
     fontSize: 16,
     backgroundColor: '#fff',
+  },
+  dateText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  placeholderText: {
+    fontSize: 16,
+    color: '#999',
   },
   button: {
     backgroundColor: '#007AFF',
