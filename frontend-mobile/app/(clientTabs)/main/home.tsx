@@ -7,7 +7,7 @@ import { TopNav } from '@/components/navigation';
 // For Android Emulator use: http://10.0.2.2:8000/api/users
 // For iOS Simulator use: http://localhost:8000/api/users
 // For Real Device: use your computer's IP (Windows) or (Mac/Linux)  ${config} (Mac/Linux)
-const API_URL = 'http://192.168.254.113:8000/api/bookings';
+const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
 interface Booking {
   id: number;
@@ -44,7 +44,7 @@ export default function HomeScreen() {
   const fetchHomeData = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_URL}/home/`, {
+      const response = await fetch(`${API_URL}/bookings/home/`, {
         method: 'GET',
         credentials: 'include', // Important for session authentication
         headers: {

@@ -4,7 +4,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { TopNav } from '@/components/navigation';
 
-const API_URL = 'http://192.168.254.113:8000/api';
+const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
 interface Mechanic {
   id: number;

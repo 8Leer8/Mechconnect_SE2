@@ -17,52 +17,50 @@ export default function TabLayout() {
         tabBarButton: HapticTab,
       }}>
       <Tabs.Screen
-        name="client/main/booking"
+        name="main/booking"
         options={{
           title: 'Booking',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="calendar" color={color} />,
         }}
       />
       <Tabs.Screen
-        name="client/main/request"
+        name="main/request"
         options={{
           title: 'Request',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="bell.fill" color={color} />,
         }}
       />
       <Tabs.Screen
-        name="client/main/home"
+        name="main/home"
         options={{
           title: 'Home',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
         }}
       />
       <Tabs.Screen
-        name="client/main/discover"
+        name="main/discover"
         options={{
           title: 'Discover',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="magnifyingglass" color={color} />,
         }}
       />
       <Tabs.Screen
-        name="client/main/profile"
+        name="main/profile"
         options={{
           title: 'Profile',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="person.fill" color={color} />,
         }}
       />
-      <Tabs.Screen
-        name="index"
-        options={{
-          href: null, // Hide from tabs
-        }}
-      />
-      <Tabs.Screen
-        name="explore"
-        options={{
-          href: null, // Hide from tabs
-        }}
-      />
+      {/* Hide non-tab routes */}
+      <Tabs.Screen name="index" options={{ href: null }} />
+      <Tabs.Screen name="explore" options={{ href: null }} />
+      <Tabs.Screen name="booking" options={{ href: null }} />
+      <Tabs.Screen name="forms" options={{ href: null }} />
+      <Tabs.Screen name="mechanic" options={{ href: null }} />
+      <Tabs.Screen name="payment" options={{ href: null }} />
+      <Tabs.Screen name="profile" options={{ href: null }} />
+      <Tabs.Screen name="request" options={{ href: null }} />
+      <Tabs.Screen name="shop" options={{ href: null }} />
     </Tabs>
   );
 }

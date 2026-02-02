@@ -114,6 +114,22 @@ class Admin(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+class MechanicDocument(models.Model):
+    class DocumentType(models.TextChoices):
+        LICENSE = "license"
+        CERTIFICATION = "certification"
+        ID = "id"
+        OTHERS = "others"
+    
+    mechanic = models.ForeignKey(Mechanic, on_delete=models.CASCADE)
+    document_name = models.CharField(max_length=100)
+    document_type = models.CharField(max_length=50, choices=DocumentType.choices)
+    document_file = models.FileField(upload_to='mechanics/docs/')
+    date_issued = models.DateField(null=True, blank=True)
+    date_expiry = models.DateField(null=True, blank=True)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
 class TokenPurchase(models.Model):
     account = models.ForeignKey(Account, on_delete=models.CASCADE)
     tokens_amount = models.IntegerField()

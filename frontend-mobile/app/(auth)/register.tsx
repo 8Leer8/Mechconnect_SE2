@@ -18,7 +18,7 @@ import { useRouter } from 'expo-router';
 // For Android Emulator use: http://10.0.2.2:8000/api/users
 // For iOS Simulator use: http://localhost:8000/api/users
 // For Real Device: Get your IP with 'ipconfig' (Windows) or 'ifconfig' (Mac/Linux)
-const API_URL = 'http://192.168.254.113:8000/api/users';
+const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const PSGC_API_BASE = 'https://psgc.gitlab.io/api';
 
 export default function RegisterScreen() {
@@ -197,7 +197,7 @@ export default function RegisterScreen() {
 
     setLoading(true);
     try {
-      const response = await fetch(`${API_URL}/register/`, {
+      const response = await fetch(`${API_URL}/users/register/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

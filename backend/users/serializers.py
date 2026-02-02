@@ -80,6 +80,102 @@ class AccountSerializer(serializers.ModelSerializer):
         return None
 
 
+class ProfileDetailSerializer(serializers.ModelSerializer):
+    """Detailed profile serializer for profile page"""
+    full_name = serializers.SerializerMethodField()
+    user_type = serializers.SerializerMethodField()
+    available_roles = serializers.SerializerMethodField()
+    current_role_profile = serializers.SerializerMethodField()
+    address = AccountAddressSerializer(source='accountaddress', read_only=True)
+    
+    class Meta:
+        model = Account
+        fields = [
+            'id', 'username', 'email', 'full_name', 'firstname', 'lastname',
+            'middlename', 'date_of_birth', 'gender', 'is_verified',
+            'user_type', 'available_roles', 'current_role_profile', 'address'
+        ]
+    
+    def get_full_name(self, obj):
+        """Get full name of user"""
+        parts = [obj.firstname, obj.middlename, obj.lastname]
+        return ' '.join(filter(None, parts))
+    
+    def get_user_type(self, obj):
+        """Get all user types/roles"""
+        roles = obj.accountrole_set.values_list('account_role', flat=True)
+        return list(roles)
+    
+    def get_available_roles(self, obj):
+        """Get available roles for switching"""
+        roles = obj.accountrole_set.values_list('account_role', flat=True)
+        role_list = []
+        for role in roles:
+            role_list.append({
+                'value': role,
+                'label': role.replace('_', ' ').title()
+            })
+        return role_list
+    
+    def get_current_role_profile(self, obj):
+        """Get current role profile data"""
+        profiles = {}
+        if hasattr(obj, 'client'):
+            profiles['client'] = ClientSerializer(obj.client).data
+        if hasattr(obj, 'mechanic'):
+            profiles['mechanic'] = MechanicSerializer(obj.mechanic).data
+        if hasattr(obj, 'shopowner'):
+            profiles['shop_owner'] = ShopOwnerSerializer(obj.shopowner).data
+        if hasattr(obj, 'admin'):
+            profiles['admin'] = AdminSerializer(obj.admin).data
+        return profiles
+
+
+class RoleSwitchSerializer(serializers.Serializer):
+    """Serializer for role switching"""
+    role = serializers.ChoiceField(choices=[
+        ('client', 'Client'),
+        ('mechanic', 'Mechanic'),
+        ('shop_owner', 'Shop Owner')
+    ])
+    
+    def validate_role(self, value):
+        """Validate that user has this role"""
+        account = self.context.get('account')
+        if not account:
+            raise serializers.ValidationError("Account context required")
+        
+        user_roles = account.accountrole_set.values_list('account_role', flat=True)
+        if value not in user_roles:
+            raise serializers.ValidationError(
+                f"You don't have the {value} role. Available roles: {', '.join(user_roles)}"
+            )
+        return value
+
+
+class ProfileSettingsSerializer(serializers.Serializer):
+    """Serializer for updating profile settings"""
+    # Personal information
+    firstname = serializers.CharField(max_length=100, required=False)
+    lastname = serializers.CharField(max_length=100, required=False)
+    middlename = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    date_of_birth = serializers.DateField(required=False, allow_null=True)
+    gender = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    
+    # Contact information
+    contact_number = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    
+    # Address information
+    house_building_number = serializers.CharField(max_length=50, required=False, allow_blank=True)
+    street_name = serializers.CharField(max_length=100, required=False)
+    subdivision_village = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    barangay = serializers.CharField(max_length=100, required=False)
+    city_municipality = serializers.CharField(max_length=100, required=False)
+    province = serializers.CharField(max_length=100, required=False)
+    region = serializers.CharField(max_length=100, required=False)
+    postal_code = serializers.CharField(max_length=20, required=False, allow_blank=True)
+
+
 class RegisterSerializer(serializers.Serializer):
     # Account fields
     lastname = serializers.CharField(max_length=100)

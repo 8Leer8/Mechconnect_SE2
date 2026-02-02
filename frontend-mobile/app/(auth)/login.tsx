@@ -16,7 +16,7 @@ import { useRouter } from 'expo-router';
 // For Android Emulator use: http://10.0.2.2:8000/api/users
 // For iOS Simulator use: http://localhost:8000/api/users
 // For Real Device: Get your IP with 'ipconfig' (Windows) or 'ifconfig' (Mac/Linux)
-const API_URL = 'http://192.168.254.113:8000/api/users';
+const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -32,13 +32,13 @@ export default function LoginScreen() {
 
     setLoading(true);
     try {
-      console.log('Attempting login to:', `${API_URL}/login/`);
+      console.log('Attempting login to:', `${API_URL}/users/login/`);
       console.log('Login data:', { username });
       
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 10000); 
       
-      const response = await fetch(`${API_URL}/login/`, {
+      const response = await fetch(`${API_URL}/users/login/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -57,7 +57,7 @@ export default function LoginScreen() {
       if (response.ok) {
         Alert.alert('Success', 'Login successful!');
         // Navigate to main app
-        router.replace('/(tabs)/client/main/home');
+        router.replace('/(clientTabs)/main/home');
       } else {
         const errorMessage = data.username?.[0] || data.password?.[0] || data.account?.[0] || 'Login failed';
         Alert.alert('Error', errorMessage);
