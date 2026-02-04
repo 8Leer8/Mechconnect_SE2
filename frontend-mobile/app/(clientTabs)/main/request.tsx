@@ -3,6 +3,7 @@ import { StyleSheet, View, TouchableOpacity, ScrollView, ActivityIndicator } fro
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { TopNav } from '@/components/navigation';
+import { router } from 'expo-router';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -107,8 +108,17 @@ export default function RequestScreen() {
 
   const handleCreateRequest = () => {
     console.log(`Create ${activeTab} request`);
-    // Navigate to create request form based on active tab
-    // You'll implement this later
+    
+    // Navigate to appropriate request creation page based on active tab
+    if (activeTab === 'direct') {
+      router.push('/client/request/direct/choosePart');
+    } else if (activeTab === 'custom') {
+      // router.push('/client/request/custom/create');
+      console.log('Navigate to custom request creation');
+    } else if (activeTab === 'emergency') {
+      // router.push('/client/request/emergency/create');
+      console.log('Navigate to emergency request creation');
+    }
   };
 
   const renderCustomRequests = () => {

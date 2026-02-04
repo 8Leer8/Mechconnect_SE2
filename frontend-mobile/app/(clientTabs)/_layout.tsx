@@ -51,16 +51,9 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="person.fill" color={color} />,
         }}
       />
-      {/* Hide non-tab routes */}
+      {/* Hide non-tab screens */}
       <Tabs.Screen name="index" options={{ href: null }} />
       <Tabs.Screen name="explore" options={{ href: null }} />
-      <Tabs.Screen name="booking" options={{ href: null }} />
-      <Tabs.Screen name="forms" options={{ href: null }} />
-      <Tabs.Screen name="mechanic" options={{ href: null }} />
-      <Tabs.Screen name="payment" options={{ href: null }} />
-      <Tabs.Screen name="profile" options={{ href: null }} />
-      <Tabs.Screen name="request" options={{ href: null }} />
-      <Tabs.Screen name="shop" options={{ href: null }} />
     </Tabs>
   );
 }
