@@ -34,6 +34,15 @@ export default function LoginScreen() {
       return;
     }
 
+    // Check if API_URL is defined
+    if (!API_URL) {
+      Alert.alert(
+        'Configuration Error', 
+        'API URL is not configured. Please check your .env file.'
+      );
+      return;
+    }
+
     setLoading(true);
     try {
       console.log('Attempting login to:', `${API_URL}/users/login/`);
@@ -66,9 +75,17 @@ export default function LoginScreen() {
         const errorMessage = data.username?.[0] || data.password?.[0] || data.account?.[0] || 'Login failed';
         Alert.alert('Error', errorMessage);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Login error:', error);
-      Alert.alert('Error', 'Connection failed. Please check your network.');
+      let errorMessage = 'Connection failed. Please check your network.';
+      
+      if (error.name === 'AbortError') {
+        errorMessage = 'Request timeout. The server is taking too long to respond.';
+      } else if (error.message) {
+        errorMessage = `Connection failed: ${error.message}`;
+      }
+      
+      Alert.alert('Error', errorMessage);
     } finally {
       setLoading(false);
     }
