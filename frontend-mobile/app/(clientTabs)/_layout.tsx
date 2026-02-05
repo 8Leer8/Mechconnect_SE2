@@ -1,54 +1,65 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
-
-import { HapticTab } from '@/components/haptic-tab';
-import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { FontAwesome } from '@expo/vector-icons';
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
-
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
+        tabBarActiveTintColor: '#FF8C00',
+        tabBarInactiveTintColor: '#999',
         headerShown: false,
-        tabBarButton: HapticTab,
+        tabBarStyle: {
+          backgroundColor: '#FFF5E6',
+          borderTopColor: '#FFE4B3',
+          borderTopWidth: 1,
+          height: 60,
+          paddingBottom: 5,
+          elevation: 8,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: -2 },
+          shadowOpacity: 0.1,
+          shadowRadius: 4,
+        },
+        tabBarLabelStyle: {
+          fontSize: 10,
+          marginTop: 2,
+          fontWeight: '500',
+        },
       }}>
       <Tabs.Screen
         name="main/booking"
         options={{
           title: 'Booking',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="calendar" color={color} />,
+          tabBarIcon: ({ color }) => <FontAwesome size={20} name="calendar" color={color} />,
         }}
       />
       <Tabs.Screen
         name="main/request"
         options={{
           title: 'Request',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="bell.fill" color={color} />,
+          tabBarIcon: ({ color }) => <FontAwesome size={20} name="file-text" color={color} />,
         }}
       />
       <Tabs.Screen
         name="main/home"
         options={{
           title: 'Home',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
+          tabBarIcon: ({ color }) => <FontAwesome size={20} name="home" color={color} />,
         }}
       />
       <Tabs.Screen
         name="main/discover"
         options={{
           title: 'Discover',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="magnifyingglass" color={color} />,
+          tabBarIcon: ({ color }) => <FontAwesome size={20} name="search" color={color} />,
         }}
       />
       <Tabs.Screen
         name="main/profile"
         options={{
           title: 'Profile',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="person.fill" color={color} />,
+          tabBarIcon: ({ color }) => <FontAwesome size={20} name="user" color={color} />,
         }}
       />
       {/* Hide non-tab screens */}

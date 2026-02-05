@@ -1,19 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  StyleSheet, 
   View, 
   ScrollView, 
   TouchableOpacity, 
   Image,
   ActivityIndicator,
   Alert,
-  Text
 } from 'react-native';
 import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { IconSymbol } from '@/components/ui/icon-symbol';
+import { FontAwesome } from '@expo/vector-icons';
 import { TopNav } from '@/components/navigation';
+import { styles } from '../../../style/client/profileStyles';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -181,7 +180,7 @@ export default function ProfileScreen() {
     return (
       <ThemedView style={styles.container}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#0a7ea4" />
+          <ActivityIndicator size="large" color="#FF8C00" />
           <ThemedText style={styles.loadingText}>Loading profile...</ThemedText>
         </View>
       </ThemedView>
@@ -192,7 +191,7 @@ export default function ProfileScreen() {
     return (
       <ThemedView style={styles.container}>
         <View style={styles.errorContainer}>
-          <IconSymbol name="exclamationmark.triangle" size={60} color="#f44336" />
+          <FontAwesome name="exclamation-triangle" size={60} color="#FF4500" />
           <ThemedText style={styles.errorText}>
             {error || 'Failed to load profile'}
           </ThemedText>
@@ -237,7 +236,7 @@ export default function ProfileScreen() {
               />
             ) : (
               <View style={styles.profilePhotoPlaceholder}>
-                <IconSymbol name="person.fill" size={36} color="#888" />
+                <FontAwesome name="user" size={36} color="#FF8C00" />
               </View>
             )}
 
@@ -266,12 +265,12 @@ export default function ProfileScreen() {
           onPress={handleSwitchRole}
         >
           <View style={styles.switchRoleLeft}>
-            <IconSymbol name="arrow.2.squarepath" size={22} color="#fff" />
+            <FontAwesome name="exchange" size={22} color="#FF8C00" />
             <ThemedText style={styles.switchRoleText}>Switch Role</ThemedText>
           </View>
           <View style={styles.switchRoleRight}>
             <ThemedText style={styles.switchRoleValue}>{currentRoleLabel}</ThemedText>
-            <IconSymbol name="chevron.right" size={18} color="#888" />
+            <FontAwesome name="chevron-right" size={18} color="#999" />
           </View>
         </TouchableOpacity>
 
@@ -279,42 +278,42 @@ export default function ProfileScreen() {
         <View style={styles.settingsSection}>
           <TouchableOpacity style={styles.settingRow}>
             <View style={styles.settingLeft}>
-              <IconSymbol name="heart.fill" size={22} color="#fff" />
+              <FontAwesome name="heart" size={22} color="#FF8C00" />
               <ThemedText style={styles.settingText}>Favorites</ThemedText>
             </View>
-            <IconSymbol name="chevron.right" size={18} color="#888" />
+            <FontAwesome name="chevron-right" size={18} color="#999" />
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.settingRow}>
             <View style={styles.settingLeft}>
-              <IconSymbol name="gearshape.fill" size={22} color="#fff" />
+              <FontAwesome name="cog" size={22} color="#FF8C00" />
               <ThemedText style={styles.settingText}>Settings</ThemedText>
             </View>
-            <IconSymbol name="chevron.right" size={18} color="#888" />
+            <FontAwesome name="chevron-right" size={18} color="#999" />
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.settingRow}>
             <View style={styles.settingLeft}>
-              <IconSymbol name="shield.fill" size={22} color="#fff" />
+              <FontAwesome name="shield" size={22} color="#FF8C00" />
               <ThemedText style={styles.settingText}>Privacy & Security</ThemedText>
             </View>
-            <IconSymbol name="chevron.right" size={18} color="#888" />
+            <FontAwesome name="chevron-right" size={18} color="#999" />
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.settingRow}>
             <View style={styles.settingLeft}>
-              <IconSymbol name="doc.text.fill" size={22} color="#fff" />
+              <FontAwesome name="file-text" size={22} color="#FF8C00" />
               <ThemedText style={styles.settingText}>Terms & Regulation</ThemedText>
             </View>
-            <IconSymbol name="chevron.right" size={18} color="#888" />
+            <FontAwesome name="chevron-right" size={18} color="#999" />
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.settingRow}>
             <View style={styles.settingLeft}>
-              <IconSymbol name="info.circle.fill" size={22} color="#fff" />
+              <FontAwesome name="info-circle" size={22} color="#FF8C00" />
               <ThemedText style={styles.settingText}>About</ThemedText>
             </View>
-            <IconSymbol name="chevron.right" size={18} color="#888" />
+            <FontAwesome name="chevron-right" size={18} color="#999" />
           </TouchableOpacity>
         </View>
 
@@ -334,187 +333,3 @@ export default function ProfileScreen() {
     </ThemedView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-  },
-  errorContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  errorText: {
-    fontSize: 16,
-    textAlign: 'center',
-    marginTop: 20,
-    marginBottom: 20,
-  },
-  retryButton: {
-    backgroundColor: '#0a7ea4',
-    paddingHorizontal: 32,
-    paddingVertical: 12,
-    borderRadius: 8,
-  },
-  retryButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  header: {
-    paddingTop: 60,
-    paddingHorizontal: 20,
-    paddingBottom: 20,
-  },
-  headerTitle: {
-    fontSize: 34,
-    fontWeight: 'bold',
-  },
-  profileCard: {
-    marginHorizontal: 16,
-    marginBottom: 12,
-    padding: 20,
-    backgroundColor: '#1f1f1f',
-    borderRadius: 12,
-  },
-  profileRow: {
-    flexDirection: 'row',
-    marginBottom: 16,
-  },
-  profilePhoto: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
-  },
-  profilePhotoPlaceholder: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
-    backgroundColor: '#333',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  userInfo: {
-    flex: 1,
-    marginLeft: 16,
-    justifyContent: 'center',
-  },
-  userName: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 4,
-  },
-  userEmail: {
-    fontSize: 14,
-    opacity: 0.7,
-    marginBottom: 2,
-  },
-  userPhone: {
-    fontSize: 13,
-    opacity: 0.6,
-    marginBottom: 2,
-  },
-  userAddress: {
-    fontSize: 12,
-    opacity: 0.5,
-    marginTop: 4,
-  },
-  editButton: {
-    backgroundColor: '#0a7ea4',
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  editButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  switchRoleButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    backgroundColor: '#1f1f1f',
-    marginTop: 8,
-    borderRadius: 12,
-  },
-  switchRoleLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
-  },
-  switchRoleText: {
-    fontSize: 16,
-  },
-  switchRoleRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  switchRoleValue: {
-    fontSize: 14,
-    opacity: 0.6,
-  },
-  settingsSection: {
-    marginTop: 8,
-  },
-  settingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    backgroundColor: '#1f1f1f',
-    borderBottomWidth: 1,
-    borderBottomColor: '#2a2a2a',
-  },
-  settingLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
-  },
-  settingText: {
-    fontSize: 16,
-  },
-  settingRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  settingValue: {
-    fontSize: 14,
-    opacity: 0.6,
-  },
-  logoutContainer: {
-    padding: 16,
-    marginTop: 8,
-  },
-  logoutButton: {
-    backgroundColor: '#f44336',
-    padding: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  logoutButtonText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  bottomPadding: {
-    height: 40,
-  },
-});

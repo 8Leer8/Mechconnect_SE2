@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import { View, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { TopNav } from '@/components/navigation';
+import { styles } from '../../../style/client/bookingStyles';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -86,11 +87,11 @@ export default function BookingScreen() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'active': return '#0066cc';
-      case 'completed': return '#00cc66';
-      case 'cancelled': return '#cc0000';
-      case 'reworked': return '#ff9900';
-      default: return '#666';
+      case 'active': return '#FF8C00';
+      case 'completed': return '#4CAF50';
+      case 'cancelled': return '#FF4500';
+      case 'reworked': return '#FFB84D';
+      default: return '#999';
     }
   };
 
@@ -98,7 +99,7 @@ export default function BookingScreen() {
     if (loading) {
       return (
         <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color="#0066cc" />
+          <ActivityIndicator size="large" color="#FF8C00" />
         </View>
       );
     }
@@ -263,136 +264,3 @@ export default function BookingScreen() {
     </ThemedView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  tabContainer: {
-    flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: '#444',
-  },
-  tab: {
-    flex: 1,
-    paddingVertical: 12,
-    alignItems: 'center',
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
-  },
-  activeTab: {
-    borderBottomColor: '#0066cc',
-  },
-  tabText: {
-    fontSize: 13,
-    opacity: 0.6,
-  },
-  activeTabText: {
-    opacity: 1,
-    fontWeight: 'bold',
-    color: '#0066cc',
-  },
-  scrollView: {
-    flex: 1,
-    padding: 16,
-  },
-  centerContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  card: {
-    backgroundColor: '#2a2a2a',
-    padding: 16,
-    borderRadius: 8,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#444',
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 12,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#444',
-  },
-  cardHeaderLeft: {
-    flex: 1,
-  },
-  bookingId: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#ffffff',
-    marginBottom: 6,
-  },
-  statusBadge: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-  },
-  statusText: {
-    color: '#ffffff',
-    fontSize: 11,
-    fontWeight: 'bold',
-  },
-  amountText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#00cc66',
-  },
-  infoRow: {
-    flexDirection: 'row',
-    marginBottom: 8,
-  },
-  label: {
-    fontSize: 14,
-    color: '#aaa',
-    width: 80,
-  },
-  value: {
-    flex: 1,
-    fontSize: 14,
-    color: '#ffffff',
-  },
-  dateText: {
-    flex: 1,
-    fontSize: 13,
-    color: '#e0e0e0',
-  },
-  detailBanner: {
-    backgroundColor: '#1a1a1a',
-    padding: 10,
-    borderRadius: 6,
-    marginTop: 12,
-    borderLeftWidth: 3,
-    borderLeftColor: '#0066cc',
-  },
-  detailText: {
-    fontSize: 13,
-    color: '#e0e0e0',
-    marginBottom: 4,
-  },
-  emptyCard: {
-    backgroundColor: '#2a2a2a',
-    padding: 32,
-    borderRadius: 8,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#444',
-  },
-  emptyText: {
-    fontSize: 14,
-    opacity: 0.6,
-    fontStyle: 'italic',
-    color: '#aaa',
-  },
-  errorText: {
-    color: '#cc0000',
-    fontSize: 14,
-    textAlign: 'center',
-  },
-});

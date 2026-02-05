@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import { View, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { TopNav } from '@/components/navigation';
 import { router } from 'expo-router';
+import { styles } from '../../../style/client/requestStyles';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -122,7 +123,7 @@ export default function RequestScreen() {
   };
 
   const renderCustomRequests = () => {
-    if (loading) return <ActivityIndicator size="large" color="#0066cc" />;
+    if (loading) return <ActivityIndicator size="large" color="#FF8C00" />;
     if (error) return <ThemedText style={styles.errorText}>{error}</ThemedText>;
     if (customRequests.length === 0) {
       return (
@@ -167,7 +168,7 @@ export default function RequestScreen() {
   };
 
   const renderDirectRequests = () => {
-    if (loading) return <ActivityIndicator size="large" color="#0066cc" />;
+    if (loading) return <ActivityIndicator size="large" color="#FF8C00" />;
     if (error) return <ThemedText style={styles.errorText}>{error}</ThemedText>;
     if (directRequests.length === 0) {
       return (
@@ -213,7 +214,7 @@ export default function RequestScreen() {
   };
 
   const renderEmergencyRequests = () => {
-    if (loading) return <ActivityIndicator size="large" color="#0066cc" />;
+    if (loading) return <ActivityIndicator size="large" color="#FF8C00" />;
     if (error) return <ThemedText style={styles.errorText}>{error}</ThemedText>;
     if (emergencyRequests.length === 0) {
       return (
@@ -257,14 +258,14 @@ export default function RequestScreen() {
   const getStatusColor = (status: string) => {
     switch (status.toLowerCase()) {
       case 'pending':
-        return '#ff9800';
+        return '#FFB84D';
       case 'accepted':
       case 'quoted':
-        return '#00cc66';
+        return '#4CAF50';
       case 'rejected':
-        return '#cc0000';
+        return '#FF4500';
       default:
-        return '#666';
+        return '#999';
     }
   };
 
@@ -318,145 +319,3 @@ export default function RequestScreen() {
     </ThemedView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  tabContainer: {
-    flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: '#444',
-  },
-  tab: {
-    flex: 1,
-    paddingVertical: 16,
-    alignItems: 'center',
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
-  },
-  activeTab: {
-    borderBottomColor: '#0066cc',
-  },
-  tabText: {
-    fontSize: 16,
-    opacity: 0.6,
-  },
-  activeTabText: {
-    opacity: 1,
-    fontWeight: 'bold',
-    color: '#0066cc',
-  },
-  buttonContainer: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#444',
-  },
-  createButton: {
-    backgroundColor: '#0066cc',
-    padding: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  createButtonText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  scrollView: {
-    flex: 1,
-    padding: 16,
-  },
-  card: {
-    backgroundColor: '#2a2a2a',
-    padding: 16,
-    borderRadius: 8,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#444',
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#ffffff',
-  },
-  cardText: {
-    fontSize: 14,
-    marginBottom: 4,
-    opacity: 0.8,
-    color: '#e0e0e0',
-  },
-  serviceText: {
-    fontSize: 15,
-    fontWeight: '600',
-    marginBottom: 8,
-    color: '#ffffff',
-  },
-  priceText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#00cc66',
-    marginBottom: 8,
-  },
-  dateText: {
-    fontSize: 12,
-    opacity: 0.6,
-    marginTop: 8,
-    color: '#aaa',
-  },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-  },
-  statusText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  emergencyBadge: {
-    backgroundColor: '#cc0000',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-  },
-  bookingBadge: {
-    backgroundColor: '#00cc66',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-    alignSelf: 'flex-start',
-    marginTop: 8,
-  },
-  bookingText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  emptyCard: {
-    backgroundColor: '#2a2a2a',
-    padding: 24,
-    borderRadius: 8,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#444',
-  },
-  emptyText: {
-    fontSize: 14,
-    opacity: 0.6,
-    fontStyle: 'italic',
-    color: '#aaa',
-  },
-  errorText: {
-    color: '#cc0000',
-    fontSize: 14,
-    textAlign: 'center',
-    padding: 16,
-  },
-});

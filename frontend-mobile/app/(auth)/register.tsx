@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import {
-  StyleSheet,
   View,
   TextInput,
   TouchableOpacity,
@@ -13,7 +12,9 @@ import {
 } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { FontAwesome } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { styles } from '../../style/auth/registerStyles';
 
 // For Android Emulator use: http://10.0.2.2:8000/api/users
 // For iOS Simulator use: http://localhost:8000/api/users
@@ -44,6 +45,10 @@ export default function RegisterScreen() {
   const [loading, setLoading] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [selectedDate, setSelectedDate] = useState(new Date());
+  const [currentStage, setCurrentStage] = useState(1);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const totalStages = 3;
   
   // Location data from PSGC API
   const [regions, setRegions] = useState<any[]>([]);
@@ -229,6 +234,331 @@ export default function RegisterScreen() {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
+  const handleNext = () => {
+    if (currentStage === 1) {
+      if (!formData.firstname || !formData.lastname || !formData.email || !formData.username) {
+        Alert.alert('Error', 'Please fill in all required fields');
+        return;
+      }
+    } else if (currentStage === 2) {
+      if (!formData.password || !formData.confirm_password) {
+        Alert.alert('Error', 'Please fill in password fields');
+        return;
+      }
+      if (formData.password !== formData.confirm_password) {
+        Alert.alert('Error', 'Passwords do not match');
+        return;
+      }
+    }
+    setCurrentStage(prev => Math.min(prev + 1, totalStages));
+  };
+
+  const handlePrevious = () => {
+    setCurrentStage(prev => Math.max(prev - 1, 1));
+  };
+
+  const getProgress = () => {
+    return (currentStage / totalStages) * 100;
+  };
+
+  const renderStage = () => {
+    switch (currentStage) {
+      case 1:
+        return (
+          <>
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>First Name *</Text>
+              <View style={styles.inputWrapper}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter first name"
+                  placeholderTextColor="#999"
+                  value={formData.firstname}
+                  onChangeText={(value) => updateField('firstname', value)}
+                  editable={!loading}
+                />
+              </View>
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Last Name *</Text>
+              <View style={styles.inputWrapper}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter last name"
+                  placeholderTextColor="#999"
+                  value={formData.lastname}
+                  onChangeText={(value) => updateField('lastname', value)}
+                  editable={!loading}
+                />
+              </View>
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Middle Name</Text>
+              <View style={styles.inputWrapper}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter middle name (optional)"
+                  placeholderTextColor="#999"
+                  value={formData.middlename}
+                  onChangeText={(value) => updateField('middlename', value)}
+                  editable={!loading}
+                />
+              </View>
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Email *</Text>
+              <View style={styles.inputWrapper}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter email"
+                  placeholderTextColor="#999"
+                  value={formData.email}
+                  onChangeText={(value) => updateField('email', value)}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  editable={!loading}
+                />
+              </View>
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Username *</Text>
+              <View style={styles.inputWrapper}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter username"
+                  placeholderTextColor="#999"
+                  value={formData.username}
+                  onChangeText={(value) => updateField('username', value)}
+                  autoCapitalize="none"
+                  editable={!loading}
+                />
+              </View>
+            </View>
+          </>
+        );
+
+      case 2:
+        return (
+          <>
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Password *</Text>
+              <View style={styles.inputWrapper}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter password"
+                  placeholderTextColor="#999"
+                  value={formData.password}
+                  onChangeText={(value) => updateField('password', value)}
+                  secureTextEntry={!showPassword}
+                  autoCapitalize="none"
+                  editable={!loading}
+                />
+                <TouchableOpacity 
+                  style={styles.eyeButton}
+                  onPress={() => setShowPassword(!showPassword)}
+                >
+                  <FontAwesome 
+                    name={showPassword ? "eye-slash" : "eye"} 
+                    size={20} 
+                    color="#FF8C00" 
+                  />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Confirm Password *</Text>
+              <View style={styles.inputWrapper}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Re-enter password"
+                  placeholderTextColor="#999"
+                  value={formData.confirm_password}
+                  onChangeText={(value) => updateField('confirm_password', value)}
+                  secureTextEntry={!showConfirmPassword}
+                  autoCapitalize="none"
+                  editable={!loading}
+                />
+                <TouchableOpacity 
+                  style={styles.eyeButton}
+                  onPress={() => setShowConfirmPassword(!showConfirmPassword)}
+                >
+                  <FontAwesome 
+                    name={showConfirmPassword ? "eye-slash" : "eye"} 
+                    size={20} 
+                    color="#FF8C00" 
+                  />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Contact Number</Text>
+              <View style={styles.inputWrapper}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter contact number"
+                  placeholderTextColor="#999"
+                  value={formData.contact_number}
+                  onChangeText={(value) => updateField('contact_number', value)}
+                  keyboardType="phone-pad"
+                  editable={!loading}
+                />
+              </View>
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Date of Birth</Text>
+              <TouchableOpacity 
+                style={styles.dateButton}
+                onPress={() => setShowDatePicker(true)}
+                disabled={loading}
+              >
+                <Text style={formData.date_of_birth ? styles.dateText : styles.placeholderText}>
+                  {formData.date_of_birth || 'Select Date of Birth'}
+                </Text>
+              </TouchableOpacity>
+              {showDatePicker && (
+                <DateTimePicker
+                  value={selectedDate}
+                  mode="date"
+                  display="default"
+                  onChange={handleDateChange}
+                  maximumDate={new Date()}
+                />
+              )}
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Gender</Text>
+              <View style={styles.pickerContainer}>
+                <Picker
+                  selectedValue={formData.gender}
+                  onValueChange={(itemValue) => updateField('gender', itemValue)}
+                  enabled={!loading}
+                  style={styles.picker}
+                >
+                  <Picker.Item label="Select Gender" value="" />
+                  <Picker.Item label="Male" value="Male" />
+                  <Picker.Item label="Female" value="Female" />
+                  <Picker.Item label="Others" value="Others" />
+                </Picker>
+              </View>
+            </View>
+          </>
+        );
+
+      case 3:
+        return (
+          <>
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Region *</Text>
+              <View style={styles.pickerContainer}>
+                <Picker
+                  selectedValue={selectedRegionCode}
+                  onValueChange={(itemValue) => {
+                    const selectedRegion = regions.find(r => r.code === itemValue);
+                    if (selectedRegion) {
+                      handleRegionChange(selectedRegion.name, itemValue);
+                    }
+                  }}
+                  enabled={!loading}
+                  style={styles.picker}
+                >
+                  <Picker.Item label="Select Region" value="" />
+                  {regions.map((region) => (
+                    <Picker.Item key={region.code} label={region.name} value={region.code} />
+                  ))}
+                </Picker>
+              </View>
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Province *</Text>
+              <View style={styles.pickerContainer}>
+                <Picker
+                  selectedValue={selectedProvinceCode}
+                  onValueChange={(itemValue) => {
+                    const selectedProvince = provinces.find(p => p.code === itemValue);
+                    if (selectedProvince) {
+                      handleProvinceChange(selectedProvince.name, itemValue);
+                    }
+                  }}
+                  enabled={!loading && selectedRegionCode !== ''}
+                  style={styles.picker}
+                >
+                  <Picker.Item label="Select Province" value="" />
+                  {provinces.map((province) => (
+                    <Picker.Item key={province.code} label={province.name} value={province.code} />
+                  ))}
+                </Picker>
+              </View>
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>City/Municipality *</Text>
+              <View style={styles.pickerContainer}>
+                <Picker
+                  selectedValue={selectedCityCode}
+                  onValueChange={(itemValue) => {
+                    const selectedCity = cities.find(c => c.code === itemValue);
+                    if (selectedCity) {
+                      handleCityChange(selectedCity.name, itemValue);
+                    }
+                  }}
+                  enabled={!loading && selectedProvinceCode !== ''}
+                  style={styles.picker}
+                >
+                  <Picker.Item label="Select City/Municipality" value="" />
+                  {cities.map((city) => (
+                    <Picker.Item key={city.code} label={city.name} value={city.code} />
+                  ))}
+                </Picker>
+              </View>
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Barangay *</Text>
+              <View style={styles.pickerContainer}>
+                <Picker
+                  selectedValue={formData.barangay}
+                  onValueChange={(itemValue) => handleBarangayChange(itemValue)}
+                  enabled={!loading && selectedCityCode !== ''}
+                  style={styles.picker}
+                >
+                  <Picker.Item label="Select Barangay" value="" />
+                  {barangays.map((barangay) => (
+                    <Picker.Item key={barangay.code} label={barangay.name} value={barangay.name} />
+                  ))}
+                </Picker>
+              </View>
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Street Name</Text>
+              <View style={styles.inputWrapper}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter street name"
+                  placeholderTextColor="#999"
+                  value={formData.street_name}
+                  onChangeText={(value) => updateField('street_name', value)}
+                  editable={!loading}
+                />
+              </View>
+            </View>
+          </>
+        );
+
+      default:
+        return null;
+    }
+  };
+
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -238,250 +568,66 @@ export default function RegisterScreen() {
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.formContainer}>
+        <View style={styles.progressContainer}>
+          <View style={styles.progressBarContainer}>
+            <View style={[styles.progressBar, { width: `${getProgress()}%` }]} />
+          </View>
+          <Text style={styles.progressText}>Step {currentStage} of {totalStages}</Text>
+        </View>
+
+        <View style={styles.titleContainer}>
           <Text style={styles.title}>Create Account</Text>
-          <Text style={styles.subtitle}>Register as a Client</Text>
+          <Text style={styles.subtitle}>
+            {currentStage === 1 && 'Personal Information'}
+            {currentStage === 2 && 'Security & Contact'}
+            {currentStage === 3 && 'Address Details'}
+          </Text>
+        </View>
 
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>First Name *</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter first name"
-              value={formData.firstname}
-              onChangeText={(value) => updateField('firstname', value)}
-              editable={!loading}
-            />
-          </View>
+        <View style={styles.formContainer}>
+          {renderStage()}
 
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Last Name *</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter last name"
-              value={formData.lastname}
-              onChangeText={(value) => updateField('lastname', value)}
-              editable={!loading}
-            />
-          </View>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Middle Name</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter middle name (optional)"
-              value={formData.middlename}
-              onChangeText={(value) => updateField('middlename', value)}
-              editable={!loading}
-            />
-          </View>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Email *</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter email"
-              value={formData.email}
-              onChangeText={(value) => updateField('email', value)}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              editable={!loading}
-            />
-          </View>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Username *</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter username"
-              value={formData.username}
-              onChangeText={(value) => updateField('username', value)}
-              autoCapitalize="none"
-              editable={!loading}
-            />
-          </View>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Password *</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter password"
-              value={formData.password}
-              onChangeText={(value) => updateField('password', value)}
-              secureTextEntry
-              autoCapitalize="none"
-              editable={!loading}
-            />
-          </View>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Confirm Password *</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Re-enter password"
-              value={formData.confirm_password}
-              onChangeText={(value) => updateField('confirm_password', value)}
-              secureTextEntry
-              autoCapitalize="none"
-              editable={!loading}
-            />
-          </View>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Contact Number</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter contact number"
-              value={formData.contact_number}
-              onChangeText={(value) => updateField('contact_number', value)}
-              keyboardType="phone-pad"
-              editable={!loading}
-            />
-          </View>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Date of Birth</Text>
-            <TouchableOpacity 
-              style={styles.input} 
-              onPress={() => setShowDatePicker(true)}
-              disabled={loading}
-            >
-              <Text style={formData.date_of_birth ? styles.dateText : styles.placeholderText}>
-                {formData.date_of_birth || 'Select Date of Birth'}
-              </Text>
-            </TouchableOpacity>
-            {showDatePicker && (
-              <DateTimePicker
-                value={selectedDate}
-                mode="date"
-                display="default"
-                onChange={handleDateChange}
-                maximumDate={new Date()}
-              />
-            )}
-          </View>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Gender</Text>
-            <View style={styles.pickerContainer}>
-              <Picker
-                selectedValue={formData.gender}
-                onValueChange={(itemValue) => updateField('gender', itemValue)}
-                enabled={!loading}
-                style={styles.picker}
+          {currentStage < totalStages ? (
+            <View style={styles.buttonContainer}>
+              {currentStage > 1 && (
+                <TouchableOpacity
+                  style={[styles.button, styles.buttonSecondary]}
+                  onPress={handlePrevious}
+                  disabled={loading}
+                >
+                  <Text style={styles.buttonText}>Previous</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                style={styles.button}
+                onPress={handleNext}
+                disabled={loading}
               >
-                <Picker.Item label="Select Gender" value="" />
-                <Picker.Item label="Male" value="Male" />
-                <Picker.Item label="Female" value="Female" />
-                <Picker.Item label="Others" value="Others" />
-              </Picker>
+                <Text style={styles.buttonText}>Next</Text>
+              </TouchableOpacity>
             </View>
-          </View>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Region *</Text>
-            <View style={styles.pickerContainer}>
-              <Picker
-                selectedValue={selectedRegionCode}
-                onValueChange={(itemValue) => {
-                  const selectedRegion = regions.find(r => r.code === itemValue);
-                  if (selectedRegion) {
-                    handleRegionChange(selectedRegion.name, itemValue);
-                  }
-                }}
-                enabled={!loading}
-                style={styles.picker}
+          ) : (
+            <>
+              <TouchableOpacity
+                style={[styles.singleButton, loading && styles.buttonDisabled]}
+                onPress={handleRegister}
+                disabled={loading}
               >
-                <Picker.Item label="Select Region" value="" />
-                {regions.map((region) => (
-                  <Picker.Item key={region.code} label={region.name} value={region.code} />
-                ))}
-              </Picker>
-            </View>
-          </View>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Province *</Text>
-            <View style={styles.pickerContainer}>
-              <Picker
-                selectedValue={selectedProvinceCode}
-                onValueChange={(itemValue) => {
-                  const selectedProvince = provinces.find(p => p.code === itemValue);
-                  if (selectedProvince) {
-                    handleProvinceChange(selectedProvince.name, itemValue);
-                  }
-                }}
-                enabled={!loading && selectedRegionCode !== ''}
-                style={styles.picker}
+                {loading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.buttonText}>Register</Text>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.button, styles.buttonSecondary, { marginTop: 10 }]}
+                onPress={handlePrevious}
+                disabled={loading}
               >
-                <Picker.Item label="Select Province" value="" />
-                {provinces.map((province) => (
-                  <Picker.Item key={province.code} label={province.name} value={province.code} />
-                ))}
-              </Picker>
-            </View>
-          </View>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>City/Municipality *</Text>
-            <View style={styles.pickerContainer}>
-              <Picker
-                selectedValue={selectedCityCode}
-                onValueChange={(itemValue) => {
-                  const selectedCity = cities.find(c => c.code === itemValue);
-                  if (selectedCity) {
-                    handleCityChange(selectedCity.name, itemValue);
-                  }
-                }}
-                enabled={!loading && selectedProvinceCode !== ''}
-                style={styles.picker}
-              >
-                <Picker.Item label="Select City/Municipality" value="" />
-                {cities.map((city) => (
-                  <Picker.Item key={city.code} label={city.name} value={city.code} />
-                ))}
-              </Picker>
-            </View>
-          </View>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Barangay *</Text>
-            <View style={styles.pickerContainer}>
-              <Picker
-                selectedValue={formData.barangay}
-                onValueChange={(itemValue) => handleBarangayChange(itemValue)}
-                enabled={!loading && selectedCityCode !== ''}
-                style={styles.picker}
-              >
-                <Picker.Item label="Select Barangay" value="" />
-                {barangays.map((barangay) => (
-                  <Picker.Item key={barangay.code} label={barangay.name} value={barangay.name} />
-                ))}
-              </Picker>
-            </View>
-          </View>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Street Name</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter street name"
-              value={formData.street_name}
-              onChangeText={(value) => updateField('street_name', value)}
-              editable={!loading}
-            />
-          </View>
-
-          <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled]}
-            onPress={handleRegister}
-            disabled={loading}
-          >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.buttonText}>Register</Text>
-            )}
-          </TouchableOpacity>
+                <Text style={styles.buttonText}>Previous</Text>
+              </TouchableOpacity>
+            </>
+          )}
 
           <View style={styles.footer}>
             <Text style={styles.footerText}>Already have an account? </Text>
@@ -494,103 +640,3 @@ export default function RegisterScreen() {
     </KeyboardAvoidingView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  scrollContent: {
-    flexGrow: 1,
-    padding: 20,
-    paddingTop: 40,
-    paddingBottom: 40,
-  },
-  formContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    padding: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#333',
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-    marginBottom: 20,
-  },
-  inputContainer: {
-    marginBottom: 16,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 6,
-  },
-  pickerContainer: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    backgroundColor: '#fff',
-    overflow: 'hidden',
-  },
-  picker: {
-    height: 50,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    backgroundColor: '#fff',
-  },
-  dateText: {
-    fontSize: 16,
-    color: '#333',
-  },
-  placeholderText: {
-    fontSize: 16,
-    color: '#999',
-  },
-  button: {
-    backgroundColor: '#007AFF',
-    borderRadius: 8,
-    padding: 16,
-    alignItems: 'center',
-    marginTop: 10,
-  },
-  buttonDisabled: {
-    backgroundColor: '#999',
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  footer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    marginTop: 20,
-  },
-  footerText: {
-    color: '#666',
-    fontSize: 14,
-  },
-  linkText: {
-    color: '#007AFF',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-});

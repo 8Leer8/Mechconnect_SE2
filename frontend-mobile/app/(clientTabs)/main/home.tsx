@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import { View, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { TopNav } from '@/components/navigation';
+import { FontAwesome } from '@expo/vector-icons';
+import { styles } from '../../../style/client/homeStyles';
 
 // For Android Emulator use: http://10.0.2.2:8000/api/users
 // For iOS Simulator use: http://localhost:8000/api/users
@@ -83,27 +85,42 @@ export default function HomeScreen() {
           {/* Row 1: Services | Request */}
           <View style={styles.buttonRow}>
             <TouchableOpacity style={[styles.quickButton, styles.servicesButton]}>
-              <ThemedText style={styles.buttonText}>Services</ThemedText>
+              <View style={styles.buttonContent}>
+                <FontAwesome name="car" size={28} color="#fff" style={styles.buttonIcon} />
+                <ThemedText style={styles.buttonText}>Services</ThemedText>
+              </View>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.quickButton, styles.requestButton]}>
-              <ThemedText style={styles.buttonText}>Request</ThemedText>
+              <View style={styles.buttonContent}>
+                <FontAwesome name="file-text" size={28} color="#fff" style={styles.buttonIcon} />
+                <ThemedText style={styles.buttonText}>Request</ThemedText>
+              </View>
             </TouchableOpacity>
           </View>
 
           {/* Row 2: Mechanics | Shops */}
           <View style={styles.buttonRow}>
             <TouchableOpacity style={[styles.quickButton, styles.mechanicsButton]}>
-              <ThemedText style={styles.buttonText}>Mechanics</ThemedText>
+              <View style={styles.buttonContent}>
+                <FontAwesome name="users" size={28} color="#fff" style={styles.buttonIcon} />
+                <ThemedText style={styles.buttonText}>Mechanics</ThemedText>
+              </View>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.quickButton, styles.shopsButton]}>
-              <ThemedText style={styles.buttonText}>Shops</ThemedText>
+              <View style={styles.buttonContent}>
+                <FontAwesome name="building" size={28} color="#fff" style={styles.buttonIcon} />
+                <ThemedText style={styles.buttonText}>Shops</ThemedText>
+              </View>
             </TouchableOpacity>
           </View>
 
           {/* Row 3: Emergency (centered) */}
           <View style={styles.buttonRow}>
             <TouchableOpacity style={[styles.quickButton, styles.emergencyButton, styles.emergencyCentered]}>
-              <ThemedText style={styles.buttonText}>Emergency</ThemedText>
+              <View style={styles.buttonContent}>
+                <FontAwesome name="exclamation-triangle" size={28} color="#fff" style={styles.buttonIcon} />
+                <ThemedText style={styles.buttonText}>Emergency</ThemedText>
+              </View>
             </TouchableOpacity>
           </View>
         </View>
@@ -112,7 +129,7 @@ export default function HomeScreen() {
         <View style={styles.section}>
           <ThemedText style={styles.sectionTitle}>Current Bookings</ThemedText>
           {loading ? (
-            <ActivityIndicator size="large" color="#0066cc" />
+            <ActivityIndicator size="large" color="#FF8C00" />
           ) : error ? (
             <ThemedText style={styles.errorText}>{error}</ThemedText>
           ) : data?.current_bookings && data.current_bookings.length > 0 ? (
@@ -143,7 +160,7 @@ export default function HomeScreen() {
         <View style={styles.section}>
           <ThemedText style={styles.sectionTitle}>Pending Requests</ThemedText>
           {loading ? (
-            <ActivityIndicator size="large" color="#0066cc" />
+            <ActivityIndicator size="large" color="#FF8C00" />
           ) : error ? (
             <ThemedText style={styles.errorText}>{error}</ThemedText>
           ) : data?.pending_requests && data.pending_requests.length > 0 ? (
@@ -172,103 +189,3 @@ export default function HomeScreen() {
     </ThemedView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  scrollView: {
-    flex: 1,
-    padding: 16,
-  },
-  quickStartSection: {
-    marginBottom: 24,
-  },
-  section: {
-    marginBottom: 24,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 12,
-  },
-  buttonRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  quickButton: {
-    flex: 1,
-    padding: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginHorizontal: 4,
-    minHeight: 60,
-  },
-  servicesButton: {
-    backgroundColor: '#0066cc',
-  },
-  requestButton: {
-    backgroundColor: '#00cc66',
-  },
-  mechanicsButton: {
-    backgroundColor: '#cc6600',
-  },
-  shopsButton: {
-    backgroundColor: '#9966cc',
-  },
-  emergencyButton: {
-    backgroundColor: '#cc0000',
-  },
-  emergencyCentered: {
-    flex: 0.5,
-    marginLeft: 'auto',
-    marginRight: 'auto',
-  },
-  buttonText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  card: {
-    backgroundColor: '#2a2a2a',
-    padding: 16,
-    borderRadius: 8,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#444',
-  },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 8,
-    color: '#ffffff',
-  },
-  cardText: {
-    fontSize: 14,
-    marginBottom: 4,
-    opacity: 0.8,
-    color: '#e0e0e0',
-  },
-  emptyCard: {
-    backgroundColor: '#2a2a2a',
-    padding: 24,
-    borderRadius: 8,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#444',
-  },
-  emptyText: {
-    fontSize: 14,
-    opacity: 0.6,
-    fontStyle: 'italic',
-    color: '#aaa',
-  },
-  errorText: {
-    color: '#cc0000',
-    fontSize: 14,
-    textAlign: 'center',
-    padding: 16,
-  },
-});

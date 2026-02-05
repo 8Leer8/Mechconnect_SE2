@@ -1,9 +1,7 @@
 import React from 'react';
 import { View, TouchableOpacity, StyleSheet } from 'react-native';
-import { IconSymbol } from '@/components/ui/icon-symbol';
+import { FontAwesome } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
-import { useColorScheme } from '@/hooks/use-color-scheme';
-import { Colors } from '@/constants/theme';
 
 interface BottomNavProps {
   activeTab: 'booking' | 'request' | 'home' | 'discover' | 'profile';
@@ -11,16 +9,15 @@ interface BottomNavProps {
 }
 
 export function ClientBottomNav({ activeTab, onTabPress }: BottomNavProps) {
-  const colorScheme = useColorScheme();
-  const tintColor = Colors[colorScheme ?? 'light'].tint;
-  const inactiveColor = Colors[colorScheme ?? 'light'].tabIconDefault;
+  const activeColor = '#FF8C00';
+  const inactiveColor = '#999';
 
   const tabs = [
     { name: 'booking', label: 'Booking', icon: 'calendar' },
-    { name: 'request', label: 'Request', icon: 'bell.fill' },
-    { name: 'home', label: 'Home', icon: 'house.fill' },
-    { name: 'discover', label: 'Discover', icon: 'magnifyingglass' },
-    { name: 'profile', label: 'Profile', icon: 'person.fill' },
+    { name: 'request', label: 'Request', icon: 'file-text' },
+    { name: 'home', label: 'Home', icon: 'home' },
+    { name: 'discover', label: 'Discover', icon: 'search' },
+    { name: 'profile', label: 'Profile', icon: 'user' },
   ] as const;
 
   return (
@@ -33,15 +30,15 @@ export function ClientBottomNav({ activeTab, onTabPress }: BottomNavProps) {
             style={styles.tab}
             onPress={() => onTabPress(tab.name)}
           >
-            <IconSymbol
-              size={24}
+            <FontAwesome
+              size={20}
               name={tab.icon}
-              color={isActive ? tintColor : inactiveColor}
+              color={isActive ? activeColor : inactiveColor}
             />
             <ThemedText
               style={[
                 styles.label,
-                { color: isActive ? tintColor : inactiveColor },
+                { color: isActive ? activeColor : inactiveColor },
               ]}
             >
               {tab.label}
@@ -58,11 +55,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     height: 60,
     borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
-    backgroundColor: '#fff',
+    borderTopColor: '#FFE4B3',
+    backgroundColor: '#FFF5E6',
     alignItems: 'center',
     justifyContent: 'space-around',
     paddingBottom: 5,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
   },
   tab: {
     flex: 1,
@@ -73,5 +75,6 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 10,
     marginTop: 2,
+    fontWeight: '500',
   },
 });
