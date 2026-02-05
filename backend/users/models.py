@@ -95,6 +95,7 @@ class Mechanic(models.Model):
     contact_number = models.CharField(max_length=20, null=True, blank=True)
     average_rating = models.DecimalField(max_digits=3, decimal_places=2, default=0)
     is_working_for_shop = models.BooleanField(default=False)
+    shop = models.ForeignKey('shops.Shop', on_delete=models.SET_NULL, null=True, blank=True, related_name='mechanics')
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.AVAILABLE)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
