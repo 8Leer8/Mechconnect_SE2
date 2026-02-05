@@ -182,6 +182,8 @@ CORS_ALLOWED_ORIGINS = [
     "https://mechconnectse2-production.up.railway.app"
 ]
 
+CORS_ALLOW_ALL_ORIGINS = True
+
 CORS_ALLOW_CREDENTIALS = True
 
 CORS_ALLOW_METHODS = [
