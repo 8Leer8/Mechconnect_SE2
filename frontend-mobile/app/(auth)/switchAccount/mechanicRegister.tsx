@@ -32,6 +32,7 @@ export default function MechanicRegister() {
   const [loading, setLoading] = useState(false);
   const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
   const [contactNumber, setContactNumber] = useState('');
+  const [bio, setBio] = useState('');
   const [documents, setDocuments] = useState<Document[]>([]);
   const [showDatePicker, setShowDatePicker] = useState<{
     docId: string;
@@ -171,6 +172,11 @@ export default function MechanicRegister() {
 
       const formData = new FormData();
       formData.append('contact_number', contactNumber);
+      
+      // Add bio if provided
+      if (bio.trim()) {
+        formData.append('bio', bio.trim());
+      }
 
       // Add profile photo if selected
       if (profilePhoto) {
@@ -295,6 +301,25 @@ export default function MechanicRegister() {
             />
             <ThemedText style={styles.hint}>
               This will be used for clients to contact you
+            </ThemedText>
+          </View>
+
+          {/* Bio */}
+          <View style={styles.formGroup}>
+            <ThemedText style={styles.label}>Bio</ThemedText>
+            <TextInput
+              style={[styles.input, styles.bioInput]}
+              placeholder="Tell clients about your experience, specialties, and expertise..."
+              placeholderTextColor="#666"
+              value={bio}
+              onChangeText={setBio}
+              multiline
+              numberOfLines={4}
+              textAlignVertical="top"
+              editable={!loading}
+            />
+            <ThemedText style={styles.hint}>
+              Optional • Describe your skills and experience (recommended)
             </ThemedText>
           </View>
 
@@ -525,6 +550,10 @@ const styles = StyleSheet.create({
     color: '#fff',
     borderWidth: 1,
     borderColor: '#2A2A2A',
+  },
+  bioInput: {
+    minHeight: 100,
+    paddingTop: 14,
   },
   hint: {
     fontSize: 12,

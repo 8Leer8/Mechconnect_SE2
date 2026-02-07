@@ -1,5 +1,6 @@
 from django.db import models
 from django.utils import timezone
+from django.core.validators import MinValueValidator, MaxValueValidator
 
 class Account(models.Model):
     lastname = models.CharField(max_length=100)
@@ -92,6 +93,7 @@ class Mechanic(models.Model):
 
     account = models.OneToOneField(Account, on_delete=models.CASCADE)
     profile_photo = models.ImageField(upload_to='mechanics/profiles/', null=True, blank=True)
+    bio = models.TextField(null=True, blank=True)
     contact_number = models.CharField(max_length=20, null=True, blank=True)
     average_rating = models.DecimalField(max_digits=3, decimal_places=2, default=0)
     is_working_for_shop = models.BooleanField(default=False)
@@ -99,6 +101,37 @@ class Mechanic(models.Model):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.AVAILABLE)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+class MechanicReview(models.Model):
+    """
+    Review model for mechanics.
+    Allows accounts to rate and review mechanics.
+    Enforces one review per reviewer per mechanic.
+    """
+    reviewer = models.ForeignKey(
+        Account, 
+        on_delete=models.CASCADE, 
+        related_name="mechanic_reviews_made"
+    )
+    mechanic = models.ForeignKey(
+        Mechanic, 
+        on_delete=models.CASCADE, 
+        related_name="reviews"
+    )
+    rating = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+        help_text="Rating from 1 to 5"
+    )
+    comment = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        # Enforce one review per reviewer per mechanic
+        unique_together = [['reviewer', 'mechanic']]
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.reviewer.username} -> {self.mechanic.account.username} ({self.rating}/5)"
 
 class ShopOwner(models.Model):
     account = models.OneToOneField(Account, on_delete=models.CASCADE)
@@ -138,3 +171,4 @@ class TokenPurchase(models.Model):
     payment_method = models.CharField(max_length=50, null=True, blank=True)
     status = models.CharField(max_length=50, default='pending')
     purchased_at = models.DateTimeField(auto_now_add=True)
+
