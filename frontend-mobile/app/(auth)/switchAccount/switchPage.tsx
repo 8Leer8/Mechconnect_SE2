@@ -85,6 +85,12 @@ export default function SwitchRolePage() {
     }
   };
 
+  const handleClientAction = async () => {
+    if (!roleData) return;
+    // All users have client role by default, just switch to it
+    await switchRole('client');
+  };
+
   const handleShopOwnerAction = async () => {
     if (!roleData) return;
 
@@ -122,8 +128,10 @@ export default function SwitchRolePage() {
               router.replace('/(mechanicTabs)/main/home');
             } else if (newRole === 'shop_owner') {
               router.replace('/(shopownerTabs)/main/home');
+            } else if (newRole === 'client') {
+              router.replace('/(clientTabs)/main/home');
             } else {
-              // Default to client home or go back
+              // Default to go back
               router.back();
             }
           },
@@ -199,113 +207,111 @@ export default function SwitchRolePage() {
         <View style={styles.rolesContainer}>
           <ThemedText style={styles.sectionTitle}>Available Roles</ThemedText>
 
-          {/* Mechanic Role Card */}
-          <TouchableOpacity
-            style={[
-              styles.roleCard,
-              isRoleActive('mechanic') && styles.roleCardActive,
-            ]}
-            onPress={handleMechanicAction}
-            activeOpacity={0.7}
-          >
-            <View style={styles.roleCardHeader}>
-              <View style={[
-                styles.roleIconContainer,
-                isRoleActive('mechanic') && styles.roleIconContainerActive,
-              ]}>
-                <IconSymbol name="wrench.fill" size={28} color="#fff" />
+          {/* Client Role Card - Only show if not currently client */}
+          {!isRoleActive('client') && (
+            <TouchableOpacity
+              style={styles.roleCard}
+              onPress={handleClientAction}
+              activeOpacity={0.7}
+            >
+              <View style={styles.roleCardHeader}>
+                <View style={styles.roleIconContainer}>
+                  <IconSymbol name="person.fill" size={28} color="#fff" />
+                </View>
+                <View style={styles.roleInfo}>
+                  <ThemedText style={styles.roleTitle}>Client</ThemedText>
+                  <ThemedText style={styles.roleSubtitle}>
+                    Default role • Available to switch
+                  </ThemedText>
+                </View>
               </View>
-              <View style={styles.roleInfo}>
-                <ThemedText style={styles.roleTitle}>Mechanic</ThemedText>
-                <ThemedText style={styles.roleSubtitle}>
-                  {roleData?.isMechanic
-                    ? 'Registered • Available to switch'
-                    : 'Not registered yet'}
-                </ThemedText>
-              </View>
-            </View>
 
-            <View style={styles.roleCardFooter}>
-              <View style={[
-                styles.actionButton,
-                isRoleActive('mechanic') && styles.actionButtonActive,
-              ]}>
-                <ThemedText style={[
-                  styles.actionButtonText,
-                  isRoleActive('mechanic') && styles.actionButtonTextActive,
-                ]}>
-                  {isRoleActive('mechanic') ? 'Active Role' : getRoleButtonText('mechanic')}
-                </ThemedText>
-                {!isRoleActive('mechanic') && (
+              <View style={styles.roleCardFooter}>
+                <View style={styles.actionButton}>
+                  <ThemedText style={styles.actionButtonText}>
+                    Switch to Client
+                  </ThemedText>
+                  <IconSymbol 
+                    name="arrow.right.circle.fill" 
+                    size={20} 
+                    color="#007AFF" 
+                  />
+                </View>
+              </View>
+            </TouchableOpacity>
+          )}
+
+          {/* Mechanic Role Card - Only show if not currently mechanic */}
+          {!isRoleActive('mechanic') && (
+            <TouchableOpacity
+              style={styles.roleCard}
+              onPress={handleMechanicAction}
+              activeOpacity={0.7}
+            >
+              <View style={styles.roleCardHeader}>
+                <View style={styles.roleIconContainer}>
+                  <IconSymbol name="wrench.fill" size={28} color="#fff" />
+                </View>
+                <View style={styles.roleInfo}>
+                  <ThemedText style={styles.roleTitle}>Mechanic</ThemedText>
+                  <ThemedText style={styles.roleSubtitle}>
+                    {roleData?.isMechanic
+                      ? 'Registered • Available to switch'
+                      : 'Not registered yet'}
+                  </ThemedText>
+                </View>
+              </View>
+
+              <View style={styles.roleCardFooter}>
+                <View style={styles.actionButton}>
+                  <ThemedText style={styles.actionButtonText}>
+                    {getRoleButtonText('mechanic')}
+                  </ThemedText>
                   <IconSymbol 
                     name={roleData?.isMechanic ? "arrow.right.circle.fill" : "plus.circle.fill"} 
                     size={20} 
                     color={roleData?.isMechanic ? "#007AFF" : "#34C759"} 
                   />
-                )}
+                </View>
               </View>
-            </View>
+            </TouchableOpacity>
+          )}
 
-            {isRoleActive('mechanic') && (
-              <View style={styles.activeIndicator}>
-                <IconSymbol name="checkmark.circle.fill" size={20} color="#34C759" />
+          {/* Shop Owner Role Card - Only show if not currently shop owner */}
+          {!isRoleActive('shop_owner') && (
+            <TouchableOpacity
+              style={styles.roleCard}
+              onPress={handleShopOwnerAction}
+              activeOpacity={0.7}
+            >
+              <View style={styles.roleCardHeader}>
+                <View style={styles.roleIconContainer}>
+                  <IconSymbol name="building.2.fill" size={28} color="#fff" />
+                </View>
+                <View style={styles.roleInfo}>
+                  <ThemedText style={styles.roleTitle}>Shop Owner</ThemedText>
+                  <ThemedText style={styles.roleSubtitle}>
+                    {roleData?.isShopOwner
+                      ? 'Registered • Available to switch'
+                      : 'Not registered yet'}
+                  </ThemedText>
+                </View>
               </View>
-            )}
-          </TouchableOpacity>
 
-          {/* Shop Owner Role Card */}
-          <TouchableOpacity
-            style={[
-              styles.roleCard,
-              isRoleActive('shop_owner') && styles.roleCardActive,
-            ]}
-            onPress={handleShopOwnerAction}
-            activeOpacity={0.7}
-          >
-            <View style={styles.roleCardHeader}>
-              <View style={[
-                styles.roleIconContainer,
-                isRoleActive('shop_owner') && styles.roleIconContainerActive,
-              ]}>
-                <IconSymbol name="building.2.fill" size={28} color="#fff" />
-              </View>
-              <View style={styles.roleInfo}>
-                <ThemedText style={styles.roleTitle}>Shop Owner</ThemedText>
-                <ThemedText style={styles.roleSubtitle}>
-                  {roleData?.isShopOwner
-                    ? 'Registered • Available to switch'
-                    : 'Not registered yet'}
-                </ThemedText>
-              </View>
-            </View>
-
-            <View style={styles.roleCardFooter}>
-              <View style={[
-                styles.actionButton,
-                isRoleActive('shop_owner') && styles.actionButtonActive,
-              ]}>
-                <ThemedText style={[
-                  styles.actionButtonText,
-                  isRoleActive('shop_owner') && styles.actionButtonTextActive,
-                ]}>
-                  {isRoleActive('shop_owner') ? 'Active Role' : getRoleButtonText('shop_owner')}
-                </ThemedText>
-                {!isRoleActive('shop_owner') && (
+              <View style={styles.roleCardFooter}>
+                <View style={styles.actionButton}>
+                  <ThemedText style={styles.actionButtonText}>
+                    {getRoleButtonText('shop_owner')}
+                  </ThemedText>
                   <IconSymbol 
                     name={roleData?.isShopOwner ? "arrow.right.circle.fill" : "plus.circle.fill"} 
                     size={20} 
                     color={roleData?.isShopOwner ? "#007AFF" : "#34C759"} 
                   />
-                )}
+                </View>
               </View>
-            </View>
-
-            {isRoleActive('shop_owner') && (
-              <View style={styles.activeIndicator}>
-                <IconSymbol name="checkmark.circle.fill" size={20} color="#34C759" />
-              </View>
-            )}
-          </TouchableOpacity>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Info Section */}

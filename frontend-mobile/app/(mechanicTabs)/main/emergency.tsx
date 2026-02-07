@@ -3,12 +3,12 @@ import { StyleSheet, View } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 
-export default function HomeScreen() {
+export default function EmergencyScreen() {
   return (
     <ThemedView style={styles.container}>
       <View style={styles.content}>
-        <ThemedText style={styles.letter}>H</ThemedText>
-        <ThemedText style={styles.label}>Home Page</ThemedText>
+        <ThemedText style={styles.letter}>E</ThemedText>
+        <ThemedText style={styles.label}>Emergency Page</ThemedText>
       </View>
     </ThemedView>
   );
@@ -27,7 +27,7 @@ const styles = StyleSheet.create({
   letter: {
     fontSize: 120,
     fontWeight: 'bold',
-    color: '#007AFF',
+    color: '#FF3B30',
   },
   label: {
     fontSize: 24,

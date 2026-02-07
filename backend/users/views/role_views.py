@@ -172,6 +172,7 @@ def register_mechanic(request):
     - contact_number: string
     
     Optional fields:
+    - bio: text (mechanic's bio/description)
     - profile_photo: image file
     - documents: array of document objects with:
         - document_name: string
@@ -204,11 +205,15 @@ def register_mechanic(request):
                 'error': 'Contact number is required'
             }, status=status.HTTP_400_BAD_REQUEST)
         
+        # Get optional bio field
+        bio = request.data.get('bio')
+        
         # Create Mechanic profile
         mechanic = Mechanic.objects.create(
             account=account,
             contact_number=contact_number,
             profile_photo=request.FILES.get('profile_photo'),
+            bio=bio if bio else None,
         )
         
         # Handle document uploads
