@@ -9,14 +9,14 @@ interface BottomNavProps {
 }
 
 export function ClientBottomNav({ activeTab, onTabPress }: BottomNavProps) {
-  const activeColor = '#FF8C00';
-  const inactiveColor = '#999';
+  const activeColor = '#FF6B35';
+  const inactiveColor = '#6c757d';
 
   const tabs = [
-    { name: 'booking', label: 'Booking', icon: 'calendar' },
-    { name: 'request', label: 'Request', icon: 'file-text' },
+    { name: 'booking', label: 'Booking', icon: 'calendar-alt' },
+    { name: 'request', label: 'Request', icon: 'hand-paper-o' },
     { name: 'home', label: 'Home', icon: 'home' },
-    { name: 'discover', label: 'Discover', icon: 'search' },
+    { name: 'discover', label: 'Discover', icon: 'compass' },
     { name: 'profile', label: 'Profile', icon: 'user' },
   ] as const;
 
@@ -30,11 +30,17 @@ export function ClientBottomNav({ activeTab, onTabPress }: BottomNavProps) {
             style={styles.tab}
             onPress={() => onTabPress(tab.name)}
           >
-            <FontAwesome
-              size={20}
-              name={tab.icon}
-              color={isActive ? activeColor : inactiveColor}
-            />
+            <View style={[
+              styles.iconCircle,
+              isActive && styles.iconCircleActive,
+              isActive && styles.iconCircleRaised
+            ]}>
+              <FontAwesome
+                size={18}
+                name={tab.icon}
+                color={isActive ? '#ffffff' : inactiveColor}
+              />
+            </View>
             <ThemedText
               style={[
                 styles.label,
@@ -53,27 +59,43 @@ export function ClientBottomNav({ activeTab, onTabPress }: BottomNavProps) {
 const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
-    height: 60,
+    height: 70,
     borderTopWidth: 1,
-    borderTopColor: '#FFE4B3',
-    backgroundColor: '#FFF5E6',
+    borderTopColor: '#e0e0e0',
+    backgroundColor: '#ffffff',
     alignItems: 'center',
     justifyContent: 'space-around',
-    paddingBottom: 5,
-    elevation: 8,
+    paddingVertical: 12,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 5,
   },
   tab: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingTop: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  iconCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#f8f9fa',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  iconCircleActive: {
+    backgroundColor: '#FF6B35',
+  },
+  iconCircleRaised: {
+    transform: [{ translateY: -4 }],
   },
   label: {
-    fontSize: 10,
+    fontSize: 11,
     marginTop: 2,
     fontWeight: '500',
   },

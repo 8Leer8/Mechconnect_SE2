@@ -85,6 +85,7 @@ export default function LoginScreen() {
       >
         <View style={styles.logoContainer}>
           <Text style={styles.title}>MechConnect</Text>
+          <Text style={styles.tagline}>Connect to your mechanical world</Text>
         </View>
 
         <View style={styles.formContainer}>
@@ -134,8 +135,8 @@ export default function LoginScreen() {
               >
                 <FontAwesome 
                   name={showPassword ? "eye-slash" : "eye"} 
-                  size={20} 
-                  color="#FF8C00" 
+                  size={16} 
+                  color="#6c757d" 
                 />
               </TouchableOpacity>
             </View>
@@ -153,12 +154,18 @@ export default function LoginScreen() {
             )}
           </TouchableOpacity>
 
+          <View style={styles.divider} />
+
           <View style={styles.footer}>
             <Text style={styles.footerText}>Don't have an account? </Text>
             <TouchableOpacity onPress={() => router.push('../(auth)/register' as any)}>
               <Text style={styles.linkText}>Register</Text>
             </TouchableOpacity>
           </View>
+        </View>
+
+        <View style={styles.bottomFooter}>
+          <Text style={styles.copyrightText}>© 2025 MechConnect. All rights reserved.</Text>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>

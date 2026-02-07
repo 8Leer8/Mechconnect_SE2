@@ -48,7 +48,7 @@ export default function RegisterScreen() {
   const [currentStage, setCurrentStage] = useState(1);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const totalStages = 3;
+  const totalStages = 4;
   
   // Location data from PSGC API
   const [regions, setRegions] = useState<any[]>([]);
@@ -249,6 +249,11 @@ export default function RegisterScreen() {
         Alert.alert('Error', 'Passwords do not match');
         return;
       }
+    } else if (currentStage === 4) {
+      if (!formData.region || !formData.province || !formData.city_municipality || !formData.barangay) {
+        Alert.alert('Error', 'Please select your complete address');
+        return;
+      }
     }
     setCurrentStage(prev => Math.min(prev + 1, totalStages));
   };
@@ -257,8 +262,37 @@ export default function RegisterScreen() {
     setCurrentStage(prev => Math.max(prev - 1, 1));
   };
 
-  const getProgress = () => {
-    return (currentStage / totalStages) * 100;
+  const getProgressWidth = () => {
+    if (currentStage === 1) return 0;
+    return ((currentStage - 1) / (totalStages - 1)) * 100;
+  };
+
+  const renderStepIndicator = (stepNum: number, label: string) => {
+    const isActive = currentStage === stepNum;
+    const isCompleted = currentStage > stepNum;
+    
+    return (
+      <View key={stepNum} style={styles.stepContainer}>
+        <View style={[
+          styles.step,
+          isActive && styles.stepActive,
+          isCompleted && styles.stepCompleted
+        ]}>
+          <Text style={[
+            styles.stepNumber,
+            (isActive || isCompleted) && styles.stepNumberActive
+          ]}>
+            {stepNum}
+          </Text>
+        </View>
+        <Text style={[
+          styles.stepLabel,
+          isActive && styles.stepLabelActive
+        ]}>
+          {label}
+        </Text>
+      </View>
+    );
   };
 
   const renderStage = () => {
@@ -266,8 +300,9 @@ export default function RegisterScreen() {
       case 1:
         return (
           <>
+            <Text style={styles.sectionTitle}>1. PERSONAL IDENTIFICATION</Text>
             <View style={styles.inputContainer}>
-              <Text style={styles.label}>First Name *</Text>
+              <Text style={styles.label}>First Name <Text style={styles.required}>*</Text></Text>
               <View style={styles.inputWrapper}>
                 <TextInput
                   style={styles.input}
@@ -281,7 +316,7 @@ export default function RegisterScreen() {
             </View>
 
             <View style={styles.inputContainer}>
-              <Text style={styles.label}>Last Name *</Text>
+              <Text style={styles.label}>Last Name <Text style={styles.required}>*</Text></Text>
               <View style={styles.inputWrapper}>
                 <TextInput
                   style={styles.input}
@@ -295,7 +330,7 @@ export default function RegisterScreen() {
             </View>
 
             <View style={styles.inputContainer}>
-              <Text style={styles.label}>Middle Name</Text>
+              <Text style={styles.label}>Middle Name <Text style={styles.optional}>(Optional)</Text></Text>
               <View style={styles.inputWrapper}>
                 <TextInput
                   style={styles.input}
@@ -309,7 +344,7 @@ export default function RegisterScreen() {
             </View>
 
             <View style={styles.inputContainer}>
-              <Text style={styles.label}>Email *</Text>
+              <Text style={styles.label}>Email <Text style={styles.required}>*</Text></Text>
               <View style={styles.inputWrapper}>
                 <TextInput
                   style={styles.input}
@@ -325,7 +360,7 @@ export default function RegisterScreen() {
             </View>
 
             <View style={styles.inputContainer}>
-              <Text style={styles.label}>Username *</Text>
+              <Text style={styles.label}>Username <Text style={styles.required}>*</Text></Text>
               <View style={styles.inputWrapper}>
                 <TextInput
                   style={styles.input}
@@ -344,8 +379,9 @@ export default function RegisterScreen() {
       case 2:
         return (
           <>
+            <Text style={styles.sectionTitle}>2. SECURITY & AUTHENTICATION</Text>
             <View style={styles.inputContainer}>
-              <Text style={styles.label}>Password *</Text>
+              <Text style={styles.label}>Password <Text style={styles.required}>*</Text></Text>
               <View style={styles.inputWrapper}>
                 <TextInput
                   style={styles.input}
@@ -363,15 +399,15 @@ export default function RegisterScreen() {
                 >
                   <FontAwesome 
                     name={showPassword ? "eye-slash" : "eye"} 
-                    size={20} 
-                    color="#FF8C00" 
+                    size={16} 
+                    color="#6c757d" 
                   />
                 </TouchableOpacity>
               </View>
             </View>
 
             <View style={styles.inputContainer}>
-              <Text style={styles.label}>Confirm Password *</Text>
+              <Text style={styles.label}>Confirm Password <Text style={styles.required}>*</Text></Text>
               <View style={styles.inputWrapper}>
                 <TextInput
                   style={styles.input}
@@ -389,15 +425,21 @@ export default function RegisterScreen() {
                 >
                   <FontAwesome 
                     name={showConfirmPassword ? "eye-slash" : "eye"} 
-                    size={20} 
-                    color="#FF8C00" 
+                    size={16} 
+                    color="#6c757d" 
                   />
                 </TouchableOpacity>
               </View>
             </View>
+          </>
+        );
 
+      case 3:
+        return (
+          <>
+            <Text style={styles.sectionTitle}>3. PERSONAL DEMOGRAPHICS</Text>
             <View style={styles.inputContainer}>
-              <Text style={styles.label}>Contact Number</Text>
+              <Text style={styles.label}>Contact Number <Text style={styles.optional}>(Optional)</Text></Text>
               <View style={styles.inputWrapper}>
                 <TextInput
                   style={styles.input}
@@ -412,7 +454,7 @@ export default function RegisterScreen() {
             </View>
 
             <View style={styles.inputContainer}>
-              <Text style={styles.label}>Date of Birth</Text>
+              <Text style={styles.label}>Date of Birth <Text style={styles.optional}>(Optional)</Text></Text>
               <TouchableOpacity 
                 style={styles.dateButton}
                 onPress={() => setShowDatePicker(true)}
@@ -434,7 +476,7 @@ export default function RegisterScreen() {
             </View>
 
             <View style={styles.inputContainer}>
-              <Text style={styles.label}>Gender</Text>
+              <Text style={styles.label}>Gender <Text style={styles.optional}>(Optional)</Text></Text>
               <View style={styles.pickerContainer}>
                 <Picker
                   selectedValue={formData.gender}
@@ -452,11 +494,12 @@ export default function RegisterScreen() {
           </>
         );
 
-      case 3:
+      case 4:
         return (
           <>
+            <Text style={styles.sectionTitle}>4. GEOGRAPHICAL LOCATION</Text>
             <View style={styles.inputContainer}>
-              <Text style={styles.label}>Region *</Text>
+              <Text style={styles.label}>Region <Text style={styles.required}>*</Text></Text>
               <View style={styles.pickerContainer}>
                 <Picker
                   selectedValue={selectedRegionCode}
@@ -478,7 +521,7 @@ export default function RegisterScreen() {
             </View>
 
             <View style={styles.inputContainer}>
-              <Text style={styles.label}>Province *</Text>
+              <Text style={styles.label}>Province <Text style={styles.required}>*</Text></Text>
               <View style={styles.pickerContainer}>
                 <Picker
                   selectedValue={selectedProvinceCode}
@@ -500,7 +543,7 @@ export default function RegisterScreen() {
             </View>
 
             <View style={styles.inputContainer}>
-              <Text style={styles.label}>City/Municipality *</Text>
+              <Text style={styles.label}>City/Municipality <Text style={styles.required}>*</Text></Text>
               <View style={styles.pickerContainer}>
                 <Picker
                   selectedValue={selectedCityCode}
@@ -522,7 +565,7 @@ export default function RegisterScreen() {
             </View>
 
             <View style={styles.inputContainer}>
-              <Text style={styles.label}>Barangay *</Text>
+              <Text style={styles.label}>Barangay <Text style={styles.required}>*</Text></Text>
               <View style={styles.pickerContainer}>
                 <Picker
                   selectedValue={formData.barangay}
@@ -539,7 +582,7 @@ export default function RegisterScreen() {
             </View>
 
             <View style={styles.inputContainer}>
-              <Text style={styles.label}>Street Name</Text>
+              <Text style={styles.label}>Street Name <Text style={styles.optional}>(Optional)</Text></Text>
               <View style={styles.inputWrapper}>
                 <TextInput
                   style={styles.input}
@@ -568,36 +611,36 @@ export default function RegisterScreen() {
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.progressContainer}>
-          <View style={styles.progressBarContainer}>
-            <View style={[styles.progressBar, { width: `${getProgress()}%` }]} />
-          </View>
-          <Text style={styles.progressText}>Step {currentStage} of {totalStages}</Text>
+        <View style={styles.header}>
+          <Text style={styles.logo}>MechConnect</Text>
+          <Text style={styles.tagline}>Create your account</Text>
         </View>
 
-        <View style={styles.titleContainer}>
-          <Text style={styles.title}>Create Account</Text>
-          <Text style={styles.subtitle}>
-            {currentStage === 1 && 'Personal Information'}
-            {currentStage === 2 && 'Security & Contact'}
-            {currentStage === 3 && 'Address Details'}
-          </Text>
+        <View style={styles.progressContainer}>
+          <View style={styles.progressSteps}>
+            <View style={styles.progressLine} />
+            <View style={[styles.progressBar, { width: `${getProgressWidth()}%` }]} />
+            {renderStepIndicator(1, 'Personal')}
+            {renderStepIndicator(2, 'Security')}
+            {renderStepIndicator(3, 'Demographics')}
+            {renderStepIndicator(4, 'Location')}
+          </View>
         </View>
 
         <View style={styles.formContainer}>
           {renderStage()}
 
-          {currentStage < totalStages ? (
-            <View style={styles.buttonContainer}>
-              {currentStage > 1 && (
-                <TouchableOpacity
-                  style={[styles.button, styles.buttonSecondary]}
-                  onPress={handlePrevious}
-                  disabled={loading}
-                >
-                  <Text style={styles.buttonText}>Previous</Text>
-                </TouchableOpacity>
-              )}
+          <View style={styles.buttonContainer}>
+            {currentStage > 1 && (
+              <TouchableOpacity
+                style={[styles.button, styles.buttonSecondary]}
+                onPress={handlePrevious}
+                disabled={loading}
+              >
+                <Text style={[styles.buttonText, styles.buttonTextSecondary]}>Previous</Text>
+              </TouchableOpacity>
+            )}
+            {currentStage < totalStages ? (
               <TouchableOpacity
                 style={styles.button}
                 onPress={handleNext}
@@ -605,36 +648,31 @@ export default function RegisterScreen() {
               >
                 <Text style={styles.buttonText}>Next</Text>
               </TouchableOpacity>
-            </View>
-          ) : (
-            <>
+            ) : (
               <TouchableOpacity
-                style={[styles.singleButton, loading && styles.buttonDisabled]}
+                style={[styles.button, styles.buttonSubmit, loading && styles.buttonDisabled]}
                 onPress={handleRegister}
                 disabled={loading}
               >
                 {loading ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <Text style={styles.buttonText}>Register</Text>
+                  <Text style={styles.buttonText}>Create Account</Text>
                 )}
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.button, styles.buttonSecondary, { marginTop: 10 }]}
-                onPress={handlePrevious}
-                disabled={loading}
-              >
-                <Text style={styles.buttonText}>Previous</Text>
-              </TouchableOpacity>
-            </>
-          )}
+            )}
+          </View>
 
           <View style={styles.footer}>
-            <Text style={styles.footerText}>Already have an account? </Text>
+            <Text style={styles.footerText}>Already have an account?</Text>
             <TouchableOpacity onPress={() => router.back()}>
               <Text style={styles.linkText}>Login</Text>
             </TouchableOpacity>
           </View>
+        </View>
+
+        <View style={styles.copyright}>
+          <Text style={styles.copyrightText}>© 2025 MechConnect. All rights reserved.</Text>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
