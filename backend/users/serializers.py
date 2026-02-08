@@ -33,7 +33,7 @@ class MechanicSerializer(serializers.ModelSerializer):
     class Meta:
         model = Mechanic
         fields = [
-            'profile_photo', 'contact_number', 'average_rating',
+            'profile_photo', 'contact_number', 'bio', 'average_rating',
             'is_working_for_shop', 'status'
         ]
 
