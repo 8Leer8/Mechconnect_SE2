@@ -14,25 +14,43 @@ interface Booking {
   request: {
     id: number;
     type: string;
-    service_location: {
-      street_name: string;
-      barangay: string;
-      city_municipality: string;
-    };
+    created_at: string;
   };
-  client?: {
-    name: string;
-  };
+  service_location?: {
+    street_name: string;
+    subdivision_village?: string;
+    barangay: string;
+    city_municipality: string;
+    landmark?: string | null;
+  } | null;
 }
 
-type TabType = 'active' | 'completed' | 'cancelled';
+// Tabs: All, Pending, Active, Completed, Cancelled
+type TabType = 'all' | 'pending' | 'active' | 'completed' | 'cancelled';
+
+type MechanicStatusBookingsResponse = {
+  status: string;
+  bookings: Booking[];
+  count: number;
+};
+
+type MechanicGroupedBookingsResponse = {
+  pending?: { bookings: Booking[]; count: number };
+  active: { bookings: Booking[]; count: number };
+  completed: { bookings: Booking[]; count: number };
+  cancelled: { bookings: Booking[]; count: number };
+  reworked: { bookings: Booking[]; count: number };
+  disputed: { bookings: Booking[]; count: number };
+  total_count: number;
+};
 
 export default function BookingsScreen() {
-  const [activeTab, setActiveTab] = useState<TabType>('active');
+  const [activeTab, setActiveTab] = useState<TabType>('all');
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [actionLoadingId, setActionLoadingId] = useState<number | null>(null);
 
   useEffect(() => {
     fetchBookings();
@@ -42,22 +60,37 @@ export default function BookingsScreen() {
     try {
       setLoading(true);
       setError(null);
-      const response = await fetch(`${API_URL}/bookings/home/`, {
-        method: 'GET',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
 
-      if (!response.ok) throw new Error('Failed to fetch bookings');
-      const data = await response.json();
-      
-      // Filter bookings by status
-      const filtered = (data.current_bookings || []).filter((b: Booking) => {
-        if (activeTab === 'active') return b.status === 'active' || b.status === 'reworked';
-        return b.status === activeTab;
-      });
-      
-      setBookings(filtered);
+      // When tab is "all", use the grouped response and flatten
+      if (activeTab === 'all') {
+        const response = await fetch(`${API_URL}/bookings/mechanic/bookings/`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (!response.ok) throw new Error('Failed to fetch bookings');
+        const data = (await response.json()) as MechanicGroupedBookingsResponse;
+        const all: Booking[] = [
+          ...((data.pending?.bookings as Booking[]) || []),
+          ...(data.active.bookings || []),
+          ...(data.completed.bookings || []),
+          ...(data.cancelled.bookings || []),
+          ...(data.reworked.bookings || []),
+          ...(data.disputed.bookings || []),
+        ];
+        setBookings(all);
+      } else {
+        // Backend supports status values including "pending" now
+        const response = await fetch(`${API_URL}/bookings/mechanic/bookings/?status=${activeTab}`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+        if (!response.ok) throw new Error('Failed to fetch bookings');
+        const data = (await response.json()) as MechanicStatusBookingsResponse;
+        setBookings(data.bookings || []);
+      }
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -81,19 +114,79 @@ export default function BookingsScreen() {
     }
   };
 
+  const handleAcceptPending = async (requestId: number) => {
+    try {
+      setActionLoadingId(requestId);
+      const response = await fetch(
+        `${API_URL}/bookings/mechanic/requests/${requestId}/accept/`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+
+      if (!response.ok) {
+        const raw = await response.json().catch(() => ({}));
+        const errData = raw as { error?: string };
+        throw new Error(errData.error || 'Failed to accept request');
+      }
+
+      await fetchBookings();
+    } catch (e: any) {
+      console.error('Accept error', e);
+      setError(e.message || 'Failed to accept request');
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleDeclinePending = async (requestId: number) => {
+    try {
+      setActionLoadingId(requestId);
+      const response = await fetch(
+        `${API_URL}/bookings/mechanic/requests/${requestId}/decline/`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+
+      if (!response.ok) {
+        const raw = await response.json().catch(() => ({}));
+        const errData = raw as { error?: string };
+        throw new Error(errData.error || 'Failed to decline request');
+      }
+
+      await fetchBookings();
+    } catch (e: any) {
+      console.error('Decline error', e);
+      setError(e.message || 'Failed to decline request');
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
   const renderTabs = () => (
     <View style={styles.tabContainer}>
-      {(['active', 'completed', 'cancelled'] as TabType[]).map((tab) => (
-        <TouchableOpacity
-          key={tab}
-          style={[styles.tab, activeTab === tab && styles.activeTab]}
-          onPress={() => setActiveTab(tab)}
-        >
-          <ThemedText style={[styles.tabText, activeTab === tab && styles.activeTabText]}>
-            {tab.charAt(0).toUpperCase() + tab.slice(1)}
-          </ThemedText>
-        </TouchableOpacity>
-      ))}
+      {(['all', 'pending', 'active', 'completed', 'cancelled'] as TabType[]).map(
+        (tab) => (
+          <TouchableOpacity
+            key={tab}
+            style={[styles.tab, activeTab === tab && styles.activeTab]}
+            onPress={() => setActiveTab(tab)}
+          >
+            <ThemedText
+              style={[styles.tabText, activeTab === tab && styles.activeTabText]}
+            >
+              {tab === 'all'
+                ? 'All'
+                : tab.charAt(0).toUpperCase() + tab.slice(1)}
+            </ThemedText>
+          </TouchableOpacity>
+        ),
+      )}
     </View>
   );
 
@@ -101,7 +194,7 @@ export default function BookingsScreen() {
     <ThemedView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <ThemedText style={styles.headerTitle}>My Jobs</ThemedText>
+        <ThemedText style={styles.headerTitle}>Bookings</ThemedText>
         <TouchableOpacity style={styles.filterButton}>
           <FontAwesome name="filter" size={20} color="#fff" />
         </TouchableOpacity>
@@ -148,13 +241,15 @@ export default function BookingsScreen() {
 
                 <View style={styles.infoRow}>
                   <FontAwesome name="user" size={14} color="#8E8E93" />
-                  <ThemedText style={styles.infoText}>{booking.client?.name || 'Client'}</ThemedText>
+                  <ThemedText style={styles.requestType}>{booking.request.type} Request</ThemedText>
                 </View>
 
                 <View style={styles.infoRow}>
                   <FontAwesome name="map-marker" size={14} color="#8E8E93" />
                   <ThemedText style={styles.infoText} numberOfLines={1}>
-                    {booking.request.service_location.street_name}, {booking.request.service_location.barangay}
+                    {booking.service_location
+                      ? `${booking.service_location.street_name}, ${booking.service_location.barangay}`
+                      : 'No location specified'}
                   </ThemedText>
                 </View>
 
@@ -171,12 +266,34 @@ export default function BookingsScreen() {
 
                 <View style={styles.cardFooter}>
                   <ThemedText style={styles.amount}>₱{booking.amount_fee.toFixed(2)}</ThemedText>
-                  {activeTab === 'active' && (
+                  {activeTab === 'pending' ? (
+                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                      <TouchableOpacity
+                        style={[styles.actionButton, { backgroundColor: '#2e7d32' }]}
+                        onPress={() => handleAcceptPending(booking.request.id)}
+                        disabled={actionLoadingId === booking.request.id}
+                      >
+                        {actionLoadingId === booking.request.id ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <ThemedText style={styles.actionText}>Accept</ThemedText>
+                        )}
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.actionButton, { backgroundColor: '#c62828' }]}
+                        onPress={() => handleDeclinePending(booking.request.id)}
+                        disabled={actionLoadingId === booking.request.id}
+                      >
+                        <ThemedText style={styles.actionText}>Decline</ThemedText>
+                      </TouchableOpacity>
+                    </View>
+                  ) : activeTab === 'active' ? (
                     <TouchableOpacity style={styles.actionButton}>
                       <ThemedText style={styles.actionText}>View Details</ThemedText>
                       <FontAwesome name="chevron-right" size={12} color="#fff" />
                     </TouchableOpacity>
-                  )}
+                  ) : null}
                 </View>
               </TouchableOpacity>
             ))}
