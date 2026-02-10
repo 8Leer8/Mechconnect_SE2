@@ -34,7 +34,7 @@ interface Service {
   description: string;
   service_picture: string | null;
   category: string;
-  price: number;
+  minimum_price: number;
 }
 
 type TabType = 'mechanics' | 'shops' | 'services';
@@ -190,7 +190,7 @@ export default function DiscoverScreen() {
             {service.description}
           </ThemedText>
         )}
-        <ThemedText style={styles.priceText}>₱{service.price.toFixed(2)}</ThemedText>
+        <ThemedText style={styles.priceText}>₱{service.minimum_price?.toFixed(2) || '0.00'}</ThemedText>
       </View>
     ));
   };

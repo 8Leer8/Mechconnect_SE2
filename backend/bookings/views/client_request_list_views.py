@@ -5,6 +5,7 @@ from rest_framework.permissions import AllowAny
 
 from ..models import Request, DirectRequestAddOn
 from users.models import Account
+from services.models import MechanicService
 
 
 @api_view(['GET'])
@@ -79,6 +80,18 @@ def list_requests(request):
                 # Get add-ons for this request
                 add_ons = DirectRequestAddOn.objects.filter(request=req).select_related('service_add_on')
                 
+                # Get the mechanic's price for this service
+                service_price = req.directrequest.service.minimum_price  # Default to minimum_price
+                if req.provider and hasattr(req.provider, 'mechanic'):
+                    try:
+                        mechanic_service = MechanicService.objects.get(
+                            mechanic=req.provider.mechanic,
+                            service=req.directrequest.service
+                        )
+                        service_price = mechanic_service.price
+                    except MechanicService.DoesNotExist:
+                        pass  # Use minimum_price as fallback
+                
                 direct_requests.append({
                     'id': req.id,
                     'provider': {
@@ -88,7 +101,7 @@ def list_requests(request):
                     'service': {
                         'id': req.directrequest.service.id,
                         'name': req.directrequest.service.name,
-                        'price': float(req.directrequest.service.price)
+                        'price': float(service_price)  # Use mechanic's specific price
                     },
                     'add_ons': [{
                         'id': addon.service_add_on.id,

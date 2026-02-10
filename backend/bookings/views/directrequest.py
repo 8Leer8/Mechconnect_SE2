@@ -31,7 +31,7 @@ def get_mechanics(request):
                 {
                     'id': ms.service.id,
                     'name': ms.service.name,
-                    'price': float(ms.service.price)
+                    'price': float(ms.price)  # Use mechanic's specific price
                 }
                 for ms in mechanic_services
             ]
@@ -85,7 +85,7 @@ def get_mechanic_services(request, mechanic_id):
                 'id': service.id,
                 'name': service.name,
                 'description': service.description,
-                'price': float(service.price),
+                'price': float(ms.price),  # Use mechanic's specific price
                 'add_ons': add_ons_data
             })
         
@@ -204,12 +204,13 @@ def create_mechanic_direct_request(request):
                 'error': 'Selected provider is not a mechanic'
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        mechanic_service_exists = MechanicService.objects.filter(
-            mechanic=provider.mechanic,
-            service=service
-        ).exists()
-        
-        if not mechanic_service_exists:
+        # Get the mechanic service to retrieve their specific price
+        try:
+            mechanic_service = MechanicService.objects.get(
+                mechanic=provider.mechanic,
+                service=service
+            )
+        except MechanicService.DoesNotExist:
             return Response({
                 'error': 'Selected mechanic does not offer this service'
             }, status=status.HTTP_400_BAD_REQUEST)
@@ -238,7 +239,7 @@ def create_mechanic_direct_request(request):
         )
         
         # Add service add-ons if provided
-        total_amount = float(service.price)
+        total_amount = float(mechanic_service.price)  # Use mechanic's specific price
         if add_on_ids:
             for add_on_id in add_on_ids:
                 try:

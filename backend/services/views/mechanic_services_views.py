@@ -39,7 +39,7 @@ def _get_mechanic(request):
 def list_my_services(request):
     """
     List services offered by the logged-in mechanic.
-    Returns list of { id, mechanic_service_id, name, description, price, category, category_id }.
+    Returns list with mechanic's price, service minimum_price (informational), and service details.
     """
     mechanic, err = _get_mechanic(request)
     if err:
@@ -58,7 +58,8 @@ def list_my_services(request):
             "mechanic_service_id": ms.id,
             "name": s.name,
             "description": s.description,
-            "price": float(s.price),
+            "price": float(ms.price),  # Mechanic's own price
+            "minimum_price": float(s.minimum_price),  # Service minimum price (informational)
             "service_picture": s.service_picture.url if s.service_picture else None,
             "category": s.category.name if s.category else None,
             "category_id": s.category.id if s.category else None,
@@ -70,19 +71,44 @@ def list_my_services(request):
 @permission_classes([AllowAny])
 def add_my_service(request):
     """
-    Add a service to the mechanic's offered services.
-    Body: { "service_id": <int> }
+    Add a service to the mechanic's offered services with custom pricing.
+    Body: { "service_id": <int>, "price": <float> }
+    Mechanics can set any price >= 0. The service minimum_price is informational only.
     """
     mechanic, err = _get_mechanic(request)
     if err:
         return err
 
     service_id = request.data.get("service_id")
+    price = request.data.get("price")
+    
     if service_id is None:
         return Response(
             {"error": "service_id is required"},
             status=status.HTTP_400_BAD_REQUEST,
         )
+    
+    if price is None:
+        return Response(
+            {"error": "price is required"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    try:
+        price = float(price)
+    except (TypeError, ValueError):
+        return Response(
+            {"error": "price must be a valid number"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    # Validate price is non-negative
+    if price < 0:
+        return Response(
+            {"error": "Price cannot be negative"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
     try:
         service = Service.objects.get(id=service_id)
     except Service.DoesNotExist:
@@ -97,21 +123,28 @@ def add_my_service(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    ms = MechanicService.objects.create(mechanic=mechanic, service=service)
-    return Response(
-        {
-            "message": "Service added",
-            "mechanic_service_id": ms.id,
-            "service": {
-                "id": service.id,
-                "name": service.name,
-                "description": service.description,
-                "price": float(service.price),
-                "category": service.category.name if service.category else None,
+    try:
+        ms = MechanicService.objects.create(mechanic=mechanic, service=service, price=price)
+        return Response(
+            {
+                "message": "Service added",
+                "mechanic_service_id": ms.id,
+                "service": {
+                    "id": service.id,
+                    "name": service.name,
+                    "description": service.description,
+                    "price": float(ms.price),
+                    "minimum_price": float(service.minimum_price),
+                    "category": service.category.name if service.category else None,
+                },
             },
-        },
-        status=status.HTTP_201_CREATED,
-    )
+            status=status.HTTP_201_CREATED,
+        )
+    except Exception as e:
+        return Response(
+            {"error": str(e)},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
 
 @api_view(["POST", "DELETE"])
@@ -151,3 +184,79 @@ def remove_my_service(request):
         {"message": "Service removed", "service_id": service_id},
         status=status.HTTP_200_OK,
     )
+
+
+@api_view(["PUT", "PATCH"])
+@permission_classes([AllowAny])
+def update_my_service_price(request):
+    """
+    Update the price for a mechanic's service.
+    Body: { "mechanic_service_id": <int>, "price": <float> }
+    Mechanics can set any price >= 0. The service minimum_price is informational only.
+    """
+    mechanic, err = _get_mechanic(request)
+    if err:
+        return err
+
+    mechanic_service_id = request.data.get("mechanic_service_id")
+    price = request.data.get("price")
+    
+    if mechanic_service_id is None:
+        return Response(
+            {"error": "mechanic_service_id is required"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    if price is None:
+        return Response(
+            {"error": "price is required"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    try:
+        price = float(price)
+    except (TypeError, ValueError):
+        return Response(
+            {"error": "price must be a valid number"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    # Validate price is non-negative
+    if price < 0:
+        return Response(
+            {"error": "Price cannot be negative"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    try:
+        ms = MechanicService.objects.select_related('service').get(
+            id=mechanic_service_id,
+            mechanic=mechanic
+        )
+    except MechanicService.DoesNotExist:
+        return Response(
+            {"error": "Service not found in your offerings"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    try:
+        ms.price = price
+        ms.save()
+        return Response(
+            {
+                "message": "Price updated",
+                "mechanic_service_id": ms.id,
+                "service": {
+                    "id": ms.service.id,
+                    "name": ms.service.name,
+                    "price": float(ms.price),
+                    "minimum_price": float(ms.service.minimum_price),
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
+    except Exception as e:
+        return Response(
+            {"error": str(e)},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
