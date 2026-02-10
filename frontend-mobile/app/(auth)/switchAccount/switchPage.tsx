@@ -27,6 +27,19 @@ interface UserRoleData {
   availableRoles: { value: string; label: string }[];
 }
 
+interface RoleStatusResponse {
+  active_role: string;
+  is_mechanic: boolean;
+  is_shop_owner: boolean;
+  is_client: boolean;
+  registered_roles: string[];
+}
+
+interface SwitchRoleResponse {
+  message?: string;
+  [key: string]: any;
+}
+
 export default function SwitchRolePage() {
   const [loading, setLoading] = useState(true);
   const [roleData, setRoleData] = useState<UserRoleData | null>(null);
@@ -52,7 +65,7 @@ export default function SwitchRolePage() {
         throw new Error('Failed to fetch role status');
       }
 
-      const data = await response.json();
+      const data = await response.json() as RoleStatusResponse;
 
       setRoleData({
         activeRole: data.active_role || 'client',
@@ -118,7 +131,7 @@ export default function SwitchRolePage() {
         throw new Error('Failed to switch role');
       }
 
-      const data = await response.json();
+      const data = await response.json() as SwitchRoleResponse;
       Alert.alert('Success', data.message || 'Role switched successfully!', [
         {
           text: 'OK',

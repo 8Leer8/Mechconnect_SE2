@@ -19,6 +19,13 @@ import { styles } from '../../style/auth/loginStyles';
 // For Real Device: Get your IP with 'ipconfig' (Windows) or 'ifconfig' (Mac/Linux)
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
+interface LoginResponse {
+  username?: string[];
+  password?: string[];
+  account?: string[];
+  [key: string]: any;
+}
+
 export default function LoginScreen() {
   const router = useRouter();
   const [username, setUsername] = useState('');
@@ -61,11 +68,11 @@ export default function LoginScreen() {
           username,
           password,
         }),
-        signal: controller.signal,
+        signal: controller.signal as any,
       });
 
       clearTimeout(timeout);
-      const data = await response.json();
+      const data = await response.json() as LoginResponse;
 
       if (response.ok) {
         Alert.alert('Success', 'Login successful!');

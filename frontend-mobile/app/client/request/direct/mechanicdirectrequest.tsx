@@ -40,6 +40,24 @@ interface AddOn {
   price: number;
 }
 
+interface MechanicsResponse {
+  mechanics: Mechanic[];
+}
+
+interface ServicesResponse {
+  services: Service[];
+}
+
+interface AddOnsResponse {
+  add_ons: AddOn[];
+}
+
+interface CreateRequestResponse {
+  message?: string;
+  error?: string;
+  [key: string]: any;
+}
+
 export default function MechanicDirectRequestScreen() {
   const [mechanics, setMechanics] = useState<Mechanic[]>([]);
   const [selectedProviderId, setSelectedProviderId] = useState<number | null>(null);
@@ -91,7 +109,7 @@ export default function MechanicDirectRequestScreen() {
       const response = await fetch(`${API_URL}/bookings/direct/mechanics/`, {
         credentials: 'include',
       });
-      const data = await response.json();
+      const data = await response.json() as MechanicsResponse;
       if (response.ok) {
         setMechanics(data.mechanics || []);
       }
@@ -108,7 +126,7 @@ export default function MechanicDirectRequestScreen() {
           credentials: 'include',
         }
       );
-      const data = await response.json();
+      const data = await response.json() as ServicesResponse;
       if (response.ok) {
         setAvailableServices(data.services || []);
       }
@@ -125,7 +143,7 @@ export default function MechanicDirectRequestScreen() {
           credentials: 'include',
         }
       );
-      const data = await response.json();
+      const data = await response.json() as AddOnsResponse;
       if (response.ok) {
         setAvailableAddOns(data.add_ons || []);
       }
@@ -221,7 +239,7 @@ export default function MechanicDirectRequestScreen() {
         body: JSON.stringify(requestData),
       });
 
-      const data = await response.json();
+      const data = await response.json() as CreateRequestResponse;
 
       if (response.ok) {
         Alert.alert('Success', data.message || 'Request created successfully!', [

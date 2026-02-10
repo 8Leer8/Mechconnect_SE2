@@ -22,6 +22,16 @@ import { styles } from '../../style/auth/registerStyles';
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const PSGC_API_BASE = 'https://psgc.gitlab.io/api';
 
+interface PSGCLocation {
+  code: string;
+  name: string;
+  [key: string]: any;
+}
+
+interface RegisterResponse {
+  [key: string]: string | string[];
+}
+
 export default function RegisterScreen() {
   const router = useRouter();
   const [formData, setFormData] = useState({
@@ -108,7 +118,7 @@ export default function RegisterScreen() {
   const fetchRegions = async () => {
     try {
       const response = await fetch(`${PSGC_API_BASE}/regions`);
-      const data = await response.json();
+      const data = await response.json() as PSGCLocation[];
       const sorted = data.sort((a: any, b: any) => a.name.localeCompare(b.name));
       setRegions(sorted);
     } catch (error) {
@@ -120,7 +130,7 @@ export default function RegisterScreen() {
   const fetchProvinces = async (regionCode: string) => {
     try {
       const response = await fetch(`${PSGC_API_BASE}/regions/${regionCode}/provinces`);
-      const data = await response.json();
+      const data = await response.json() as PSGCLocation[];
       const sorted = data.sort((a: any, b: any) => a.name.localeCompare(b.name));
       setProvinces(sorted);
     } catch (error) {
@@ -132,7 +142,7 @@ export default function RegisterScreen() {
   const fetchCities = async (provinceCode: string) => {
     try {
       const response = await fetch(`${PSGC_API_BASE}/provinces/${provinceCode}/cities-municipalities`);
-      const data = await response.json();
+      const data = await response.json() as PSGCLocation[];
       const sorted = data.sort((a: any, b: any) => a.name.localeCompare(b.name));
       setCities(sorted);
     } catch (error) {
@@ -144,7 +154,7 @@ export default function RegisterScreen() {
   const fetchBarangays = async (cityCode: string) => {
     try {
       const response = await fetch(`${PSGC_API_BASE}/cities-municipalities/${cityCode}/barangays`);
-      const data = await response.json();
+      const data = await response.json() as PSGCLocation[];
       const sorted = data.sort((a: any, b: any) => a.name.localeCompare(b.name));
       setBarangays(sorted);
     } catch (error) {
@@ -210,7 +220,7 @@ export default function RegisterScreen() {
         body: JSON.stringify(formData),
       });
 
-      const data = await response.json();
+      const data = await response.json() as RegisterResponse;
 
       if (response.ok) {
         Alert.alert('Success', 'Registration successful! Please login.', [

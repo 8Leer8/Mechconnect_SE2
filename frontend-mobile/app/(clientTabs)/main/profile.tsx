@@ -53,6 +53,14 @@ interface ProfileData {
   address?: Address;
 }
 
+interface ProfileResponse {
+  profile: ProfileData;
+}
+
+interface ActiveRoleResponse {
+  active_role: string;
+}
+
 export default function ProfileScreen() {
   const [profileData, setProfileData] = useState<ProfileData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -82,7 +90,7 @@ export default function ProfileScreen() {
 
       if (!response.ok) throw new Error('Failed to fetch profile data');
       
-      const data = await response.json();
+      const data = await response.json() as ProfileResponse;
       setProfileData(data.profile);
 
       // Fetch active role
@@ -93,7 +101,7 @@ export default function ProfileScreen() {
       });
 
       if (roleResponse.ok) {
-        const roleData = await roleResponse.json();
+        const roleData = await roleResponse.json() as ActiveRoleResponse;
         setActiveRole(roleData.active_role || 'client');
       }
     } catch (err) {

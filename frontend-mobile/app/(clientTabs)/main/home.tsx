@@ -48,17 +48,18 @@ export default function HomeScreen() {
       setLoading(true);
       const response = await fetch(`${API_URL}/bookings/home/`, {
         method: 'GET',
-        credentials: 'include', // Important for session authentication
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
       });
 
+      const result = await response.json() as HomeData;
+      
       if (!response.ok) {
         throw new Error('Failed to fetch data');
       }
 
-      const result = await response.json();
       setData(result);
       setError(null);
     } catch (err) {

@@ -7,6 +7,10 @@ import { styles } from '../../../style/client/bookingStyles';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
+interface BookingsResponse {
+  bookings: Booking[];
+}
+
 interface Booking {
   id: number;
   status: string;
@@ -33,6 +37,10 @@ interface Booking {
   cancellation_details?: any;
   rework_details?: any;
   completion_details?: any;
+}
+
+interface BookingsResponse {
+  bookings: Booking[];
 }
 
 type TabType = 'active' | 'completed' | 'cancelled' | 'reworked';
@@ -64,7 +72,7 @@ export default function BookingScreen() {
 
       if (!response.ok) throw new Error('Failed to fetch bookings');
       
-      const data = await response.json();
+      const data = await response.json() as BookingsResponse;
       setBookings(data.bookings || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');

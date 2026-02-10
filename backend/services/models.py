@@ -14,11 +14,6 @@ class ServiceCategory(models.Model):
         return self.name
 
 class Service(models.Model):
-    """
-    Service definition with admin-set minimum price.
-    The minimum price is informational and helps guide market pricing.
-    Mechanics are free to set their own prices without restriction.
-    """
     name = models.CharField(max_length=100)
     description = models.TextField()
     service_picture = models.ImageField(upload_to='services/pictures/', null=True, blank=True)
@@ -43,11 +38,6 @@ class ServiceAddOn(models.Model):
     price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 
 class MechanicService(models.Model):
-    """
-    Junction table linking mechanics to services with mechanic-specific pricing.
-    Mechanics can set their own prices freely without restriction.
-    The service's minimum_price is informational only and not enforced.
-    """
     mechanic = models.ForeignKey(Mechanic, on_delete=models.CASCADE, related_name='mechanic_services')
     service = models.ForeignKey(Service, on_delete=models.CASCADE, related_name='mechanic_services')
     price = models.DecimalField(

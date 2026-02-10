@@ -153,4 +153,17 @@ export const styles = StyleSheet.create({
     textAlign: 'center',
     padding: 16,
   },
+  cancelButton: {
+    backgroundColor: '#FF4500',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  cancelButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
 });

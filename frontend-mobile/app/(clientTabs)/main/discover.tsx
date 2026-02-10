@@ -37,6 +37,18 @@ interface Service {
   minimum_price: number;
 }
 
+interface MechanicsResponse {
+  mechanics: Mechanic[];
+}
+
+interface ShopsResponse {
+  shops: Shop[];
+}
+
+interface ServicesResponse {
+  services: Service[];
+}
+
 type TabType = 'mechanics' | 'shops' | 'services';
 
 export default function DiscoverScreen() {
@@ -68,7 +80,7 @@ export default function DiscoverScreen() {
           headers: { 'Content-Type': 'application/json' },
         });
         if (!response.ok) throw new Error('Failed to fetch mechanics');
-        const data = await response.json();
+        const data = await response.json() as MechanicsResponse;
         setMechanics(data.mechanics || []);
       } else if (activeTab === 'shops' && shops.length === 0) {
         const response = await fetch(`${API_URL}/shops/`, {
@@ -77,7 +89,7 @@ export default function DiscoverScreen() {
           headers: { 'Content-Type': 'application/json' },
         });
         if (!response.ok) throw new Error('Failed to fetch shops');
-        const data = await response.json();
+        const data = await response.json() as ShopsResponse;
         setShops(data.shops || []);
       } else if (activeTab === 'services' && services.length === 0) {
         const response = await fetch(`${API_URL}/services/`, {
@@ -86,7 +98,7 @@ export default function DiscoverScreen() {
           headers: { 'Content-Type': 'application/json' },
         });
         if (!response.ok) throw new Error('Failed to fetch services');
-        const data = await response.json();
+        const data = await response.json() as ServicesResponse;
         setServices(data.services || []);
       }
     } catch (err) {

@@ -11,6 +11,7 @@ __all__ = [
     
     # Request list views
     'list_requests',
+    'cancel_request',
     
     # Request create views
     'create_custom_request',

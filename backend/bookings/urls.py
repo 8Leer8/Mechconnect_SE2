@@ -7,6 +7,7 @@ urlpatterns = [
     path('requests/custom/create/', views.create_custom_request, name='create-custom-request'),
     path('requests/direct/create/', views.create_direct_request, name='create-direct-request'),
     path('requests/emergency/create/', views.create_emergency_request, name='create-emergency-request'),
+    path('requests/<int:request_id>/cancel/', views.cancel_request, name='cancel-request'),
     
     # Direct request endpoints
     path('direct/mechanics/', views.get_mechanics, name='get-mechanics'),

@@ -19,6 +19,12 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
+interface MechanicRegisterResponse {
+  error?: string;
+  message?: string;
+  [key: string]: any;
+}
+
 interface Document {
   id: string;
   name: string;
@@ -219,10 +225,10 @@ export default function MechanicRegister() {
       const response = await fetch(`${API_URL}/users/register-mechanic/`, {
         method: 'POST',
         credentials: 'include',
-        body: formData,
+        body: formData as any,
       });
 
-      const data = await response.json();
+      const data = await response.json() as MechanicRegisterResponse;
 
       if (response.ok) {
         Alert.alert(

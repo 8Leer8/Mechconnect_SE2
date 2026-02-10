@@ -151,3 +151,67 @@ def list_requests(request):
         return Response({
             'error': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def cancel_request(request, request_id):
+    account_id = request.session.get('account_id')
+    
+    if not account_id:
+        return Response({
+            'error': 'Authentication required'
+        }, status=status.HTTP_401_UNAUTHORIZED)
+    
+    try:
+        account = Account.objects.get(id=account_id)
+        
+        if not hasattr(account, 'client'):
+            return Response({
+                'error': 'Only clients can cancel requests'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        client = account.client
+        
+        req = Request.objects.get(id=request_id, client=client)
+        
+        if hasattr(req, 'booking'):
+            return Response({
+                'error': 'Cannot cancel a request that already has a booking'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if req.request_type == 'custom' and hasattr(req, 'customrequest'):
+            if req.customrequest.request_status == 'cancelled':
+                return Response({
+                    'error': 'Request is already cancelled'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            req.customrequest.request_status = 'cancelled'
+            req.customrequest.save()
+        elif req.request_type == 'direct' and hasattr(req, 'directrequest'):
+            if req.directrequest.request_status == 'cancelled':
+                return Response({
+                    'error': 'Request is already cancelled'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            req.directrequest.request_status = 'cancelled'
+            req.directrequest.save()
+        else:
+            return Response({
+                'error': 'Invalid request type for cancellation'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        return Response({
+            'message': 'Request cancelled successfully'
+        }, status=status.HTTP_200_OK)
+    
+    except Request.DoesNotExist:
+        return Response({
+            'error': 'Request not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Account.DoesNotExist:
+        return Response({
+            'error': 'Account not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

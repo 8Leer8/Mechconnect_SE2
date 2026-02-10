@@ -63,6 +63,17 @@ interface EmergencyRequest {
   has_booking: boolean;
 }
 
+interface RequestsResponse {
+  custom_requests: CustomRequest[];
+  direct_requests: DirectRequest[];
+  emergency_requests: EmergencyRequest[];
+  total_count: number;
+}
+
+interface ErrorResponse {
+  error: string;
+}
+
 type TabType = 'custom' | 'direct' | 'emergency';
 
 export default function RequestScreen() {
@@ -94,7 +105,7 @@ export default function RequestScreen() {
       });
 
       if (!response.ok) throw new Error('Failed to fetch requests');
-      const data = await response.json();
+      const data = await response.json() as RequestsResponse;
       
       setCustomRequests(data.custom_requests || []);
       setDirectRequests(data.direct_requests || []);
@@ -104,6 +115,26 @@ export default function RequestScreen() {
       console.error('Error fetching requests:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCancelRequest = async (requestId: number, requestType: 'custom' | 'direct') => {
+    try {
+      const response = await fetch(`${API_URL}/bookings/requests/${requestId}/cancel/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (!response.ok) {
+        const data = await response.json() as ErrorResponse;
+        throw new Error(data.error || 'Failed to cancel request');
+      }
+
+      await fetchRequests();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to cancel request');
+      console.error('Error cancelling request:', err);
     }
   };
 
@@ -163,6 +194,14 @@ export default function RequestScreen() {
             <ThemedText style={styles.bookingText}>✓ Booked</ThemedText>
           </View>
         )}
+        {!request.has_booking && request.status !== 'cancelled' && (
+          <TouchableOpacity 
+            style={styles.cancelButton}
+            onPress={() => handleCancelRequest(request.id, 'custom')}
+          >
+            <ThemedText style={styles.cancelButtonText}>Cancel Request</ThemedText>
+          </TouchableOpacity>
+        )}
       </View>
     ));
   };
@@ -178,7 +217,11 @@ export default function RequestScreen() {
       );
     }
 
-    return directRequests.map((request) => (
+    return directRequests.map((request) => {
+      const addOnsTotal = request.add_ons.reduce((sum, addon) => sum + addon.price, 0);
+      const totalPrice = request.service.price + addOnsTotal;
+      
+      return (
       <View key={request.id} style={styles.card}>
         <View style={styles.cardHeader}>
           <ThemedText style={styles.cardTitle}>Request #{request.id}</ThemedText>
@@ -187,10 +230,10 @@ export default function RequestScreen() {
           </View>
         </View>
         <ThemedText style={styles.serviceText}>{request.service.name}</ThemedText>
-        <ThemedText style={styles.priceText}>₱{request.service.price.toFixed(2)}</ThemedText>
+        <ThemedText style={styles.priceText}>Total: ₱{totalPrice.toFixed(2)}</ThemedText>
         {request.add_ons.length > 0 && (
           <ThemedText style={styles.cardText}>
-            Add-ons: {request.add_ons.map(a => a.name).join(', ')}
+            Add-ons: {request.add_ons.map(a => `${a.name} (₱${a.price.toFixed(2)})`).join(', ')}
           </ThemedText>
         )}
         {request.provider && (
@@ -209,8 +252,17 @@ export default function RequestScreen() {
             <ThemedText style={styles.bookingText}>✓ Booked</ThemedText>
           </View>
         )}
+        {!request.has_booking && request.status !== 'cancelled' && (
+          <TouchableOpacity 
+            style={styles.cancelButton}
+            onPress={() => handleCancelRequest(request.id, 'direct')}
+          >
+            <ThemedText style={styles.cancelButtonText}>Cancel Request</ThemedText>
+          </TouchableOpacity>
+        )}
       </View>
-    ));
+      );
+    });
   };
 
   const renderEmergencyRequests = () => {
@@ -263,6 +315,7 @@ export default function RequestScreen() {
       case 'quoted':
         return '#4CAF50';
       case 'rejected':
+      case 'cancelled':
         return '#FF4500';
       default:
         return '#999';

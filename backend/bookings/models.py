@@ -26,6 +26,7 @@ class CustomRequest(models.Model):
         PENDING = "pending"
         QUOTED = "quoted"
         REJECTED = "rejected"
+        CANCELLED = "cancelled"
     request = models.OneToOneField(Request, on_delete=models.CASCADE)
     description = models.TextField()
     request_status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)    
@@ -38,6 +39,7 @@ class DirectRequest(models.Model):
         PENDING = "pending"
         ACCEPTED = "accepted"
         REJECTED = "rejected"
+        CANCELLED = "cancelled"
     request = models.OneToOneField(Request, on_delete=models.CASCADE)
     service = models.ForeignKey(Service, on_delete=models.CASCADE)
     request_status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
