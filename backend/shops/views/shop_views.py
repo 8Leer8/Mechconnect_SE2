@@ -2,8 +2,12 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
+from django.db.models import Count, Sum, Avg, Q
 
-from ..models import Shop
+from ..models import Shop, ShopMechanic
+from users.models import ShopOwner, Mechanic
+from bookings.models import Booking, CompleteBooking
+from services.models import ShopService
 
 
 @api_view(['GET'])
@@ -40,3 +44,104 @@ def list_shops(request):
         return Response({
             'error': str(e)
         }, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def shop_owner_dashboard(request):
+    """
+    Get shop owner dashboard statistics
+    Returns:
+    - Total mechanics working for the shop
+    - Total services offered by the shop
+    - Active bookings count
+    - Completed jobs count
+    - Total revenue from completed jobs
+    - Average rating of shop mechanics
+    """
+    # Get account_id from session
+    account_id = request.session.get('account_id')
+    
+    if not account_id:
+        return Response({
+            'error': 'Authentication required'
+        }, status=status.HTTP_401_UNAUTHORIZED)
+    
+    try:
+        # Get shop owner
+        shop_owner = ShopOwner.objects.get(account_id=account_id)
+        
+        # Check if shop owner has a shop
+        if not shop_owner.owns_shop:
+            return Response({
+                'error': 'No shop found for this owner'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get the shop
+        shop = Shop.objects.get(shop_owner=shop_owner)
+        
+        # 1. Total mechanics
+        total_mechanics = ShopMechanic.objects.filter(shop=shop).count()
+        
+        # 2. Total services offered
+        total_services = ShopService.objects.filter(shop=shop).count()
+        
+        # Get all mechanics working for this shop
+        shop_mechanic_ids = ShopMechanic.objects.filter(shop=shop).values_list('mechanic_id', flat=True)
+        shop_mechanic_accounts = Mechanic.objects.filter(
+            id__in=shop_mechanic_ids
+        ).values_list('account_id', flat=True)
+        
+        # 3. Active bookings (bookings where provider is one of shop's mechanics)
+        active_bookings = Booking.objects.filter(
+            request__provider_id__in=shop_mechanic_accounts,
+            status=Booking.Status.ACTIVE
+        ).count()
+        
+        # 4. Completed jobs
+        completed_jobs = Booking.objects.filter(
+            request__provider_id__in=shop_mechanic_accounts,
+            status=Booking.Status.COMPLETED
+        ).count()
+        
+        # 5. Total revenue from completed bookings
+        revenue_data = CompleteBooking.objects.filter(
+            booking__request__provider_id__in=shop_mechanic_accounts
+        ).aggregate(
+            total_revenue=Sum('total_amount')
+        )
+        total_revenue = revenue_data['total_revenue'] if revenue_data['total_revenue'] else 0
+        
+        # 6. Average rating of shop mechanics
+        rating_data = Mechanic.objects.filter(
+            id__in=shop_mechanic_ids
+        ).aggregate(
+            avg_rating=Avg('average_rating')
+        )
+        average_rating = round(float(rating_data['avg_rating']), 2) if rating_data['avg_rating'] else 0
+        
+        return Response({
+            'shop_name': shop.shop_name,
+            'total_mechanics': total_mechanics,
+            'total_services': total_services,
+            'active_bookings': active_bookings,
+            'completed_jobs': completed_jobs,
+            'total_revenue': float(total_revenue),
+            'average_rating': average_rating,
+            'shop_status': shop.status,
+            'is_verified': shop.is_verified
+        }, status=status.HTTP_200_OK)
+        
+    except ShopOwner.DoesNotExist:
+        return Response({
+            'error': 'Shop owner profile not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Shop.DoesNotExist:
+        return Response({
+            'error': 'Shop not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({
+            'error': str(e)
+        }, status=status.HTTP_400_BAD_REQUEST)
+

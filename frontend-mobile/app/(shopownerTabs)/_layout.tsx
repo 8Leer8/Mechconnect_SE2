@@ -23,7 +23,22 @@ export default function ShopOwnerTabLayout() {
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
         }}
       />
+      <Tabs.Screen
+        name="main/mechanics"
+        options={{
+          title: 'Mechanics',
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="wrench.fill" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="main/shop"
+        options={{
+          title: 'Shop',
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="building.2.fill" color={color} />,
+        }}
+      />
       {/* Hide non-tab routes */}
+      <Tabs.Screen name="index" options={{ href: null }} />
       <Tabs.Screen name="profile" options={{ href: null }} />
     </Tabs>
   );

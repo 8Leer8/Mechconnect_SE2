@@ -28,6 +28,7 @@ __all__ = [
     'get_active_role',
     'get_role_status',
     'register_mechanic',
+    'register_shop_owner',
     
     # Discovery views
     'list_mechanics',

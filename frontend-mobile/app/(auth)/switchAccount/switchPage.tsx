@@ -109,8 +109,7 @@ export default function SwitchRolePage() {
 
     if (!roleData.isShopOwner) {
       // Navigate to shop owner registration page
-      router.push('/(auth)/register'); // Update this path to your actual shop owner registration route
-      Alert.alert('Registration', 'Redirecting to shop owner registration...');
+      router.push('/(auth)/switchAccount/shopOwnerRegister');
     } else {
       // Switch to shop owner role
       await switchRole('shop_owner');

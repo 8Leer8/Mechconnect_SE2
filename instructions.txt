@@ -36,3 +36,5 @@ commands:
     python manage.py migrate
 dapat nasa backend kayo and naka activate ang venv para gagana
 unahin niyo gawin instructions sa taas bago dito
+
+for building = eas build -p android --profile preview

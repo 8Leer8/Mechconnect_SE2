@@ -29,4 +29,5 @@ urlpatterns = [
     
     # Role registration
     path('register-mechanic/', views.register_mechanic, name='register_mechanic'),
+    path('register-shop-owner/', views.register_shop_owner, name='register_shop_owner'),
 ]
