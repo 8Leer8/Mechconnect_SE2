@@ -32,4 +32,5 @@ __all__ = [
     
     # Discovery views
     'list_mechanics',
+    'get_mechanic_profile',
 ]

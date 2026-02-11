@@ -1,10 +1,11 @@
 from rest_framework import serializers
 from .models import (
     Account, AccountAddress, AccountRole, Client, 
-    Mechanic, ShopOwner, Admin, PasswordReset
+    Mechanic, ShopOwner, Admin, PasswordReset, MechanicReview
 )
 from django.contrib.auth.hashers import make_password, check_password
 from django.utils import timezone
+from django.db.models import Avg
 import re
 
 
@@ -378,3 +379,199 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
         except PasswordReset.DoesNotExist:
             raise serializers.ValidationError("Invalid or expired reset token")
         return value
+
+
+class MechanicReviewSerializer(serializers.ModelSerializer):
+    """Serializer for mechanic reviews"""
+    reviewer_name = serializers.SerializerMethodField()
+    reviewer_photo = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = MechanicReview
+        fields = [
+            'id', 'reviewer_name', 'reviewer_photo', 
+            'rating', 'comment', 'created_at'
+        ]
+    
+    def get_reviewer_name(self, obj):
+        """Get reviewer's full name"""
+        parts = [obj.reviewer.firstname, obj.reviewer.lastname]
+        return ' '.join(filter(None, parts))
+    
+    def get_reviewer_photo(self, obj):
+        """Get reviewer's profile photo if they're a client"""
+        try:
+            if hasattr(obj.reviewer, 'client') and obj.reviewer.client.profile_photo:
+                request = self.context.get('request')
+                if request:
+                    return request.build_absolute_uri(obj.reviewer.client.profile_photo.url)
+        except:
+            pass
+        return None
+
+
+class MechanicServiceSerializer(serializers.ModelSerializer):
+    """Serializer for mechanic services"""
+    service_name = serializers.CharField(source='service.name', read_only=True)
+    service_description = serializers.CharField(source='service.description', read_only=True)
+    service_category = serializers.CharField(source='service.category.name', read_only=True)
+    service_picture = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = None  # Will be imported from services
+        fields = [
+            'id', 'service_name', 'service_description', 
+            'service_category', 'service_picture', 'price'
+        ]
+    
+    def get_service_picture(self, obj):
+        """Get service picture URL"""
+        try:
+            if obj.service.service_picture:
+                request = self.context.get('request')
+                if request:
+                    return request.build_absolute_uri(obj.service.service_picture.url)
+        except:
+            pass
+        return None
+
+
+class MechanicSpecialtySerializer(serializers.ModelSerializer):
+    """Serializer for mechanic specialties"""
+    specialty_name = serializers.CharField(source='specialty.name', read_only=True)
+    specialty_description = serializers.CharField(source='specialty.description', read_only=True)
+    
+    class Meta:
+        model = None  # Will be imported from services
+        fields = ['id', 'specialty_name', 'specialty_description', 'created_at']
+
+
+class MechanicProfileSerializer(serializers.ModelSerializer):
+    """Comprehensive serializer for mechanic profile page"""
+    # Account information
+    full_name = serializers.SerializerMethodField()
+    firstname = serializers.CharField(source='account.firstname', read_only=True)
+    lastname = serializers.CharField(source='account.lastname', read_only=True)
+    middlename = serializers.CharField(source='account.middlename', read_only=True)
+    email = serializers.EmailField(source='account.email', read_only=True)
+    username = serializers.CharField(source='account.username', read_only=True)
+    
+    # Profile photo
+    profile_photo_url = serializers.SerializerMethodField()
+    
+    # Rating and reviews
+    average_rating = serializers.DecimalField(max_digits=3, decimal_places=2, read_only=True)
+    total_reviews = serializers.SerializerMethodField()
+    reviews = serializers.SerializerMethodField()
+    
+    # Years of experience (calculated from account creation)
+    years_active = serializers.SerializerMethodField()
+    account_created = serializers.DateTimeField(source='created_at', read_only=True)
+    
+    # Shop information
+    is_part_of_shop = serializers.BooleanField(source='is_working_for_shop', read_only=True)
+    shop_name = serializers.SerializerMethodField()
+    shop_id = serializers.IntegerField(source='shop.id', read_only=True, allow_null=True)
+    
+    # Specialties
+    specialties = serializers.SerializerMethodField()
+    
+    # Services offered
+    services = serializers.SerializerMethodField()
+    
+    # Additional info
+    contact_number = serializers.CharField(read_only=True)
+    status = serializers.CharField(read_only=True)
+    
+    class Meta:
+        model = Mechanic
+        fields = [
+            'id', 'full_name', 'firstname', 'lastname', 'middlename',
+            'email', 'username', 'profile_photo_url', 'bio',
+            'average_rating', 'total_reviews', 'reviews',
+            'years_active', 'account_created',
+            'is_part_of_shop', 'shop_name', 'shop_id',
+            'specialties', 'services',
+            'contact_number', 'status'
+        ]
+    
+    def get_full_name(self, obj):
+        """Get mechanic's full name"""
+        parts = [obj.account.firstname, obj.account.middlename, obj.account.lastname]
+        return ' '.join(filter(None, parts))
+    
+    def get_profile_photo_url(self, obj):
+        """Get absolute URL for profile photo"""
+        if obj.profile_photo:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.profile_photo.url)
+        return None
+    
+    def get_total_reviews(self, obj):
+        """Get total number of reviews"""
+        return obj.reviews.count()
+    
+    def get_reviews(self, obj):
+        """Get all reviews for this mechanic"""
+        reviews = obj.reviews.all().order_by('-created_at')
+        return MechanicReviewSerializer(reviews, many=True, context=self.context).data
+    
+    def get_years_active(self, obj):
+        """Calculate years since account creation"""
+        if obj.created_at:
+            delta = timezone.now() - obj.created_at
+            years = delta.days / 365.25
+            return round(years, 1)
+        return 0
+    
+    def get_shop_name(self, obj):
+        """Get shop name if mechanic is working for a shop"""
+        if obj.is_working_for_shop and obj.shop:
+            return obj.shop.shop_name
+        return None
+    
+    def get_specialties(self, obj):
+        """Get mechanic's specialties"""
+        try:
+            from services.models import MechanicSpecialty
+            specialties = MechanicSpecialty.objects.filter(mechanic=obj).select_related('specialty')
+            return [
+                {
+                    'id': ms.specialty.id,
+                    'name': ms.specialty.name,
+                    'description': ms.specialty.description
+                }
+                for ms in specialties
+            ]
+        except:
+            return []
+    
+    def get_services(self, obj):
+        """Get services offered by this mechanic"""
+        try:
+            from services.models import MechanicService
+            services = MechanicService.objects.filter(mechanic=obj).select_related('service', 'service__category')
+            result = []
+            for ms in services:
+                service_data = {
+                    'id': ms.id,
+                    'service_id': ms.service.id,
+                    'service_name': ms.service.name,
+                    'service_description': ms.service.description,
+                    'price': str(ms.price),
+                    'category': ms.service.category.name if ms.service.category else None
+                }
+                
+                # Add service picture URL if available
+                if ms.service.service_picture:
+                    request = self.context.get('request')
+                    if request:
+                        service_data['service_picture'] = request.build_absolute_uri(ms.service.service_picture.url)
+                
+                result.append(service_data)
+            
+            return result
+        except Exception as e:
+            return []
+

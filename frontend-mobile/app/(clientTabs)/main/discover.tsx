@@ -3,6 +3,7 @@ import { View, TouchableOpacity, ScrollView, ActivityIndicator, Image } from 're
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { TopNav } from '@/components/navigation';
+import { useRouter } from 'expo-router';
 import { styles } from '../../../style/client/discoverStyles';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -52,6 +53,7 @@ interface ServicesResponse {
 type TabType = 'mechanics' | 'shops' | 'services';
 
 export default function DiscoverScreen() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<TabType>('mechanics');
   const [mechanics, setMechanics] = useState<Mechanic[]>([]);
   const [shops, setShops] = useState<Shop[]>([]);
@@ -121,7 +123,12 @@ export default function DiscoverScreen() {
     }
 
     return mechanics.map((mechanic) => (
-      <View key={mechanic.id} style={styles.card}>
+      <TouchableOpacity
+        key={mechanic.id}
+        style={styles.card}
+        onPress={() => router.push(`/client/mechanic/mechanicprofile?mechanicId=${mechanic.id}`)}
+        activeOpacity={0.7}
+      >
         <View style={styles.cardHeader}>
           {mechanic.profile_photo ? (
             <Image source={{ uri: mechanic.profile_photo }} style={styles.avatar} />
@@ -139,7 +146,7 @@ export default function DiscoverScreen() {
         </View>
         <ThemedText style={styles.cardText}>Contact: {mechanic.contact_number}</ThemedText>
         <ThemedText style={styles.cardText}>Status: {mechanic.status}</ThemedText>
-      </View>
+      </TouchableOpacity>
     ));
   };
 

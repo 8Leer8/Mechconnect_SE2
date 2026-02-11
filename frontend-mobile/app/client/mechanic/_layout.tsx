@@ -8,7 +8,6 @@ export default function MechanicLayout() {
         headerShown: false,
       }}>
       <Stack.Screen name="mechanicprofile" options={{ headerShown: false }} />
-      <Stack.Screen name="mechanicservice" options={{ headerShown: false }} />
     </Stack>
   );
 }

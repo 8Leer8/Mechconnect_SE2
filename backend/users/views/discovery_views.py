@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from ..models import Mechanic
-from ..serializers import MechanicSerializer
+from ..serializers import MechanicSerializer, MechanicProfileSerializer
 
 
 @api_view(['GET'])
@@ -39,3 +39,42 @@ def list_mechanics(request):
         return Response({
             'error': str(e)
         }, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def get_mechanic_profile(request, mechanic_id):
+    """
+    Get detailed mechanic profile by mechanic ID
+    
+    Returns comprehensive profile including:
+    - Basic info (name, photo, contact)
+    - Ratings and reviews
+    - Years active
+    - Bio
+    - Specialties
+    - Services offered with prices
+    - Shop affiliation
+    """
+    try:
+        mechanic = Mechanic.objects.select_related(
+            'account', 'shop'
+        ).prefetch_related(
+            'reviews', 'reviews__reviewer'
+        ).get(id=mechanic_id)
+        
+        serializer = MechanicProfileSerializer(mechanic, context={'request': request})
+        
+        return Response({
+            'mechanic': serializer.data
+        }, status=status.HTTP_200_OK)
+        
+    except Mechanic.DoesNotExist:
+        return Response({
+            'error': 'Mechanic not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({
+            'error': str(e)
+        }, status=status.HTTP_400_BAD_REQUEST)
+
