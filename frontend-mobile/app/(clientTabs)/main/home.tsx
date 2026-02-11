@@ -54,10 +54,25 @@ export default function HomeScreen() {
         },
       });
 
-      const result = await response.json() as HomeData;
-      
       if (!response.ok) {
         throw new Error('Failed to fetch data');
+      }
+
+      const result = await response.json() as HomeData;
+      
+      // Log the response for debugging
+      console.log('Home data response:', JSON.stringify(result, null, 2));
+      console.log('Current bookings count:', result.current_bookings?.length || 0);
+      console.log('Pending requests count:', result.pending_requests?.length || 0);
+      
+      // Check for error or message from backend
+      if ('error' in result) {
+        console.error('Backend error:', (result as any).error);
+        throw new Error((result as any).error);
+      }
+      
+      if ('message' in result) {
+        console.log('Backend message:', (result as any).message);
       }
 
       setData(result);

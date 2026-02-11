@@ -16,7 +16,7 @@ class ServiceLocationSerializer(serializers.ModelSerializer):
 class ServiceBasicSerializer(serializers.ModelSerializer):
     class Meta:
         model = Service
-        fields = ['id', 'name', 'description', 'price']
+        fields = ['id', 'name', 'description', 'minimum_price']
 
 
 class ServiceAddOnSerializer(serializers.ModelSerializer):

@@ -17,6 +17,8 @@ from users.models import Account
 def home_page(request):
     account_id = request.session.get('account_id')
     
+    print(f"[DEBUG] Session account_id: {account_id}")
+    
     if not account_id:
         return Response({
             'current_bookings': [],
@@ -26,6 +28,7 @@ def home_page(request):
     
     try:
         account = Account.objects.get(id=account_id)
+        print(f"[DEBUG] Account found: {account.username} (ID: {account.id})")
     except Account.DoesNotExist:
         return Response({
             'current_bookings': [],
@@ -36,6 +39,13 @@ def home_page(request):
     try:
         if hasattr(account, 'client'):
             client = account.client
+            print(f"[DEBUG] Account has client role, Client ID: {client.id}")
+            
+            # Check all bookings for this client (regardless of status)
+            all_client_bookings = Booking.objects.filter(request__client=client)
+            print(f"[DEBUG] Total bookings for client (all statuses): {all_client_bookings.count()}")
+            for booking in all_client_bookings:
+                print(f"[DEBUG] All bookings - ID: {booking.id}, Status: '{booking.status}', Request ID: {booking.request.id}")
             
             current_bookings = Booking.objects.filter(
                 request__client=client,
@@ -49,6 +59,10 @@ def home_page(request):
             ).prefetch_related(
                 Prefetch('activebooking', queryset=ActiveBooking.objects.all())
             ).order_by('-booked_at')
+            
+            print(f"[DEBUG] Current bookings query count: {current_bookings.count()}")
+            for booking in current_bookings:
+                print(f"[DEBUG] Booking ID: {booking.id}, Status: {booking.status}, Request ID: {booking.request.id}")
             
             all_requests = Request.objects.filter(
                 client=client
@@ -169,11 +183,15 @@ def home_page(request):
             'pending_requests': RequestSerializer(filtered_pending_requests, many=True).data
         }
         
+        print(f"[DEBUG] Response data - current_bookings count: {len(data['current_bookings'])}")
+        print(f"[DEBUG] Response data - pending_requests count: {len(data['pending_requests'])}")
+        
         return Response(data, status=status.HTTP_200_OK)
     
     except Exception as e:
         import traceback
         traceback.print_exc()
+        print(f"[DEBUG] Exception occurred: {str(e)}")
         return Response({
             'current_bookings': [],
             'pending_requests': [],
