@@ -235,7 +235,7 @@ export default function MapScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#151718',
+    backgroundColor: '#111214',
   },
   header: {
     flexDirection: 'row',
@@ -243,8 +243,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingTop: 60,
-    paddingBottom: 20,
-    backgroundColor: '#1E1E1E',
+    paddingBottom: 16,
+    backgroundColor: '#1A1C1E',
   },
   headerTitle: {
     fontSize: 24,
@@ -252,24 +252,27 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   locationButton: {
-    padding: 8,
-    backgroundColor: '#2A2A2A',
-    borderRadius: 8,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FF8C0015',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   filterContainer: {
-    backgroundColor: '#1E1E1E',
-    paddingHorizontal: 20,
-    paddingBottom: 16,
+    backgroundColor: '#1A1C1E',
+    paddingHorizontal: 16,
+    paddingBottom: 12,
   },
   filterChip: {
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
-    backgroundColor: '#2A2A2A',
-    marginRight: 10,
+    backgroundColor: '#222426',
+    marginRight: 8,
   },
   filterChipActive: {
-    backgroundColor: '#34C759',
+    backgroundColor: '#FF8C00',
   },
   filterChipText: {
     fontSize: 14,
@@ -281,11 +284,11 @@ const styles = StyleSheet.create({
   },
   mapPlaceholder: {
     height: 280,
-    backgroundColor: '#1E1E1E',
+    backgroundColor: '#1A1C1E',
     justifyContent: 'center',
     alignItems: 'center',
     borderBottomWidth: 1,
-    borderBottomColor: '#2A2A2A',
+    borderBottomColor: '#2A2C2E',
     position: 'relative',
   },
   mapPlaceholderText: {
@@ -320,7 +323,7 @@ const styles = StyleSheet.create({
   },
   jobListContainer: {
     flex: 1,
-    backgroundColor: '#151718',
+    backgroundColor: '#111214',
   },
   jobListTitle: {
     fontSize: 16,
@@ -382,12 +385,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   jobCard: {
-    backgroundColor: '#1E1E1E',
-    borderRadius: 12,
+    backgroundColor: '#1A1C1E',
+    borderRadius: 14,
     padding: 14,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#2A2A2A',
+    borderColor: '#2A2C2E',
   },
   jobCardHeader: {
     flexDirection: 'row',
@@ -426,7 +429,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: '#2A2A2A',
+    borderTopColor: '#2A2C2E',
   },
   jobEarnings: {
     fontSize: 16,
@@ -440,7 +443,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FF8C00',
     paddingHorizontal: 12,
     paddingVertical: 7,
-    borderRadius: 6,
+    borderRadius: 8,
   },
   navigateText: {
     fontSize: 12,

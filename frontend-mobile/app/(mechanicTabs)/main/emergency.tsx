@@ -213,7 +213,7 @@ export default function EmergencyScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#151718',
+    backgroundColor: '#111214',
   },
   header: {
     flexDirection: 'row',
@@ -222,7 +222,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 60,
     paddingBottom: 20,
-    backgroundColor: '#1E1E1E',
+    backgroundColor: '#1A1C1E',
   },
   headerLeft: {
     flexDirection: 'row',
@@ -232,8 +232,8 @@ const styles = StyleSheet.create({
   emergencyIcon: {
     width: 48,
     height: 48,
-    borderRadius: 24,
-    backgroundColor: '#2A1A1A',
+    borderRadius: 16,
+    backgroundColor: '#FF3B3015',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -283,7 +283,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 12,
     backgroundColor: '#FF3B30',
-    borderRadius: 8,
+    borderRadius: 10,
   },
   retryText: {
     color: '#fff',
@@ -311,12 +311,12 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   emergencyCard: {
-    backgroundColor: '#2A1A1A',
-    borderRadius: 12,
+    backgroundColor: '#1A1C1E',
+    borderRadius: 14,
     padding: 16,
-    marginBottom: 16,
-    borderWidth: 2,
-    borderColor: '#FF3B30',
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#FF3B3040',
   },
   cardHeader: {
     flexDirection: 'row',
@@ -369,8 +369,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   descriptionBox: {
-    backgroundColor: '#1E1E1E',
-    borderRadius: 8,
+    backgroundColor: '#222426',
+    borderRadius: 10,
     padding: 12,
     marginTop: 8,
   },
@@ -396,7 +396,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 6,
     paddingVertical: 12,
-    borderRadius: 8,
+    borderRadius: 10,
   },
   acceptBtn: {
     backgroundColor: '#34C759',

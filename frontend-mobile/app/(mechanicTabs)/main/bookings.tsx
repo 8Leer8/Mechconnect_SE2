@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl } from 'react-native';
+import { StyleSheet, View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Animated } from 'react-native';
+import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -11,11 +12,17 @@ interface Booking {
   status: string;
   amount_fee: number;
   booked_at: string;
+  updated_at?: string;
   request: {
     id: number;
     type: string;
     created_at: string;
   };
+  provider?: {
+    id: number;
+    name: string;
+    email: string;
+  } | null;
   service_location?: {
     street_name: string;
     subdivision_village?: string;
@@ -23,6 +30,16 @@ interface Booking {
     city_municipality: string;
     landmark?: string | null;
   } | null;
+  active_details?: {
+    is_job_done: boolean;
+    is_rescheduled: boolean;
+    started_at?: string;
+  };
+  client?: {
+    firstname?: string;
+    lastname?: string;
+    name?: string;
+  };
 }
 
 // Tabs: All, Pending, Active, Completed, Cancelled
@@ -51,6 +68,7 @@ export default function BookingsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState<number | null>(null);
+  const [counts, setCounts] = useState<Record<string, number>>({});
 
   useEffect(() => {
     fetchBookings();
@@ -61,7 +79,6 @@ export default function BookingsScreen() {
       setLoading(true);
       setError(null);
 
-      // When tab is "all", use the grouped response and flatten
       if (activeTab === 'all') {
         const response = await fetch(`${API_URL}/bookings/mechanic/bookings/`, {
           method: 'GET',
@@ -79,8 +96,14 @@ export default function BookingsScreen() {
           ...(data.disputed.bookings || []),
         ];
         setBookings(all);
+        setCounts({
+          all: data.total_count || all.length,
+          pending: data.pending?.count || 0,
+          active: data.active?.count || 0,
+          completed: data.completed?.count || 0,
+          cancelled: data.cancelled?.count || 0,
+        });
       } else {
-        // Backend supports status values including "pending" now
         const response = await fetch(`${API_URL}/bookings/mechanic/bookings/?status=${activeTab}`, {
           method: 'GET',
           credentials: 'include',
@@ -110,7 +133,21 @@ export default function BookingsScreen() {
       case 'reworked': return '#FFD60A';
       case 'completed': return '#34C759';
       case 'cancelled': return '#FF3B30';
+      case 'pending': return '#007AFF';
+      case 'disputed': return '#AF52DE';
       default: return '#8E8E93';
+    }
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'active': return 'wrench';
+      case 'completed': return 'check-circle';
+      case 'cancelled': return 'times-circle';
+      case 'pending': return 'clock-o';
+      case 'reworked': return 'refresh';
+      case 'disputed': return 'exclamation-circle';
+      default: return 'circle';
     }
   };
 
@@ -168,42 +205,103 @@ export default function BookingsScreen() {
     }
   };
 
+  const handleViewDetails = (booking: Booking) => {
+    router.push({
+      pathname: '/(mechanicTabs)/booking_details',
+      params: { bookingId: booking.id.toString() },
+    });
+  };
+
+  const getTabIcon = (tab: TabType) => {
+    switch (tab) {
+      case 'all': return 'th-list';
+      case 'pending': return 'clock-o';
+      case 'active': return 'wrench';
+      case 'completed': return 'check-circle';
+      case 'cancelled': return 'times-circle';
+      default: return 'circle';
+    }
+  };
+
   const renderTabs = () => (
-    <View style={styles.tabContainer}>
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.tabScrollContent}
+      style={styles.tabContainer}
+    >
       {(['all', 'pending', 'active', 'completed', 'cancelled'] as TabType[]).map(
-        (tab) => (
-          <TouchableOpacity
-            key={tab}
-            style={[styles.tab, activeTab === tab && styles.activeTab]}
-            onPress={() => setActiveTab(tab)}
-          >
-            <ThemedText
-              style={[styles.tabText, activeTab === tab && styles.activeTabText]}
+        (tab) => {
+          const isActive = activeTab === tab;
+          const count = counts[tab] || 0;
+          return (
+            <TouchableOpacity
+              key={tab}
+              style={[styles.tab, isActive && styles.activeTab]}
+              onPress={() => setActiveTab(tab)}
+              activeOpacity={0.7}
             >
-              {tab === 'all'
-                ? 'All'
-                : tab.charAt(0).toUpperCase() + tab.slice(1)}
-            </ThemedText>
-          </TouchableOpacity>
-        ),
+              <FontAwesome
+                name={getTabIcon(tab)}
+                size={14}
+                color={isActive ? '#fff' : '#8E8E93'}
+                style={{ marginRight: 6 }}
+              />
+              <ThemedText
+                style={[styles.tabText, isActive && styles.activeTabText]}
+              >
+                {tab === 'all' ? 'All' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+              </ThemedText>
+              {count > 0 && activeTab === 'all' && (
+                <View style={[styles.tabCount, isActive && styles.activeTabCount]}>
+                  <ThemedText style={[styles.tabCountText, isActive && styles.activeTabCountText]}>
+                    {count}
+                  </ThemedText>
+                </View>
+              )}
+            </TouchableOpacity>
+          );
+        },
       )}
-    </View>
+    </ScrollView>
   );
+
+  const formatDate = (dateString: string) =>
+    new Date(dateString).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+
+  const getTimeSince = (dateString: string) => {
+    const seconds = Math.floor((new Date().getTime() - new Date(dateString).getTime()) / 1000);
+    if (seconds < 60) return 'Just now';
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+    return `${Math.floor(seconds / 86400)}d ago`;
+  };
 
   return (
     <ThemedView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <ThemedText style={styles.headerTitle}>Bookings</ThemedText>
-        <TouchableOpacity style={styles.filterButton}>
-          <FontAwesome name="filter" size={20} color="#fff" />
+        <View>
+          <ThemedText style={styles.headerTitle}>Bookings</ThemedText>
+          <ThemedText style={styles.headerSubtitle}>
+            {bookings.length} {activeTab === 'all' ? 'total' : activeTab} booking{bookings.length !== 1 ? 's' : ''}
+          </ThemedText>
+        </View>
+        <TouchableOpacity style={styles.refreshButton} onPress={onRefresh}>
+          <FontAwesome name="refresh" size={18} color="#FF8C00" />
         </TouchableOpacity>
       </View>
 
       {renderTabs()}
 
-      <ScrollView 
+      <ScrollView
         style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF8C00" />
         }
@@ -220,85 +318,120 @@ export default function BookingsScreen() {
           </View>
         ) : bookings.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <FontAwesome name="briefcase" size={64} color="#8E8E93" />
-            <ThemedText style={styles.emptyText}>No {activeTab} jobs</ThemedText>
+            <View style={styles.emptyIconCircle}>
+              <FontAwesome name={getTabIcon(activeTab)} size={40} color="#555" />
+            </View>
+            <ThemedText style={styles.emptyText}>No {activeTab === 'all' ? '' : activeTab + ' '}bookings</ThemedText>
             <ThemedText style={styles.emptySubtext}>
-              {activeTab === 'active' ? 'New jobs will appear here' : `No ${activeTab} jobs yet`}
+              {activeTab === 'active' ? 'New jobs will appear here when accepted' :
+               activeTab === 'pending' ? 'Client requests will appear here' :
+               `No ${activeTab} bookings yet`}
             </ThemedText>
           </View>
         ) : (
           <View style={styles.bookingsList}>
             {bookings.map((booking) => (
-              <TouchableOpacity key={booking.id} style={styles.bookingCard}>
-                <View style={styles.cardHeader}>
-                  <View style={[styles.statusBadge, { backgroundColor: getStatusColor(booking.status) }]}>
-                    <ThemedText style={styles.statusText}>{booking.status.toUpperCase()}</ThemedText>
+              <TouchableOpacity
+                key={booking.id}
+                style={styles.bookingCard}
+                activeOpacity={0.7}
+                onPress={() => {
+                  if (booking.status === 'active' || booking.status === 'completed' || booking.status === 'reworked') {
+                    handleViewDetails(booking);
+                  }
+                }}
+              >
+                {/* Card Top Row */}
+                <View style={styles.cardTopRow}>
+                  <View style={styles.cardTopLeft}>
+                    <View style={[styles.statusIconCircle, { backgroundColor: getStatusColor(booking.status) + '20' }]}>
+                      <FontAwesome name={getStatusIcon(booking.status)} size={16} color={getStatusColor(booking.status)} />
+                    </View>
+                    <View>
+                      <View style={styles.statusRow}>
+                        <View style={[styles.statusBadge, { backgroundColor: getStatusColor(booking.status) }]}>
+                          <ThemedText style={styles.statusText}>{booking.status.toUpperCase()}</ThemedText>
+                        </View>
+                        <ThemedText style={styles.bookingId}>#{booking.id}</ThemedText>
+                      </View>
+                      <ThemedText style={styles.requestType}>
+                        {booking.request.type
+                          ? booking.request.type.charAt(0).toUpperCase() + booking.request.type.slice(1) + ' Service'
+                          : 'Service Request'}
+                      </ThemedText>
+                    </View>
                   </View>
-                  <ThemedText style={styles.bookingId}>#{booking.id}</ThemedText>
+                  <ThemedText style={styles.timeAgo}>{getTimeSince(booking.booked_at)}</ThemedText>
                 </View>
 
-                <ThemedText style={styles.requestType}>{booking.request.type} Request</ThemedText>
+                {/* Info Rows */}
+                <View style={styles.cardInfoSection}>
+                  <View style={styles.infoRow}>
+                    <FontAwesome name="map-marker" size={14} color="#8E8E93" />
+                    <ThemedText style={styles.infoText} numberOfLines={1}>
+                      {booking.service_location
+                        ? `${booking.service_location.street_name}, ${booking.service_location.barangay}`
+                        : 'No location specified'}
+                    </ThemedText>
+                  </View>
 
-                <View style={styles.infoRow}>
-                  <FontAwesome name="user" size={14} color="#8E8E93" />
-                  <ThemedText style={styles.requestType}>{booking.request.type} Request</ThemedText>
+                  <View style={styles.infoRow}>
+                    <FontAwesome name="calendar-o" size={13} color="#8E8E93" />
+                    <ThemedText style={styles.infoText}>{formatDate(booking.booked_at)}</ThemedText>
+                  </View>
                 </View>
 
-                <View style={styles.infoRow}>
-                  <FontAwesome name="map-marker" size={14} color="#8E8E93" />
-                  <ThemedText style={styles.infoText} numberOfLines={1}>
-                    {booking.service_location
-                      ? `${booking.service_location.street_name}, ${booking.service_location.barangay}`
-                      : 'No location specified'}
-                  </ThemedText>
-                </View>
-
-                <View style={styles.infoRow}>
-                  <FontAwesome name="calendar" size={14} color="#8E8E93" />
-                  <ThemedText style={styles.infoText}>
-                    {new Date(booking.booked_at).toLocaleDateString('en-US', { 
-                      month: 'short', 
-                      day: 'numeric', 
-                      year: 'numeric' 
-                    })}
-                  </ThemedText>
-                </View>
-
+                {/* Card Footer */}
                 <View style={styles.cardFooter}>
-                  <ThemedText style={styles.amount}>₱{booking.amount_fee.toFixed(2)}</ThemedText>
-                  {activeTab === 'pending' ? (
-                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <ThemedText style={styles.amount}>₱{booking.amount_fee?.toFixed(2) || '0.00'}</ThemedText>
+
+                  {booking.status === 'pending' ? (
+                    <View style={styles.pendingActions}>
                       <TouchableOpacity
-                        style={[styles.actionButton, { backgroundColor: '#2e7d32' }]}
+                        style={styles.declineBtn}
+                        onPress={() => handleDeclinePending(booking.request.id)}
+                        disabled={actionLoadingId === booking.request.id}
+                      >
+                        <ThemedText style={styles.declineBtnText}>Decline</ThemedText>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.acceptBtn}
                         onPress={() => handleAcceptPending(booking.request.id)}
                         disabled={actionLoadingId === booking.request.id}
                       >
                         {actionLoadingId === booking.request.id ? (
                           <ActivityIndicator size="small" color="#fff" />
                         ) : (
-                          <ThemedText style={styles.actionText}>Accept</ThemedText>
+                          <>
+                            <FontAwesome name="check" size={11} color="#fff" />
+                            <ThemedText style={styles.acceptBtnText}>Accept</ThemedText>
+                          </>
                         )}
                       </TouchableOpacity>
-
-                      <TouchableOpacity
-                        style={[styles.actionButton, { backgroundColor: '#c62828' }]}
-                        onPress={() => handleDeclinePending(booking.request.id)}
-                        disabled={actionLoadingId === booking.request.id}
-                      >
-                        <ThemedText style={styles.actionText}>Decline</ThemedText>
-                      </TouchableOpacity>
                     </View>
-                  ) : activeTab === 'active' ? (
-                    <TouchableOpacity style={styles.actionButton}>
-                      <ThemedText style={styles.actionText}>View Details</ThemedText>
-                      <FontAwesome name="chevron-right" size={12} color="#fff" />
+                  ) : (booking.status === 'active' || booking.status === 'completed' || booking.status === 'reworked') ? (
+                    <TouchableOpacity
+                      style={styles.detailsBtn}
+                      onPress={() => handleViewDetails(booking)}
+                    >
+                      <ThemedText style={styles.detailsBtnText}>Details</ThemedText>
+                      <FontAwesome name="chevron-right" size={11} color="#FF8C00" />
                     </TouchableOpacity>
                   ) : null}
                 </View>
+
+                {/* Active booking extra info */}
+                {booking.status === 'active' && booking.active_details?.is_job_done && (
+                  <View style={styles.jobDoneBanner}>
+                    <FontAwesome name="check-circle" size={14} color="#34C759" />
+                    <ThemedText style={styles.jobDoneText}>Job marked as done</ThemedText>
+                  </View>
+                )}
               </TouchableOpacity>
             ))}
           </View>
         )}
+        <View style={{ height: 20 }} />
       </ScrollView>
     </ThemedView>
   );
@@ -307,7 +440,7 @@ export default function BookingsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#151718',
+    backgroundColor: '#111214',
   },
   header: {
     flexDirection: 'row',
@@ -315,44 +448,81 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingTop: 60,
-    paddingBottom: 20,
-    backgroundColor: '#1E1E1E',
+    paddingBottom: 16,
+    backgroundColor: '#1A1C1E',
   },
   headerTitle: {
     fontSize: 24,
     fontWeight: 'bold',
     color: '#fff',
   },
-  filterButton: {
-    padding: 8,
+  headerSubtitle: {
+    fontSize: 13,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+  refreshButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FF8C0015',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   tabContainer: {
-    flexDirection: 'row',
-    backgroundColor: '#1E1E1E',
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-    gap: 12,
+    backgroundColor: '#1A1C1E',
+    maxHeight: 56,
+    paddingBottom: 12,
+  },
+  tabScrollContent: {
+    paddingHorizontal: 16,
+    gap: 8,
   },
   tab: {
-    flex: 1,
-    paddingVertical: 10,
+    flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 8,
-    backgroundColor: '#2A2A2A',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    backgroundColor: '#222426',
   },
   activeTab: {
     backgroundColor: '#FF8C00',
   },
   tabText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: '#8E8E93',
   },
   activeTabText: {
     color: '#fff',
   },
+  tabCount: {
+    marginLeft: 6,
+    backgroundColor: '#333',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 5,
+  },
+  activeTabCount: {
+    backgroundColor: 'rgba(255,255,255,0.25)',
+  },
+  tabCountText: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: '#8E8E93',
+  },
+  activeTabCountText: {
+    color: '#fff',
+  },
   scrollView: {
     flex: 1,
+  },
+  scrollContent: {
+    paddingTop: 8,
   },
   loader: {
     marginTop: 40,
@@ -373,7 +543,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 12,
     backgroundColor: '#FF8C00',
-    borderRadius: 8,
+    borderRadius: 10,
   },
   retryText: {
     color: '#fff',
@@ -383,65 +553,105 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: 40,
-    marginTop: 60,
+    marginTop: 40,
   },
-  emptyText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#fff',
-    marginTop: 16,
-  },
-  emptySubtext: {
-    fontSize: 14,
-    color: '#8E8E93',
-    marginTop: 8,
-  },
-  bookingsList: {
-    padding: 20,
-  },
-  bookingCard: {
-    backgroundColor: '#1E1E1E',
-    borderRadius: 12,
-    padding: 16,
+  emptyIconCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#1A1C1E',
+    justifyContent: 'center',
+    alignItems: 'center',
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#2A2A2A',
+    borderColor: '#2A2C2E',
   },
-  cardHeader: {
+  emptyText: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: '#888',
+  },
+  emptySubtext: {
+    fontSize: 13,
+    color: '#555',
+    marginTop: 6,
+    textAlign: 'center',
+    paddingHorizontal: 20,
+  },
+  bookingsList: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  bookingCard: {
+    backgroundColor: '#1A1C1E',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+  },
+  cardTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: 12,
   },
+  cardTopLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  statusIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 2,
+  },
   statusBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     borderRadius: 6,
   },
   statusText: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: 'bold',
     color: '#fff',
+    letterSpacing: 0.5,
   },
   bookingId: {
-    fontSize: 14,
-    color: '#8E8E93',
+    fontSize: 12,
+    color: '#666',
     fontWeight: '600',
   },
   requestType: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
-    color: '#fff',
+    color: '#ccc',
+  },
+  timeAgo: {
+    fontSize: 11,
+    color: '#666',
+  },
+  cardInfoSection: {
+    gap: 6,
     marginBottom: 12,
+    paddingLeft: 50,
   },
   infoRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginBottom: 8,
   },
   infoText: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#8E8E93',
     flex: 1,
   },
@@ -449,28 +659,70 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 12,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: '#2A2A2A',
+    borderTopColor: '#222426',
   },
   amount: {
     fontSize: 18,
     fontWeight: 'bold',
     color: '#34C759',
   },
-  actionButton: {
+  pendingActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  declineBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#2A2C2E',
+  },
+  declineBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#aaa',
+  },
+  acceptBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#FF8C00',
-    paddingHorizontal: 12,
+    gap: 5,
+    paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: 6,
+    borderRadius: 8,
+    backgroundColor: '#34C759',
   },
-  actionText: {
+  acceptBtnText: {
     fontSize: 12,
     fontWeight: '600',
     color: '#fff',
+  },
+  detailsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#FF8C0015',
+  },
+  detailsBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#FF8C00',
+  },
+  jobDoneBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#222426',
+  },
+  jobDoneText: {
+    fontSize: 12,
+    color: '#34C759',
+    fontWeight: '500',
   },
 });
