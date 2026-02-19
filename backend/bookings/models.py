@@ -1,5 +1,6 @@
 from django.db import models
-from users.models import Client, Account, Admin
+from django.utils import timezone
+from users.models import Client, Account, Admin, Mechanic
 from services.models import Service, ServiceAddOn
 
 class ServiceLocation(models.Model):
@@ -14,6 +15,7 @@ class Request(models.Model):
         CUSTOM = "custom"
         DIRECT = "direct"
         EMERGENCY = "emergency"
+        BROADCAST = "broadcast"
 
     client = models.ForeignKey(Client, on_delete=models.CASCADE)
     provider = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="provided_requests", null=True, blank=True)
@@ -117,3 +119,111 @@ class CompleteBooking(models.Model):
     completed_at = models.DateTimeField(auto_now_add=True)
     total_amount = models.DecimalField(max_digits=10, decimal_places=2)
     notes = models.TextField(null=True, blank=True)
+
+
+class BroadcastRequest(models.Model):
+    """
+    Broadcast Request - Similar to Uber/Grab ride-hailing flow.
+    Multiple mechanics can see and attempt to accept.
+    First to accept wins and gets the booking.
+    """
+    class Status(models.TextChoices):
+        SEARCHING = "searching"      # Looking for mechanics
+        ACCEPTED = "accepted"         # A mechanic has been assigned
+        EXPIRED = "expired"           # Time limit passed
+        CANCELLED = "cancelled"       # Client cancelled
+
+    request = models.OneToOneField(Request, on_delete=models.CASCADE, related_name='broadcast_request')
+    services = models.ManyToManyField(Service, related_name='broadcast_requests')
+    description = models.TextField()
+    concern_picture = models.ImageField(upload_to='requests/broadcast/', null=True, blank=True)
+    
+    # Broadcast-specific fields
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.SEARCHING)
+    latitude = models.DecimalField(max_digits=9, decimal_places=6)  # -90 to 90
+    longitude = models.DecimalField(max_digits=9, decimal_places=6)  # -180 to 180
+    expires_at = models.DateTimeField()
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    accepted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'bookings_broadcastrequest'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status', 'expires_at']),
+            models.Index(fields=['latitude', 'longitude']),
+        ]
+
+    def __str__(self):
+        return f"Broadcast Request {self.id} - {self.status}"
+
+    def is_expired(self):
+        """Check if the broadcast request has expired"""
+        return timezone.now() > self.expires_at and self.status == self.Status.SEARCHING
+
+    def can_accept_offers(self):
+        """Check if mechanics can still accept this broadcast"""
+        return self.status == self.Status.SEARCHING and not self.is_expired()
+
+
+class BroadcastRequestAddOn(models.Model):
+    """
+    Service add-ons for broadcast requests.
+    Allows clients to specify additional services beyond the main services.
+    """
+    broadcast_request = models.ForeignKey(
+        BroadcastRequest, 
+        on_delete=models.CASCADE, 
+        related_name='add_ons'
+    )
+    service_add_on = models.ForeignKey(
+        ServiceAddOn, 
+        on_delete=models.CASCADE,
+        related_name='broadcast_requests'
+    )
+
+    class Meta:
+        db_table = 'bookings_broadcastrequestaddon'
+        unique_together = [['broadcast_request', 'service_add_on']]
+
+    def __str__(self):
+        return f"AddOn for Broadcast {self.broadcast_request_id}: {self.service_add_on}"
+
+
+class BroadcastOffer(models.Model):
+    """
+    Tracks mechanics attempting to accept broadcast requests.
+    Only used for broadcast flow - prevents race conditions.
+    """
+    class Status(models.TextChoices):
+        PENDING = "pending"           # Offer submitted, waiting
+        ACCEPTED = "accepted"         # This mechanic won
+        REJECTED = "rejected"         # Another mechanic was faster
+
+    broadcast_request = models.ForeignKey(
+        BroadcastRequest, 
+        on_delete=models.CASCADE, 
+        related_name='offers'
+    )
+    mechanic = models.ForeignKey(
+        Mechanic, 
+        on_delete=models.CASCADE, 
+        related_name='broadcast_offers'
+    )
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    created_at = models.DateTimeField(auto_now_add=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'bookings_broadcastoffer'
+        ordering = ['created_at']  # First-come-first-served
+        unique_together = [['broadcast_request', 'mechanic']]  # One offer per mechanic per broadcast
+        indexes = [
+            models.Index(fields=['broadcast_request', 'status']),
+            models.Index(fields=['mechanic', 'created_at']),
+        ]
+
+    def __str__(self):
+        return f"Offer by Mechanic {self.mechanic_id} for Broadcast {self.broadcast_request_id} - {self.status}"
