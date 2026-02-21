@@ -9,6 +9,7 @@ export default function RequestLayout() {
       }}>
       <Stack.Screen name="direct" options={{ headerShown: false }} />
       <Stack.Screen name="custom" options={{ headerShown: false }} />
+      <Stack.Screen name="broadcast" options={{ headerShown: false }} />
       <Stack.Screen name="emergency" options={{ headerShown: false }} />
       <Stack.Screen name="aiRecommend" options={{ headerShown: false }} />
     </Stack>

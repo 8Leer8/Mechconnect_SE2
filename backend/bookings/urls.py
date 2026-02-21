@@ -9,6 +9,7 @@ urlpatterns = [
     path('requests/custom/create/', views.create_custom_request, name='create-custom-request'),
     path('requests/direct/create/', views.create_direct_request, name='create-direct-request'),
     path('requests/emergency/create/', views.create_emergency_request, name='create-emergency-request'),
+    path('requests/broadcast/create/', views.create_broadcast_request, name='create-broadcast-request'),
     path('requests/<int:request_id>/cancel/', views.cancel_request, name='cancel-request'),
     
     # Direct request discovery/creation (client side)

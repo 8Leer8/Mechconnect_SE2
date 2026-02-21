@@ -47,13 +47,15 @@ def list_requests(request):
         ).prefetch_related(
             'customrequest',
             'directrequest',
-            'emergencyrequest'
+            'emergencyrequest',
+            'broadcast_request'
         ).order_by('-created_at')
         
         # Separate by type
         custom_requests = []
         direct_requests = []
         emergency_requests = []
+        broadcast_requests = []
         
         for req in all_requests:
             if req.request_type == 'custom' and hasattr(req, 'customrequest'):
@@ -135,12 +137,39 @@ def list_requests(request):
                     'created_at': req.created_at.isoformat(),
                     'has_booking': hasattr(req, 'booking')
                 })
+            elif req.request_type == 'broadcast' and hasattr(req, 'broadcast_request'):
+                # Get services for this broadcast request
+                broadcast_services = req.broadcast_request.services.all()
+                
+                broadcast_requests.append({
+                    'id': req.id,
+                    'provider': {
+                        'id': req.provider.id,
+                        'name': f"{req.provider.firstname} {req.provider.lastname}"
+                    } if req.provider else None,
+                    'description': req.broadcast_request.description,
+                    'services': [{
+                        'id': service.id,
+                        'name': service.name
+                    } for service in broadcast_services],
+                    'status': req.broadcast_request.status,
+                    'concern_picture': req.broadcast_request.concern_picture.url if req.broadcast_request.concern_picture else None,
+                    'service_location': {
+                        'street_name': req.service_location.street_name,
+                        'barangay': req.service_location.barangay,
+                        'city_municipality': req.service_location.city_municipality,
+                    } if req.service_location else None,
+                    'created_at': req.created_at.isoformat(),
+                    'expires_at': req.broadcast_request.expires_at.isoformat(),
+                    'has_booking': hasattr(req, 'booking')
+                })
         
         return Response({
             'custom_requests': custom_requests,
             'direct_requests': direct_requests,
             'emergency_requests': emergency_requests,
-            'total_count': len(custom_requests) + len(direct_requests) + len(emergency_requests)
+            'broadcast_requests': broadcast_requests,
+            'total_count': len(custom_requests) + len(direct_requests) + len(emergency_requests) + len(broadcast_requests)
         }, status=status.HTTP_200_OK)
     
     except Account.DoesNotExist:

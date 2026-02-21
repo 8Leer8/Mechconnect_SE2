@@ -4,6 +4,7 @@ from .client_request_list_views import *
 from .client_request_create_views import *
 from .client_booking_views import *
 from .directrequest import *
+from .broadcast_request_views import *
 from .mechanic_booking_views import (
     list_mechanic_bookings,
     get_mechanic_booking_detail,
@@ -24,6 +25,7 @@ __all__ = [
     'create_custom_request',
     'create_direct_request',
     'create_emergency_request',
+    'create_broadcast_request',
     
     # Client booking views
     'list_client_bookings',

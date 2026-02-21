@@ -48,7 +48,7 @@ interface DirectRequest {
   has_booking: boolean;
 }
 
-interface EmergencyRequest {
+interface BroadcastRequest {
   id: number;
   provider: { id: number; name: string } | null;
   description: string;
@@ -66,7 +66,7 @@ interface EmergencyRequest {
 interface RequestsResponse {
   custom_requests: CustomRequest[];
   direct_requests: DirectRequest[];
-  emergency_requests: EmergencyRequest[];
+  broadcast_requests: BroadcastRequest[];
   total_count: number;
 }
 
@@ -74,13 +74,13 @@ interface ErrorResponse {
   error: string;
 }
 
-type TabType = 'custom' | 'direct' | 'emergency';
+type TabType = 'custom' | 'direct' | 'broadcast';
 
 export default function RequestScreen() {
   const [activeTab, setActiveTab] = useState<TabType>('custom');
   const [customRequests, setCustomRequests] = useState<CustomRequest[]>([]);
   const [directRequests, setDirectRequests] = useState<DirectRequest[]>([]);
-  const [emergencyRequests, setEmergencyRequests] = useState<EmergencyRequest[]>([]);
+  const [broadcastRequests, setBroadcastRequests] = useState<BroadcastRequest[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -109,7 +109,7 @@ export default function RequestScreen() {
       
       setCustomRequests(data.custom_requests || []);
       setDirectRequests(data.direct_requests || []);
-      setEmergencyRequests(data.emergency_requests || []);
+      setBroadcastRequests(data.broadcast_requests || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
       console.error('Error fetching requests:', err);
@@ -147,9 +147,9 @@ export default function RequestScreen() {
     } else if (activeTab === 'custom') {
       // router.push('/client/request/custom/create');
       console.log('Navigate to custom request creation');
-    } else if (activeTab === 'emergency') {
-      // router.push('/client/request/emergency/create');
-      console.log('Navigate to emergency request creation');
+    } else if (activeTab === 'broadcast') {
+      router.push('/client/request/broadcast/broadcastrequest' as any);
+      
     }
   };
 
@@ -265,23 +265,23 @@ export default function RequestScreen() {
     });
   };
 
-  const renderEmergencyRequests = () => {
+  const renderBroadcastRequests = () => {
     if (loading) return <ActivityIndicator size="large" color="#FF8C00" />;
     if (error) return <ThemedText style={styles.errorText}>{error}</ThemedText>;
-    if (emergencyRequests.length === 0) {
+    if (broadcastRequests.length === 0) {
       return (
         <View style={styles.emptyCard}>
-          <ThemedText style={styles.emptyText}>No emergency requests yet</ThemedText>
+          <ThemedText style={styles.emptyText}>No broadcast requests yet</ThemedText>
         </View>
       );
     }
 
-    return emergencyRequests.map((request) => (
+    return broadcastRequests.map((request) => (
       <View key={request.id} style={styles.card}>
         <View style={styles.cardHeader}>
-          <ThemedText style={styles.cardTitle}>Emergency Request #{request.id}</ThemedText>
+          <ThemedText style={styles.cardTitle}>Broadcast Request #{request.id}</ThemedText>
           <View style={styles.emergencyBadge}>
-            <ThemedText style={styles.statusText}>⚠ EMERGENCY</ThemedText>
+            <ThemedText style={styles.statusText}>📢 BROADCAST</ThemedText>
           </View>
         </View>
         <ThemedText style={styles.cardText} numberOfLines={2}>
@@ -345,11 +345,11 @@ export default function RequestScreen() {
           </ThemedText>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.tab, activeTab === 'emergency' && styles.activeTab]}
-          onPress={() => setActiveTab('emergency')}
+          style={[styles.tab, activeTab === 'broadcast' && styles.activeTab]}
+          onPress={() => setActiveTab('broadcast')}
         >
-          <ThemedText style={[styles.tabText, activeTab === 'emergency' && styles.activeTabText]}>
-            Emergency
+          <ThemedText style={[styles.tabText, activeTab === 'broadcast' && styles.activeTabText]}>
+            Broadcast
           </ThemedText>
         </TouchableOpacity>
       </View>
@@ -367,7 +367,7 @@ export default function RequestScreen() {
       <ScrollView style={styles.scrollView}>
         {activeTab === 'custom' && renderCustomRequests()}
         {activeTab === 'direct' && renderDirectRequests()}
-        {activeTab === 'emergency' && renderEmergencyRequests()}
+        {activeTab === 'broadcast' && renderBroadcastRequests()}
       </ScrollView>
     </ThemedView>
   );
