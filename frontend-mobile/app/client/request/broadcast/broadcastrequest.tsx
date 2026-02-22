@@ -57,11 +57,8 @@ export default function BroadcastRequestScreen() {
   }, []);
 
   // Handle location data from map screen when returning to this screen
-  // Only update if new location params are provided (from Confirm)
-  // Do NOT clear location if params are undefined (from Cancel)
   useFocusEffect(
     React.useCallback(() => {
-      // Only update location state if we have new location data from the map
       if (params.selectedLatitude && params.selectedLongitude) {
         setLatitude(parseFloat(params.selectedLatitude as string));
         setLongitude(parseFloat(params.selectedLongitude as string));
@@ -70,7 +67,6 @@ export default function BroadcastRequestScreen() {
         setCityMunicipality(params.selectedCity as string || '');
         setBarangay(params.selectedBarangay as string || '');
       }
-      // If params are undefined/empty (Cancel was pressed), do nothing - keep existing location
     }, [params.selectedLatitude, params.selectedLongitude, params.selectedAddress, params.selectedStreet, params.selectedCity, params.selectedBarangay])
   );
 
