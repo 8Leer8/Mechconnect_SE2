@@ -4,7 +4,11 @@ from .client_request_list_views import *
 from .client_request_create_views import *
 from .client_booking_views import *
 from .directrequest import *
-from .broadcast_request_views import *
+from .broadcast_request_views import create_broadcast_request
+from .mechanic_broadcast_request_views import (
+    get_active_broadcasts,
+    accept_broadcast_request,
+)
 from .mechanic_booking_views import (
     list_mechanic_bookings,
     get_mechanic_booking_detail,
@@ -26,6 +30,10 @@ __all__ = [
     'create_direct_request',
     'create_emergency_request',
     'create_broadcast_request',
+    
+    # Broadcast request views
+    'get_active_broadcasts',
+    'accept_broadcast_request',
     
     # Client booking views
     'list_client_bookings',

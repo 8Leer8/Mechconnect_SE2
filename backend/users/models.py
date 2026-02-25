@@ -14,6 +14,12 @@ class Account(models.Model):
     is_active = models.BooleanField(default=True)
     is_verified = models.BooleanField(default=False)
     last_login = models.DateTimeField(null=True, blank=True)
+    last_active_role = models.CharField(
+        max_length=20, 
+        null=True, 
+        blank=True,
+        help_text="Last role the user was using before logout"
+    )
 
 class AccountAddress(models.Model):
     account = models.OneToOneField(Account, on_delete=models.CASCADE)

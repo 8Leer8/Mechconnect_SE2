@@ -23,7 +23,14 @@ interface LoginResponse {
   username?: string[];
   password?: string[];
   account?: string[];
+  message?: string;
+  active_role?: string;
   [key: string]: any;
+}
+
+interface ActiveRoleResponse {
+  active_role: string;
+  roles?: string[];
 }
 
 export default function LoginScreen() {
@@ -64,6 +71,7 @@ export default function LoginScreen() {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({
           username,
           password,
@@ -75,9 +83,47 @@ export default function LoginScreen() {
       const data = await response.json() as LoginResponse;
 
       if (response.ok) {
-        Alert.alert('Success', 'Login successful!');
-        // Navigate to main app
-        router.replace('/(clientTabs)/main/home');
+        console.log('Login successful');
+        
+        // Get active role from login response or fetch it
+        let activeRole = data.active_role;
+        
+        if (!activeRole) {
+          // Fallback: fetch the active role if not included in login response
+          console.log('Active role not in response, fetching...');
+          try {
+            const roleResponse = await fetch(`${API_URL}/users/profile/active-role/`, {
+              method: 'GET',
+              credentials: 'include',
+              headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+              },
+            });
+
+            if (roleResponse.ok) {
+              const roleData = await roleResponse.json() as ActiveRoleResponse;
+              activeRole = roleData.active_role;
+            }
+          } catch (roleError) {
+            console.error('Error fetching role:', roleError);
+          }
+        }
+        
+        console.log('Active role:', activeRole);
+        
+        // Navigate based on active role
+        if (activeRole === 'mechanic') {
+          Alert.alert('Success', 'Login successful!');
+          router.replace('/(mechanicTabs)/main/home');
+        } else if (activeRole === 'shop_owner') {
+          Alert.alert('Success', 'Login successful!');
+          router.replace('/(shopownerTabs)/main/home');
+        } else {
+          // Default to client
+          Alert.alert('Success', 'Login successful!');
+          router.replace('/(clientTabs)/main/home');
+        }
       } else {
         const errorMessage = data.username?.[0] || data.password?.[0] || data.account?.[0] || 'Login failed';
         Alert.alert('Error', errorMessage);

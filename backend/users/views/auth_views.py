@@ -55,9 +55,21 @@ def login(request):
         roles = list(account.accountrole_set.values_list('account_role', flat=True))
         request.session['roles'] = roles
         
+        # Set active role: use last_active_role if available, otherwise default to client
+        if account.last_active_role and account.last_active_role in roles:
+            # User's last active role is still valid
+            request.session['active_role'] = account.last_active_role
+        elif 'client' in roles:
+            request.session['active_role'] = 'client'
+        elif roles:
+            request.session['active_role'] = roles[0]
+        else:
+            request.session['active_role'] = 'client'  # Default to client
+        
         return Response({
             'message': 'Login successful',
-            'account': AccountSerializer(account).data
+            'account': AccountSerializer(account).data,
+            'active_role': request.session['active_role']
         }, status=status.HTTP_200_OK)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -66,9 +78,21 @@ def login(request):
 @permission_classes([AllowAny])
 def logout(request):
     """
-    Logout current user
+    Logout current user and save their last active role
     """
     try:
+        # Save the current active role before logging out
+        account_id = request.session.get('account_id')
+        active_role = request.session.get('active_role')
+        
+        if account_id and active_role:
+            try:
+                account = Account.objects.get(id=account_id)
+                account.last_active_role = active_role
+                account.save(update_fields=['last_active_role'])
+            except Account.DoesNotExist:
+                pass  # Account not found, continue with logout
+        
         request.session.flush()
         return Response({
             'message': 'Logout successful'

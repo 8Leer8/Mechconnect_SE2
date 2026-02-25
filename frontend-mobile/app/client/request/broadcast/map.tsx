@@ -11,6 +11,7 @@ import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { ThemedText } from '@/components/themed-text';
 import { router, useLocalSearchParams } from 'expo-router';
+import { useLocation } from './LocationContext';
 
 interface LocationData {
   latitude: number;
@@ -23,6 +24,7 @@ interface LocationData {
 
 export default function MapScreen() {
   const params = useLocalSearchParams();
+  const { setSelectedLocation } = useLocation();
   const mapRef = useRef<MapView>(null);
   
   // Get initial coordinates if passed from broadcast screen
@@ -36,7 +38,7 @@ export default function MapScreen() {
     longitudeDelta: number;
   } | null>(null);
   
-  const [selectedLocation, setSelectedLocation] = useState<{
+  const [markerLocation, setMarkerLocation] = useState<{
     latitude: number;
     longitude: number;
   } | null>(null);
@@ -58,7 +60,7 @@ export default function MapScreen() {
         longitudeDelta: 0.0421,
       };
       setRegion(initialRegion);
-      setSelectedLocation({ latitude: initialLat, longitude: initialLng });
+      setMarkerLocation({ latitude: initialLat, longitude: initialLng });
       await getAddressFromCoords(initialLat, initialLng);
       setLoading(false);
       return;
@@ -86,22 +88,39 @@ export default function MapScreen() {
         return;
       }
 
-      // Get current location
-      const location = await Location.getCurrentPositionAsync({
+      // Get current location with timeout
+      const locationPromise = Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Balanced,
       });
 
-      const currentRegion = {
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
-        latitudeDelta: 0.0922,
-        longitudeDelta: 0.0421,
-      };
-      setRegion(currentRegion);      
+      const timeoutPromise = new Promise<null>((resolve) => {
+        setTimeout(() => resolve(null), 5000); // 5 second timeout
+      });
+
+      const location = await Promise.race([locationPromise, timeoutPromise]);
+
+      if (location) {
+        const currentRegion = {
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude,
+          latitudeDelta: 0.0922,
+          longitudeDelta: 0.0421,
+        };
+        setRegion(currentRegion);
+      } else {
+        // Timeout - use default location
+        console.log('Location fetch timeout, using default location');
+        const fallbackRegion = {
+          latitude: 14.5995,
+          longitude: 120.9842,
+          latitudeDelta: 0.0922,
+          longitudeDelta: 0.0421,
+        };
+        setRegion(fallbackRegion);
+      }
       setLoading(false);
     } catch (error) {
       console.error('Error getting location:', error);
-      Alert.alert('Error', 'Failed to get your current location. Please select a location manually.');
       const fallbackRegion = {
         latitude: 14.5995,
         longitude: 120.9842,
@@ -141,12 +160,12 @@ export default function MapScreen() {
   const handleMapPress = async (event: any) => {
     const { latitude, longitude } = event.nativeEvent.coordinate;
     
-    setSelectedLocation({ latitude, longitude });
+    setMarkerLocation({ latitude, longitude });
     await getAddressFromCoords(latitude, longitude);
   };
 
   const handleConfirm = async () => {
-    if (!selectedLocation) {
+    if (!markerLocation) {
       Alert.alert('Error', 'Please select a location on the map');
       return;
     }
@@ -155,13 +174,13 @@ export default function MapScreen() {
 
     try {
       const results = await Location.reverseGeocodeAsync({
-        latitude: selectedLocation.latitude,
-        longitude: selectedLocation.longitude,
+        latitude: markerLocation.latitude,
+        longitude: markerLocation.longitude,
       });
 
       let locationData: LocationData = {
-        latitude: selectedLocation.latitude,
-        longitude: selectedLocation.longitude,
+        latitude: markerLocation.latitude,
+        longitude: markerLocation.longitude,
         address: address || 'Location selected',
         streetName: '',
         city: '',
@@ -171,25 +190,18 @@ export default function MapScreen() {
       if (results && results.length > 0) {
         const location = results[0];
         locationData = {
-          latitude: selectedLocation.latitude,
-          longitude: selectedLocation.longitude,
+          latitude: markerLocation.latitude,
+          longitude: markerLocation.longitude,
           address: address,
           streetName: location.street || location.name || '',
           city: location.city || location.region || '',
           barangay: location.district || location.subregion || '',
         };
       }
-      router.replace({
-        pathname: '/client/request/broadcast/broadcastrequest',
-        params: {
-          selectedLatitude: locationData.latitude.toString(),
-          selectedLongitude: locationData.longitude.toString(),
-          selectedAddress: locationData.address,
-          selectedStreet: locationData.streetName,
-          selectedCity: locationData.city,
-          selectedBarangay: locationData.barangay,
-        },
-      });
+      
+      // Save location to context and go back
+      setSelectedLocation(locationData);
+      router.back();
     } catch (error) {
       console.error('Error confirming location:', error);
       Alert.alert('Error', 'Failed to confirm location');
@@ -218,9 +230,9 @@ export default function MapScreen() {
         showsUserLocation
         showsMyLocationButton
       >
-        {selectedLocation && (
+        {markerLocation && (
           <Marker
-            coordinate={selectedLocation}
+            coordinate={markerLocation}
             title="Selected Location"
             description={address}
             pinColor="#FF8C00"
@@ -242,7 +254,7 @@ export default function MapScreen() {
         <View style={styles.buttonContainer}>
           <TouchableOpacity
             style={styles.cancelButton}
-            onPress={() => router.replace('/client/request/broadcast/broadcastrequest')}
+            onPress={() => router.back()}
           >
             <ThemedText style={styles.cancelButtonText}>Cancel</ThemedText>
           </TouchableOpacity>
@@ -250,10 +262,10 @@ export default function MapScreen() {
           <TouchableOpacity
             style={[
               styles.confirmButton,
-              !selectedLocation && styles.confirmButtonDisabled,
+              !markerLocation && styles.confirmButtonDisabled,
             ]}
             onPress={handleConfirm}
-            disabled={!selectedLocation || confirming}
+            disabled={!markerLocation || confirming}
           >
             {confirming ? (
               <ActivityIndicator color="#FFF" />

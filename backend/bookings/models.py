@@ -213,6 +213,27 @@ class BroadcastOffer(models.Model):
         related_name='broadcast_offers'
     )
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    
+    # Mechanic location when accepting (for distance calculation)
+    mechanic_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    mechanic_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    
+    # Calculated distance and pricing
+    distance_km = models.DecimalField(
+        max_digits=6, 
+        decimal_places=2, 
+        null=True, 
+        blank=True,
+        help_text="Distance from mechanic to service location in kilometers"
+    )
+    estimated_price = models.DecimalField(
+        max_digits=10, 
+        decimal_places=2, 
+        null=True, 
+        blank=True,
+        help_text="Estimated total price: service minimum prices + distance charge (₱10/km, min 5km)"
+    )
+    
     created_at = models.DateTimeField(auto_now_add=True)
     responded_at = models.DateTimeField(null=True, blank=True)
 

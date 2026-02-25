@@ -12,8 +12,9 @@ import {
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { TopNav } from '@/components/navigation';
-import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import { useLocation } from './LocationContext';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -35,7 +36,7 @@ interface CreateRequestResponse {
 }
 
 export default function BroadcastRequestScreen() {
-  const params = useLocalSearchParams();
+  const { selectedLocation, setSelectedLocation } = useLocation();
   const [services, setServices] = useState<Service[]>([]);
   const [selectedServiceIds, setSelectedServiceIds] = useState<number[]>([]);
   const [description, setDescription] = useState('');
@@ -59,15 +60,17 @@ export default function BroadcastRequestScreen() {
   // Handle location data from map screen when returning to this screen
   useFocusEffect(
     React.useCallback(() => {
-      if (params.selectedLatitude && params.selectedLongitude) {
-        setLatitude(parseFloat(params.selectedLatitude as string));
-        setLongitude(parseFloat(params.selectedLongitude as string));
-        setSelectedAddress(params.selectedAddress as string || '');
-        setStreetName(params.selectedStreet as string || '');
-        setCityMunicipality(params.selectedCity as string || '');
-        setBarangay(params.selectedBarangay as string || '');
+      if (selectedLocation) {
+        setLatitude(selectedLocation.latitude);
+        setLongitude(selectedLocation.longitude);
+        setSelectedAddress(selectedLocation.address);
+        setStreetName(selectedLocation.streetName);
+        setCityMunicipality(selectedLocation.city);
+        setBarangay(selectedLocation.barangay);
+        // Clear the context after reading
+        setSelectedLocation(null);
       }
-    }, [params.selectedLatitude, params.selectedLongitude, params.selectedAddress, params.selectedStreet, params.selectedCity, params.selectedBarangay])
+    }, [selectedLocation])
   );
 
   const fetchServices = async () => {
@@ -95,6 +98,13 @@ export default function BroadcastRequestScreen() {
         ? prev.filter((id) => id !== serviceId)
         : [...prev, serviceId]
     );
+  };
+
+  // Calculate total minimum price for selected services
+  const getTotalMinimumPrice = () => {
+    return services
+      .filter((service) => selectedServiceIds.includes(service.id))
+      .reduce((sum, service) => sum + service.minimum_price, 0);
   };
 
   const pickImage = async () => {
@@ -140,7 +150,7 @@ export default function BroadcastRequestScreen() {
 
   const handleSelectLocation = () => {
     if (selectedAddress && latitude !== null && longitude !== null) {
-      router.replace({
+      router.push({
         pathname: '/client/request/broadcast/map',
         params: {
           latitude: latitude.toString(),
@@ -148,7 +158,7 @@ export default function BroadcastRequestScreen() {
         },
       });
     } else {
-      router.replace('/client/request/broadcast/map');
+      router.push('/client/request/broadcast/map');
     }
   };
 
@@ -269,17 +279,32 @@ export default function BroadcastRequestScreen() {
                     ]}
                     onPress={() => toggleService(service.id)}
                   >
-                    <ThemedText style={[
-                      styles.serviceCardText,
-                      selectedServiceIds.includes(service.id) && styles.serviceCardTextSelected,
-                    ]}>
-                      {service.name}
-                    </ThemedText>
-                    {selectedServiceIds.includes(service.id) && (
-                      <ThemedText style={styles.checkmark}>✓</ThemedText>
-                    )}
+                    <View style={styles.serviceCardContent}>
+                      <ThemedText style={[
+                        styles.serviceCardText,
+                        selectedServiceIds.includes(service.id) && styles.serviceCardTextSelected,
+                      ]}>
+                        {service.name}
+                      </ThemedText>
+                      <ThemedText style={[
+                        styles.servicePriceText,
+                        selectedServiceIds.includes(service.id) && styles.servicePriceTextSelected,
+                      ]}>
+                        ₱{service.minimum_price.toFixed(2)}
+                      </ThemedText>
+                    </View>
                   </TouchableOpacity>
                 ))}
+              </View>
+            )}
+            {selectedServiceIds.length > 0 && (
+              <View style={styles.priceBreakdown}>
+                <ThemedText style={styles.priceBreakdownText}>
+                  Total Service Minimum Price: ₱{getTotalMinimumPrice().toFixed(2)}
+                </ThemedText>
+                <ThemedText style={styles.priceBreakdownNote}>
+                  + Distance charge: ₱10/km from mechanic location
+                </ThemedText>
               </View>
             )}
           </View>
@@ -356,7 +381,6 @@ export default function BroadcastRequestScreen() {
                 onPress={handleSelectLocation}
               >
                 <View style={styles.locationButtonContent}>
-                  <ThemedText style={styles.locationButtonIcon}>📍</ThemedText>
                   <View style={styles.locationButtonTextContainer}>
                     <ThemedText style={styles.locationButtonText}>
                       Select Location from Map
@@ -448,13 +472,45 @@ const styles = StyleSheet.create({
     backgroundColor: '#FF8C00',
     borderColor: '#FF8C00',
   },
+  serviceCardContent: {
+    flex: 1,
+  },
   serviceCardText: {
     fontSize: 14,
     color: '#333',
+    marginBottom: 4,
   },
   serviceCardTextSelected: {
     color: '#FFF',
     fontWeight: '600',
+  },
+  servicePriceText: {
+    fontSize: 12,
+    color: '#666',
+    fontWeight: '500',
+  },
+  servicePriceTextSelected: {
+    color: '#FFF',
+    fontWeight: '600',
+  },
+  priceBreakdown: {
+    backgroundColor: '#FFF9E6',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#FFE4B5',
+  },
+  priceBreakdownText: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  priceBreakdownNote: {
+    fontSize: 12,
+    color: '#666',
+    fontStyle: 'italic',
   },
   checkmark: {
     color: '#FFF',

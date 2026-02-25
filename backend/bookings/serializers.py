@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from .models import (
     Booking, Request, CustomRequest, DirectRequest, EmergencyRequest,
-    ActiveBooking, ServiceLocation, DirectRequestAddOn
+    ActiveBooking, ServiceLocation, DirectRequestAddOn, BroadcastRequest, BroadcastOffer
 )
 from services.models import Service, ServiceAddOn
 from users.models import Account, Client
@@ -14,12 +14,16 @@ class ServiceLocationSerializer(serializers.ModelSerializer):
 
 
 class ServiceBasicSerializer(serializers.ModelSerializer):
+    minimum_price = serializers.FloatField()
+    
     class Meta:
         model = Service
         fields = ['id', 'name', 'description', 'minimum_price']
 
 
 class ServiceAddOnSerializer(serializers.ModelSerializer):
+    price = serializers.FloatField()
+    
     class Meta:
         model = ServiceAddOn
         fields = ['id', 'name', 'description', 'price']
@@ -121,3 +125,43 @@ class BookingSerializer(serializers.ModelSerializer):
 class HomePageSerializer(serializers.Serializer):
     current_bookings = BookingSerializer(many=True, read_only=True)
     pending_requests = RequestSerializer(many=True, read_only=True)
+
+
+class BroadcastRequestSerializer(serializers.ModelSerializer):
+    """Serializer for broadcast requests on mechanic map"""
+    services = ServiceBasicSerializer(many=True, read_only=True)
+    add_ons = serializers.SerializerMethodField()
+    concern_picture = serializers.SerializerMethodField()
+    latitude = serializers.FloatField()
+    longitude = serializers.FloatField()
+    
+    class Meta:
+        model = BroadcastRequest
+        fields = [
+            'id', 'description', 'latitude', 'longitude', 
+            'services', 'add_ons', 'created_at', 'expires_at',
+            'status', 'concern_picture'
+        ]
+    
+    def get_concern_picture(self, obj):
+        """Return full URL for concern picture"""
+        if obj.concern_picture:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.concern_picture.url)
+            return obj.concern_picture.url
+        return None
+    
+    def get_add_ons(self, obj):
+        from .models import BroadcastRequestAddOn
+        add_ons = BroadcastRequestAddOn.objects.filter(broadcast_request=obj).select_related('service_add_on')
+        return ServiceAddOnSerializer([addon.service_add_on for addon in add_ons], many=True).data
+
+
+class BroadcastOfferSerializer(serializers.ModelSerializer):
+    """Serializer for broadcast offers"""
+    mechanic = AccountBasicSerializer(source='mechanic.account', read_only=True)
+    
+    class Meta:
+        model = BroadcastOffer
+        fields = ['id', 'broadcast_request', 'mechanic', 'status', 'created_at', 'responded_at']

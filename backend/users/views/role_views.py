@@ -43,6 +43,10 @@ def switch_role(request):
             request.session['active_role'] = new_role
             request.session.modified = True
             
+            # Save the active role to the Account model for persistence
+            account.last_active_role = new_role
+            account.save(update_fields=['last_active_role'])
+            
             # Get profile data for new role
             profile_data = None
             if new_role == 'client' and hasattr(account, 'client'):
