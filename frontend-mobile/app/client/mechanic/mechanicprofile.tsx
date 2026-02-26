@@ -41,6 +41,7 @@ interface Specialty {
 
 interface MechanicProfile {
   id: number;
+  account_id: number;
   full_name: string;
   firstname: string;
   lastname: string;
@@ -186,7 +187,17 @@ export default function MechanicProfileScreen() {
           </View>
 
           {/* Direct Request Button */}
-          <TouchableOpacity style={styles.directRequestButton}>
+          <TouchableOpacity 
+            style={styles.directRequestButton}
+            onPress={() => {
+              const providerAccountId = profile.account_id || profile.id;
+              console.log('Direct Request pressed for provider account ID:', providerAccountId);
+              router.push({
+                pathname: '/client/request/direct/mechanicdirectrequest',
+                params: { mechanicId: String(providerAccountId) }
+              });
+            }}
+          >
             <Ionicons name="clipboard-outline" size={20} color="#ffffff" />
             <ThemedText style={styles.directRequestButtonText}>Direct Request</ThemedText>
           </TouchableOpacity>

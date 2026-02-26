@@ -472,6 +472,8 @@ class MechanicProfileSerializer(serializers.ModelSerializer):
     is_part_of_shop = serializers.BooleanField(source='is_working_for_shop', read_only=True)
     shop_name = serializers.SerializerMethodField()
     shop_id = serializers.IntegerField(source='shop.id', read_only=True, allow_null=True)
+    # Expose account id so clients can reference provider Account id
+    account_id = serializers.IntegerField(source='account.id', read_only=True)
     
     # Specialties
     specialties = serializers.SerializerMethodField()
@@ -487,7 +489,8 @@ class MechanicProfileSerializer(serializers.ModelSerializer):
         model = Mechanic
         fields = [
             'id', 'full_name', 'firstname', 'lastname', 'middlename',
-            'email', 'username', 'profile_photo_url', 'bio',
+                'account_id',
+                'email', 'username', 'profile_photo_url', 'bio',
             'average_rating', 'total_reviews', 'reviews',
             'years_active', 'account_created',
             'is_part_of_shop', 'shop_name', 'shop_id',

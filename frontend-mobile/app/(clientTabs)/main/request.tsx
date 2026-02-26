@@ -281,7 +281,7 @@ export default function RequestScreen() {
         <View style={styles.cardHeader}>
           <ThemedText style={styles.cardTitle}>Broadcast Request #{request.id}</ThemedText>
           <View style={styles.emergencyBadge}>
-            <ThemedText style={styles.statusText}>📢 BROADCAST</ThemedText>
+            <ThemedText style={styles.statusText}>BROADCAST</ThemedText>
           </View>
         </View>
         <ThemedText style={styles.cardText} numberOfLines={2}>
@@ -300,7 +300,7 @@ export default function RequestScreen() {
         </ThemedText>
         {request.has_booking && (
           <View style={styles.bookingBadge}>
-            <ThemedText style={styles.bookingText}>✓ Booked</ThemedText>
+            <ThemedText style={styles.bookingText}>Booked</ThemedText>
           </View>
         )}
       </View>

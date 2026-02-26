@@ -9,7 +9,8 @@ export default function DirectRequestLayout() {
       }}>
       <Stack.Screen name="choosePart" options={{ headerShown: false }} />
       <Stack.Screen name="mechanicdirectrequest" options={{ headerShown: false }} />
-      <Stack.Screen name="shopdirectrequest" options={{ headerShown: false }} />
+      {/* `shopdirectrequest` route is handled by file-based routing or not present,
+          defining it here causes an extraneous screen warning, so it's removed. */}
     </Stack>
   );
 }

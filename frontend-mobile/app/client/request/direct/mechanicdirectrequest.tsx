@@ -12,7 +12,7 @@ import {
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { TopNav } from '@/components/navigation';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Picker } from '@react-native-picker/picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
@@ -59,6 +59,8 @@ interface CreateRequestResponse {
 }
 
 export default function MechanicDirectRequestScreen() {
+  const params = useLocalSearchParams<{ mechanicId?: string | string[] }>();
+  const mechanicId = typeof params.mechanicId === 'string' ? params.mechanicId : Array.isArray(params.mechanicId) ? params.mechanicId[0] : undefined;
   const [mechanics, setMechanics] = useState<Mechanic[]>([]);
   const [selectedProviderId, setSelectedProviderId] = useState<number | null>(null);
   const [selectedServiceId, setSelectedServiceId] = useState<number | null>(null);
@@ -87,6 +89,29 @@ export default function MechanicDirectRequestScreen() {
   }, []);
 
   useEffect(() => {
+    
+    if (mechanicId && mechanics.length > 0) {
+      try {
+        const mechanicIdNum = parseInt(mechanicId, 10);        
+        const mechanicExists = mechanics.some(m => m.id === mechanicIdNum);        
+        if (!isNaN(mechanicIdNum) && mechanicExists) {
+          console.log('Setting selected provider to:', mechanicIdNum);
+          setSelectedProviderId(mechanicIdNum);
+        } else if (!isNaN(mechanicIdNum) && !mechanicExists) {
+          console.log('Mechanic ID not found in mechanics list. Available IDs:', mechanics.map(m => m.id));
+          Alert.alert(
+            'Mechanic Not Available',
+            'This mechanic is not currently available for direct requests. Please select another mechanic from the dropdown.',
+            [{ text: 'OK' }]
+          );
+        }
+      } catch (error) {
+        console.error('Error parsing mechanicId:', error);
+      }
+    }
+  }, [mechanicId, mechanics]);
+
+  useEffect(() => {
     if (selectedProviderId) {
       fetchMechanicServices(selectedProviderId);
     } else {
@@ -112,6 +137,8 @@ export default function MechanicDirectRequestScreen() {
       const data = await response.json() as MechanicsResponse;
       if (response.ok) {
         setMechanics(data.mechanics || []);
+      } else {
+        console.error('Failed to fetch mechanics:', response.status);
       }
     } catch (error) {
       console.error('Error fetching mechanics:', error);
