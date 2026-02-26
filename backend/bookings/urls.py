@@ -16,6 +16,9 @@ urlpatterns = [
     path('broadcasts/active/', views.get_active_broadcasts, name='get-active-broadcasts'),
     path('broadcasts/<int:broadcast_id>/accept/', views.accept_broadcast_request, name='accept-broadcast-request'),
     
+    # Broadcast request endpoints (client side)
+    path('requests/<int:request_id>/broadcast/resend/', views.resend_broadcast_request, name='resend-broadcast-request'),
+    
     # Direct request discovery/creation (client side)
     path('direct/mechanics/', views.get_mechanics, name='get-mechanics'),
     path('direct/mechanics/<int:mechanic_id>/services/', views.get_mechanic_services, name='get-mechanic-services'),

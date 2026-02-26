@@ -2,8 +2,10 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
+from django.utils import timezone
+from datetime import timedelta
 
-from ..models import Request, DirectRequestAddOn
+from ..models import Request, DirectRequestAddOn, BroadcastRequest
 from users.models import Account
 from services.models import MechanicService
 
@@ -138,6 +140,11 @@ def list_requests(request):
                     'has_booking': hasattr(req, 'booking')
                 })
             elif req.request_type == 'broadcast' and hasattr(req, 'broadcast_request'):
+                # Update status to expired if time has passed and still searching
+                if req.broadcast_request.is_expired():
+                    req.broadcast_request.status = BroadcastRequest.Status.EXPIRED
+                    req.broadcast_request.save()
+                
                 # Get services for this broadcast request
                 broadcast_services = req.broadcast_request.services.all()
                 
@@ -223,6 +230,12 @@ def cancel_request(request, request_id):
                 }, status=status.HTTP_400_BAD_REQUEST)
             req.directrequest.request_status = 'cancelled'
             req.directrequest.save()
+        elif req.request_type == 'broadcast' and hasattr(req, 'broadcast_request'):
+            # For broadcast requests, delete the entire request
+            req.delete()
+            return Response({
+                'message': 'Broadcast request deleted successfully'
+            }, status=status.HTTP_200_OK)
         else:
             return Response({
                 'error': 'Invalid request type for cancellation'
@@ -230,6 +243,78 @@ def cancel_request(request, request_id):
         
         return Response({
             'message': 'Request cancelled successfully'
+        }, status=status.HTTP_200_OK)
+    
+    except Request.DoesNotExist:
+        return Response({
+            'error': 'Request not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Account.DoesNotExist:
+        return Response({
+            'error': 'Account not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def resend_broadcast_request(request, request_id):
+    """
+    Resend/Reactivate an expired broadcast request by updating its status to SEARCHING
+    and setting a new expiration time (30 minutes from now).
+    """
+    account_id = request.session.get('account_id')
+    
+    if not account_id:
+        return Response({
+            'error': 'Authentication required'
+        }, status=status.HTTP_401_UNAUTHORIZED)
+    
+    try:
+        account = Account.objects.get(id=account_id)
+        
+        if not hasattr(account, 'client'):
+            return Response({
+                'error': 'Only clients can resend broadcast requests'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        client = account.client
+        
+        # Get the request and verify it belongs to the client
+        req = Request.objects.get(id=request_id, client=client, request_type='broadcast')
+        
+        if not hasattr(req, 'broadcast_request'):
+            return Response({
+                'error': 'This is not a broadcast request'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        broadcast_req = req.broadcast_request
+        
+        # Only allow resending expired or cancelled requests
+        if broadcast_req.status not in [BroadcastRequest.Status.EXPIRED, BroadcastRequest.Status.CANCELLED]:
+            return Response({
+                'error': 'Only expired or cancelled broadcast requests can be resent'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if there's already a booking
+        if hasattr(req, 'booking'):
+            return Response({
+                'error': 'Cannot resend a request that already has a booking'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Update the broadcast request
+        broadcast_req.status = BroadcastRequest.Status.SEARCHING
+        broadcast_req.expires_at = timezone.now() + timedelta(minutes=30)
+        broadcast_req.save()
+        
+        return Response({
+            'message': 'Broadcast request resent successfully',
+            'request_id': req.id,
+            'expires_at': broadcast_req.expires_at.isoformat(),
+            'status': broadcast_req.status
         }, status=status.HTTP_200_OK)
     
     except Request.DoesNotExist:

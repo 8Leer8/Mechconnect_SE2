@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import { View, TouchableOpacity, ScrollView, ActivityIndicator, Modal } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { TopNav } from '@/components/navigation';
@@ -54,12 +54,18 @@ interface BroadcastRequest {
   description: string;
   providers_note: string | null;
   concern_picture: string | null;
+  services: Array<{
+    id: number;
+    name: string;
+  }>;
+  status: string;
   service_location: {
     street_name: string;
     barangay: string;
     city_municipality: string;
   } | null;
   created_at: string;
+  expires_at: string;
   has_booking: boolean;
 }
 
@@ -83,6 +89,9 @@ export default function RequestScreen() {
   const [broadcastRequests, setBroadcastRequests] = useState<BroadcastRequest[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [currentTime, setCurrentTime] = useState(Date.now());
+  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+  const [requestToDelete, setRequestToDelete] = useState<BroadcastRequest | null>(null);
 
   const fetchRequests = async () => {
     try {
@@ -154,12 +163,21 @@ export default function RequestScreen() {
     };
   }, []);
 
+  // Update current time every second for countdown timer
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 1000);
+    
+    return () => clearInterval(timer);
+  }, []);
+
   const handleNotificationPress = () => {
     console.log('Notification pressed');
     // Add notification navigation here later
   };
 
-  const handleCancelRequest = async (requestId: number, requestType: 'custom' | 'direct') => {
+  const handleCancelRequest = async (requestId: number, requestType: 'custom' | 'direct' | 'broadcast') => {
     try {
       const response = await fetch(`${API_URL}/bookings/requests/${requestId}/cancel/`, {
         method: 'POST',
@@ -176,6 +194,62 @@ export default function RequestScreen() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to cancel request');
       console.error('Error cancelling request:', err);
+    }
+  };
+
+  const getTimeRemaining = (expiresAt: string): { text: string; isExpired: boolean } => {
+    const expiry = new Date(expiresAt).getTime();
+    const diff = expiry - currentTime;
+    
+    if (diff <= 0) return { text: 'Expired', isExpired: true };
+    
+    const minutes = Math.floor(diff / 60000);
+    const seconds = Math.floor((diff % 60000) / 1000);
+    
+    return { text: `${minutes}m ${seconds}s`, isExpired: false };
+  };
+
+  const handleOpenDeleteModal = (request: BroadcastRequest) => {
+    setRequestToDelete(request);
+    setDeleteModalVisible(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!requestToDelete) return;
+    
+    setDeleteModalVisible(false);
+    await handleCancelRequest(requestToDelete.id, 'broadcast');
+    setRequestToDelete(null);
+  };
+
+  const handleCancelDelete = () => {
+    setDeleteModalVisible(false);
+    setRequestToDelete(null);
+  };
+
+  const handleResendBroadcast = async (requestId: number) => {
+    try {
+      setLoading(true);
+      const response = await fetch(`${API_URL}/bookings/requests/${requestId}/broadcast/resend/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      const data = await response.json() as any;
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to resend broadcast request');
+      }
+
+      // Refresh the requests list to show updated status
+      await fetchRequests();
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to resend broadcast request');
+      console.error('Error resending broadcast:', err);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -317,17 +391,26 @@ export default function RequestScreen() {
       );
     }
 
-    return broadcastRequests.map((request) => (
+    return broadcastRequests.map((request) => {
+      const timeRemaining = getTimeRemaining(request.expires_at);
+      const isExpired = request.status === 'expired' || timeRemaining.isExpired;
+      
+      return (
       <View key={request.id} style={styles.card}>
         <View style={styles.cardHeader}>
           <ThemedText style={styles.cardTitle}>Broadcast Request #{request.id}</ThemedText>
-          <View style={styles.emergencyBadge}>
-            <ThemedText style={styles.statusText}>BROADCAST</ThemedText>
+          <View style={[styles.statusBadge, { backgroundColor: getBroadcastStatusColor(request.status) }]}>
+            <ThemedText style={styles.statusText}>{request.status.toUpperCase()}</ThemedText>
           </View>
         </View>
         <ThemedText style={styles.cardText} numberOfLines={2}>
           {request.description}
         </ThemedText>
+        {request.services && request.services.length > 0 && (
+          <ThemedText style={styles.cardText}>
+            Services: {request.services.map(s => s.name).join(', ')}
+          </ThemedText>
+        )}
         {request.provider && (
           <ThemedText style={styles.cardText}>Provider: {request.provider.name}</ThemedText>
         )}
@@ -339,13 +422,47 @@ export default function RequestScreen() {
         <ThemedText style={styles.dateText}>
           {new Date(request.created_at).toLocaleDateString()}
         </ThemedText>
+        
+        {/* Timer Display - Only show if not booked and status is searching */}
+        {!request.has_booking && request.status === 'searching' && (
+          <View style={[styles.timerContainer, isExpired && styles.expiredTimerContainer]}>
+            <ThemedText style={[styles.timerText, isExpired && styles.expiredTimerText]}>
+              {isExpired ? 'Expired' : `Time remaining: ${timeRemaining.text}`}
+            </ThemedText>
+          </View>
+        )}
+        
+        {/* Expired State - Only show if status is expired and not booked */}
+        {isExpired && !request.has_booking && (
+          <View style={styles.expiredContainer}>
+            <ThemedText style={styles.expiredMessage}>
+              This request has expired. No mechanics responded in time.
+            </ThemedText>
+            <View style={styles.expiredButtonsContainer}>
+              <TouchableOpacity 
+                style={styles.resendButton}
+                onPress={() => handleResendBroadcast(request.id)}
+              >
+                <ThemedText style={styles.resendButtonText}>Send Again</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.removeButton}
+                onPress={() => handleOpenDeleteModal(request)}
+              >
+                <ThemedText style={styles.removeButtonText}>Remove</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+        
         {request.has_booking && (
           <View style={styles.bookingBadge}>
             <ThemedText style={styles.bookingText}>Booked</ThemedText>
           </View>
         )}
       </View>
-    ));
+      );
+    });
   };
 
   const getStatusColor = (status: string) => {
@@ -360,6 +477,21 @@ export default function RequestScreen() {
         return '#FF4500';
       default:
         return '#999';
+    }
+  };
+
+  const getBroadcastStatusColor = (status: string) => {
+    switch (status.toLowerCase()) {
+      case 'searching':
+        return '#34C759'; // Green - actively searching
+      case 'accepted':
+        return '#4CAF50'; // Green - accepted
+      case 'expired':
+        return '#FF4500'; // Red - expired
+      case 'cancelled':
+        return '#999'; // Gray - cancelled
+      default:
+        return '#34C759';
     }
   };
 
@@ -410,6 +542,46 @@ export default function RequestScreen() {
         {activeTab === 'direct' && renderDirectRequests()}
         {activeTab === 'broadcast' && renderBroadcastRequests()}
       </ScrollView>
+
+      {/* Delete Confirmation Modal */}
+      <Modal
+        visible={deleteModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={handleCancelDelete}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <ThemedText style={styles.modalTitle}>Confirm Deletion</ThemedText>
+            
+            <ThemedText style={styles.modalLabel}>Request Description:</ThemedText>
+            <View style={styles.modalDescriptionBox}>
+              <ThemedText style={styles.modalDescription}>
+                {requestToDelete?.description || 'No description'}
+              </ThemedText>
+            </View>
+            
+            <ThemedText style={styles.modalWarning}>
+              Are you sure you want to delete this broadcast request? This action cannot be undone.
+            </ThemedText>
+            
+            <View style={styles.modalButtonsContainer}>
+              <TouchableOpacity 
+                style={styles.modalCancelButton}
+                onPress={handleCancelDelete}
+              >
+                <ThemedText style={styles.modalCancelButtonText}>Cancel</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.modalDeleteButton}
+                onPress={handleConfirmDelete}
+              >
+                <ThemedText style={styles.modalDeleteButtonText}>Delete</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ThemedView>
   );
 }

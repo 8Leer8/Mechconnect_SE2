@@ -62,6 +62,7 @@ export default function MapScreen() {
   const [selectedBroadcast, setSelectedBroadcast] = useState<BroadcastRequest | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [accepting, setAccepting] = useState(false);
+  const [currentTime, setCurrentTime] = useState(Date.now());
   
   // Map state
   const [region, setRegion] = useState<{
@@ -86,6 +87,15 @@ export default function MapScreen() {
     }, 8000);
     
     return () => clearInterval(interval);
+  }, []);
+
+  // Update current time every second for countdown timer
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 1000);
+    
+    return () => clearInterval(timer);
   }, []);
 
   const initializeMap = async () => {
@@ -230,8 +240,6 @@ export default function MapScreen() {
   };
 
   const handleBroadcastPress = (broadcast: BroadcastRequest) => {
-    console.log('Selected broadcast:', broadcast);
-    console.log('Concern picture URL:', broadcast.concern_picture);
     setSelectedBroadcast(broadcast);
     setModalVisible(true);
   };
@@ -325,9 +333,8 @@ export default function MapScreen() {
   };
 
   const getTimeRemaining = (expiresAt: string): string => {
-    const now = new Date().getTime();
     const expiry = new Date(expiresAt).getTime();
-    const diff = expiry - now;
+    const diff = expiry - currentTime;
     
     if (diff <= 0) return 'Expired';
     
@@ -354,13 +361,6 @@ export default function MapScreen() {
   const filteredBroadcasts = selectedFilter === 'all' || selectedFilter === 'broadcast'
     ? broadcasts
     : [];
-  if (filteredBroadcasts.length > 0) {
-    console.log('Rendering broadcast markers:', filteredBroadcasts.map(b => ({
-      id: b.id,
-      lat: b.latitude,
-      lng: b.longitude
-    })));
-  }
 
   return (
     <ThemedView style={styles.container}>
