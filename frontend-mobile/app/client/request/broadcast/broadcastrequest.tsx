@@ -7,8 +7,8 @@ import {
   TextInput,
   Alert,
   ActivityIndicator,
-  Image,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { TopNav } from '@/components/navigation';
@@ -54,13 +54,52 @@ export default function BroadcastRequestScreen() {
   const [longitude, setLongitude] = useState<number | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const fetchServices = async () => {
+      try {
+        if (!cancelled) {
+          setFetchingServices(true);
+        }
+        const response = await fetch(`${API_URL}/services/`, {
+          credentials: 'include',
+        });
+        
+        if (cancelled) return;
+
+        if (response.ok) {
+          const data = await response.json() as ServicesResponse;
+          if (!cancelled) {
+            setServices(data.services || []);
+          }
+        } else if (!cancelled) {
+          console.error('Failed to fetch services');
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Error fetching services:', error);
+          Alert.alert('Error', 'Failed to load services');
+        }
+      } finally {
+        if (!cancelled) {
+          setFetchingServices(false);
+        }
+      }
+    };
+
     fetchServices();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Handle location data from map screen when returning to this screen
   useFocusEffect(
     React.useCallback(() => {
-      if (selectedLocation) {
+      let isMounted = true;
+
+      if (selectedLocation && isMounted) {
         setLatitude(selectedLocation.latitude);
         setLongitude(selectedLocation.longitude);
         setSelectedAddress(selectedLocation.address);
@@ -70,27 +109,12 @@ export default function BroadcastRequestScreen() {
         // Clear the context after reading
         setSelectedLocation(null);
       }
-    }, [selectedLocation])
-  );
 
-  const fetchServices = async () => {
-    try {
-      setFetchingServices(true);
-      const response = await fetch(`${API_URL}/services/`, {
-        credentials: 'include',
-      });
-      
-      if (response.ok) {
-        const data = await response.json() as ServicesResponse;
-        setServices(data.services || []);
-      }
-    } catch (error) {
-      console.error('Error fetching services:', error);
-      Alert.alert('Error', 'Failed to load services');
-    } finally {
-      setFetchingServices(false);
-    }
-  };
+      return () => {
+        isMounted = false;
+      };
+    }, [selectedLocation, setSelectedLocation])
+  );
 
   const toggleService = (serviceId: number) => {
     setSelectedServiceIds((prev) =>
@@ -336,7 +360,12 @@ export default function BroadcastRequestScreen() {
             </View>
             {concernPicture && (
               <View style={styles.previewContainer}>
-                <Image source={{ uri: concernPicture }} style={styles.previewImage} />
+                <Image 
+                  source={{ uri: concernPicture }} 
+                  style={styles.previewImage}
+                  contentFit="cover"
+                  cachePolicy="memory-disk"
+                />
                 <TouchableOpacity
                   style={styles.removeImageButton}
                   onPress={() => setConcernPicture(null)}

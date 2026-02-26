@@ -6,7 +6,7 @@ interface TopNavProps {
   onNotificationPress?: () => void;
 }
 
-export function TopNav({ onNotificationPress }: TopNavProps) {
+export const TopNav = React.memo(function TopNav({ onNotificationPress }: TopNavProps) {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>MechConnect</Text>
@@ -18,7 +18,7 @@ export function TopNav({ onNotificationPress }: TopNavProps) {
       </TouchableOpacity>
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   container: {

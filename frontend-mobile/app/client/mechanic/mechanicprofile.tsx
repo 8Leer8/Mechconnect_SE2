@@ -2,10 +2,10 @@ import React, { useState, useEffect } from 'react';
 import {
   View,
   ScrollView,
-  Image,
   ActivityIndicator,
   TouchableOpacity,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -72,33 +72,49 @@ export default function MechanicProfileScreen() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const fetchMechanicProfile = async () => {
+      try {
+        if (!cancelled) {
+          setLoading(true);
+          setError(null);
+        }
+
+        const response = await fetch(`${API_URL}/users/mechanics/${mechanicId}/profile/`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+        if (cancelled) return;
+
+        if (!response.ok) throw new Error('Failed to fetch mechanic profile');
+
+        const data = await response.json() as { mechanic: MechanicProfile };
+        if (!cancelled) {
+          setProfile(data.mechanic);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'An error occurred');
+          console.error('Error fetching mechanic profile:', err);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
     if (mechanicId) {
       fetchMechanicProfile();
     }
+
+    return () => {
+      cancelled = true;
+    };
   }, [mechanicId]);
-
-  const fetchMechanicProfile = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-
-      const response = await fetch(`${API_URL}/users/mechanics/${mechanicId}/profile/`, {
-        method: 'GET',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
-
-      if (!response.ok) throw new Error('Failed to fetch mechanic profile');
-
-      const data = await response.json() as { mechanic: MechanicProfile };
-      setProfile(data.mechanic);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
-      console.error('Error fetching mechanic profile:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const renderStars = (rating: number) => {
     const stars = [];
@@ -155,7 +171,12 @@ export default function MechanicProfileScreen() {
         {/* Profile Header */}
         <View style={styles.profileHeader}>
           {profile.profile_photo_url ? (
-            <Image source={{ uri: profile.profile_photo_url }} style={styles.profilePhoto} />
+            <Image 
+              source={{ uri: profile.profile_photo_url }} 
+              style={styles.profilePhoto}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+            />
           ) : (
             <View style={[styles.profilePhoto, styles.profilePhotoPlaceholder]}>
               <ThemedText style={styles.profilePhotoText}>
@@ -284,7 +305,12 @@ export default function MechanicProfileScreen() {
               <View key={review.id} style={styles.reviewCard}>
                 <View style={styles.reviewHeader}>
                   {review.reviewer_photo ? (
-                    <Image source={{ uri: review.reviewer_photo }} style={styles.reviewerPhoto} />
+                    <Image 
+                      source={{ uri: review.reviewer_photo }} 
+                      style={styles.reviewerPhoto}
+                      contentFit="cover"
+                      cachePolicy="memory-disk"
+                    />
                   ) : (
                     <View style={[styles.reviewerPhoto, styles.reviewerPhotoPlaceholder]}>
                       <ThemedText style={styles.reviewerPhotoText}>

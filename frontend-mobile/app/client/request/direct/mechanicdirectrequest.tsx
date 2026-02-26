@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   StyleSheet,
   View,
@@ -85,19 +85,46 @@ export default function MechanicDirectRequestScreen() {
   const [landmark, setLandmark] = useState('');
 
   useEffect(() => {
+    let cancelled = false;
+
+    const fetchMechanics = async () => {
+      try {
+        const response = await fetch(`${API_URL}/bookings/direct/mechanics/`, {
+          credentials: 'include',
+        });
+        if (cancelled) return;
+
+        const data = await response.json() as MechanicsResponse;
+        if (response.ok && !cancelled) {
+          setMechanics(data.mechanics || []);
+        } else if (!cancelled) {
+          console.error('Failed to fetch mechanics:', response.status);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Error fetching mechanics:', error);
+        }
+      }
+    };
+
     fetchMechanics();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     
     if (mechanicId && mechanics.length > 0) {
       try {
         const mechanicIdNum = parseInt(mechanicId, 10);        
         const mechanicExists = mechanics.some(m => m.id === mechanicIdNum);        
-        if (!isNaN(mechanicIdNum) && mechanicExists) {
+        if (!cancelled && !isNaN(mechanicIdNum) && mechanicExists) {
           console.log('Setting selected provider to:', mechanicIdNum);
           setSelectedProviderId(mechanicIdNum);
-        } else if (!isNaN(mechanicIdNum) && !mechanicExists) {
+        } else if (!isNaN(mechanicIdNum) && !mechanicExists && !cancelled) {
           console.log('Mechanic ID not found in mechanics list. Available IDs:', mechanics.map(m => m.id));
           Alert.alert(
             'Mechanic Not Available',
@@ -106,78 +133,100 @@ export default function MechanicDirectRequestScreen() {
           );
         }
       } catch (error) {
-        console.error('Error parsing mechanicId:', error);
+        if (!cancelled) {
+          console.error('Error parsing mechanicId:', error);
+        }
       }
     }
+
+    return () => {
+      cancelled = true;
+    };
   }, [mechanicId, mechanics]);
 
+  // Reset dependent state when mechanicId changes to prevent stale data
   useEffect(() => {
-    if (selectedProviderId) {
-      fetchMechanicServices(selectedProviderId);
-    } else {
-      setAvailableServices([]);
-      setSelectedServiceId(null);
-    }
+    setSelectedServiceId(null);
+    setSelectedAddOnIds([]);
+    setAvailableServices([]);
+    setAvailableAddOns([]);
+  }, [mechanicId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchServices = async () => {
+      if (selectedProviderId) {
+        try {
+          const response = await fetch(
+            `${API_URL}/bookings/direct/mechanics/${selectedProviderId}/services/`,
+            {
+              credentials: 'include',
+            }
+          );
+          if (cancelled) return;
+
+          const data = await response.json() as ServicesResponse;
+          if (response.ok && !cancelled) {
+            setAvailableServices(data.services || []);
+          } else if (!cancelled) {
+            console.error('Failed to fetch services:', response.status);
+          }
+        } catch (error) {
+          if (!cancelled) {
+            console.error('Error fetching mechanic services:', error);
+          }
+        }
+      } else {
+        setAvailableServices([]);
+        setSelectedServiceId(null);
+      }
+    };
+
+    fetchServices();
+
+    return () => {
+      cancelled = true;
+    };
   }, [selectedProviderId]);
 
   useEffect(() => {
-    if (selectedServiceId) {
-      fetchServiceAddOns(selectedServiceId);
-    } else {
-      setAvailableAddOns([]);
-      setSelectedAddOnIds([]);
-    }
-  }, [selectedServiceId]);
+    let cancelled = false;
 
-  const fetchMechanics = async () => {
-    try {
-      const response = await fetch(`${API_URL}/bookings/direct/mechanics/`, {
-        credentials: 'include',
-      });
-      const data = await response.json() as MechanicsResponse;
-      if (response.ok) {
-        setMechanics(data.mechanics || []);
+    const fetchAddOns = async () => {
+      if (selectedServiceId) {
+        try {
+          const response = await fetch(
+            `${API_URL}/bookings/direct/services/${selectedServiceId}/addons/`,
+            {
+              credentials: 'include',
+            }
+          );
+          if (cancelled) return;
+
+          const data = await response.json() as AddOnsResponse;
+          if (response.ok && !cancelled) {
+            setAvailableAddOns(data.add_ons || []);
+          } else if (!cancelled) {
+            console.error('Failed to fetch add-ons:', response.status);
+          }
+        } catch (error) {
+          if (!cancelled) {
+            console.error('Error fetching service add-ons:', error);
+          }
+        }
       } else {
-        console.error('Failed to fetch mechanics:', response.status);
+        setAvailableAddOns([]);
+        setSelectedAddOnIds([]);
       }
-    } catch (error) {
-      console.error('Error fetching mechanics:', error);
-    }
-  };
+    };
 
-  const fetchMechanicServices = async (mechanicId: number) => {
-    try {
-      const response = await fetch(
-        `${API_URL}/bookings/direct/mechanics/${mechanicId}/services/`,
-        {
-          credentials: 'include',
-        }
-      );
-      const data = await response.json() as ServicesResponse;
-      if (response.ok) {
-        setAvailableServices(data.services || []);
-      }
-    } catch (error) {
-      console.error('Error fetching mechanic services:', error);
-    }
-  };
+    fetchAddOns();
 
-  const fetchServiceAddOns = async (serviceId: number) => {
-    try {
-      const response = await fetch(
-        `${API_URL}/bookings/direct/services/${serviceId}/addons/`,
-        {
-          credentials: 'include',
-        }
-      );
-      const data = await response.json() as AddOnsResponse;
-      if (response.ok) {
-        setAvailableAddOns(data.add_ons || []);
-      }
-    } catch (error) {
-      console.error('Error fetching service add-ons:', error);
-    }
-  };
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedServiceId]);
 
   const toggleAddOn = (addOnId: number) => {
     if (!selectedProviderId) return; // Disable if no provider selected
@@ -189,7 +238,8 @@ export default function MechanicDirectRequestScreen() {
     );
   };
 
-  const calculateTotal = () => {
+  // Memoized calculation to prevent recalculating on every render
+  const totalPrice = useMemo(() => {
     let total = 0;
     
     // Add service price
@@ -209,7 +259,7 @@ export default function MechanicDirectRequestScreen() {
     });
     
     return total;
-  };
+  }, [selectedServiceId, selectedAddOnIds, availableServices, availableAddOns]);
 
   const handleSend = async () => {
     if (!selectedProviderId) {
@@ -493,7 +543,7 @@ export default function MechanicDirectRequestScreen() {
                   !selectedProviderId && styles.disabledText,
                 ]}
               >
-                ${calculateTotal().toFixed(2)}
+                ${totalPrice.toFixed(2)}
               </ThemedText>
             </View>
           </View>

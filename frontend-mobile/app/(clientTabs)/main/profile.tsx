@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   View, 
   ScrollView, 
@@ -67,11 +67,7 @@ export default function ProfileScreen() {
   const [error, setError] = useState<string | null>(null);
   const [activeRole, setActiveRole] = useState<string>('client');
 
-  useEffect(() => {
-    fetchProfileData();
-  }, []);
-
-  const fetchProfileData = async () => {
+  const fetchProfileData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -110,7 +106,11 @@ export default function ProfileScreen() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchProfileData();
+  }, [fetchProfileData]);
 
   const handleSwitchRole = () => {
     // Navigate to the switch role page

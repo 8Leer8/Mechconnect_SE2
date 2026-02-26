@@ -52,34 +52,50 @@ export default function BookingScreen() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const fetchBookings = async () => {
+      try {
+        if (!cancelled) {
+          setLoading(true);
+          setError(null);
+        }
+
+        const response = await fetch(`${API_URL}/bookings/bookings?status=${activeTab}`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+        if (cancelled) return;
+
+        if (!response.ok) throw new Error('Failed to fetch bookings');
+        
+        const data = await response.json() as BookingsResponse;
+        if (!cancelled) {
+          setBookings(data.bookings || []);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'An error occurred');
+          console.error('Error fetching bookings:', err);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
     fetchBookings();
+
+    return () => {
+      cancelled = true;
+    };
   }, [activeTab]);
 
   const handleNotificationPress = () => {
     console.log('Notification pressed');
-  };
-
-  const fetchBookings = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-
-      const response = await fetch(`${API_URL}/bookings/bookings?status=${activeTab}`, {
-        method: 'GET',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
-
-      if (!response.ok) throw new Error('Failed to fetch bookings');
-      
-      const data = await response.json() as BookingsResponse;
-      setBookings(data.bookings || []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
-      console.error('Error fetching bookings:', err);
-    } finally {
-      setLoading(false);
-    }
   };
 
   const formatDate = (dateString: string) => {

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useMemo, ReactNode } from 'react';
 
 interface LocationData {
   latitude: number;
@@ -27,10 +27,14 @@ export function LocationProvider({ children }: { children: ReactNode }) {
   const [selectedLocation, setSelectedLocation] = useState<LocationData | null>(null);
   const [mechanicLocation, setMechanicLocation] = useState<MechanicLocation | null>(null);
 
+  // Memoize context value to prevent re-renders on every parent render
+  const value = useMemo(
+    () => ({ selectedLocation, setSelectedLocation, mechanicLocation, setMechanicLocation }),
+    [selectedLocation, mechanicLocation]
+  );
+
   return (
-    <LocationContext.Provider
-      value={{ selectedLocation, setSelectedLocation, mechanicLocation, setMechanicLocation }}
-    >
+    <LocationContext.Provider value={value}>
       {children}
     </LocationContext.Provider>
   );

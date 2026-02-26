@@ -40,45 +40,63 @@ export default function HomeScreen() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const fetchHomeData = async () => {
+      try {
+        if (!cancelled) {
+          setLoading(true);
+        }
+        const response = await fetch(`${API_URL}/bookings/home/`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (cancelled) return;
+
+        if (!response.ok) {
+          throw new Error('Failed to fetch data');
+        }
+
+        const result = await response.json() as HomeData;
+        
+        if (cancelled) return;
+
+        // Check for error or message from backend
+        if ('error' in result) {
+          console.error('Backend error:', (result as any).error);
+          throw new Error((result as any).error);
+        }
+        
+        if ('message' in result) {
+          console.log('Backend message:', (result as any).message);
+        }
+
+        if (!cancelled) {
+          setData(result);
+          setError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'An error occurred');
+          console.error('Error fetching home data:', err);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
     fetchHomeData();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
-
-  const fetchHomeData = async () => {
-    try {
-      setLoading(true);
-      const response = await fetch(`${API_URL}/bookings/home/`, {
-        method: 'GET',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch data');
-      }
-
-      const result = await response.json() as HomeData;
-      
-      // Check for error or message from backend
-      if ('error' in result) {
-        console.error('Backend error:', (result as any).error);
-        throw new Error((result as any).error);
-      }
-      
-      if ('message' in result) {
-        console.log('Backend message:', (result as any).message);
-      }
-
-      setData(result);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
-      console.error('Error fetching home data:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleNotificationPress = () => {
     console.log('Notification pressed');

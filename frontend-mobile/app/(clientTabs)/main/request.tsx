@@ -84,15 +84,6 @@ export default function RequestScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchRequests();
-  }, []);
-
-  const handleNotificationPress = () => {
-    console.log('Notification pressed');
-    // Add notification navigation here later
-  };
-
   const fetchRequests = async () => {
     try {
       setLoading(true);
@@ -116,6 +107,56 @@ export default function RequestScreen() {
     } finally {
       setLoading(false);
     }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadData = async () => {
+      try {
+        if (!cancelled) {
+          setLoading(true);
+          setError(null);
+        }
+
+        const response = await fetch(`${API_URL}/bookings/requests/`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+        if (cancelled) return;
+
+        if (!response.ok) throw new Error('Failed to fetch requests');
+        const data = await response.json() as RequestsResponse;
+        
+        if (!cancelled) {
+          setCustomRequests(data.custom_requests || []);
+          setDirectRequests(data.direct_requests || []);
+          setBroadcastRequests(data.broadcast_requests || []);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'An error occurred');
+          console.error('Error fetching requests:', err);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    loadData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleNotificationPress = () => {
+    console.log('Notification pressed');
+    // Add notification navigation here later
   };
 
   const handleCancelRequest = async (requestId: number, requestType: 'custom' | 'direct') => {
