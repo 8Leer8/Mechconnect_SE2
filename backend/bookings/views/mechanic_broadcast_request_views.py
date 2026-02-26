@@ -148,7 +148,7 @@ def accept_broadcast_request(request, broadcast_id):
             
             booking = Booking.objects.create(
                 request=base_request,
-                status=Booking.Status.ACTIVE,
+                status=Booking.Status.ACCEPTED,
                 amount_fee=total_amount
             )
             

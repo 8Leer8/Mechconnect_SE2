@@ -58,7 +58,9 @@ class EmergencyRequest(models.Model):
 
 class Booking(models.Model):
     class Status(models.TextChoices):
-        ACTIVE = "active"
+        ACCEPTED = "accepted"         # Mechanic accepted, waiting to start
+        ON_THE_WAY = "on_the_way"    # Mechanic traveling to client
+        ACTIVE = "active"            # Job started
         COMPLETED = "completed"
         REWORKED = "reworked"
         CANCELLED = "cancelled"

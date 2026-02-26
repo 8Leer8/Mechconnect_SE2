@@ -70,17 +70,21 @@ def list_client_bookings(request):
         
         # Apply status filter if provided
         if status_filter:
-            valid_statuses = ['active', 'completed', 'cancelled', 'reworked', 'disputed']
+            valid_statuses = ['active', 'on_the_way', 'completed', 'cancelled', 'reworked', 'disputed']
             if status_filter.lower() not in valid_statuses:
                 return Response({
                     'error': f'Invalid status. Must be one of: {", ".join(valid_statuses)}'
                 }, status=status.HTTP_400_BAD_REQUEST)
-            
-            bookings_queryset = bookings_queryset.filter(status=status_filter.lower())
-            
+
+            # For 'active' tab, merge both 'active' and 'on_the_way' statuses
+            if status_filter.lower() == 'active':
+                bookings_queryset = bookings_queryset.filter(status__in=['active', 'on_the_way'])
+            else:
+                bookings_queryset = bookings_queryset.filter(status=status_filter.lower())
+
             # Serialize and return filtered bookings
             bookings_data = _serialize_bookings(bookings_queryset)
-            
+
             return Response({
                 'status': status_filter.lower(),
                 'bookings': bookings_data,
@@ -89,12 +93,13 @@ def list_client_bookings(request):
         
         # If no filter, return bookings grouped by status
         else:
-            active_bookings = bookings_queryset.filter(status='active')
+            # Merge both 'active' and 'on_the_way' for the active group
+            active_bookings = bookings_queryset.filter(status__in=['active', 'on_the_way'])
             completed_bookings = bookings_queryset.filter(status='completed')
             cancelled_bookings = bookings_queryset.filter(status='cancelled')
             reworked_bookings = bookings_queryset.filter(status='reworked')
             disputed_bookings = bookings_queryset.filter(status='disputed')
-            
+
             return Response({
                 'active': {
                     'bookings': _serialize_bookings(active_bookings),
@@ -236,7 +241,7 @@ def _serialize_single_booking(booking):
     }
     
     # Add status-specific details
-    if booking.status == 'active' and hasattr(booking, 'activebooking'):
+    if booking.status in ['active', 'on_the_way'] and hasattr(booking, 'activebooking'):
         active = booking.activebooking
         booking_data['active_details'] = {
             'before_picture': active.before_picture_service.url if active.before_picture_service else None,

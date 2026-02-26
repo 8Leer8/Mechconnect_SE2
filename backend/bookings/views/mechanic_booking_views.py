@@ -1,10 +1,9 @@
-from django.utils import timezone
-from django.db.models import Prefetch
-from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-
+from rest_framework import status
+from django.utils import timezone
+from django.db.models import Prefetch
 from ..models import (
     Booking,
     Request,
@@ -18,6 +17,56 @@ from services.models import MechanicService
 from .client_booking_views import _serialize_bookings, _serialize_single_booking
 
 
+
+# (All imports are already at the top of the file. No need to repeat here.)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def mechanic_start_travel(request, booking_id):
+    """
+    Mechanic starts travel to client. Sets Booking.status = ON_THE_WAY.
+    """
+    account, err = _get_mechanic_account(request)
+    if err:
+        return err
+
+    try:
+        booking = Booking.objects.get(id=booking_id, request__provider=account)
+    except Booking.DoesNotExist:
+        return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
+
+    if booking.status != Booking.Status.ACCEPTED:
+        return Response({"error": "Booking must be in 'accepted' status to start travel."}, status=status.HTTP_400_BAD_REQUEST)
+
+    booking.status = Booking.Status.ON_THE_WAY
+    booking.save(update_fields=["status"])
+    return Response({"message": "Travel started.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def mechanic_start_job(request, booking_id):
+    """
+    Mechanic starts the job. Sets Booking.status = ACTIVE.
+    """
+    account, err = _get_mechanic_account(request)
+    if err:
+        return err
+
+    try:
+        booking = Booking.objects.get(id=booking_id, request__provider=account)
+    except Booking.DoesNotExist:
+        return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
+
+    if booking.status not in [Booking.Status.ACCEPTED, Booking.Status.ON_THE_WAY]:
+        return Response({"error": "Booking must be in 'accepted' or 'on_the_way' status to start job."}, status=status.HTTP_400_BAD_REQUEST)
+
+    booking.status = Booking.Status.ACTIVE
+    booking.save(update_fields=["status"])
+    return Response({"message": "Job started.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
+
+
 def _get_mechanic_account(request):
     """
     Helper to get the logged-in mechanic's Account.
@@ -29,6 +78,7 @@ def _get_mechanic_account(request):
             {"error": "Authentication required"},
             status=status.HTTP_401_UNAUTHORIZED,
         )
+
     try:
         account = Account.objects.get(id=account_id)
     except Account.DoesNotExist:
@@ -60,6 +110,9 @@ def _serialize_pending_direct_requests(account):
         .select_related(
             "client",
             "client__account",
+
+
+
             "provider",
             "service_location",
             "directrequest",
@@ -180,7 +233,7 @@ def list_mechanic_bookings(request):
                 status=status.HTTP_200_OK,
             )
 
-        valid_statuses = ["active", "completed", "cancelled", "reworked", "disputed"]
+        valid_statuses = ["accepted", "on_the_way", "active", "completed", "cancelled", "reworked", "disputed"]
         if status_filter.lower() not in valid_statuses:
             return Response(
                 {
@@ -201,6 +254,8 @@ def list_mechanic_bookings(request):
         )
 
     # Group by status (same shape as client_list_bookings) plus 'pending'
+    accepted_bookings = bookings_queryset.filter(status="accepted")
+    on_the_way_bookings = bookings_queryset.filter(status="on_the_way")
     active_bookings = bookings_queryset.filter(status="active")
     completed_bookings = bookings_queryset.filter(status="completed")
     cancelled_bookings = bookings_queryset.filter(status="cancelled")
@@ -214,6 +269,14 @@ def list_mechanic_bookings(request):
             "pending": {
                 "bookings": pending_items,
                 "count": len(pending_items),
+            },
+            "accepted": {
+                "bookings": _serialize_bookings(accepted_bookings),
+                "count": accepted_bookings.count(),
+            },
+            "on_the_way": {
+                "bookings": _serialize_bookings(on_the_way_bookings),
+                "count": on_the_way_bookings.count(),
             },
             "active": {
                 "bookings": _serialize_bookings(active_bookings),
@@ -352,7 +415,7 @@ def mechanic_accept_direct_request(request, request_id):
 
     booking = Booking.objects.create(
         request=req,
-        status=Booking.Status.ACTIVE,
+        status=Booking.Status.ACCEPTED,
         amount_fee=total_amount,
     )
     ActiveBooking.objects.create(booking=booking)

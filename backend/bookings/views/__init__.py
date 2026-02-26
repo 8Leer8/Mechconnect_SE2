@@ -15,6 +15,8 @@ from .mechanic_booking_views import (
     mechanic_accept_direct_request,
     mechanic_decline_direct_request,
     mechanic_complete_booking,
+    mechanic_start_travel,
+    mechanic_start_job,
 )
 
 __all__ = [

@@ -30,6 +30,8 @@ urlpatterns = [
     path('mechanic/bookings/', views.list_mechanic_bookings, name='list-mechanic-bookings'),
     path('mechanic/bookings/<int:booking_id>/', views.get_mechanic_booking_detail, name='get-mechanic-booking-detail'),
     path('mechanic/bookings/<int:booking_id>/complete/', views.mechanic_complete_booking, name='mechanic-complete-booking'),
+    path('mechanic/bookings/<int:booking_id>/start-travel/', views.mechanic_start_travel, name='mechanic-start-travel'),
+    path('mechanic/bookings/<int:booking_id>/start-job/', views.mechanic_start_job, name='mechanic-start-job'),
     path('mechanic/requests/<int:request_id>/accept/', views.mechanic_accept_direct_request, name='mechanic-accept-direct-request'),
     path('mechanic/requests/<int:request_id>/decline/', views.mechanic_decline_direct_request, name='mechanic-decline-direct-request'),
 ]
