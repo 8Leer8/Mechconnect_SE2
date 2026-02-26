@@ -104,22 +104,32 @@ class ActiveBookingSerializer(serializers.ModelSerializer):
 class BookingSerializer(serializers.ModelSerializer):
     request = RequestSerializer(read_only=True)
     active_details = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = Booking
         fields = [
-            'id', 'request', 'status', 'amount_fee', 'booked_at', 
+            'id', 'request', 'status', 'amount_fee', 'booked_at',
             'updated_at', 'completed_at', 'active_details'
         ]
-    
+        read_only_fields = ['id', 'request', 'amount_fee', 'booked_at', 'updated_at', 'completed_at', 'active_details']
+
     def get_active_details(self, obj):
-        if obj.status == 'active':
+        # Show active details if booking is in a relevant status
+        if obj.status in ['active', 'on_the_way', 'accepted']:
             try:
                 active = obj.activebooking
                 return ActiveBookingSerializer(active).data
             except ActiveBooking.DoesNotExist:
                 return None
         return None
+
+    def update(self, instance, validated_data):
+        # Allow status update via PATCH
+        status = validated_data.get('status', None)
+        if status and status in [choice[0] for choice in instance.Status.choices]:
+            instance.status = status
+            instance.save()
+        return instance
 
 
 class HomePageSerializer(serializers.Serializer):
