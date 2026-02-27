@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Animated } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -63,13 +63,20 @@ type MechanicGroupedBookingsResponse = {
 };
 
 export default function BookingsScreen() {
-  const [activeTab, setActiveTab] = useState<TabType>('all');
+  const { tab } = useLocalSearchParams<{ tab?: string }>();
+  const [activeTab, setActiveTab] = useState<TabType>((tab as TabType) || 'all');
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState<number | null>(null);
   const [counts, setCounts] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    if (tab && tab !== activeTab) {
+      setActiveTab(tab as TabType);
+    }
+  }, [tab]);
 
   useEffect(() => {
     fetchBookings();
@@ -437,7 +444,7 @@ export default function BookingsScreen() {
 
                 {/* Card Footer */}
                 <View style={styles.cardFooter}>
-                  <ThemedText style={styles.amount}>₱{booking.amount_fee?.toFixed(2) || '0.00'}</ThemedText>
+                  <ThemedText style={styles.amount}>₱{parseFloat(String(booking.amount_fee || '0')).toFixed(2)}</ThemedText>
 
                   {booking.status === 'pending' ? (
                     <View style={styles.pendingActions}>

@@ -71,6 +71,12 @@ export default function RegisterScreen() {
   const [selectedProvinceCode, setSelectedProvinceCode] = useState('');
   const [selectedCityCode, setSelectedCityCode] = useState('');
 
+  // Loading states for cascading location pickers
+  const [loadingRegions, setLoadingRegions] = useState(false);
+  const [loadingProvinces, setLoadingProvinces] = useState(false);
+  const [loadingCities, setLoadingCities] = useState(false);
+  const [loadingBarangays, setLoadingBarangays] = useState(false);
+
   // Fetch regions on component mount
   useEffect(() => {
     fetchRegions();
@@ -79,43 +85,36 @@ export default function RegisterScreen() {
   // Fetch provinces when region is selected
   useEffect(() => {
     if (selectedRegionCode) {
-      fetchProvinces(selectedRegionCode);
-      // Reset dependent fields
-      setProvinces([]);
-      setCities([]);
-      setBarangays([]);
+      // Reset dependent selections — arrays are replaced inside fetch functions
       setSelectedProvinceCode('');
       setSelectedCityCode('');
       updateField('province', '');
       updateField('city_municipality', '');
       updateField('barangay', '');
+      fetchProvinces(selectedRegionCode);
     }
   }, [selectedRegionCode]);
 
   // Fetch cities when province is selected
   useEffect(() => {
     if (selectedProvinceCode) {
-      fetchCities(selectedProvinceCode);
-      // Reset dependent fields
-      setCities([]);
-      setBarangays([]);
       setSelectedCityCode('');
       updateField('city_municipality', '');
       updateField('barangay', '');
+      fetchCities(selectedProvinceCode);
     }
   }, [selectedProvinceCode]);
 
   // Fetch barangays when city is selected
   useEffect(() => {
     if (selectedCityCode) {
-      fetchBarangays(selectedCityCode);
-      // Reset dependent field
-      setBarangays([]);
       updateField('barangay', '');
+      fetchBarangays(selectedCityCode);
     }
   }, [selectedCityCode]);
 
   const fetchRegions = async () => {
+    setLoadingRegions(true);
     try {
       const response = await fetch(`${PSGC_API_BASE}/regions`);
       const data = await response.json() as PSGCLocation[];
@@ -124,10 +123,15 @@ export default function RegisterScreen() {
     } catch (error) {
       console.error('Error fetching regions:', error);
       Alert.alert('Error', 'Failed to load regions');
+    } finally {
+      setLoadingRegions(false);
     }
   };
 
   const fetchProvinces = async (regionCode: string) => {
+    setLoadingProvinces(true);
+    setCities([]);
+    setBarangays([]);
     try {
       const response = await fetch(`${PSGC_API_BASE}/regions/${regionCode}/provinces`);
       const data = await response.json() as PSGCLocation[];
@@ -136,10 +140,14 @@ export default function RegisterScreen() {
     } catch (error) {
       console.error('Error fetching provinces:', error);
       Alert.alert('Error', 'Failed to load provinces');
+    } finally {
+      setLoadingProvinces(false);
     }
   };
 
   const fetchCities = async (provinceCode: string) => {
+    setLoadingCities(true);
+    setBarangays([]);
     try {
       const response = await fetch(`${PSGC_API_BASE}/provinces/${provinceCode}/cities-municipalities`);
       const data = await response.json() as PSGCLocation[];
@@ -148,10 +156,13 @@ export default function RegisterScreen() {
     } catch (error) {
       console.error('Error fetching cities:', error);
       Alert.alert('Error', 'Failed to load cities/municipalities');
+    } finally {
+      setLoadingCities(false);
     }
   };
 
   const fetchBarangays = async (cityCode: string) => {
+    setLoadingBarangays(true);
     try {
       const response = await fetch(`${PSGC_API_BASE}/cities-municipalities/${cityCode}/barangays`);
       const data = await response.json() as PSGCLocation[];
@@ -160,6 +171,8 @@ export default function RegisterScreen() {
     } catch (error) {
       console.error('Error fetching barangays:', error);
       Alert.alert('Error', 'Failed to load barangays');
+    } finally {
+      setLoadingBarangays(false);
     }
   };
 
@@ -492,12 +505,13 @@ export default function RegisterScreen() {
                   selectedValue={formData.gender}
                   onValueChange={(itemValue) => updateField('gender', itemValue)}
                   enabled={!loading}
-                  style={styles.picker}
+                  style={[styles.picker, { color: '#212529' }]}
+                  dropdownIconColor="#6c757d"
                 >
-                  <Picker.Item label="Select Gender" value="" />
-                  <Picker.Item label="Male" value="Male" />
-                  <Picker.Item label="Female" value="Female" />
-                  <Picker.Item label="Others" value="Others" />
+                  <Picker.Item label="Select Gender" value="" color="#999" />
+                  <Picker.Item label="Male" value="Male" color="#212529" />
+                  <Picker.Item label="Female" value="Female" color="#212529" />
+                  <Picker.Item label="Others" value="Others" color="#212529" />
                 </Picker>
               </View>
             </View>
@@ -519,15 +533,22 @@ export default function RegisterScreen() {
                       handleRegionChange(selectedRegion.name, itemValue);
                     }
                   }}
-                  enabled={!loading}
-                  style={styles.picker}
+                  enabled={!loading && !loadingRegions}
+                  style={[styles.picker, { color: '#212529' }]}
+                  dropdownIconColor="#6c757d"
                 >
-                  <Picker.Item label="Select Region" value="" />
-                  {regions.map((region) => (
-                    <Picker.Item key={region.code} label={region.name} value={region.code} />
+                  <Picker.Item label={loadingRegions ? 'Loading regions...' : 'Select Region'} value="" color="#999" />
+                  {!loadingRegions && regions.map((region) => (
+                    <Picker.Item key={region.code} label={region.name} value={region.code} color="#212529" />
                   ))}
                 </Picker>
               </View>
+              {loadingRegions && (
+                <View style={styles.pickerLoadingRow}>
+                  <ActivityIndicator size="small" color="#FF6B35" />
+                  <Text style={styles.pickerLoadingText}>Fetching regions...</Text>
+                </View>
+              )}
             </View>
 
             <View style={styles.inputContainer}>
@@ -541,15 +562,25 @@ export default function RegisterScreen() {
                       handleProvinceChange(selectedProvince.name, itemValue);
                     }
                   }}
-                  enabled={!loading && selectedRegionCode !== ''}
-                  style={styles.picker}
+                  enabled={!loading && selectedRegionCode !== '' && !loadingProvinces}
+                  style={[styles.picker, { color: selectedRegionCode ? '#212529' : '#999' }]}
+                  dropdownIconColor="#6c757d"
                 >
-                  <Picker.Item label="Select Province" value="" />
-                  {provinces.map((province) => (
-                    <Picker.Item key={province.code} label={province.name} value={province.code} />
+                  <Picker.Item
+                    label={loadingProvinces ? 'Loading provinces...' : (!selectedRegionCode ? 'Select a region first' : 'Select Province')}
+                    value="" color="#999"
+                  />
+                  {!loadingProvinces && provinces.map((province) => (
+                    <Picker.Item key={province.code} label={province.name} value={province.code} color="#212529" />
                   ))}
                 </Picker>
               </View>
+              {loadingProvinces && (
+                <View style={styles.pickerLoadingRow}>
+                  <ActivityIndicator size="small" color="#FF6B35" />
+                  <Text style={styles.pickerLoadingText}>Fetching provinces...</Text>
+                </View>
+              )}
             </View>
 
             <View style={styles.inputContainer}>
@@ -563,15 +594,25 @@ export default function RegisterScreen() {
                       handleCityChange(selectedCity.name, itemValue);
                     }
                   }}
-                  enabled={!loading && selectedProvinceCode !== ''}
-                  style={styles.picker}
+                  enabled={!loading && selectedProvinceCode !== '' && !loadingCities}
+                  style={[styles.picker, { color: selectedProvinceCode ? '#212529' : '#999' }]}
+                  dropdownIconColor="#6c757d"
                 >
-                  <Picker.Item label="Select City/Municipality" value="" />
-                  {cities.map((city) => (
-                    <Picker.Item key={city.code} label={city.name} value={city.code} />
+                  <Picker.Item
+                    label={loadingCities ? 'Loading cities...' : (!selectedProvinceCode ? 'Select a province first' : 'Select City/Municipality')}
+                    value="" color="#999"
+                  />
+                  {!loadingCities && cities.map((city) => (
+                    <Picker.Item key={city.code} label={city.name} value={city.code} color="#212529" />
                   ))}
                 </Picker>
               </View>
+              {loadingCities && (
+                <View style={styles.pickerLoadingRow}>
+                  <ActivityIndicator size="small" color="#FF6B35" />
+                  <Text style={styles.pickerLoadingText}>Fetching cities...</Text>
+                </View>
+              )}
             </View>
 
             <View style={styles.inputContainer}>
@@ -580,15 +621,25 @@ export default function RegisterScreen() {
                 <Picker
                   selectedValue={formData.barangay}
                   onValueChange={(itemValue) => handleBarangayChange(itemValue)}
-                  enabled={!loading && selectedCityCode !== ''}
-                  style={styles.picker}
+                  enabled={!loading && selectedCityCode !== '' && !loadingBarangays}
+                  style={[styles.picker, { color: selectedCityCode ? '#212529' : '#999' }]}
+                  dropdownIconColor="#6c757d"
                 >
-                  <Picker.Item label="Select Barangay" value="" />
-                  {barangays.map((barangay) => (
-                    <Picker.Item key={barangay.code} label={barangay.name} value={barangay.name} />
+                  <Picker.Item
+                    label={loadingBarangays ? 'Loading barangays...' : (!selectedCityCode ? 'Select a city first' : 'Select Barangay')}
+                    value="" color="#999"
+                  />
+                  {!loadingBarangays && barangays.map((barangay) => (
+                    <Picker.Item key={barangay.code} label={barangay.name} value={barangay.name} color="#212529" />
                   ))}
                 </Picker>
               </View>
+              {loadingBarangays && (
+                <View style={styles.pickerLoadingRow}>
+                  <ActivityIndicator size="small" color="#FF6B35" />
+                  <Text style={styles.pickerLoadingText}>Fetching barangays...</Text>
+                </View>
+              )}
             </View>
 
             <View style={styles.inputContainer}>

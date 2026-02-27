@@ -11,7 +11,7 @@ import {
 import { Image } from 'expo-image';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { TopNav } from '@/components/navigation';
+import { FontAwesome } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useLocation } from './LocationContext';
@@ -43,7 +43,7 @@ export default function BroadcastRequestScreen() {
   const [concernPicture, setConcernPicture] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [fetchingServices, setFetchingServices] = useState(false);
-  
+
   // Location from map
   const [selectedAddress, setSelectedAddress] = useState<string>('');
   const [streetName, setStreetName] = useState('');
@@ -53,27 +53,17 @@ export default function BroadcastRequestScreen() {
   const [latitude, setLatitude] = useState<number | null>(null);
   const [longitude, setLongitude] = useState<number | null>(null);
 
+  // ─── Fetch Services ────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
-
     const fetchServices = async () => {
       try {
-        if (!cancelled) {
-          setFetchingServices(true);
-        }
-        const response = await fetch(`${API_URL}/services/`, {
-          credentials: 'include',
-        });
-        
+        if (!cancelled) setFetchingServices(true);
+        const response = await fetch(`${API_URL}/services/`, { credentials: 'include' });
         if (cancelled) return;
-
         if (response.ok) {
           const data = await response.json() as ServicesResponse;
-          if (!cancelled) {
-            setServices(data.services || []);
-          }
-        } else if (!cancelled) {
-          console.error('Failed to fetch services');
+          if (!cancelled) setServices(data.services || []);
         }
       } catch (error) {
         if (!cancelled) {
@@ -81,24 +71,17 @@ export default function BroadcastRequestScreen() {
           Alert.alert('Error', 'Failed to load services');
         }
       } finally {
-        if (!cancelled) {
-          setFetchingServices(false);
-        }
+        if (!cancelled) setFetchingServices(false);
       }
     };
-
     fetchServices();
-
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
-  // Handle location data from map screen when returning to this screen
+  // Handle location data from map screen
   useFocusEffect(
     React.useCallback(() => {
       let isMounted = true;
-
       if (selectedLocation && isMounted) {
         setLatitude(selectedLocation.latitude);
         setLongitude(selectedLocation.longitude);
@@ -106,25 +89,18 @@ export default function BroadcastRequestScreen() {
         setStreetName(selectedLocation.streetName);
         setCityMunicipality(selectedLocation.city);
         setBarangay(selectedLocation.barangay);
-        // Clear the context after reading
         setSelectedLocation(null);
       }
-
-      return () => {
-        isMounted = false;
-      };
+      return () => { isMounted = false; };
     }, [selectedLocation, setSelectedLocation])
   );
 
   const toggleService = (serviceId: number) => {
     setSelectedServiceIds((prev) =>
-      prev.includes(serviceId)
-        ? prev.filter((id) => id !== serviceId)
-        : [...prev, serviceId]
+      prev.includes(serviceId) ? prev.filter((id) => id !== serviceId) : [...prev, serviceId]
     );
   };
 
-  // Calculate total minimum price for selected services
   const getTotalMinimumPrice = () => {
     return services
       .filter((service) => selectedServiceIds.includes(service.id))
@@ -134,17 +110,13 @@ export default function BroadcastRequestScreen() {
   const pickImage = async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [4, 3],
         quality: 0.8,
       });
-
-      if (!result.canceled && result.assets[0]) {
-        setConcernPicture(result.assets[0].uri);
-      }
+      if (!result.canceled && result.assets[0]) setConcernPicture(result.assets[0].uri);
     } catch (error) {
-      console.error('Error picking image:', error);
       Alert.alert('Error', 'Failed to pick image');
     }
   };
@@ -152,94 +124,50 @@ export default function BroadcastRequestScreen() {
   const takePhoto = async () => {
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Camera permission is required');
-        return;
-      }
-
-      const result = await ImagePicker.launchCameraAsync({
-        allowsEditing: true,
-        aspect: [4, 3],
-        quality: 0.8,
-      });
-
-      if (!result.canceled && result.assets[0]) {
-        setConcernPicture(result.assets[0].uri);
-      }
+      if (status !== 'granted') { Alert.alert('Permission Denied', 'Camera permission is required'); return; }
+      const result = await ImagePicker.launchCameraAsync({ allowsEditing: true, aspect: [4, 3], quality: 0.8 });
+      if (!result.canceled && result.assets[0]) setConcernPicture(result.assets[0].uri);
     } catch (error) {
-      console.error('Error taking photo:', error);
       Alert.alert('Error', 'Failed to take photo');
     }
   };
 
   const handleSelectLocation = () => {
     if (selectedAddress && latitude !== null && longitude !== null) {
-      router.push({
-        pathname: '/client/request/broadcast/map',
-        params: {
-          latitude: latitude.toString(),
-          longitude: longitude.toString(),
-        },
-      });
+      router.push({ pathname: '/client/request/broadcast/map', params: { latitude: latitude.toString(), longitude: longitude.toString() } });
     } else {
       router.push('/client/request/broadcast/map');
     }
   };
 
+  // ─── Send ──────────────────────────────────────────────────
   const handleSend = async () => {
-    // Validation
-    if (selectedServiceIds.length === 0) {
-      Alert.alert('Error', 'Please select at least one service');
-      return;
-    }
-
-    if (!description.trim()) {
-      Alert.alert('Error', 'Please provide a description');
-      return;
-    }
-
-    if (!selectedAddress) {
-      Alert.alert('Error', 'Please select a location from the map');
-      return;
-    }
-
-    if (!latitude || !longitude) {
-      Alert.alert('Error', 'Please select a location from the map');
-      return;
-    }
+    if (selectedServiceIds.length === 0) { Alert.alert('Error', 'Please select at least one service'); return; }
+    if (!description.trim()) { Alert.alert('Error', 'Please provide a description'); return; }
+    if (!selectedAddress) { Alert.alert('Error', 'Please select a location from the map'); return; }
+    if (!latitude || !longitude) { Alert.alert('Error', 'Please select a location from the map'); return; }
 
     setLoading(true);
-
     try {
       const formData = new FormData();
-      
-      // Add service IDs as a JSON array
       formData.append('service_ids', JSON.stringify(selectedServiceIds));
       formData.append('description', description);
       formData.append('latitude', latitude.toString());
       formData.append('longitude', longitude.toString());
-      
-      // Add service location
+
       const serviceLocationData = {
         street_name: streetName,
         barangay: barangay,
         city_municipality: cityMunicipality,
         landmark: landmark || undefined,
       };
-      
       formData.append('service_location', JSON.stringify(serviceLocationData));
-      
-      // Add concern picture if available
+
       if (concernPicture) {
         const filename = concernPicture.split('/').pop() || 'image.jpg';
         const match = /\.(\w+)$/.exec(filename);
         const type = match ? `image/${match[1]}` : 'image/jpeg';
-        
-        formData.append('concern_picture', {
-          uri: concernPicture,
-          name: filename,
-          type: type,
-        } as any);
+        formData.append('concern_picture', { uri: concernPicture, name: filename, type } as any);
       }
 
       const response = await fetch(`${API_URL}/bookings/requests/broadcast/create/`, {
@@ -251,200 +179,185 @@ export default function BroadcastRequestScreen() {
       const data = await response.json() as CreateRequestResponse;
 
       if (response.ok) {
-        Alert.alert(
-          'Success', 
-          'Broadcast request created! Nearby mechanics will be notified.',
-          [
-            {
-              text: 'OK',
-              onPress: () => router.back(),
-            },
-          ]
-        );
+        Alert.alert('Success', 'Broadcast request created! Nearby mechanics will be notified.', [{ text: 'OK', onPress: () => router.back() }]);
       } else {
         Alert.alert('Error', data.error || 'Failed to create broadcast request');
       }
     } catch (error) {
-      console.error('Error creating broadcast request:', error);
       Alert.alert('Error', 'An error occurred while creating the request');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleNotificationPress = () => {
-    console.log('Notification pressed');
-  };
-
   return (
     <ThemedView style={styles.container}>
-      <TopNav onNotificationPress={handleNotificationPress} />
+      {/* Header */}
+      <View style={styles.header}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+          <FontAwesome name="chevron-left" size={16} color="#FF8C00" />
+        </TouchableOpacity>
+        <ThemedText style={styles.headerTitle}>Broadcast Request</ThemedText>
+        <View style={{ width: 40 }} />
+      </View>
 
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        <View style={styles.content}>
-          <ThemedText style={styles.title}>Broadcast Request</ThemedText>
-          <ThemedText style={styles.subtitle}>
-            Send your request to nearby mechanics
-          </ThemedText>
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <ThemedText style={styles.subtitle}>Send your request to nearby mechanics</ThemedText>
 
-          {/* Services Selection */}
-          <View style={styles.section}>
-            <ThemedText style={styles.sectionTitle}>Select Services: *</ThemedText>
-            {fetchingServices ? (
-              <ActivityIndicator size="small" color="#FF8C00" />
-            ) : (
-              <View style={styles.servicesGrid}>
-                {services.map((service) => (
+        {/* Services Selection */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <FontAwesome name="cogs" size={14} color="#FF8C00" />
+            <ThemedText style={styles.sectionTitle}>Select Services *</ThemedText>
+          </View>
+          {fetchingServices ? (
+            <ActivityIndicator size="small" color="#FF8C00" style={{ paddingVertical: 20 }} />
+          ) : (
+            <View style={styles.servicesGrid}>
+              {services.map((service) => {
+                const selected = selectedServiceIds.includes(service.id);
+                return (
                   <TouchableOpacity
                     key={service.id}
-                    style={[
-                      styles.serviceCard,
-                      selectedServiceIds.includes(service.id) && styles.serviceCardSelected,
-                    ]}
+                    style={[styles.serviceCard, selected && styles.serviceCardSelected]}
                     onPress={() => toggleService(service.id)}
+                    activeOpacity={0.7}
                   >
-                    <View style={styles.serviceCardContent}>
-                      <ThemedText style={[
-                        styles.serviceCardText,
-                        selectedServiceIds.includes(service.id) && styles.serviceCardTextSelected,
-                      ]}>
-                        {service.name}
-                      </ThemedText>
-                      <ThemedText style={[
-                        styles.servicePriceText,
-                        selectedServiceIds.includes(service.id) && styles.servicePriceTextSelected,
-                      ]}>
-                        ₱{service.minimum_price.toFixed(2)}
-                      </ThemedText>
-                    </View>
+                    {selected && (
+                      <View style={styles.serviceCheck}>
+                        <FontAwesome name="check" size={10} color="#fff" />
+                      </View>
+                    )}
+                    <ThemedText style={[styles.serviceText, selected && styles.serviceTextSelected]}>{service.name}</ThemedText>
+                    <ThemedText style={[styles.servicePrice, selected && styles.servicePriceSelected]}>₱{service.minimum_price.toFixed(2)}</ThemedText>
                   </TouchableOpacity>
-                ))}
-              </View>
-            )}
-            {selectedServiceIds.length > 0 && (
-              <View style={styles.priceBreakdown}>
+                );
+              })}
+            </View>
+          )}
+          {selectedServiceIds.length > 0 && (
+            <View style={styles.priceBreakdown}>
+              <View style={styles.priceRow}>
+                <FontAwesome name="tag" size={12} color="#FF8C00" />
                 <ThemedText style={styles.priceBreakdownText}>
-                  Total Service Minimum Price: ₱{getTotalMinimumPrice().toFixed(2)}
-                </ThemedText>
-                <ThemedText style={styles.priceBreakdownNote}>
-                  + Distance charge: ₱10/km from mechanic location
+                  Total Min Price: ₱{getTotalMinimumPrice().toFixed(2)}
                 </ThemedText>
               </View>
-            )}
-          </View>
+              <ThemedText style={styles.priceNote}>+ Distance charge: ₱10/km from mechanic location</ThemedText>
+            </View>
+          )}
+        </View>
 
-          {/* Description */}
-          <View style={styles.section}>
-            <ThemedText style={styles.sectionTitle}>Description: *</ThemedText>
-            <TextInput
-              style={styles.textArea}
-              placeholder="Describe your vehicle issue or service needed..."
-              placeholderTextColor="#999"
-              multiline
-              numberOfLines={4}
-              value={description}
-              onChangeText={setDescription}
-            />
+        {/* Description */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <FontAwesome name="pencil" size={14} color="#FF8C00" />
+            <ThemedText style={styles.sectionTitle}>Description *</ThemedText>
           </View>
+          <TextInput
+            style={styles.textArea}
+            placeholder="Describe your vehicle issue or service needed..."
+            placeholderTextColor="#555"
+            multiline
+            numberOfLines={4}
+            value={description}
+            onChangeText={setDescription}
+            textAlignVertical="top"
+          />
+        </View>
 
-          {/* Concern Picture */}
-          <View style={styles.section}>
-            <ThemedText style={styles.sectionTitle}>Concern Picture (Optional):</ThemedText>
-            <View style={styles.imageButtons}>
-              <TouchableOpacity style={styles.imageButton} onPress={takePhoto}>
-                <ThemedText style={styles.imageButtonText}>Take Photo</ThemedText>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.imageButton} onPress={pickImage}>
-                <ThemedText style={styles.imageButtonText}>Pick Image</ThemedText>
+        {/* Concern Picture */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <FontAwesome name="camera" size={14} color="#FF8C00" />
+            <ThemedText style={styles.sectionTitle}>Concern Picture (Optional)</ThemedText>
+          </View>
+          <View style={styles.imageRow}>
+            <TouchableOpacity style={styles.imageBtn} onPress={takePhoto} activeOpacity={0.7}>
+              <FontAwesome name="camera" size={18} color="#FF8C00" />
+              <ThemedText style={styles.imageBtnText}>Take Photo</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.imageBtn} onPress={pickImage} activeOpacity={0.7}>
+              <FontAwesome name="image" size={18} color="#FF8C00" />
+              <ThemedText style={styles.imageBtnText}>Gallery</ThemedText>
+            </TouchableOpacity>
+          </View>
+          {concernPicture && (
+            <View style={styles.previewContainer}>
+              <Image source={{ uri: concernPicture }} style={styles.previewImage} contentFit="cover" cachePolicy="memory-disk" />
+              <TouchableOpacity style={styles.removeImageBtn} onPress={() => setConcernPicture(null)}>
+                <FontAwesome name="times-circle" size={14} color="#FF3B30" />
+                <ThemedText style={styles.removeImageText}>Remove</ThemedText>
               </TouchableOpacity>
             </View>
-            {concernPicture && (
-              <View style={styles.previewContainer}>
-                <Image 
-                  source={{ uri: concernPicture }} 
-                  style={styles.previewImage}
-                  contentFit="cover"
-                  cachePolicy="memory-disk"
-                />
-                <TouchableOpacity
-                  style={styles.removeImageButton}
-                  onPress={() => setConcernPicture(null)}
-                >
-                  <ThemedText style={styles.removeImageText}>✕ Remove</ThemedText>
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
-
-          {/* Location */}
-          <View style={styles.section}>
-            <ThemedText style={styles.sectionTitle}>Location: *</ThemedText>
-            
-            {selectedAddress ? (
-              <>
-                <View style={styles.selectedLocationCard}>
-                  <ThemedText style={styles.selectedLocationIcon}></ThemedText>
-                  <View style={styles.selectedLocationTextContainer}>
-                    <ThemedText style={styles.selectedLocationText}>
-                      {selectedAddress}
-                    </ThemedText>
-                    {(streetName || cityMunicipality) && (
-                      <ThemedText style={styles.selectedLocationDetails}>
-                        {[streetName, barangay, cityMunicipality].filter(Boolean).join(', ')}
-                      </ThemedText>
-                    )}
-                  </View>
-                </View>
-                <TouchableOpacity 
-                  style={styles.changeLocationButton} 
-                  onPress={handleSelectLocation}
-                >
-                  <ThemedText style={styles.changeLocationButtonText}>
-                    Change Location
-                  </ThemedText>
-                </TouchableOpacity>
-              </>
-            ) : (
-              <TouchableOpacity 
-                style={styles.locationButton} 
-                onPress={handleSelectLocation}
-              >
-                <View style={styles.locationButtonContent}>
-                  <View style={styles.locationButtonTextContainer}>
-                    <ThemedText style={styles.locationButtonText}>
-                      Select Location from Map
-                    </ThemedText>
-                  </View>
-                  <ThemedText style={styles.locationButtonArrow}>›</ThemedText>
-                </View>
-              </TouchableOpacity>
-            )}
-            
-            {/* Optional Landmark Field */}
-            {selectedAddress && (
-              <TextInput
-                style={[styles.input, { marginTop: 10 }]}
-                placeholder="Add Landmark (Optional)"
-                placeholderTextColor="#999"
-                value={landmark}
-                onChangeText={setLandmark}
-              />
-            )}
-          </View>
-
-          {/* Submit Button */}
-          <TouchableOpacity
-            style={[styles.sendButton, loading && styles.sendButtonDisabled]}
-            onPress={handleSend}
-            disabled={loading}
-          >
-            {loading ? (
-              <ActivityIndicator color="#FFF" />
-            ) : (
-              <ThemedText style={styles.sendButtonText}>Send Broadcast</ThemedText>
-            )}
-          </TouchableOpacity>
+          )}
         </View>
+
+        {/* Location */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <FontAwesome name="map-marker" size={14} color="#FF8C00" />
+            <ThemedText style={styles.sectionTitle}>Location *</ThemedText>
+          </View>
+
+          {selectedAddress ? (
+            <>
+              <View style={styles.locationCard}>
+                <View style={styles.locationIconWrap}>
+                  <FontAwesome name="map-pin" size={16} color="#FF8C00" />
+                </View>
+                <View style={styles.locationTextWrap}>
+                  <ThemedText style={styles.locationAddress}>{selectedAddress}</ThemedText>
+                  {(streetName || cityMunicipality) && (
+                    <ThemedText style={styles.locationDetails}>
+                      {[streetName, barangay, cityMunicipality].filter(Boolean).join(', ')}
+                    </ThemedText>
+                  )}
+                </View>
+              </View>
+              <TouchableOpacity style={styles.changeLocationBtn} onPress={handleSelectLocation} activeOpacity={0.7}>
+                <FontAwesome name="refresh" size={12} color="#fff" />
+                <ThemedText style={styles.changeLocationText}>Change Location</ThemedText>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <TouchableOpacity style={styles.selectLocationBtn} onPress={handleSelectLocation} activeOpacity={0.7}>
+              <FontAwesome name="map" size={18} color="#FF8C00" />
+              <ThemedText style={styles.selectLocationText}>Select Location from Map</ThemedText>
+              <FontAwesome name="chevron-right" size={14} color="#8E8E93" />
+            </TouchableOpacity>
+          )}
+
+          {/* Optional Landmark */}
+          {selectedAddress && (
+            <TextInput
+              style={[styles.input, { marginTop: 12 }]}
+              placeholder="Add Landmark (Optional)"
+              placeholderTextColor="#555"
+              value={landmark}
+              onChangeText={setLandmark}
+            />
+          )}
+        </View>
+
+        {/* Submit */}
+        <TouchableOpacity
+          style={[styles.sendBtn, loading && styles.sendBtnDisabled]}
+          onPress={handleSend}
+          disabled={loading}
+          activeOpacity={0.7}
+        >
+          {loading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <>
+              <FontAwesome name="bullhorn" size={16} color="#fff" />
+              <ThemedText style={styles.sendBtnText}>Send Broadcast</ThemedText>
+            </>
+          )}
+        </TouchableOpacity>
+
+        <View style={{ height: 40 }} />
       </ScrollView>
     </ThemedView>
   );
@@ -453,236 +366,275 @@ export default function BroadcastRequestScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: '#111214',
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 60,
+    paddingBottom: 16,
+    backgroundColor: '#1A1C1E',
+  },
+  backBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FF8C0015',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#fff',
   },
   scrollView: {
     flex: 1,
   },
-  content: {
-    padding: 20,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#FF8C00',
-    marginBottom: 5,
+  scrollContent: {
+    padding: 16,
   },
   subtitle: {
-    fontSize: 14,
-    color: '#666',
+    fontSize: 13,
+    color: '#8E8E93',
     marginBottom: 20,
   },
+  // Section
   section: {
-    marginBottom: 25,
+    marginBottom: 20,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
   },
   sectionTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
-    marginBottom: 10,
-    color: '#333',
+    color: '#fff',
   },
+  // Services grid
   servicesGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
   },
   serviceCard: {
-    backgroundColor: '#FFF',
-    padding: 12,
-    borderRadius: 8,
+    backgroundColor: '#1A1C1E',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#DDD',
+    borderColor: '#2A2C2E',
     minWidth: '45%',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexGrow: 1,
+    position: 'relative',
   },
   serviceCardSelected: {
-    backgroundColor: '#FF8C00',
+    backgroundColor: '#FF8C0018',
     borderColor: '#FF8C00',
   },
-  serviceCardContent: {
-    flex: 1,
+  serviceCheck: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#FF8C00',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  serviceCardText: {
+  serviceText: {
     fontSize: 14,
-    color: '#333',
+    color: '#ccc',
     marginBottom: 4,
   },
-  serviceCardTextSelected: {
-    color: '#FFF',
+  serviceTextSelected: {
+    color: '#fff',
     fontWeight: '600',
   },
-  servicePriceText: {
+  servicePrice: {
     fontSize: 12,
-    color: '#666',
+    color: '#8E8E93',
     fontWeight: '500',
   },
-  servicePriceTextSelected: {
-    color: '#FFF',
+  servicePriceSelected: {
+    color: '#FF8C00',
     fontWeight: '600',
   },
   priceBreakdown: {
-    backgroundColor: '#FFF9E6',
+    backgroundColor: '#FF8C0010',
     padding: 12,
-    borderRadius: 8,
+    borderRadius: 10,
     marginTop: 12,
     borderWidth: 1,
-    borderColor: '#FFE4B5',
+    borderColor: '#FF8C0030',
+  },
+  priceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
   },
   priceBreakdownText: {
     fontSize: 14,
-    color: '#333',
+    color: '#FF8C00',
     fontWeight: '600',
-    marginBottom: 4,
   },
-  priceBreakdownNote: {
-    fontSize: 12,
-    color: '#666',
+  priceNote: {
+    fontSize: 11,
+    color: '#8E8E93',
     fontStyle: 'italic',
+    marginLeft: 18,
   },
-  checkmark: {
-    color: '#FFF',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
+  // Text area
   textArea: {
-    backgroundColor: '#FFF',
-    borderRadius: 8,
-    padding: 12,
+    backgroundColor: '#1A1C1E',
+    borderRadius: 12,
+    padding: 14,
     fontSize: 14,
-    color: '#333',
+    color: '#fff',
     borderWidth: 1,
-    borderColor: '#DDD',
+    borderColor: '#2A2C2E',
     minHeight: 100,
-    textAlignVertical: 'top',
   },
-  imageButtons: {
+  // Image buttons
+  imageRow: {
     flexDirection: 'row',
     gap: 10,
   },
-  imageButton: {
+  imageBtn: {
     flex: 1,
-    backgroundColor: '#FFF',
-    padding: 15,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#DDD',
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#1A1C1E',
+    borderRadius: 12,
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
   },
-  imageButtonText: {
+  imageBtnText: {
     fontSize: 14,
-    color: '#333',
+    color: '#FF8C00',
+    fontWeight: '600',
   },
   previewContainer: {
-    marginTop: 15,
-    alignItems: 'center',
+    marginTop: 12,
+    borderRadius: 12,
+    overflow: 'hidden',
   },
   previewImage: {
     width: '100%',
     height: 200,
-    borderRadius: 8,
-    resizeMode: 'cover',
+    borderRadius: 12,
   },
-  removeImageButton: {
-    marginTop: 10,
-    padding: 8,
+  removeImageBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
   },
   removeImageText: {
-    color: '#FF4500',
-    fontSize: 14,
+    color: '#FF3B30',
+    fontSize: 13,
+    fontWeight: '600',
   },
-  locationButton: {
-    backgroundColor: '#FFF',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#DDD',
-    padding: 15,
-  },
-  locationButtonContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  locationButtonIcon: {
-    fontSize: 24,
-    marginRight: 12,
-  },
-  locationButtonTextContainer: {
-    flex: 1,
-  },
-  locationButtonText: {
-    fontSize: 14,
-    color: '#666',
-  },
-  locationButtonArrow: {
-    fontSize: 24,
-    color: '#999',
-    marginLeft: 8,
-  },
-  selectedLocationCard: {
-    backgroundColor: '#FFF',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#FF8C00',
-    padding: 15,
+  // Location
+  locationCard: {
     flexDirection: 'row',
     alignItems: 'flex-start',
+    backgroundColor: '#1A1C1E',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#FF8C00',
+    gap: 12,
     marginBottom: 10,
   },
-  selectedLocationIcon: {
-    fontSize: 24,
-    marginRight: 12,
+  locationIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#FF8C0015',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 2,
   },
-  selectedLocationTextContainer: {
+  locationTextWrap: {
     flex: 1,
   },
-  selectedLocationText: {
+  locationAddress: {
     fontSize: 14,
-    color: '#333',
+    color: '#fff',
     fontWeight: '600',
-    marginBottom: 4,
+    marginBottom: 3,
   },
-  selectedLocationDetails: {
+  locationDetails: {
     fontSize: 12,
-    color: '#666',
+    color: '#8E8E93',
   },
-  changeLocationButton: {
-    backgroundColor: '#FF8C00',
-    padding: 12,
-    borderRadius: 8,
+  changeLocationBtn: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#FF8C00',
+    borderRadius: 10,
+    paddingVertical: 12,
   },
-  changeLocationButtonText: {
+  changeLocationText: {
     fontSize: 14,
-    color: '#FFF',
+    color: '#fff',
     fontWeight: '600',
   },
-  manualLocationFields: {
-    gap: 10,
+  selectLocationBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1A1C1E',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+    gap: 12,
+  },
+  selectLocationText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#8E8E93',
   },
   input: {
-    backgroundColor: '#FFF',
-    borderRadius: 8,
-    padding: 12,
+    backgroundColor: '#1A1C1E',
+    borderRadius: 12,
+    padding: 14,
     fontSize: 14,
-    color: '#333',
+    color: '#fff',
     borderWidth: 1,
-    borderColor: '#DDD',
+    borderColor: '#2A2C2E',
   },
-  sendButton: {
-    backgroundColor: '#FF8C00',
-    padding: 18,
-    borderRadius: 8,
+  // Submit
+  sendBtn: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 10,
-    marginBottom: 30,
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#FF8C00',
+    borderRadius: 14,
+    paddingVertical: 16,
+    marginTop: 8,
   },
-  sendButtonDisabled: {
-    backgroundColor: '#CCC',
+  sendBtnDisabled: {
+    opacity: 0.5,
   },
-  sendButtonText: {
-    color: '#FFF',
-    fontSize: 18,
-    fontWeight: 'bold',
+  sendBtnText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
   },
 });

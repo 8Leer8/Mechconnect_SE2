@@ -107,6 +107,10 @@ export default function BookingDetailScreen() {
 
   useEffect(() => {
     fetchBookingDetail();
+
+    // Poll every 15 seconds so status updates appear without manual refresh
+    const interval = setInterval(fetchBookingDetail, 15000);
+    return () => clearInterval(interval);
   }, [fetchBookingDetail]);
 
   const onRefresh = () => {
@@ -369,7 +373,7 @@ export default function BookingDetailScreen() {
                 : 'Service Request'}
             </ThemedText>
           </View>
-          <ThemedText style={styles.amountLarge}>₱{booking.amount_fee?.toFixed(2) || '0.00'}</ThemedText>
+          <ThemedText style={styles.amountLarge}>₱{parseFloat(String(booking.amount_fee || '0')).toFixed(2)}</ThemedText>
         </View>
 
         {/* Client Info Section */}

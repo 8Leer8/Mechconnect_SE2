@@ -275,7 +275,7 @@ export default function ProfileScreen() {
             <FontAwesome name="user" size={36} color="#8E8E93" />
           </View>
           <ThemedText style={styles.name}>{name}</ThemedText>
-          <ThemedText style={styles.subtitle}>Mechanic profile (temporary UI)</ThemedText>
+          <ThemedText style={styles.subtitle}>Mechanic profile</ThemedText>
         </View>
 
         {/* Services I offer - connected to backend */}
@@ -316,7 +316,7 @@ export default function ProfileScreen() {
         <View style={styles.section}>
           <TouchableOpacity style={styles.menuItem} onPress={() => router.push('/(auth)/switchAccount/switchPage')}>
             <FontAwesome name="exchange" size={20} color="#FF8C00" />
-            <ThemedText style={styles.menuText}>Switch account</ThemedText>
+            <ThemedText style={styles.menuText}>Switch Role</ThemedText>
             <FontAwesome name="chevron-right" size={16} color="#8E8E93" />
           </TouchableOpacity>
           <TouchableOpacity style={[styles.menuItem, styles.logoutItem]} onPress={handleLogout}>

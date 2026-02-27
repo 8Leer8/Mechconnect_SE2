@@ -8,7 +8,6 @@ export default function CustomRequestLayout() {
         headerShown: false,
       }}>
       <Stack.Screen name="mechaniccustomrequest" options={{ headerShown: false }} />
-      <Stack.Screen name="shopcustomrequest" options={{ headerShown: false }} />
     </Stack>
   );
 }

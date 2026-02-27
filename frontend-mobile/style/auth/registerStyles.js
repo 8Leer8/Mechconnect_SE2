@@ -152,6 +152,19 @@ export const styles = StyleSheet.create({
   },
   picker: {
     height: 50,
+    color: '#212529',
+  },
+  pickerLoadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 6,
+    paddingLeft: 4,
+  },
+  pickerLoadingText: {
+    fontSize: 12,
+    color: '#FF6B35',
+    marginLeft: 6,
+    fontStyle: 'italic',
   },
   dateButton: {
     borderWidth: 1.5,

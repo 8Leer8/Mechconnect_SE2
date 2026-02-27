@@ -182,11 +182,11 @@ export default function MapScreen() {
         data.current_bookings.forEach((booking: any) => {
           allJobs.push({
             id: booking.id,
-            title: `${booking.request.type} Request`,
+            title: `${booking.request.request_type} Request`,
             address: `${booking.request.service_location.barangay}, ${booking.request.service_location.city_municipality}`,
             status: 'active',
-            earnings: booking.amount_fee,
-            request_type: booking.request.type,
+            earnings: parseFloat(String(booking.amount_fee || '0')),
+            request_type: booking.request.request_type,
             service_location: booking.request.service_location,
           });
         });
@@ -602,7 +602,7 @@ export default function MapScreen() {
 
                 <View style={styles.jobCardFooter}>
                   <ThemedText style={styles.jobEarnings}>
-                    {job.earnings > 0 ? `₱${job.earnings.toFixed(2)}` : 'TBD'}
+                    {job.earnings > 0 ? `₱${parseFloat(String(job.earnings || '0')).toFixed(2)}` : 'TBD'}
                   </ThemedText>
                   <TouchableOpacity style={styles.navigateButton}>
                     <FontAwesome name="location-arrow" size={14} color="#fff" />
@@ -673,7 +673,7 @@ export default function MapScreen() {
                           <ThemedText style={styles.modalServiceDesc}>{service.description}</ThemedText>
                         </View>
                         <ThemedText style={styles.modalServicePrice}>
-                          ₱{(service.minimum_price || 0).toFixed(2)}
+                          ₱{parseFloat(String(service.minimum_price || '0')).toFixed(2)}
                         </ThemedText>
                       </View>
                     ))}
@@ -690,7 +690,7 @@ export default function MapScreen() {
                             <ThemedText style={styles.modalServiceDesc}>{addon.description}</ThemedText>
                           </View>
                           <ThemedText style={styles.modalServicePrice}>
-                            ₱{(addon.price || 0).toFixed(2)}
+                            ₱{parseFloat(String(addon.price || '0')).toFixed(2)}
                           </ThemedText>
                         </View>
                       ))}
@@ -702,14 +702,14 @@ export default function MapScreen() {
                     <View style={styles.modalPriceRow}>
                       <ThemedText style={styles.modalPriceLabel}>Service Fees:</ThemedText>
                       <ThemedText style={styles.modalPriceValue}>
-                        ₱{selectedBroadcast.services.reduce((sum, s) => sum + (s.minimum_price || 0), 0).toFixed(2)}
+                        ₱{selectedBroadcast.services.reduce((sum, s) => sum + parseFloat(String(s.minimum_price || '0')), 0).toFixed(2)}
                       </ThemedText>
                     </View>
                     {selectedBroadcast.add_ons && selectedBroadcast.add_ons.length > 0 && (
                       <View style={styles.modalPriceRow}>
                         <ThemedText style={styles.modalPriceLabel}>Add-ons:</ThemedText>
                         <ThemedText style={styles.modalPriceValue}>
-                          ₱{(selectedBroadcast.add_ons?.reduce((sum, a) => sum + (a.price || 0), 0) || 0).toFixed(2)}
+                          ₱{(selectedBroadcast.add_ons?.reduce((sum, a) => sum + parseFloat(String(a.price || '0')), 0) || 0).toFixed(2)}
                         </ThemedText>
                       </View>
                     )}

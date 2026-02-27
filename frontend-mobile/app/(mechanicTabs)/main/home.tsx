@@ -117,6 +117,10 @@ export default function HomeScreen() {
 
   useEffect(() => {
     fetchAllData();
+
+    // Silently refresh dashboard every 30 seconds
+    const interval = setInterval(fetchAllData, 30000);
+    return () => clearInterval(interval);
   }, [fetchAllData]);
 
   const onRefresh = () => {
@@ -134,6 +138,7 @@ export default function HomeScreen() {
     }
   };
 
+  //greeting function based on time of day
   const getGreeting = () => {
     const hour = new Date().getHours();
     if (hour < 12) return 'Good Morning';
@@ -142,7 +147,7 @@ export default function HomeScreen() {
   };
 
   const totalEarnings = stats?.completed?.bookings?.reduce(
-    (sum: number, b: any) => sum + (b.amount_fee || 0), 0
+    (sum: number, b: any) => sum + parseFloat(String(b.amount_fee || '0')), 0
   ) || 0;
 
   const activeCount = stats?.active?.count || 0;
@@ -236,7 +241,7 @@ export default function HomeScreen() {
                   <View style={[styles.sectionDot, { backgroundColor: '#FF8C00' }]} />
                   <ThemedText style={styles.sectionTitle}>Active Jobs</ThemedText>
                 </View>
-                <TouchableOpacity onPress={() => router.push('/(mechanicTabs)/main/bookings')}>
+                <TouchableOpacity onPress={() => router.push({ pathname: '/(mechanicTabs)/main/bookings', params: { tab: 'on_going' } })}>
                   <ThemedText style={styles.seeAll}>See All →</ThemedText>
                 </TouchableOpacity>
               </View>
@@ -246,7 +251,7 @@ export default function HomeScreen() {
                   <TouchableOpacity
                     key={booking.id}
                     style={styles.jobCard}
-                    onPress={() => router.push(`/(mechanicTabs)/main/bookings?highlight=${booking.id}`)}
+                    onPress={() => router.push({ pathname: '/(mechanicTabs)/main/bookings', params: { tab: 'on_going', highlight: booking.id.toString() } })}
                     activeOpacity={0.7}
                   >
                     <View style={styles.jobCardLeft}>
@@ -257,7 +262,7 @@ export default function HomeScreen() {
                     <View style={styles.jobCardCenter}>
                       <View style={styles.jobCardTitleRow}>
                         <ThemedText style={styles.jobTitle} numberOfLines={1}>
-                          {booking.request?.type ? `${booking.request.type.charAt(0).toUpperCase() + booking.request.type.slice(1)} Service` : 'Service Request'}
+                          {booking.request?.request_type ? `${booking.request.request_type.charAt(0).toUpperCase() + booking.request.request_type.slice(1)} Service` : 'Service Request'}
                         </ThemedText>
                         <View style={[styles.statusDot, { backgroundColor: getStatusColor(booking.status) }]} />
                       </View>
@@ -281,7 +286,7 @@ export default function HomeScreen() {
                       </View>
                     </View>
                     <View style={styles.jobCardRight}>
-                      <ThemedText style={styles.jobAmount}>₱{booking.amount_fee?.toFixed(2) || '0.00'}</ThemedText>
+                      <ThemedText style={styles.jobAmount}>₱{parseFloat(String(booking.amount_fee || '0')).toFixed(2)}</ThemedText>
                       <FontAwesome name="chevron-right" size={12} color="#555" />
                     </View>
                   </TouchableOpacity>
@@ -302,7 +307,7 @@ export default function HomeScreen() {
                   <View style={[styles.sectionDot, { backgroundColor: '#007AFF' }]} />
                   <ThemedText style={styles.sectionTitle}>Pending Requests</ThemedText>
                 </View>
-                <TouchableOpacity onPress={() => router.push('/(mechanicTabs)/main/bookings')}>
+                <TouchableOpacity onPress={() => router.push({ pathname: '/(mechanicTabs)/main/bookings', params: { tab: 'pending' } })}>
                   <ThemedText style={styles.seeAll}>See All →</ThemedText>
                 </TouchableOpacity>
               </View>

@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { TopNav } from '@/components/navigation';
+import { FontAwesome } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Picker } from '@react-native-picker/picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -70,81 +70,56 @@ export default function MechanicDirectRequestScreen() {
   const [loading, setLoading] = useState(false);
   const [useCurrentTime, setUseCurrentTime] = useState(true);
   const [useCurrentLocation, setUseCurrentLocation] = useState(true);
-  const [requestNumber, setRequestNumber] = useState('02');
-  
+
   // Date and time pickers
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [selectedTime, setSelectedTime] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
-  
+
   // Manual location input fields
   const [streetName, setStreetName] = useState('');
   const [cityMunicipality, setCityMunicipality] = useState('');
   const [barangay, setBarangay] = useState('');
   const [landmark, setLandmark] = useState('');
 
+  // ─── Fetch Mechanics ───────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
-
     const fetchMechanics = async () => {
       try {
-        const response = await fetch(`${API_URL}/bookings/direct/mechanics/`, {
-          credentials: 'include',
-        });
+        const response = await fetch(`${API_URL}/bookings/direct/mechanics/`, { credentials: 'include' });
         if (cancelled) return;
-
         const data = await response.json() as MechanicsResponse;
-        if (response.ok && !cancelled) {
-          setMechanics(data.mechanics || []);
-        } else if (!cancelled) {
-          console.error('Failed to fetch mechanics:', response.status);
-        }
+        if (response.ok && !cancelled) setMechanics(data.mechanics || []);
       } catch (error) {
-        if (!cancelled) {
-          console.error('Error fetching mechanics:', error);
-        }
+        if (!cancelled) console.error('Error fetching mechanics:', error);
       }
     };
-
     fetchMechanics();
-
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
+  // ─── Pre-select mechanic from params ───────────────────────
   useEffect(() => {
     let cancelled = false;
-    
     if (mechanicId && mechanics.length > 0) {
       try {
-        const mechanicIdNum = parseInt(mechanicId, 10);        
-        const mechanicExists = mechanics.some(m => m.id === mechanicIdNum);        
+        const mechanicIdNum = parseInt(mechanicId, 10);
+        const mechanicExists = mechanics.some(m => m.id === mechanicIdNum);
         if (!cancelled && !isNaN(mechanicIdNum) && mechanicExists) {
-          console.log('Setting selected provider to:', mechanicIdNum);
           setSelectedProviderId(mechanicIdNum);
         } else if (!isNaN(mechanicIdNum) && !mechanicExists && !cancelled) {
-          console.log('Mechanic ID not found in mechanics list. Available IDs:', mechanics.map(m => m.id));
-          Alert.alert(
-            'Mechanic Not Available',
-            'This mechanic is not currently available for direct requests. Please select another mechanic from the dropdown.',
-            [{ text: 'OK' }]
-          );
+          Alert.alert('Mechanic Not Available', 'This mechanic is not currently available for direct requests. Please select another mechanic from the dropdown.', [{ text: 'OK' }]);
         }
       } catch (error) {
-        if (!cancelled) {
-          console.error('Error parsing mechanicId:', error);
-        }
+        if (!cancelled) console.error('Error parsing mechanicId:', error);
       }
     }
-
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [mechanicId, mechanics]);
 
-  // Reset dependent state when mechanicId changes to prevent stale data
+  // Reset dependent state when mechanicId changes
   useEffect(() => {
     setSelectedServiceId(null);
     setSelectedAddOnIds([]);
@@ -152,137 +127,80 @@ export default function MechanicDirectRequestScreen() {
     setAvailableAddOns([]);
   }, [mechanicId]);
 
+  // ─── Fetch Services ────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
-
     const fetchServices = async () => {
       if (selectedProviderId) {
         try {
-          const response = await fetch(
-            `${API_URL}/bookings/direct/mechanics/${selectedProviderId}/services/`,
-            {
-              credentials: 'include',
-            }
-          );
+          const response = await fetch(`${API_URL}/bookings/direct/mechanics/${selectedProviderId}/services/`, { credentials: 'include' });
           if (cancelled) return;
-
           const data = await response.json() as ServicesResponse;
-          if (response.ok && !cancelled) {
-            setAvailableServices(data.services || []);
-          } else if (!cancelled) {
-            console.error('Failed to fetch services:', response.status);
-          }
+          if (response.ok && !cancelled) setAvailableServices(data.services || []);
         } catch (error) {
-          if (!cancelled) {
-            console.error('Error fetching mechanic services:', error);
-          }
+          if (!cancelled) console.error('Error fetching mechanic services:', error);
         }
       } else {
         setAvailableServices([]);
         setSelectedServiceId(null);
       }
     };
-
     fetchServices();
-
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [selectedProviderId]);
 
+  // ─── Fetch Add-ons ─────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
-
     const fetchAddOns = async () => {
       if (selectedServiceId) {
         try {
-          const response = await fetch(
-            `${API_URL}/bookings/direct/services/${selectedServiceId}/addons/`,
-            {
-              credentials: 'include',
-            }
-          );
+          const response = await fetch(`${API_URL}/bookings/direct/services/${selectedServiceId}/addons/`, { credentials: 'include' });
           if (cancelled) return;
-
           const data = await response.json() as AddOnsResponse;
-          if (response.ok && !cancelled) {
-            setAvailableAddOns(data.add_ons || []);
-          } else if (!cancelled) {
-            console.error('Failed to fetch add-ons:', response.status);
-          }
+          if (response.ok && !cancelled) setAvailableAddOns(data.add_ons || []);
         } catch (error) {
-          if (!cancelled) {
-            console.error('Error fetching service add-ons:', error);
-          }
+          if (!cancelled) console.error('Error fetching service add-ons:', error);
         }
       } else {
         setAvailableAddOns([]);
         setSelectedAddOnIds([]);
       }
     };
-
     fetchAddOns();
-
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [selectedServiceId]);
 
   const toggleAddOn = (addOnId: number) => {
-    if (!selectedProviderId) return; // Disable if no provider selected
-    
+    if (!selectedProviderId) return;
     setSelectedAddOnIds((prev) =>
-      prev.includes(addOnId)
-        ? prev.filter((id) => id !== addOnId)
-        : [...prev, addOnId]
+      prev.includes(addOnId) ? prev.filter((id) => id !== addOnId) : [...prev, addOnId]
     );
   };
 
-  // Memoized calculation to prevent recalculating on every render
   const totalPrice = useMemo(() => {
     let total = 0;
-    
-    // Add service price
     if (selectedServiceId) {
       const service = availableServices.find((s) => s.id === selectedServiceId);
-      if (service) {
-        total += service.price;
-      }
+      if (service) total += service.price;
     }
-    
-    // Add selected add-ons prices
     selectedAddOnIds.forEach((addOnId) => {
       const addOn = availableAddOns.find((a) => a.id === addOnId);
-      if (addOn) {
-        total += addOn.price;
-      }
+      if (addOn) total += addOn.price;
     });
-    
     return total;
   }, [selectedServiceId, selectedAddOnIds, availableServices, availableAddOns]);
 
+  // ─── Send ──────────────────────────────────────────────────
   const handleSend = async () => {
-    if (!selectedProviderId) {
-      Alert.alert('Error', 'Please select a provider first');
-      return;
-    }
-    
-    if (!selectedServiceId) {
-      Alert.alert('Error', 'Please select a service');
-      return;
-    }
-
-    if (!useCurrentLocation) {
-      if (!streetName || !barangay || !cityMunicipality) {
-        Alert.alert('Error', 'Please fill in all required location fields');
-        return;
-      }
+    if (!selectedProviderId) { Alert.alert('Error', 'Please select a provider first'); return; }
+    if (!selectedServiceId) { Alert.alert('Error', 'Please select a service'); return; }
+    if (!useCurrentLocation && (!streetName || !barangay || !cityMunicipality)) {
+      Alert.alert('Error', 'Please fill in all required location fields'); return;
     }
 
     setLoading(true);
-
     try {
-      // Combine date and time
       const scheduledDateTime = new Date(selectedDate);
       scheduledDateTime.setHours(selectedTime.getHours());
       scheduledDateTime.setMinutes(selectedTime.getMinutes());
@@ -292,26 +210,14 @@ export default function MechanicDirectRequestScreen() {
         service_id: selectedServiceId,
         add_on_ids: selectedAddOnIds,
         service_location: useCurrentLocation
-          ? {
-              street_name: 'Current Location',
-              barangay: 'Current',
-              city_municipality: 'Current',
-              landmark: 'User current location',
-            }
-          : {
-              street_name: streetName,
-              barangay: barangay,
-              city_municipality: cityMunicipality,
-              landmark: landmark || undefined,
-            },
+          ? { street_name: 'Current Location', barangay: 'Current', city_municipality: 'Current', landmark: 'User current location' }
+          : { street_name: streetName, barangay, city_municipality: cityMunicipality, landmark: landmark || undefined },
         scheduled_time: useCurrentTime ? new Date().toISOString() : scheduledDateTime.toISOString(),
       };
 
       const response = await fetch(`${API_URL}/bookings/direct/mechanic/create/`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify(requestData),
       });
@@ -319,35 +225,25 @@ export default function MechanicDirectRequestScreen() {
       const data = await response.json() as CreateRequestResponse;
 
       if (response.ok) {
-        Alert.alert('Success', data.message || 'Request created successfully!', [
-          {
-            text: 'OK',
-            onPress: () => router.back(),
-          },
-        ]);
+        Alert.alert('Success', data.message || 'Request created successfully!', [{ text: 'OK', onPress: () => router.back() }]);
       } else {
         Alert.alert('Error', data.error || 'Failed to create request');
       }
     } catch (error) {
-      console.error('Error creating request:', error);
       Alert.alert('Error', 'An error occurred while creating the request');
     } finally {
       setLoading(false);
     }
   };
 
-  const onDateChange = (event: any, date?: Date) => {
+  const onDateChange = (_event: any, date?: Date) => {
     setShowDatePicker(Platform.OS === 'ios');
-    if (date) {
-      setSelectedDate(date);
-    }
+    if (date) setSelectedDate(date);
   };
 
-  const onTimeChange = (event: any, time?: Date) => {
+  const onTimeChange = (_event: any, time?: Date) => {
     setShowTimePicker(Platform.OS === 'ios');
-    if (time) {
-      setSelectedTime(time);
-    }
+    if (time) setSelectedTime(time);
   };
 
   const formatDateTime = () => {
@@ -356,415 +252,270 @@ export default function MechanicDirectRequestScreen() {
     return `${dateStr} ${timeStr}`;
   };
 
-  const handleNotificationPress = () => {
-    console.log('Notification pressed');
-  };
-
-  const selectedProvider = mechanics.find((m) => m.id === selectedProviderId);
   const selectedService = availableServices.find((s) => s.id === selectedServiceId);
+  const disabled = !selectedProviderId;
 
   return (
     <ThemedView style={styles.container}>
-      <TopNav onNotificationPress={handleNotificationPress} />
+      {/* Header */}
+      <View style={styles.header}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+          <FontAwesome name="chevron-left" size={16} color="#FF8C00" />
+        </TouchableOpacity>
+        <ThemedText style={styles.headerTitle}>Direct Request</ThemedText>
+        <View style={{ width: 40 }} />
+      </View>
 
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        <View style={styles.content}>
-          <ThemedText style={styles.title}>Direct Request Form</ThemedText>
-          <ThemedText style={styles.requestNumber}>Request No. {requestNumber}</ThemedText>
-
-          {/* Provider Selection - Always enabled at top */}
-          <View style={styles.section}>
-            <ThemedText style={styles.sectionTitle}>Provider:</ThemedText>
-            <View style={styles.pickerContainer}>
-              <Picker
-                selectedValue={selectedProviderId}
-                onValueChange={(value) => setSelectedProviderId(value)}
-                style={styles.picker}
-                dropdownIconColor="#fff"
-              >
-                <Picker.Item label="Select Mechanic" value={null} />
-                {mechanics.map((mechanic) => (
-                  <Picker.Item
-                    key={mechanic.id}
-                    label={mechanic.full_name}
-                    value={mechanic.id}
-                  />
-                ))}
-              </Picker>
-            </View>
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        {/* Provider Selection */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <FontAwesome name="user" size={14} color="#FF8C00" />
+            <ThemedText style={styles.sectionTitle}>Select Mechanic *</ThemedText>
           </View>
-
-          {/* Service Selection - Disabled until provider selected */}
-          <View style={styles.section}>
-            <ThemedText style={styles.sectionTitle}>Service:</ThemedText>
-            <View
-              style={[
-                styles.pickerContainer,
-                !selectedProviderId && styles.disabledContainer,
-              ]}
+          <View style={styles.pickerContainer}>
+            <Picker
+              selectedValue={selectedProviderId}
+              onValueChange={(value) => setSelectedProviderId(value)}
+              style={styles.picker}
+              dropdownIconColor="#FF8C00"
             >
-              <Picker
-                enabled={!!selectedProviderId}
-                selectedValue={selectedServiceId}
-                onValueChange={(value) => setSelectedServiceId(value)}
-                style={[styles.picker, !selectedProviderId && styles.disabledPicker]}
-                dropdownIconColor={selectedProviderId ? '#fff' : '#666'}
-              >
-                <Picker.Item label="Select Service" value={null} />
-                {availableServices.map((service) => (
-                  <Picker.Item
-                    key={service.id}
-                    label={`${service.name} - $${service.price.toFixed(2)}`}
-                    value={service.id}
-                  />
-                ))}
-              </Picker>
-            </View>
+              <Picker.Item label="Choose a mechanic..." value={null} />
+              {mechanics.map((mechanic) => (
+                <Picker.Item key={mechanic.id} label={mechanic.full_name} value={mechanic.id} />
+              ))}
+            </Picker>
           </View>
-
-          {/* Add-ons Section - Disabled until provider selected */}
-          <View style={styles.section}>
-            <ThemedText style={styles.sectionTitle}>Add-ons:</ThemedText>
-            {availableAddOns.length > 0 ? (
-              availableAddOns.map((addOn) => (
-                <TouchableOpacity
-                  key={addOn.id}
-                  style={[
-                    styles.addOnItem,
-                    selectedAddOnIds.includes(addOn.id) && styles.addOnItemSelected,
-                    !selectedProviderId && styles.disabledContainer,
-                  ]}
-                  onPress={() => toggleAddOn(addOn.id)}
-                  disabled={!selectedProviderId}
-                >
-                  <View style={styles.addOnInfo}>
-                    <ThemedText
-                      style={[
-                        styles.addOnName,
-                        !selectedProviderId && styles.disabledText,
-                      ]}
-                    >
-                      {addOn.name}
-                    </ThemedText>
-                    <ThemedText
-                      style={[
-                        styles.addOnDescription,
-                        !selectedProviderId && styles.disabledText,
-                      ]}
-                    >
-                      {addOn.description}
-                    </ThemedText>
-                  </View>
-                  <ThemedText
-                    style={[
-                      styles.addOnPrice,
-                      !selectedProviderId && styles.disabledText,
-                    ]}
-                  >
-                    ${addOn.price.toFixed(2)}
-                  </ThemedText>
-                </TouchableOpacity>
-              ))
-            ) : (
-              <ThemedText
-                style={[styles.noAddOns, !selectedProviderId && styles.disabledText]}
-              >
-                {selectedServiceId
-                  ? 'No add-ons available for this service'
-                  : 'Select a service to view add-ons'}
-              </ThemedText>
-            )}
-          </View>
-
-          {/* Summary - Disabled until provider selected */}
-          <View
-            style={[
-              styles.section,
-              styles.summarySection,
-              !selectedProviderId && styles.disabledContainer,
-            ]}
-          >
-            <ThemedText style={styles.sectionTitle}>Summary:</ThemedText>
-            {selectedService && (
-              <View style={styles.summaryItem}>
-                <ThemedText
-                  style={[
-                    styles.summaryItemText,
-                    !selectedProviderId && styles.disabledText,
-                  ]}
-                >
-                  {selectedService.name}
-                </ThemedText>
-                <ThemedText
-                  style={[
-                    styles.summaryItemPrice,
-                    !selectedProviderId && styles.disabledText,
-                  ]}
-                >
-                  ${selectedService.price.toFixed(2)}
-                </ThemedText>
-              </View>
-            )}
-            {selectedAddOnIds.map((addOnId) => {
-              const addOn = availableAddOns.find((a) => a.id === addOnId);
-              return addOn ? (
-                <View key={addOnId} style={styles.summaryItem}>
-                  <ThemedText
-                    style={[
-                      styles.summaryItemText,
-                      !selectedProviderId && styles.disabledText,
-                    ]}
-                  >
-                    {addOn.name}
-                  </ThemedText>
-                  <ThemedText
-                    style={[
-                      styles.summaryItemPrice,
-                      !selectedProviderId && styles.disabledText,
-                    ]}
-                  >
-                    ${addOn.price.toFixed(2)}
-                  </ThemedText>
-                </View>
-              ) : null;
-            })}
-            <View style={[styles.summaryItem, styles.totalItem]}>
-              <ThemedText
-                style={[
-                  styles.totalText,
-                  !selectedProviderId && styles.disabledText,
-                ]}
-              >
-                Total:
-              </ThemedText>
-              <ThemedText
-                style={[
-                  styles.totalPrice,
-                  !selectedProviderId && styles.disabledText,
-                ]}
-              >
-                ${totalPrice.toFixed(2)}
-              </ThemedText>
-            </View>
-          </View>
-
-          {/* Time Section - Disabled until provider selected */}
-          <View style={styles.section}>
-            <ThemedText style={styles.sectionTitle}>Time:</ThemedText>
-            <View style={styles.timeOptions}>
-              <TouchableOpacity
-                style={[
-                  styles.timeOption,
-                  useCurrentTime && styles.timeOptionSelected,
-                  !selectedProviderId && styles.disabledContainer,
-                ]}
-                onPress={() => selectedProviderId && setUseCurrentTime(true)}
-                disabled={!selectedProviderId}
-              >
-                <ThemedText
-                  style={[
-                    styles.timeOptionText,
-                    !selectedProviderId && styles.disabledText,
-                  ]}
-                >
-                  Now
-                </ThemedText>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.timeOption,
-                  !useCurrentTime && styles.timeOptionSelected,
-                  !selectedProviderId && styles.disabledContainer,
-                ]}
-                onPress={() => selectedProviderId && setUseCurrentTime(false)}
-                disabled={!selectedProviderId}
-              >
-                <ThemedText
-                  style={[
-                    styles.timeOptionText,
-                    !selectedProviderId && styles.disabledText,
-                  ]}
-                >
-                  Input time --- date and time
-                </ThemedText>
-              </TouchableOpacity>
-            </View>
-            {!useCurrentTime && (
-              <View style={styles.dateTimeContainer}>
-                <TouchableOpacity
-                  style={[
-                    styles.dateTimeButton,
-                    !selectedProviderId && styles.disabledContainer,
-                  ]}
-                  onPress={() => selectedProviderId && setShowDatePicker(true)}
-                  disabled={!selectedProviderId}
-                >
-                  <ThemedText
-                    style={[
-                      styles.dateTimeButtonText,
-                      !selectedProviderId && styles.disabledText,
-                    ]}
-                  >
-                    📅 {selectedDate.toLocaleDateString()}
-                  </ThemedText>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[
-                    styles.dateTimeButton,
-                    !selectedProviderId && styles.disabledContainer,
-                  ]}
-                  onPress={() => selectedProviderId && setShowTimePicker(true)}
-                  disabled={!selectedProviderId}
-                >
-                  <ThemedText
-                    style={[
-                      styles.dateTimeButtonText,
-                      !selectedProviderId && styles.disabledText,
-                    ]}
-                  >
-                    🕐 {selectedTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </ThemedText>
-                </TouchableOpacity>
-
-                {showDatePicker && (
-                  <DateTimePicker
-                    value={selectedDate}
-                    mode="date"
-                    display="default"
-                    onChange={onDateChange}
-                    minimumDate={new Date()}
-                  />
-                )}
-
-                {showTimePicker && (
-                  <DateTimePicker
-                    value={selectedTime}
-                    mode="time"
-                    display="default"
-                    onChange={onTimeChange}
-                  />
-                )}
-
-                <ThemedText
-                  style={[
-                    styles.selectedDateTime,
-                    !selectedProviderId && styles.disabledText,
-                  ]}
-                >
-                  Selected: {formatDateTime()}
-                </ThemedText>
-              </View>
-            )}
-          </View>
-
-          {/* Location Section - Disabled until provider selected */}
-          <View style={styles.section}>
-            <ThemedText style={styles.sectionTitle}>Location:</ThemedText>
-            <View style={styles.timeOptions}>
-              <TouchableOpacity
-                style={[
-                  styles.timeOption,
-                  useCurrentLocation && styles.timeOptionSelected,
-                  !selectedProviderId && styles.disabledContainer,
-                ]}
-                onPress={() => selectedProviderId && setUseCurrentLocation(true)}
-                disabled={!selectedProviderId}
-              >
-                <ThemedText
-                  style={[
-                    styles.timeOptionText,
-                    !selectedProviderId && styles.disabledText,
-                  ]}
-                >
-                  Currently location
-                </ThemedText>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.timeOption,
-                  !useCurrentLocation && styles.timeOptionSelected,
-                  !selectedProviderId && styles.disabledContainer,
-                ]}
-                onPress={() => selectedProviderId && setUseCurrentLocation(false)}
-                disabled={!selectedProviderId}
-              >
-                <ThemedText
-                  style={[
-                    styles.timeOptionText,
-                    !selectedProviderId && styles.disabledText,
-                  ]}
-                >
-                  Input location --- street, barangay etc...
-                </ThemedText>
-              </TouchableOpacity>
-            </View>
-            {!useCurrentLocation && (
-              <View style={styles.locationInputs}>
-                <TextInput
-                  style={[
-                    styles.input,
-                    !selectedProviderId && styles.disabledInput,
-                  ]}
-                  placeholder="Street name"
-                  placeholderTextColor="#888"
-                  value={streetName}
-                  onChangeText={setStreetName}
-                  editable={!!selectedProviderId}
-                />
-                <TextInput
-                  style={[
-                    styles.input,
-                    !selectedProviderId && styles.disabledInput,
-                  ]}
-                  placeholder="City/Municipality"
-                  placeholderTextColor="#888"
-                  value={cityMunicipality}
-                  onChangeText={setCityMunicipality}
-                  editable={!!selectedProviderId}
-                />
-                <TextInput
-                  style={[
-                    styles.input,
-                    !selectedProviderId && styles.disabledInput,
-                  ]}
-                  placeholder="Barangay"
-                  placeholderTextColor="#888"
-                  value={barangay}
-                  onChangeText={setBarangay}
-                  editable={!!selectedProviderId}
-                />
-                <TextInput
-                  style={[
-                    styles.input,
-                    !selectedProviderId && styles.disabledInput,
-                  ]}
-                  placeholder="Landmark (optional)"
-                  placeholderTextColor="#888"
-                  value={landmark}
-                  onChangeText={setLandmark}
-                  editable={!!selectedProviderId}
-                />
-              </View>
-            )}
-          </View>
-
-          {/* Send Button - Disabled until provider selected */}
-          <TouchableOpacity
-            style={[
-              styles.sendButton,
-              (!selectedProviderId || loading) && styles.sendButtonDisabled,
-            ]}
-            onPress={handleSend}
-            disabled={!selectedProviderId || loading}
-          >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <ThemedText style={styles.sendButtonText}>Send</ThemedText>
-            )}
-          </TouchableOpacity>
         </View>
+
+        {/* Service Selection */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <FontAwesome name="cog" size={14} color="#FF8C00" />
+            <ThemedText style={styles.sectionTitle}>Select Service *</ThemedText>
+          </View>
+          <View style={[styles.pickerContainer, disabled && styles.disabledContainer]}>
+            <Picker
+              enabled={!!selectedProviderId}
+              selectedValue={selectedServiceId}
+              onValueChange={(value) => setSelectedServiceId(value)}
+              style={[styles.picker, disabled && styles.disabledPicker]}
+              dropdownIconColor={selectedProviderId ? '#FF8C00' : '#555'}
+            >
+              <Picker.Item label="Choose a service..." value={null} />
+              {availableServices.map((service) => (
+                <Picker.Item key={service.id} label={`${service.name} - ₱${service.price.toFixed(2)}`} value={service.id} />
+              ))}
+            </Picker>
+          </View>
+        </View>
+
+        {/* Add-ons */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <FontAwesome name="plus-circle" size={14} color="#FF8C00" />
+            <ThemedText style={styles.sectionTitle}>Add-ons</ThemedText>
+          </View>
+          {availableAddOns.length > 0 ? (
+            availableAddOns.map((addOn) => (
+              <TouchableOpacity
+                key={addOn.id}
+                style={[styles.addOnItem, selectedAddOnIds.includes(addOn.id) && styles.addOnItemSelected, disabled && styles.disabledContainer]}
+                onPress={() => toggleAddOn(addOn.id)}
+                disabled={disabled}
+                activeOpacity={0.7}
+              >
+                <View style={styles.addOnCheck}>
+                  <FontAwesome
+                    name={selectedAddOnIds.includes(addOn.id) ? 'check-square' : 'square-o'}
+                    size={18}
+                    color={selectedAddOnIds.includes(addOn.id) ? '#FF8C00' : '#555'}
+                  />
+                </View>
+                <View style={styles.addOnInfo}>
+                  <ThemedText style={[styles.addOnName, disabled && styles.disabledText]}>{addOn.name}</ThemedText>
+                  <ThemedText style={[styles.addOnDescription, disabled && styles.disabledText]}>{addOn.description}</ThemedText>
+                </View>
+                <ThemedText style={[styles.addOnPrice, disabled && styles.disabledText]}>₱{addOn.price.toFixed(2)}</ThemedText>
+              </TouchableOpacity>
+            ))
+          ) : (
+            <View style={styles.emptyCard}>
+              <FontAwesome name="info-circle" size={14} color="#555" />
+              <ThemedText style={styles.emptyText}>
+                {selectedServiceId ? 'No add-ons available for this service' : 'Select a service to view add-ons'}
+              </ThemedText>
+            </View>
+          )}
+        </View>
+
+        {/* Summary */}
+        <View style={[styles.summaryCard, disabled && styles.disabledContainer]}>
+          <View style={styles.sectionHeader}>
+            <FontAwesome name="list-alt" size={14} color="#FF8C00" />
+            <ThemedText style={styles.sectionTitle}>Summary</ThemedText>
+          </View>
+          {selectedService && (
+            <View style={styles.summaryRow}>
+              <ThemedText style={styles.summaryLabel}>{selectedService.name}</ThemedText>
+              <ThemedText style={styles.summaryValue}>₱{selectedService.price.toFixed(2)}</ThemedText>
+            </View>
+          )}
+          {selectedAddOnIds.map((addOnId) => {
+            const addOn = availableAddOns.find((a) => a.id === addOnId);
+            return addOn ? (
+              <View key={addOnId} style={styles.summaryRow}>
+                <ThemedText style={styles.summaryLabel}>{addOn.name}</ThemedText>
+                <ThemedText style={styles.summaryValue}>₱{addOn.price.toFixed(2)}</ThemedText>
+              </View>
+            ) : null;
+          })}
+          <View style={styles.summaryDivider} />
+          <View style={styles.summaryRow}>
+            <ThemedText style={styles.totalText}>Total</ThemedText>
+            <ThemedText style={styles.totalPrice}>₱{totalPrice.toFixed(2)}</ThemedText>
+          </View>
+        </View>
+
+        {/* Time Selection */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <FontAwesome name="clock-o" size={14} color="#FF8C00" />
+            <ThemedText style={styles.sectionTitle}>Schedule</ThemedText>
+          </View>
+          <View style={styles.pillRow}>
+            <TouchableOpacity
+              style={[styles.pill, useCurrentTime && styles.pillSelected, disabled && styles.disabledContainer]}
+              onPress={() => selectedProviderId && setUseCurrentTime(true)}
+              disabled={disabled}
+              activeOpacity={0.7}
+            >
+              <FontAwesome name="bolt" size={12} color={useCurrentTime ? '#fff' : '#8E8E93'} />
+              <ThemedText style={[styles.pillText, useCurrentTime && styles.pillTextSelected]}>Now</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.pill, !useCurrentTime && styles.pillSelected, disabled && styles.disabledContainer]}
+              onPress={() => selectedProviderId && setUseCurrentTime(false)}
+              disabled={disabled}
+              activeOpacity={0.7}
+            >
+              <FontAwesome name="calendar" size={12} color={!useCurrentTime ? '#fff' : '#8E8E93'} />
+              <ThemedText style={[styles.pillText, !useCurrentTime && styles.pillTextSelected]}>Custom</ThemedText>
+            </TouchableOpacity>
+          </View>
+          {!useCurrentTime && (
+            <View style={styles.dateTimeContainer}>
+              <TouchableOpacity
+                style={[styles.dateTimeBtn, disabled && styles.disabledContainer]}
+                onPress={() => selectedProviderId && setShowDatePicker(true)}
+                disabled={disabled}
+                activeOpacity={0.7}
+              >
+                <FontAwesome name="calendar-o" size={14} color="#FF8C00" />
+                <ThemedText style={styles.dateTimeText}>{selectedDate.toLocaleDateString()}</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.dateTimeBtn, disabled && styles.disabledContainer]}
+                onPress={() => selectedProviderId && setShowTimePicker(true)}
+                disabled={disabled}
+                activeOpacity={0.7}
+              >
+                <FontAwesome name="clock-o" size={14} color="#FF8C00" />
+                <ThemedText style={styles.dateTimeText}>{selectedTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</ThemedText>
+              </TouchableOpacity>
+              {showDatePicker && (
+                <DateTimePicker value={selectedDate} mode="date" display="default" onChange={onDateChange} minimumDate={new Date()} />
+              )}
+              {showTimePicker && (
+                <DateTimePicker value={selectedTime} mode="time" display="default" onChange={onTimeChange} />
+              )}
+              <ThemedText style={styles.selectedDateTimeLabel}>Selected: {formatDateTime()}</ThemedText>
+            </View>
+          )}
+        </View>
+
+        {/* Location Selection */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <FontAwesome name="map-marker" size={14} color="#FF8C00" />
+            <ThemedText style={styles.sectionTitle}>Location</ThemedText>
+          </View>
+          <View style={styles.pillRow}>
+            <TouchableOpacity
+              style={[styles.pill, useCurrentLocation && styles.pillSelected, disabled && styles.disabledContainer]}
+              onPress={() => selectedProviderId && setUseCurrentLocation(true)}
+              disabled={disabled}
+              activeOpacity={0.7}
+            >
+              <FontAwesome name="crosshairs" size={12} color={useCurrentLocation ? '#fff' : '#8E8E93'} />
+              <ThemedText style={[styles.pillText, useCurrentLocation && styles.pillTextSelected]}>Current</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.pill, !useCurrentLocation && styles.pillSelected, disabled && styles.disabledContainer]}
+              onPress={() => selectedProviderId && setUseCurrentLocation(false)}
+              disabled={disabled}
+              activeOpacity={0.7}
+            >
+              <FontAwesome name="pencil" size={12} color={!useCurrentLocation ? '#fff' : '#8E8E93'} />
+              <ThemedText style={[styles.pillText, !useCurrentLocation && styles.pillTextSelected]}>Manual</ThemedText>
+            </TouchableOpacity>
+          </View>
+          {!useCurrentLocation && (
+            <View style={styles.inputGroup}>
+              <TextInput
+                style={[styles.input, disabled && styles.disabledInput]}
+                placeholder="Street Name"
+                placeholderTextColor="#555"
+                value={streetName}
+                onChangeText={setStreetName}
+                editable={!disabled}
+              />
+              <TextInput
+                style={[styles.input, disabled && styles.disabledInput]}
+                placeholder="City / Municipality"
+                placeholderTextColor="#555"
+                value={cityMunicipality}
+                onChangeText={setCityMunicipality}
+                editable={!disabled}
+              />
+              <TextInput
+                style={[styles.input, disabled && styles.disabledInput]}
+                placeholder="Barangay"
+                placeholderTextColor="#555"
+                value={barangay}
+                onChangeText={setBarangay}
+                editable={!disabled}
+              />
+              <TextInput
+                style={[styles.input, disabled && styles.disabledInput]}
+                placeholder="Landmark (Optional)"
+                placeholderTextColor="#555"
+                value={landmark}
+                onChangeText={setLandmark}
+                editable={!disabled}
+              />
+            </View>
+          )}
+        </View>
+
+        {/* Send Button */}
+        <TouchableOpacity
+          style={[styles.sendBtn, (disabled || loading) && styles.sendBtnDisabled]}
+          onPress={handleSend}
+          disabled={disabled || loading}
+          activeOpacity={0.7}
+        >
+          {loading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <>
+              <FontAwesome name="paper-plane" size={16} color="#fff" />
+              <ThemedText style={styles.sendBtnText}>Send Request</ThemedText>
+            </>
+          )}
+        </TouchableOpacity>
+
+        <View style={{ height: 40 }} />
       </ScrollView>
     </ThemedView>
   );
@@ -773,206 +524,251 @@ export default function MechanicDirectRequestScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#111214',
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 60,
+    paddingBottom: 16,
+    backgroundColor: '#1A1C1E',
+  },
+  backBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FF8C0015',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#fff',
   },
   scrollView: {
     flex: 1,
   },
-  content: {
-    padding: 20,
-    paddingBottom: 40,
+  scrollContent: {
+    padding: 16,
   },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 8,
-    color: '#ffffff',
-  },
-  requestNumber: {
-    fontSize: 16,
-    marginBottom: 20,
-    color: '#aaa',
-  },
+  // Section
   section: {
-    marginBottom: 24,
+    marginBottom: 20,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
   },
   sectionTitle: {
-    fontSize: 18,
+    fontSize: 15,
     fontWeight: '600',
-    marginBottom: 12,
-    color: '#ffffff',
+    color: '#fff',
   },
+  // Picker
   pickerContainer: {
-    backgroundColor: '#2a2a2a',
-    borderRadius: 8,
+    backgroundColor: '#1A1C1E',
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#444',
+    borderColor: '#2A2C2E',
     overflow: 'hidden',
   },
   picker: {
-    color: '#ffffff',
+    color: '#fff',
     backgroundColor: 'transparent',
   },
   disabledContainer: {
-    opacity: 0.4,
-    backgroundColor: '#1a1a1a',
+    opacity: 0.35,
   },
   disabledPicker: {
-    color: '#666',
+    color: '#555',
   },
   disabledText: {
-    color: '#666',
+    color: '#555',
   },
   disabledInput: {
-    backgroundColor: '#1a1a1a',
-    color: '#666',
+    backgroundColor: '#16181A',
+    color: '#555',
   },
+  // Add-ons
   addOnItem: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#2a2a2a',
-    padding: 12,
-    borderRadius: 8,
+    backgroundColor: '#1A1C1E',
+    padding: 14,
+    borderRadius: 12,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#444',
+    borderColor: '#2A2C2E',
+    gap: 12,
   },
   addOnItemSelected: {
-    backgroundColor: '#3a5a3a',
-    borderColor: '#4a7a4a',
+    borderColor: '#FF8C00',
+    backgroundColor: '#FF8C0010',
+  },
+  addOnCheck: {
+    width: 24,
   },
   addOnInfo: {
     flex: 1,
   },
   addOnName: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '500',
-    color: '#ffffff',
-    marginBottom: 4,
+    color: '#fff',
+    marginBottom: 2,
   },
   addOnDescription: {
     fontSize: 12,
-    color: '#aaa',
+    color: '#8E8E93',
   },
   addOnPrice: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
-    color: '#ffffff',
-    marginLeft: 12,
+    color: '#FF8C00',
   },
-  noAddOns: {
-    fontSize: 14,
-    color: '#888',
-    fontStyle: 'italic',
-    textAlign: 'center',
-    paddingVertical: 16,
-  },
-  summarySection: {
-    backgroundColor: '#2a2a2a',
+  emptyCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#1A1C1E',
     padding: 16,
-    borderRadius: 8,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#444',
+    borderColor: '#2A2C2E',
   },
-  summaryItem: {
+  emptyText: {
+    fontSize: 13,
+    color: '#555',
+    fontStyle: 'italic',
+  },
+  // Summary
+  summaryCard: {
+    backgroundColor: '#1A1C1E',
+    padding: 16,
+    borderRadius: 14,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+  },
+  summaryRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 6,
   },
-  summaryItemText: {
+  summaryLabel: {
     fontSize: 14,
-    color: '#ddd',
+    color: '#ccc',
   },
-  summaryItemPrice: {
+  summaryValue: {
     fontSize: 14,
-    color: '#ddd',
+    color: '#ccc',
   },
-  totalItem: {
-    marginTop: 8,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#444',
+  summaryDivider: {
+    height: 1,
+    backgroundColor: '#2A2C2E',
+    marginVertical: 10,
   },
   totalText: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#ffffff',
+    color: '#fff',
   },
   totalPrice: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#ffffff',
+    color: '#FF8C00',
   },
-  timeOptions: {
+  // Pill toggles
+  pillRow: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 10,
     marginBottom: 12,
   },
-  timeOption: {
+  pill: {
     flex: 1,
-    backgroundColor: '#2a2a2a',
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#444',
+    flexDirection: 'row',
     alignItems: 'center',
-  },
-  timeOptionSelected: {
-    backgroundColor: '#3a5a3a',
-    borderColor: '#4a7a4a',
-  },
-  timeOptionText: {
-    fontSize: 14,
-    color: '#ffffff',
-  },
-  input: {
-    backgroundColor: '#2a2a2a',
-    borderRadius: 8,
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#1A1C1E',
+    paddingVertical: 12,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#444',
-    padding: 12,
+    borderColor: '#2A2C2E',
+  },
+  pillSelected: {
+    backgroundColor: '#FF8C00',
+    borderColor: '#FF8C00',
+  },
+  pillText: {
     fontSize: 14,
-    color: '#ffffff',
+    color: '#8E8E93',
+    fontWeight: '500',
   },
-  locationInputs: {
-    gap: 12,
-  },
-  dateTimeContainer: {
-    gap: 12,
-  },
-  dateTimeButton: {
-    backgroundColor: '#2a2a2a',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#444',
-    padding: 12,
-    alignItems: 'center',
-  },
-  dateTimeButtonText: {
-    fontSize: 14,
-    color: '#ffffff',
-  },
-  selectedDateTime: {
-    fontSize: 14,
-    color: '#4a7a4a',
-    textAlign: 'center',
-    marginTop: 8,
+  pillTextSelected: {
+    color: '#fff',
     fontWeight: '600',
   },
-  sendButton: {
-    backgroundColor: '#4a7a4a',
-    padding: 16,
-    borderRadius: 8,
+  // Date Time
+  dateTimeContainer: {
+    gap: 10,
+  },
+  dateTimeBtn: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 24,
+    gap: 10,
+    backgroundColor: '#1A1C1E',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+    padding: 14,
   },
-  sendButtonDisabled: {
-    backgroundColor: '#333',
-    opacity: 0.5,
+  dateTimeText: {
+    fontSize: 14,
+    color: '#fff',
   },
-  sendButtonText: {
+  selectedDateTimeLabel: {
+    fontSize: 13,
+    color: '#FF8C00',
+    textAlign: 'center',
+    marginTop: 4,
+    fontWeight: '600',
+  },
+  // Inputs
+  inputGroup: {
+    gap: 10,
+  },
+  input: {
+    backgroundColor: '#1A1C1E',
+    borderRadius: 12,
+    padding: 14,
+    fontSize: 14,
+    color: '#fff',
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+  },
+  // Send
+  sendBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#FF8C00',
+    borderRadius: 14,
+    paddingVertical: 16,
+    marginTop: 8,
+  },
+  sendBtnDisabled: {
+    opacity: 0.4,
+  },
+  sendBtnText: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#ffffff',
+    color: '#fff',
   },
 });
