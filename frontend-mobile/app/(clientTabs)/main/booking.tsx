@@ -3,6 +3,7 @@ import { View, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-nat
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { TopNav } from '@/components/navigation';
+import { router } from 'expo-router';
 import { styles } from '../../../style/client/bookingStyles';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -111,6 +112,7 @@ export default function BookingScreen() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
+      case 'on_the_way': return '#FF2D55'; // urgent pink/red
       case 'active': return '#FF8C00';
       case 'completed': return '#4CAF50';
       case 'cancelled': return '#FF4500';
@@ -153,9 +155,14 @@ export default function BookingScreen() {
           <View style={styles.cardHeaderLeft}>
             <ThemedText style={styles.bookingId}>Booking #{booking.id}</ThemedText>
             <View style={[styles.statusBadge, { backgroundColor: getStatusColor(booking.status) }]}>
-              <ThemedText style={styles.statusText}>
-                {booking.status.toUpperCase()}
+              <ThemedText style={[styles.statusText, booking.status === 'on_the_way' && { color: '#fff', fontWeight: 'bold', textTransform: 'none', fontSize: 13 }]}> 
+                {booking.status === 'on_the_way' ? 'Mechanic on the way' : booking.status.toUpperCase()}
               </ThemedText>
+              {booking.status === 'on_the_way' && (
+                <ThemedText style={{ color: '#fff', fontSize: 10, fontWeight: 'bold', marginTop: 2, letterSpacing: 0.5 }}>
+                  Please be ready!
+                </ThemedText>
+              )}
             </View>
           </View>
           <ThemedText style={styles.amountText}>₱{booking.amount_fee.toFixed(2)}</ThemedText>
@@ -192,9 +199,28 @@ export default function BookingScreen() {
         </View>
 
         {/* Status-specific Details */}
-        {booking.status === 'active' && booking.active_details?.is_job_done && (
+        {(booking.status === 'active' || booking.status === 'on_the_way') && booking.active_details && (
           <View style={styles.detailBanner}>
-            <ThemedText style={styles.detailText}>✓ Job marked as done</ThemedText>
+            {booking.active_details.is_job_done ? (
+              <ThemedText style={styles.detailText}>✓ Job marked as done</ThemedText>
+            ) : (
+              <ThemedText style={[styles.detailText, { color: '#FF2D55', fontWeight: 'bold' }]}>Mechanic is on the way or job in progress</ThemedText>
+            )}
+            {booking.active_details.started_at && (
+              <ThemedText style={styles.detailText}>
+                Started: {formatDate(booking.active_details.started_at)}
+              </ThemedText>
+            )}
+            {booking.active_details.reason && (
+              <ThemedText style={styles.detailText} numberOfLines={2}>
+                Reason: {booking.active_details.reason}
+              </ThemedText>
+            )}
+            {booking.active_details.is_rescheduled && (
+              <ThemedText style={styles.detailText}>
+                Rescheduled!
+              </ThemedText>
+            )}
           </View>
         )}
 
@@ -234,6 +260,12 @@ export default function BookingScreen() {
             </ThemedText>
           </View>
         )}
+        <TouchableOpacity
+          style={{ marginTop: 10, alignSelf: 'flex-end', backgroundColor: '#FF8C00', borderRadius: 6, paddingHorizontal: 14, paddingVertical: 7 }}
+          onPress={() => router.push({ pathname: '/(clientTabs)/booking_details', params: { bookingId: booking.id.toString() } })}
+        >
+          <ThemedText style={{ color: '#fff', fontWeight: 'bold', fontSize: 13 }}>Details</ThemedText>
+        </TouchableOpacity>
       </View>
     ));
   };

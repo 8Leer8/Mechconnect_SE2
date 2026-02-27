@@ -114,22 +114,41 @@ export default function BookingDetailScreen() {
     fetchBookingDetail();
   };
 
+  // Map backend status to user-friendly label and color
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case 'accepted': return 'Booked';
+      case 'active': return 'On Going';
+      case 'on_the_way': return 'On the Way';
+      case 'completed': return 'Completed';
+      case 'cancelled': return 'Cancelled';
+      case 'pending': return 'Pending';
+      case 'reworked': return 'Reworked';
+      case 'disputed': return 'Disputed';
+      default: return status.charAt(0).toUpperCase() + status.slice(1);
+    }
+  };
   const getStatusColor = (status: string) => {
     switch (status) {
+      case 'accepted': return '#00B8D9';
       case 'active': return '#FF8C00';
-      case 'completed': return '#34C759';
+      case 'on_the_way': return '#007AFF';
       case 'reworked': return '#FFD60A';
+      case 'completed': return '#34C759';
       case 'cancelled': return '#FF3B30';
+      case 'pending': return '#8E8E93';
       case 'disputed': return '#AF52DE';
       default: return '#8E8E93';
     }
   };
-
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'active': return 'wrench';
+      case 'accepted': return 'calendar-check-o';
+      case 'active': return 'play-circle';
+      case 'on_the_way': return 'car';
       case 'completed': return 'check-circle';
       case 'cancelled': return 'times-circle';
+      case 'pending': return 'clock-o';
       case 'reworked': return 'refresh';
       case 'disputed': return 'exclamation-circle';
       default: return 'circle';
@@ -225,6 +244,53 @@ export default function BookingDetailScreen() {
     );
   };
 
+  // --- New handlers for status transitions ---
+  const [transitioning, setTransitioning] = useState(false);
+
+  const handleStartTravel = async () => {
+    if (!booking) return;
+    setTransitioning(true);
+    try {
+      const response = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/start-travel/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error((errData as any).error || 'Failed to start travel');
+      }
+      Alert.alert('Success', 'Status updated to On The Way!');
+      fetchBookingDetail();
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'Failed to start travel');
+    } finally {
+      setTransitioning(false);
+    }
+  };
+
+  const handleStartJob = async () => {
+    if (!booking) return;
+    setTransitioning(true);
+    try {
+      const response = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/start-job/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error((errData as any).error || 'Failed to start job');
+      }
+      Alert.alert('Success', 'Status updated to Active!');
+      fetchBookingDetail();
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'Failed to start job');
+    } finally {
+      setTransitioning(false);
+    }
+  };
+
   if (loading) {
     return (
       <ThemedView style={styles.container}>
@@ -294,8 +360,8 @@ export default function BookingDetailScreen() {
             <FontAwesome name={getStatusIcon(booking.status)} size={28} color={getStatusColor(booking.status)} />
           </View>
           <View style={styles.statusInfo}>
-            <View style={[styles.statusBadge, { backgroundColor: getStatusColor(booking.status) }]}>
-              <ThemedText style={styles.statusBadgeText}>{booking.status.toUpperCase()}</ThemedText>
+            <View style={[styles.statusBadge, { backgroundColor: getStatusColor(booking.status) }]}> 
+              <ThemedText style={styles.statusBadgeText}>{getStatusLabel(booking.status)}</ThemedText>
             </View>
             <ThemedText style={styles.serviceType}>
               {booking.request.type
@@ -572,7 +638,48 @@ export default function BookingDetailScreen() {
           </View>
         )}
 
-        {/* Action Button */}
+
+        {/* Action Buttons for status transitions */}
+        {booking.status === 'accepted' && (
+          <View style={styles.actionSection}>
+            <TouchableOpacity
+              style={[styles.completeButton, transitioning && styles.disabledButton]}
+              onPress={handleStartTravel}
+              disabled={transitioning}
+              activeOpacity={0.7}
+            >
+              {transitioning ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <FontAwesome name="car" size={18} color="#fff" />
+                  <ThemedText style={styles.completeButtonText}>Start Travel</ThemedText>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {booking.status === 'on_the_way' && (
+          <View style={styles.actionSection}>
+            <TouchableOpacity
+              style={[styles.completeButton, transitioning && styles.disabledButton]}
+              onPress={handleStartJob}
+              disabled={transitioning}
+              activeOpacity={0.7}
+            >
+              {transitioning ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <FontAwesome name="play" size={18} color="#fff" />
+                  <ThemedText style={styles.completeButtonText}>Start Job</ThemedText>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
+
         {booking.status === 'active' && (
           <View style={styles.actionSection}>
             <TouchableOpacity

@@ -65,6 +65,7 @@ export default function TabLayout() {
       {/* Hide non-tab screens */}
       <Tabs.Screen name="index" options={{ href: null }} />
       <Tabs.Screen name="explore" options={{ href: null }} />
+      <Tabs.Screen name="booking_details" options={{ href: null }} />
     </Tabs>
   );
 }

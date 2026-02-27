@@ -42,8 +42,8 @@ interface Booking {
   };
 }
 
-// Tabs: All, Pending, Active, Completed, Cancelled
-type TabType = 'all' | 'pending' | 'active' | 'completed' | 'cancelled';
+// Tabs: All, Pending, Booked, On Going, Completed, Cancelled, Reworked, Disputed
+type TabType = 'all' | 'pending' | 'booked' | 'on_going' | 'completed' | 'cancelled' | 'reworked' | 'disputed';
 
 type MechanicStatusBookingsResponse = {
   status: string;
@@ -53,11 +53,12 @@ type MechanicStatusBookingsResponse = {
 
 type MechanicGroupedBookingsResponse = {
   pending?: { bookings: Booking[]; count: number };
-  active: { bookings: Booking[]; count: number };
-  completed: { bookings: Booking[]; count: number };
-  cancelled: { bookings: Booking[]; count: number };
-  reworked: { bookings: Booking[]; count: number };
-  disputed: { bookings: Booking[]; count: number };
+  booked?: { bookings: Booking[]; count: number };
+  on_going?: { bookings: Booking[]; count: number };
+  completed?: { bookings: Booking[]; count: number };
+  cancelled?: { bookings: Booking[]; count: number };
+  reworked?: { bookings: Booking[]; count: number };
+  disputed?: { bookings: Booking[]; count: number };
   total_count: number;
 };
 
@@ -89,30 +90,57 @@ export default function BookingsScreen() {
         const data = (await response.json()) as MechanicGroupedBookingsResponse;
         const all: Booking[] = [
           ...((data.pending?.bookings as Booking[]) || []),
-          ...(data.active.bookings || []),
-          ...(data.completed.bookings || []),
-          ...(data.cancelled.bookings || []),
-          ...(data.reworked.bookings || []),
-          ...(data.disputed.bookings || []),
+          ...((data.accepted?.bookings as Booking[]) || []),
+          ...(data.on_the_way?.bookings || []),
+          ...(data.active?.bookings || []),
+          ...(data.completed?.bookings || []),
+          ...(data.cancelled?.bookings || []),
+          ...(data.reworked?.bookings || []),
+          ...(data.disputed?.bookings || []),
         ];
         setBookings(all);
         setCounts({
           all: data.total_count || all.length,
           pending: data.pending?.count || 0,
-          active: data.active?.count || 0,
+          booked: data.accepted?.count || 0,
+          on_going: (data.on_the_way?.count || 0) + (data.active?.count || 0),
           completed: data.completed?.count || 0,
           cancelled: data.cancelled?.count || 0,
+          reworked: data.reworked?.count || 0,
+          disputed: data.disputed?.count || 0,
         });
       } else {
-        const response = await fetch(`${API_URL}/bookings/mechanic/bookings/?status=${activeTab}`, {
-          method: 'GET',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        });
+        let backendStatus = activeTab;
+        if (activeTab === 'booked') backendStatus = 'accepted';
+        // For 'on_going', fetch both 'on_the_way' and 'active' and merge results
+        if (activeTab === 'on_going') {
+          const [onTheWayRes, activeRes] = await Promise.all([
+            fetch(`${API_URL}/bookings/mechanic/bookings/?status=on_the_way`, {
+              method: 'GET',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+            }),
+            fetch(`${API_URL}/bookings/mechanic/bookings/?status=active`, {
+              method: 'GET',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+            }),
+          ]);
+          if (!onTheWayRes.ok && !activeRes.ok) throw new Error('Failed to fetch bookings');
+          const onTheWayData = onTheWayRes.ok ? ((await onTheWayRes.json()) as MechanicStatusBookingsResponse) : { bookings: [] };
+          const activeData = activeRes.ok ? ((await activeRes.json()) as MechanicStatusBookingsResponse) : { bookings: [] };
+          setBookings([...(onTheWayData.bookings || []), ...(activeData.bookings || [])]);
+        } else {
+          const response = await fetch(`${API_URL}/bookings/mechanic/bookings/?status=${backendStatus}`, {
+            method: 'GET',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+          });
 
-        if (!response.ok) throw new Error('Failed to fetch bookings');
-        const data = (await response.json()) as MechanicStatusBookingsResponse;
-        setBookings(data.bookings || []);
+          if (!response.ok) throw new Error('Failed to fetch bookings');
+          const data = (await response.json()) as MechanicStatusBookingsResponse;
+          setBookings(data.bookings || []);
+        }
       }
     } catch (err: any) {
       setError(err.message);
@@ -127,13 +155,29 @@ export default function BookingsScreen() {
     fetchBookings();
   };
 
+  // Map backend status to user-friendly label and color
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case 'accepted': return 'Booked';
+      case 'active': return 'On Going';
+      case 'on_the_way': return 'On the Way';
+      case 'completed': return 'Completed';
+      case 'cancelled': return 'Cancelled';
+      case 'pending': return 'Pending';
+      case 'reworked': return 'Reworked';
+      case 'disputed': return 'Disputed';
+      default: return status.charAt(0).toUpperCase() + status.slice(1);
+    }
+  };
   const getStatusColor = (status: string) => {
     switch (status) {
+      case 'accepted': return '#00B8D9';
       case 'active': return '#FF8C00';
+      case 'on_the_way': return '#007AFF';
       case 'reworked': return '#FFD60A';
       case 'completed': return '#34C759';
       case 'cancelled': return '#FF3B30';
-      case 'pending': return '#007AFF';
+      case 'pending': return '#8E8E93';
       case 'disputed': return '#AF52DE';
       default: return '#8E8E93';
     }
@@ -141,7 +185,9 @@ export default function BookingsScreen() {
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'active': return 'wrench';
+      case 'accepted': return 'calendar-check-o';
+      case 'active': return 'play-circle';
+      case 'on_the_way': return 'car';
       case 'completed': return 'check-circle';
       case 'cancelled': return 'times-circle';
       case 'pending': return 'clock-o';
@@ -216,9 +262,12 @@ export default function BookingsScreen() {
     switch (tab) {
       case 'all': return 'th-list';
       case 'pending': return 'clock-o';
-      case 'active': return 'wrench';
+      case 'booked': return 'calendar-check-o';
+      case 'on_going': return 'play-circle';
       case 'completed': return 'check-circle';
       case 'cancelled': return 'times-circle';
+      case 'reworked': return 'refresh';
+      case 'disputed': return 'exclamation-circle';
       default: return 'circle';
     }
   };
@@ -230,7 +279,7 @@ export default function BookingsScreen() {
       contentContainerStyle={styles.tabScrollContent}
       style={styles.tabContainer}
     >
-      {(['all', 'pending', 'active', 'completed', 'cancelled'] as TabType[]).map(
+      {(['all', 'pending', 'booked', 'on_going', 'completed', 'cancelled', 'reworked', 'disputed'] as TabType[]).map(
         (tab) => {
           const isActive = activeTab === tab;
           const count = counts[tab] || 0;
@@ -336,7 +385,12 @@ export default function BookingsScreen() {
                 style={styles.bookingCard}
                 activeOpacity={0.7}
                 onPress={() => {
-                  if (booking.status === 'active' || booking.status === 'completed' || booking.status === 'reworked') {
+                  if (
+                    booking.status === 'active' ||
+                    booking.status === 'on_the_way' ||
+                    booking.status === 'completed' ||
+                    booking.status === 'reworked'
+                  ) {
                     handleViewDetails(booking);
                   }
                 }}
@@ -349,8 +403,8 @@ export default function BookingsScreen() {
                     </View>
                     <View>
                       <View style={styles.statusRow}>
-                        <View style={[styles.statusBadge, { backgroundColor: getStatusColor(booking.status) }]}>
-                          <ThemedText style={styles.statusText}>{booking.status.toUpperCase()}</ThemedText>
+                        <View style={[styles.statusBadge, { backgroundColor: getStatusColor(booking.status) }]}> 
+                          <ThemedText style={styles.statusText}>{getStatusLabel(booking.status)}</ThemedText>
                         </View>
                         <ThemedText style={styles.bookingId}>#{booking.id}</ThemedText>
                       </View>
@@ -409,7 +463,7 @@ export default function BookingsScreen() {
                         )}
                       </TouchableOpacity>
                     </View>
-                  ) : (booking.status === 'active' || booking.status === 'completed' || booking.status === 'reworked') ? (
+                  ) : (booking.status === 'accepted' || booking.status === 'on_the_way' || booking.status === 'active' || booking.status === 'completed' || booking.status === 'reworked') ? (
                     <TouchableOpacity
                       style={styles.detailsBtn}
                       onPress={() => handleViewDetails(booking)}
