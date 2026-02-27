@@ -231,6 +231,12 @@ def _serialize_single_booking(booking):
             'name': f"{booking.request.provider.firstname} {booking.request.provider.lastname}",
             'email': booking.request.provider.email,
         } if booking.request.provider else None,
+        'client': {
+            'firstname':booking.request.client.account.firstname,
+            'lastname':booking.request.client.account.lastname,
+            'username':booking.request.client.account.username,
+            'email':booking.request.client.account.email,
+            } if booking.request.client and hasattr(booking.request.client, 'account') else None,
         'service_location': {
             'street_name': booking.request.service_location.street_name,
             'subdivision_village': booking.request.service_location.subdivision_village,
