@@ -3,6 +3,8 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 
+import json
+
 from ..models import (
     Request, CustomRequest, DirectRequest, EmergencyRequest,
     ServiceLocation, DirectRequestAddOn
@@ -41,6 +43,16 @@ def create_custom_request(request):
         description = request.data.get('description')
         service_location_data = request.data.get('service_location')
         concern_picture = request.FILES.get('concern_picture')
+        
+        # Parse service_location JSON string when sent via FormData
+        # (same lng sa broadcast_request_views)
+        if isinstance(service_location_data, str):
+            try:
+                service_location_data = json.loads(service_location_data)
+            except json.JSONDecodeError:
+                return Response({
+                    'error': 'Invalid service location format'
+                }, status=status.HTTP_400_BAD_REQUEST)
         
         # Validate required fields
         if not description or not service_location_data:
