@@ -6,9 +6,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
-  Linking,
   Alert,
-  Platform,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
@@ -185,22 +183,15 @@ export default function BookingDetailScreen() {
       .filter(Boolean)
       .join(', ');
 
-    // Open Google Maps with a search for the address
-    const encodedAddress = encodeURIComponent(address);
-    const googleMapsUrl = Platform.select({
-      ios: `comgooglemaps://?q=${encodedAddress}`,
-      android: `geo:0,0?q=${encodedAddress}`,
-      default: `https://www.google.com/maps/search/?api=1&query=${encodedAddress}`,
-    });
-
-    const webFallback = `https://www.google.com/maps/search/?api=1&query=${encodedAddress}`;
-
-    Linking.canOpenURL(googleMapsUrl).then((supported) => {
-      if (supported) {
-        Linking.openURL(googleMapsUrl);
-      } else {
-        Linking.openURL(webFallback);
-      }
+    // Navigate to in-app map screen
+    router.push({
+      pathname: '/mechanic/booking/booking_location_map',
+      params: {
+        address: address,
+        street: loc.street_name,
+        barangay: loc.barangay,
+        city: loc.city_municipality,
+      },
     });
   };
 
@@ -344,7 +335,7 @@ export default function BookingDetailScreen() {
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
           <FontAwesome name="chevron-left" size={16} color="#FF8C00" />
         </TouchableOpacity>
-        <ThemedText style={styles.headerTitle}>Booking #{booking.id}</ThemedText>
+        <ThemedText style={styles.headerTitle}>Booking Details</ThemedText>
         <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
           <FontAwesome name="refresh" size={16} color="#FF8C00" />
         </TouchableOpacity>
@@ -364,8 +355,11 @@ export default function BookingDetailScreen() {
             <FontAwesome name={getStatusIcon(booking.status)} size={28} color={getStatusColor(booking.status)} />
           </View>
           <View style={styles.statusInfo}>
-            <View style={[styles.statusBadge, { backgroundColor: getStatusColor(booking.status) }]}> 
-              <ThemedText style={styles.statusBadgeText}>{getStatusLabel(booking.status)}</ThemedText>
+            <View style={styles.statusBadgeRow}>
+              <View style={[styles.statusBadge, { backgroundColor: getStatusColor(booking.status) }]}> 
+                <ThemedText style={styles.statusBadgeText}>{getStatusLabel(booking.status)}</ThemedText>
+              </View>
+              <ThemedText style={styles.bookingIdText}>#{booking.id}</ThemedText>
             </View>
             <ThemedText style={styles.serviceType}>
               {booking.request.type
@@ -457,7 +451,7 @@ export default function BookingDetailScreen() {
                 </View>
                 <View style={styles.navigateTextContainer}>
                   <ThemedText style={styles.navigateTitle}>Navigate to Client</ThemedText>
-                  <ThemedText style={styles.navigateSubtitle}>Open in Google Maps</ThemedText>
+                  <ThemedText style={styles.navigateSubtitle}>View on map</ThemedText>
                 </View>
                 <FontAwesome name="external-link" size={14} color="#FF8C00" />
               </TouchableOpacity>
@@ -720,9 +714,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: 60,
-    paddingBottom: 16,
+    paddingTop: 50,
+    paddingBottom: 12,
     backgroundColor: '#1A1C1E',
+    borderBottomWidth: 1,
+    borderBottomColor: '#2A2C2E',
   },
   backButton: {
     width: 40,
@@ -800,18 +796,27 @@ const styles = StyleSheet.create({
   statusInfo: {
     flex: 1,
   },
+  statusBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
   statusBadge: {
-    alignSelf: 'flex-start',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 6,
-    marginBottom: 4,
   },
   statusBadgeText: {
     fontSize: 10,
     fontWeight: 'bold',
     color: '#fff',
     letterSpacing: 0.5,
+  },
+  bookingIdText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#666',
   },
   serviceType: {
     fontSize: 15,

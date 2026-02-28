@@ -111,6 +111,10 @@ export default function MapScreen() {
           longitudeDelta: 0.0421,
         };
         setRegion(fallbackRegion);
+        setUserLocation({
+          latitude: 14.5995,
+          longitude: 120.9842,
+        });
         return;
       }
 
@@ -147,6 +151,10 @@ export default function MapScreen() {
           longitudeDelta: 0.0421,
         };
         setRegion(fallbackRegion);
+        setUserLocation({
+          latitude: 14.5995,
+          longitude: 120.9842,
+        });
       }
     } catch (error) {
       console.error('Error getting location:', error);
@@ -158,6 +166,10 @@ export default function MapScreen() {
         longitudeDelta: 0.0421,
       };
       setRegion(fallbackRegion);
+      setUserLocation({
+        latitude: 14.5995,
+        longitude: 120.9842,
+      });
     }
   };
 

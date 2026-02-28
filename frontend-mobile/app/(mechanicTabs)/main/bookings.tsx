@@ -53,8 +53,9 @@ type MechanicStatusBookingsResponse = {
 
 type MechanicGroupedBookingsResponse = {
   pending?: { bookings: Booking[]; count: number };
-  booked?: { bookings: Booking[]; count: number };
-  on_going?: { bookings: Booking[]; count: number };
+  accepted?: { bookings: Booking[]; count: number };
+  on_the_way?: { bookings: Booking[]; count: number };
+  active?: { bookings: Booking[]; count: number };
   completed?: { bookings: Booking[]; count: number };
   cancelled?: { bookings: Booking[]; count: number };
   reworked?: { bookings: Booking[]; count: number };
@@ -117,7 +118,7 @@ export default function BookingsScreen() {
           disputed: data.disputed?.count || 0,
         });
       } else {
-        let backendStatus = activeTab;
+        let backendStatus: string = activeTab;
         if (activeTab === 'booked') backendStatus = 'accepted';
         // For 'on_going', fetch both 'on_the_way' and 'active' and merge results
         if (activeTab === 'on_going') {
@@ -260,7 +261,7 @@ export default function BookingsScreen() {
 
   const handleViewDetails = (booking: Booking) => {
     router.push({
-      pathname: '/(mechanicTabs)/booking_details',
+      pathname: '/mechanic/booking/booking_details',
       params: { bookingId: booking.id.toString() },
     });
   };
@@ -379,7 +380,7 @@ export default function BookingsScreen() {
             </View>
             <ThemedText style={styles.emptyText}>No {activeTab === 'all' ? '' : activeTab + ' '}bookings</ThemedText>
             <ThemedText style={styles.emptySubtext}>
-              {activeTab === 'active' ? 'New jobs will appear here when accepted' :
+              {activeTab === 'on_going' ? 'New jobs will appear here when accepted' :
                activeTab === 'pending' ? 'Client requests will appear here' :
                `No ${activeTab} bookings yet`}
             </ThemedText>
