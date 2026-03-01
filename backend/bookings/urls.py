@@ -25,6 +25,11 @@ urlpatterns = [
     path('direct/services/<int:service_id>/addons/', views.get_service_addons, name='get-service-addons'),
     path('direct/mechanic/create/', views.create_mechanic_direct_request, name='create-mechanic-direct-request'),
     
+    # Shop direct request endpoints (client side)
+    path('direct/shops/', views.get_shops, name='get-shops'),
+    path('direct/shops/<int:shop_id>/services/', views.get_shop_services, name='get-shop-services'),
+    path('direct/shop/create/', views.create_shop_direct_request, name='create-shop-direct-request'),
+    
     # Client booking endpoints
     path('bookings/', views.list_client_bookings, name='list-client-bookings'),
     path('bookings/<int:booking_id>/', views.get_booking_detail, name='get-booking-detail'),

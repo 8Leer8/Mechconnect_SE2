@@ -73,6 +73,7 @@ interface BroadcastRequest {
   } | null;
   created_at: string;
   expires_at: string;
+  accepted_at: string | null;
   has_booking: boolean;
 }
 
@@ -305,20 +306,22 @@ export default function RequestScreen() {
     hasBooking: boolean,
     onCancel?: () => void,
     extra?: React.ReactNode,
-  ) => (
-    <View key={id} style={styles.card}>
-      <View style={styles.cardTop}>
-        <View style={[styles.cardIconCircle, { backgroundColor: getStatusColor(status) + '20' }]}>
-          <FontAwesome name={getStatusIcon(status) as any} size={18} color={getStatusColor(status)} />
+    onPress?: () => void,
+  ) => {
+    const card = (
+      <View key={id} style={styles.card}>
+        <View style={styles.cardTop}>
+          <View style={[styles.cardIconCircle, { backgroundColor: getStatusColor(status) + '20' }]}>
+            <FontAwesome name={getStatusIcon(status) as any} size={18} color={getStatusColor(status)} />
+          </View>
+          <View style={styles.cardInfo}>
+            <ThemedText style={styles.cardTitle}>{title}</ThemedText>
+            <ThemedText style={styles.cardSubtitle} numberOfLines={2}>{subtitle}</ThemedText>
+          </View>
+          <View style={[styles.statusBadge, { backgroundColor: getStatusColor(status) }]}>
+            <ThemedText style={styles.statusBadgeText}>{status.toUpperCase()}</ThemedText>
+          </View>
         </View>
-        <View style={styles.cardInfo}>
-          <ThemedText style={styles.cardTitle}>{title}</ThemedText>
-          <ThemedText style={styles.cardSubtitle} numberOfLines={2}>{subtitle}</ThemedText>
-        </View>
-        <View style={[styles.statusBadge, { backgroundColor: getStatusColor(status) }]}>
-          <ThemedText style={styles.statusBadgeText}>{status.toUpperCase()}</ThemedText>
-        </View>
-      </View>
 
       {details.length > 0 && (
         <View style={styles.cardDetails}>
@@ -347,7 +350,18 @@ export default function RequestScreen() {
         </TouchableOpacity>
       )}
     </View>
-  );
+    );
+
+    if (onPress) {
+      return (
+        <TouchableOpacity key={id} onPress={onPress} activeOpacity={0.7}>
+          {card}
+        </TouchableOpacity>
+      );
+    }
+
+    return card;
+  };
 
   const renderCustomRequests = () => {
     if (customRequests.length === 0) {
@@ -363,7 +377,7 @@ export default function RequestScreen() {
       const details: { icon: string; text: string }[] = [];
       if (r.provider) details.push({ icon: 'wrench', text: r.provider.name });
       if (r.quoted_price) details.push({ icon: 'tag', text: `₱${parseFloat(String(r.quoted_price || '0')).toFixed(2)}` });
-      if (r.service_location) details.push({ icon: 'map-marker', text: `${r.service_location.barangay}, ${r.service_location.city_municipality}` });
+      if (r.service_location) details.push({ icon: 'map-marker', text: `${r.service_location.street_name}, ${r.service_location.barangay}, ${r.service_location.city_municipality}` });
       details.push({ icon: 'calendar', text: new Date(r.created_at).toLocaleDateString() });
 
       return renderRequestCard(
@@ -393,7 +407,7 @@ export default function RequestScreen() {
       ];
       if (r.add_ons.length > 0) details.push({ icon: 'plus-circle', text: r.add_ons.map(a => a.name).join(', ') });
       if (r.provider) details.push({ icon: 'wrench', text: r.provider.name });
-      if (r.service_location) details.push({ icon: 'map-marker', text: `${r.service_location.barangay}, ${r.service_location.city_municipality}` });
+      if (r.service_location) details.push({ icon: 'map-marker', text: `${r.service_location.street_name}, ${r.service_location.barangay}, ${r.service_location.city_municipality}` });
       details.push({ icon: 'calendar', text: new Date(r.created_at).toLocaleDateString() });
 
       return renderRequestCard(
@@ -419,7 +433,7 @@ export default function RequestScreen() {
       const details: { icon: string; text: string }[] = [];
       if (r.services?.length > 0) details.push({ icon: 'list', text: r.services.map(s => s.name).join(', ') });
       if (r.provider) details.push({ icon: 'wrench', text: r.provider.name });
-      if (r.service_location) details.push({ icon: 'map-marker', text: `${r.service_location.barangay}, ${r.service_location.city_municipality}` });
+      if (r.service_location) details.push({ icon: 'map-marker', text: `${r.service_location.street_name}, ${r.service_location.barangay}, ${r.service_location.city_municipality}` });
       details.push({ icon: 'calendar', text: new Date(r.created_at).toLocaleDateString() });
 
       const extra = (
@@ -451,6 +465,25 @@ export default function RequestScreen() {
       return renderRequestCard(
         r.id, isExpired ? 'expired' : r.status, `Broadcast #${r.id}`, r.description, details, r.has_booking,
         undefined, extra,
+        () => {
+          router.push({
+            pathname: '/client/request/broadcast/broadcastdetail',
+            params: {
+              id: r.id.toString(),
+              description: r.description,
+              status: isExpired ? 'expired' : r.status,
+              services: JSON.stringify(r.services || []),
+              provider: r.provider ? JSON.stringify(r.provider) : '',
+              providersNote: r.providers_note || '',
+              concernPicture: r.concern_picture || '',
+              serviceLocation: r.service_location ? JSON.stringify(r.service_location) : '',
+              createdAt: r.created_at,
+              expiresAt: r.expires_at,
+              acceptedAt: r.accepted_at || '',
+              hasBooking: r.has_booking.toString(),
+            },
+          });
+        },
       );
     });
   };

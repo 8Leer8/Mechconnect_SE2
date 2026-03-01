@@ -46,6 +46,11 @@ __all__ = [
     'get_mechanic_services',
     'get_service_addons',
     'create_mechanic_direct_request',
+    
+    # Shop direct request views (client-side)
+    'get_shops',
+    'get_shop_services',
+    'create_shop_direct_request',
 
     # Mechanic booking views
     'list_mechanic_bookings',
