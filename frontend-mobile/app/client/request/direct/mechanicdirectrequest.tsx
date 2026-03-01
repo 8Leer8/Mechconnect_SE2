@@ -97,6 +97,12 @@ export default function MechanicDirectRequestScreen() {
   const [currentAddress, setCurrentAddress] = useState<string>('');
   const [fetchingLocation, setFetchingLocation] = useState(false);
 
+  // Individual location components from reverse geocoding
+  const [currentStreetName, setCurrentStreetName] = useState<string>('');
+  const [currentSubdivision, setCurrentSubdivision] = useState<string>('');
+  const [currentBarangay, setCurrentBarangay] = useState<string>('');
+  const [currentCity, setCurrentCity] = useState<string>('');
+
   // PSGC Location data
   const [regions, setRegions] = useState<PSGCLocation[]>([]);
   const [provinces, setProvinces] = useState<PSGCLocation[]>([]);
@@ -337,17 +343,29 @@ export default function MechanicDirectRequestScreen() {
 
         if (results && results.length > 0) {
           const loc = results[0];
-          const addressParts = [];
           
+          // Store individual components for database mapping
+          setCurrentStreetName(loc.street || loc.name || '');
+          setCurrentSubdivision(loc.district || '');
+          setCurrentBarangay(loc.subregion || loc.district || '');
+          setCurrentCity(loc.city || '');
+          
+          // Build display address
+          const addressParts = [];
           if (loc.street) addressParts.push(loc.street);
           if (loc.subregion) addressParts.push(loc.subregion);
           if (loc.city) addressParts.push(loc.city);
           if (loc.region) addressParts.push(loc.region);
           
           const fullAddress = addressParts.join(', ');
-          setCurrentAddress(fullAddress || 'Current Location');
+          setCurrentAddress(fullAddress || 'GPS Location');
         } else {
-          setCurrentAddress('Current Location');
+          // Fallback when reverse geocoding fails
+          setCurrentAddress('GPS Location');
+          setCurrentStreetName('');
+          setCurrentSubdivision('');
+          setCurrentBarangay('');
+          setCurrentCity('');
         }
       } else {
         Alert.alert('Timeout', 'Could not fetch location. Please try again.');
@@ -416,13 +434,15 @@ export default function MechanicDirectRequestScreen() {
         add_on_ids: selectedAddOnIds,
         service_location: useCurrentLocation
           ? { 
-              street_name: currentAddress || 'Current Location', 
-              barangay: 'Current Location', 
-              city_municipality: 'Current Location', 
+              street_name: currentStreetName || 'GPS Location', 
+              subdivision_village: currentSubdivision || undefined,
+              barangay: currentBarangay || 'GPS Location', 
+              city_municipality: currentCity || 'GPS Location', 
               landmark: `Lat: ${currentLatitude}, Lng: ${currentLongitude}` 
             }
           : { 
               street_name: streetName, 
+              subdivision_village: undefined,
               barangay, 
               city_municipality: cityMunicipality, 
               landmark: landmark || undefined 
