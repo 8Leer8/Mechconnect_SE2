@@ -11,6 +11,8 @@ __all__ = [
     'login',
     'logout',
     'check_session',
+    'send_verification_code',
+    'verify_code',
     
     # Password views
     'change_password',

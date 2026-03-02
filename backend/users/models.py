@@ -178,3 +178,22 @@ class TokenPurchase(models.Model):
     status = models.CharField(max_length=50, default='pending')
     purchased_at = models.DateTimeField(auto_now_add=True)
 
+class EmailVerification(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending"
+        VERIFIED = "verified"
+        EXPIRED = "expired"
+    
+    email = models.EmailField()
+    verification_code = models.CharField(max_length=6)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    verified_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['email', 'status']),
+        ]
+
