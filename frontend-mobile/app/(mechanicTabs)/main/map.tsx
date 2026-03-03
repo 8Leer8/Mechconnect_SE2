@@ -33,18 +33,18 @@ interface BroadcastRequest {
   description: string;
   latitude: number;
   longitude: number;
-  services: Array<{
+  services: {
     id: number;
     name: string;
     description: string;
     minimum_price: number;
-  }>;
-  add_ons: Array<{
+  }[];
+  add_ons: {
     id: number;
     name: string;
     description: string;
     price: number;
-  }>;
+  }[];
   created_at: string;
   expires_at: string;
   status: string;

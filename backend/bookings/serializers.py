@@ -117,7 +117,7 @@ class ActiveBookingSerializer(serializers.ModelSerializer):
         model = ActiveBooking
         fields = [
             'id', 'before_picture_service', 'is_job_done', 'after_picture_service',
-            'is_rescheduled', 'reason', 'new_time', 'new_date', 'started_at'
+            'is_rescheduled', 'reason', 'new_time', 'new_date', 'started_at', 'paused_at', 'total_pause_duration'
         ]
 
 
@@ -134,8 +134,8 @@ class BookingSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'request', 'amount_fee', 'booked_at', 'updated_at', 'completed_at', 'active_details']
 
     def get_active_details(self, obj):
-        # Show active details if booking is in a relevant status
-        if obj.status in ['active', 'on_the_way', 'accepted']:
+        # Show active details for statuses where mechanic may need them
+        if obj.status in ['active', 'on_the_way', 'accepted', 'paused', 'finished', 'pending_payment']:
             try:
                 active = obj.activebooking
                 return ActiveBookingSerializer(active).data

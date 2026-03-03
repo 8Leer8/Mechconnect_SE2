@@ -40,11 +40,11 @@ interface DirectRequest {
     name: string;
     price: number;
   };
-  add_ons: Array<{
+  add_ons: {
     id: number;
     name: string;
     price: number;
-  }>;
+  }[];
   status: string;
   service_location: {
     street_name: string;
@@ -61,10 +61,10 @@ interface BroadcastRequest {
   description: string;
   providers_note: string | null;
   concern_picture: string | null;
-  services: Array<{
+  services: {
     id: number;
     name: string;
-  }>;
+  }[];
   status: string;
   service_location: {
     street_name: string;

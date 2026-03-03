@@ -4,6 +4,9 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.utils import timezone
 from django.db.models import Prefetch
+from django.db import transaction
+import logging
+import traceback
 from ..models import (
     Booking,
     Request,
@@ -11,6 +14,8 @@ from ..models import (
     DirectRequestAddOn,
     ActiveBooking,
     CompleteBooking,
+    Receipt,
+    CancelBooking,
 )
 from users.models import Account
 from services.models import MechanicService
@@ -36,12 +41,39 @@ def mechanic_start_travel(request, booking_id):
     except Booking.DoesNotExist:
         return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
 
-    if booking.status != Booking.Status.ACCEPTED:
-        return Response({"error": "Booking must be in 'accepted' status to start travel."}, status=status.HTTP_400_BAD_REQUEST)
+    # Allow idempotent start: if already on_the_way, return success; otherwise require ACCEPTED
+    if booking.status not in [Booking.Status.ACCEPTED, Booking.Status.ON_THE_WAY]:
+        return Response({"error": "Booking must be in 'accepted' or 'on_the_way' status to start travel."}, status=status.HTTP_400_BAD_REQUEST)
+
+    if booking.status == Booking.Status.ON_THE_WAY:
+        return Response({"message": "Travel already started.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
 
     booking.status = Booking.Status.ON_THE_WAY
     booking.save(update_fields=["status"])
     return Response({"message": "Travel started.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def mechanic_cancel_travel(request, booking_id):
+    """
+    Mechanic cancels travel and reverts status to ACCEPTED.
+    """
+    account, err = _get_mechanic_account(request)
+    if err:
+        return err
+
+    try:
+        booking = Booking.objects.get(id=booking_id, request__provider=account)
+    except Booking.DoesNotExist:
+        return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
+
+    if booking.status != Booking.Status.ON_THE_WAY:
+        return Response({"error": "Booking must be in 'on_the_way' status to cancel travel."}, status=status.HTTP_400_BAD_REQUEST)
+
+    booking.status = Booking.Status.ACCEPTED
+    booking.save(update_fields=["status"])
+    return Response({"message": "Travel cancelled, status reverted to accepted.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
 
 
 @api_view(["POST"])
@@ -62,9 +94,248 @@ def mechanic_start_job(request, booking_id):
     if booking.status not in [Booking.Status.ACCEPTED, Booking.Status.ON_THE_WAY]:
         return Response({"error": "Booking must be in 'accepted' or 'on_the_way' status to start job."}, status=status.HTTP_400_BAD_REQUEST)
 
+    # Make creation of ActiveBooking and status update atomic
+    try:
+        with transaction.atomic():
+            active_booking, created = ActiveBooking.objects.get_or_create(booking=booking)
+            if created or not active_booking.started_at:
+                active_booking.started_at = timezone.now()
+                active_booking.paused_at = None
+                active_booking.save()
+
+            booking.status = Booking.Status.ACTIVE
+            booking.save(update_fields=["status"])
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        tb = traceback.format_exc()
+        logger.error("Failed to start job for booking %s: %s", booking_id, tb)
+        # Return a concise error message but log full traceback to server logs
+        return Response({"error": "Failed to start job", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    return Response({"message": "Job started.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def mechanic_cancel_job(request, booking_id):
+    """
+    Mechanic cancels the job and reverts status to ON_THE_WAY.
+    """
+    account, err = _get_mechanic_account(request)
+    if err:
+        return err
+
+    try:
+        booking = Booking.objects.get(id=booking_id, request__provider=account)
+    except Booking.DoesNotExist:
+        return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
+
+    if booking.status != Booking.Status.ACTIVE:
+        return Response({"error": "Booking must be in 'active' status to cancel job."}, status=status.HTTP_400_BAD_REQUEST)
+
+    booking.status = Booking.Status.ON_THE_WAY
+    booking.save(update_fields=["status"])
+    return Response({"message": "Job cancelled, status reverted to on_the_way.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"]) 
+@permission_classes([AllowAny])
+def mechanic_cancel_booking(request, booking_id):
+    """
+    Mechanic cancels the booking entirely.
+    """
+    account, err = _get_mechanic_account(request)
+    if err:
+        return err
+
+    try:
+        booking = Booking.objects.get(id=booking_id, request__provider=account)
+    except Booking.DoesNotExist:
+        return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
+
+    if booking.status == Booking.Status.CANCELLED:
+        return Response({"error": "Booking already cancelled"}, status=status.HTTP_400_BAD_REQUEST)
+
+    booking.status = Booking.Status.CANCELLED
+    booking.save(update_fields=["status"])
+
+    # create CancelBooking record
+    CancelBooking.objects.create(booking=booking, cancelled_by=account, reason=request.data.get('reason', 'Cancelled by mechanic'))
+
+    return Response({"message": "Booking cancelled.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def mechanic_pause_job(request, booking_id):
+    """
+    Mechanic pauses the job. Sets Booking.status = PAUSED.
+    """
+    account, err = _get_mechanic_account(request)
+    if err:
+        return err
+
+
+    try:
+        booking = Booking.objects.get(id=booking_id, request__provider=account)
+    except Booking.DoesNotExist:
+        return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        active_booking = ActiveBooking.objects.get(booking=booking)
+    except ActiveBooking.DoesNotExist:
+        return Response({"error": "Active booking details not found. Start the job first."}, status=status.HTTP_400_BAD_REQUEST)
+
+    if booking.status != Booking.Status.ACTIVE:
+        return Response({"error": "Booking must be in 'active' status to pause the job."}, status=status.HTTP_400_BAD_REQUEST)
+
+    booking.status = Booking.Status.PAUSED
+    active_booking.paused_at = timezone.now()
+    booking.save(update_fields=["status"])
+    active_booking.save(update_fields=["paused_at"])
+    
+    return Response({"message": "Job paused.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def mechanic_resume_job(request, booking_id):
+    """
+    Mechanic resumes the job. Sets Booking.status = ACTIVE.
+    """
+    account, err = _get_mechanic_account(request)
+    if err:
+        return err
+
+    try:
+        booking = Booking.objects.get(id=booking_id, request__provider=account)
+    except Booking.DoesNotExist:
+        return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        active_booking = ActiveBooking.objects.get(booking=booking)
+    except ActiveBooking.DoesNotExist:
+        return Response({"error": "Active booking details not found. Start the job first."}, status=status.HTTP_400_BAD_REQUEST)
+
+    if booking.status != Booking.Status.PAUSED:
+        return Response({"error": "Booking must be in 'paused' status to resume the job."}, status=status.HTTP_400_BAD_REQUEST)
+
+    if active_booking.paused_at:
+        pause_duration = timezone.now() - active_booking.paused_at
+        active_booking.total_pause_duration += pause_duration
+        active_booking.paused_at = None
+        active_booking.save(update_fields=["total_pause_duration", "paused_at"])
+
     booking.status = Booking.Status.ACTIVE
     booking.save(update_fields=["status"])
-    return Response({"message": "Job started.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
+    
+    return Response({"message": "Job resumed.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def mechanic_finish_job(request, booking_id):
+    """
+    Mechanic finishes the job. Sets Booking.status = FINISHED.
+    """
+    account, err = _get_mechanic_account(request)
+    if err:
+        return err
+
+    try:
+        booking = Booking.objects.get(id=booking_id, request__provider=account)
+    except Booking.DoesNotExist:
+        return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
+
+    if booking.status != Booking.Status.ACTIVE:
+        return Response({"error": "Booking must be in 'active' status to finish the job."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # When mechanic finishes the job, mark it as pending payment and create a receipt
+    booking.status = Booking.Status.PENDING_PAYMENT
+    booking.save(update_fields=["status"])
+
+    # Create a receipt if not exists
+    Receipt.objects.get_or_create(booking=booking)
+
+    return Response({"message": "Job finished. Pending payment.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def mechanic_payment_received(request, booking_id):
+    """
+    Mechanic confirms payment has been received. Sets Booking.status = PENDING_PAYMENT.
+    """
+    account, err = _get_mechanic_account(request)
+    if err:
+        return err
+
+    try:
+        booking = Booking.objects.get(id=booking_id, request__provider=account)
+        receipt = Receipt.objects.get(booking=booking)
+    except (Booking.DoesNotExist, Receipt.DoesNotExist):
+        return Response({"error": "Booking or receipt not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    # Accept payment when booking is in pending_payment
+    if booking.status != Booking.Status.PENDING_PAYMENT:
+        return Response({"error": "Booking must be in 'pending_payment' status."}, status=status.HTTP_400_BAD_REQUEST)
+
+    receipt.payment_received = True
+    receipt.save(update_fields=["payment_received"])
+
+    return Response({"message": "Payment received. Ready to mark as complete.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def mechanic_revert_stage(request, booking_id):
+    """
+    Mechanic reverts a booking to the previous logical stage/status.
+    Mapping:
+      - pending_payment, finished -> active
+      - paused -> active
+      - active -> on_the_way
+      - on_the_way -> accepted
+    """
+    account, err = _get_mechanic_account(request)
+    if err:
+        return err
+
+    try:
+        booking = Booking.objects.get(id=booking_id, request__provider=account)
+    except Booking.DoesNotExist:
+        return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
+
+    prev_map = {
+        Booking.Status.PENDING_PAYMENT: Booking.Status.ACTIVE,
+        Booking.Status.FINISHED: Booking.Status.ACTIVE,
+        Booking.Status.PAUSED: Booking.Status.ACTIVE,
+        Booking.Status.ACTIVE: Booking.Status.ON_THE_WAY,
+        Booking.Status.ON_THE_WAY: Booking.Status.ACCEPTED,
+    }
+
+    current = booking.status
+    if current not in prev_map:
+        return Response({"error": "Cannot revert booking from its current status."}, status=status.HTTP_400_BAD_REQUEST)
+
+    new_status = prev_map[current]
+
+    # Ensure ActiveBooking exists and has started_at when reverting to ACTIVE
+    if new_status == Booking.Status.ACTIVE:
+        try:
+            active, _ = ActiveBooking.objects.get_or_create(booking=booking)
+            if not active.started_at:
+                active.started_at = timezone.now()
+                active.paused_at = None
+                active.save(update_fields=["started_at", "paused_at"])
+        except Exception:
+            # ignore failures to set started_at; still proceed with status change
+            pass
+
+    booking.status = new_status
+    booking.save(update_fields=["status"])
+
+    return Response({"message": f"Booking reverted to {new_status}.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
 
 
 def _get_mechanic_account(request):
@@ -233,7 +504,19 @@ def list_mechanic_bookings(request):
                 status=status.HTTP_200_OK,
             )
 
-        valid_statuses = ["accepted", "on_the_way", "active", "completed", "cancelled", "reworked", "disputed"]
+        # Allow filtering by all statuses we expose in the grouped response
+        valid_statuses = [
+            "accepted",
+            "on_the_way",
+            "active",
+            "paused",
+            "finished",
+            "pending_payment",
+            "completed",
+            "cancelled",
+            "reworked",
+            "disputed",
+        ]
         if status_filter.lower() not in valid_statuses:
             return Response(
                 {
@@ -257,6 +540,9 @@ def list_mechanic_bookings(request):
     accepted_bookings = bookings_queryset.filter(status="accepted")
     on_the_way_bookings = bookings_queryset.filter(status="on_the_way")
     active_bookings = bookings_queryset.filter(status="active")
+    paused_bookings = bookings_queryset.filter(status="paused")
+    finished_bookings = bookings_queryset.filter(status="finished")
+    pending_payment_bookings = bookings_queryset.filter(status="pending_payment")
     completed_bookings = bookings_queryset.filter(status="completed")
     cancelled_bookings = bookings_queryset.filter(status="cancelled")
     reworked_bookings = bookings_queryset.filter(status="reworked")
@@ -281,6 +567,18 @@ def list_mechanic_bookings(request):
             "active": {
                 "bookings": _serialize_bookings(active_bookings),
                 "count": active_bookings.count(),
+            },
+            "paused": {
+                "bookings": _serialize_bookings(paused_bookings),
+                "count": paused_bookings.count(),
+            },
+            "finished": {
+                "bookings": _serialize_bookings(finished_bookings),
+                "count": finished_bookings.count(),
+            },
+            "pending_payment": {
+                "bookings": _serialize_bookings(pending_payment_bookings),
+                "count": pending_payment_bookings.count(),
             },
             "completed": {
                 "bookings": _serialize_bookings(completed_bookings),
@@ -337,6 +635,13 @@ def get_mechanic_booking_detail(request, booking_id):
             },
             status=status.HTTP_404_NOT_FOUND,
         )
+
+    # Ensure ActiveBooking exists for runtime details when booking is in a running/finished state
+    if booking.status in [Booking.Status.ACTIVE, Booking.Status.PAUSED, Booking.Status.PENDING_PAYMENT, Booking.Status.FINISHED]:
+        try:
+            ActiveBooking.objects.get_or_create(booking=booking)
+        except Exception:
+            pass
 
     data = _serialize_single_booking(booking)
     return Response({"booking": data}, status=status.HTTP_200_OK)
