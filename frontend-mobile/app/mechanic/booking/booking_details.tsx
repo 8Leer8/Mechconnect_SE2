@@ -12,6 +12,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
+import WalletBadge from '@/components/wallet-badge';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 interface BookingDetail {
@@ -411,9 +412,12 @@ export default function BookingDetailScreen() {
           <FontAwesome name="chevron-left" size={16} color="#FF8C00" />
         </TouchableOpacity>
         <ThemedText style={styles.headerTitle}>Booking Details</ThemedText>
-        <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
-          <FontAwesome name="refresh" size={16} color="#FF8C00" />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
+            <FontAwesome name="refresh" size={16} color="#FF8C00" />
+          </TouchableOpacity>
+          <WalletBadge onPress={() => router.push('/mechanic/wallet')} />
+        </View>
       </View>
 
       {/* Action Buttons */}
