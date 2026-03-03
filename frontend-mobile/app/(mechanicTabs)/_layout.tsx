@@ -65,6 +65,7 @@ export default function MechanicTabLayout() {
       {/* Hide non-tab routes */}
       <Tabs.Screen name="index" options={{ href: null }} />
       <Tabs.Screen name="booking_details" options={{ href: null }} />
+      <Tabs.Screen name="main/wallet" options={{ href: null }} />
     </Tabs>
   );
 }

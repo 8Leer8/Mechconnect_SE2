@@ -14,6 +14,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/mechanic/profileStyles';
+import WalletSection from '@/components/wallet-section';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -277,6 +278,9 @@ export default function ProfileScreen() {
           <ThemedText style={styles.name}>{name}</ThemedText>
           <ThemedText style={styles.subtitle}>Mechanic profile</ThemedText>
         </View>
+
+        {/* Wallet Section */}
+        <WalletSection />
 
         {/* Services I offer - connected to backend */}
         <View style={styles.section}>

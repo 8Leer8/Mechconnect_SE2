@@ -1,0 +1,43 @@
+import { StyleSheet } from 'react-native';
+
+export const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#111214' },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 60,
+    paddingBottom: 16,
+    backgroundColor: '#1A1C1E',
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FF8C0015',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerTitle: { fontSize: 24, fontWeight: 'bold', color: '#fff' },
+  headerSubtitle: { fontSize: 13, color: '#8E8E93', marginTop: 2 },
+  refreshBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FF8C0015',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  scrollContent: { paddingTop: 16 },
+  section: { paddingHorizontal: 20, marginTop: 16 },
+  sectionTitle: { fontSize: 16, fontWeight: '600', color: '#fff', marginBottom: 12 },
+  topupRow: { flexDirection: 'row', gap: 12 },
+  topupBtn: { backgroundColor: '#FF8C00', paddingVertical: 12, paddingHorizontal: 18, borderRadius: 10, marginRight: 12 },
+  topupText: { color: '#fff', fontWeight: '700' },
+  emptyText: { color: '#8E8E93' },
+  txRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#222426' },
+  txType: { fontSize: 14, fontWeight: '600', color: '#fff' },
+  txTime: { fontSize: 12, color: '#8E8E93' },
+  txAmount: { fontSize: 14, fontWeight: '700', color: '#34C759' },
+});

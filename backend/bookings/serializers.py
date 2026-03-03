@@ -162,6 +162,7 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
     services = ServiceBasicSerializer(many=True, read_only=True)
     add_ons = serializers.SerializerMethodField()
     concern_picture = serializers.SerializerMethodField()
+    required_tokens = serializers.SerializerMethodField()
     latitude = serializers.FloatField()
     longitude = serializers.FloatField()
     
@@ -170,7 +171,7 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'description', 'latitude', 'longitude', 
             'services', 'add_ons', 'created_at', 'expires_at', 'accepted_at',
-            'status', 'concern_picture'
+            'status', 'concern_picture', 'required_tokens'
         ]
     
     def get_concern_picture(self, obj):
@@ -186,6 +187,24 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
         from .models import BroadcastRequestAddOn
         add_ons = BroadcastRequestAddOn.objects.filter(broadcast_request=obj).select_related('service_add_on')
         return ServiceAddOnSerializer([addon.service_add_on for addon in add_ons], many=True).data
+
+    def get_required_tokens(self, obj):
+        """Calculate required tokens (2% of total service price) rounded up to integer."""
+        try:
+            total_amount = 0.0
+            for service in obj.services.all():
+                total_amount += float(service.minimum_price)
+
+            from .models import BroadcastRequestAddOn
+            add_ons = BroadcastRequestAddOn.objects.filter(broadcast_request=obj).select_related('service_add_on')
+            for ar in add_ons:
+                total_amount += float(ar.service_add_on.price)
+
+            import math
+            required = math.ceil(total_amount * 0.02)
+            return required
+        except Exception:
+            return 0
 
 
 class BroadcastOfferSerializer(serializers.ModelSerializer):

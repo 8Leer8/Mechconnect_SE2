@@ -13,6 +13,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/mechanic/homeStyles';
+import WalletSection from '@/components/wallet-section';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const { width } = Dimensions.get('window');
@@ -220,6 +221,9 @@ export default function HomeScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF8C00" />
         }
       >
+        {/* Wallet Section */}
+        <WalletSection />
+
         {/* Earnings Banner */}
         <View style={styles.earningsBanner}>
           <View style={styles.earningsLeft}>

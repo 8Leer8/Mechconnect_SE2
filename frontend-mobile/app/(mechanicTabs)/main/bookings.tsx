@@ -5,6 +5,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/mechanic/bookingsStyles';
+import WalletBadge from '@/components/wallet-badge';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -404,9 +405,12 @@ export default function BookingsScreen() {
             {bookings.length} {activeTab === 'all' ? 'total' : activeTab} booking{bookings.length !== 1 ? 's' : ''}
           </ThemedText>
         </View>
-        <TouchableOpacity style={styles.refreshButton} onPress={onRefresh}>
-          <FontAwesome name="refresh" size={18} color="#FF8C00" />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity style={styles.refreshButton} onPress={onRefresh}>
+            <FontAwesome name="refresh" size={18} color="#FF8C00" />
+          </TouchableOpacity>
+          <WalletBadge onPress={() => router.push('/mechanic/wallet')} />
+        </View>
       </View>
 
       {renderTabs()}

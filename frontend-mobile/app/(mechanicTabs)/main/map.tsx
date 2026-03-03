@@ -15,6 +15,8 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import WalletBadge from '@/components/wallet-badge';
+import { eventBus } from '@/utils/eventBus';
 import { getDistanceKm, getEstimatedPrice } from '@/app/client/request/broadcast/LocationContext';
 import { styles } from '@/style/mechanic/mapStyles';
 
@@ -59,6 +61,7 @@ interface BroadcastRequest {
   expires_at: string;
   status: string;
   concern_picture?: string;
+  required_tokens?: number;
 }
 
 export default function MapScreen() {
@@ -72,6 +75,7 @@ export default function MapScreen() {
   const [selectedBroadcast, setSelectedBroadcast] = useState<BroadcastRequest | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [accepting, setAccepting] = useState(false);
+  const [tokensBalance, setTokensBalance] = useState<number | null>(null);
   const [currentTime, setCurrentTime] = useState(Date.now());
   
   // Map state
@@ -96,6 +100,7 @@ export default function MapScreen() {
       fetchBroadcasts();
     }, 8000);
     
+    fetchTokensBalance();
     return () => clearInterval(interval);
   }, []);
 
@@ -107,6 +112,17 @@ export default function MapScreen() {
     
     return () => clearInterval(timer);
   }, []);
+
+  const fetchTokensBalance = async () => {
+    try {
+      const res = await fetch(`${API_URL}/users/mechanic/wallet/`, { credentials: 'include' });
+      if (!res.ok) return;
+      const data = await res.json();
+      setTokensBalance(data.tokens_balance ?? 0);
+    } catch (e) {
+      // ignore
+    }
+  };
 
   const initializeMap = async () => {
     try {
@@ -264,6 +280,7 @@ export default function MapScreen() {
   const handleBroadcastPress = (broadcast: BroadcastRequest) => {
     setSelectedBroadcast(broadcast);
     setModalVisible(true);
+    fetchTokensBalance();
   };
 
   // Calculate distance and estimated earnings for a broadcast
@@ -327,6 +344,8 @@ export default function MapScreen() {
               onPress: () => {
                 setModalVisible(false);
                 fetchBroadcasts(); // Refresh broadcasts
+                fetchTokensBalance();
+                try { eventBus.emit('walletChanged'); } catch(e){}
               },
             },
           ]
@@ -389,9 +408,12 @@ export default function MapScreen() {
       {/* Header */}
       <View style={styles.header}>
         <ThemedText style={styles.headerTitle}>Nearby Jobs</ThemedText>
-        <TouchableOpacity style={styles.locationButton}>
-          <FontAwesome name="crosshairs" size={20} color="#fff" />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity style={styles.locationButton}>
+            <FontAwesome name="crosshairs" size={20} color="#fff" />
+          </TouchableOpacity>
+          <WalletBadge onPress={() => router.push('/mechanic/wallet')} />
+        </View>
       </View>
 
       {/* Filter Chips */}
@@ -777,12 +799,27 @@ export default function MapScreen() {
               )}
             </ScrollView>
 
-            {/* Accept Button */}
+            {/* Tokens requirement + Accept Button */}
+            <View style={styles.modalSection}>
+              <ThemedText style={styles.modalSectionTitle}>Tokens Required to Accept</ThemedText>
+              <ThemedText style={styles.modalText}>
+                {selectedBroadcast?.required_tokens ? `${selectedBroadcast.required_tokens} tokens` : 'Calculating...'}
+              </ThemedText>
+              <ThemedText style={[styles.modalText, { marginTop: 8 }]}>Your balance: {tokensBalance ?? '...'}</ThemedText>
+              {selectedBroadcast && typeof selectedBroadcast.required_tokens === 'number' && tokensBalance !== null && tokensBalance < selectedBroadcast.required_tokens && (
+                <ThemedText style={{ color: '#FF3B30', marginTop: 8 }}>You need to top up tokens to accept this job.</ThemedText>
+              )}
+            </View>
+
             <View style={styles.modalFooter}>
               <TouchableOpacity
-                style={[styles.modalAcceptButton, accepting && styles.modalAcceptButtonDisabled]}
+                style={[
+                  styles.modalAcceptButton,
+                  accepting && styles.modalAcceptButtonDisabled,
+                  (selectedBroadcast && typeof selectedBroadcast.required_tokens === 'number' && tokensBalance !== null && tokensBalance < selectedBroadcast.required_tokens) ? styles.modalAcceptButtonDisabled : null,
+                ]}
                 onPress={handleAcceptBroadcast}
-                disabled={accepting}
+                disabled={accepting || (selectedBroadcast && typeof selectedBroadcast.required_tokens === 'number' && tokensBalance !== null && tokensBalance < selectedBroadcast.required_tokens)}
               >
                 {accepting ? (
                   <ActivityIndicator color="#fff" />
