@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { View, TouchableOpacity, StyleSheet } from 'react-native';
+import { TouchableOpacity, StyleSheet } from 'react-native';
 import { ThemedText } from './themed-text';
+import { FontAwesome } from '@expo/vector-icons';
 import { eventBus } from '@/utils/eventBus';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -24,9 +25,7 @@ export default function WalletBadge({ onPress }: { onPress?: () => void }) {
       }
     }
     load();
-    const off = eventBus.on('walletChanged', () => {
-      load();
-    });
+    const off = eventBus.on('walletChanged', () => load());
     return () => {
       mounted = false;
       off();
@@ -34,34 +33,29 @@ export default function WalletBadge({ onPress }: { onPress?: () => void }) {
   }, []);
 
   return (
-    <TouchableOpacity style={styles.container} onPress={onPress}>
-      <ThemedText style={styles.label} type="defaultSemiBold">
-        Tokens
-      </ThemedText>
-      <View style={styles.pill}>
-        <ThemedText style={styles.amount}>{balance === null ? '...' : balance}</ThemedText>
-      </View>
+    <TouchableOpacity style={styles.badge} onPress={onPress} activeOpacity={0.7}>
+      <FontAwesome name="database" size={12} color="#FF8C00" />
+      <ThemedText style={styles.amount}>{balance === null ? '...' : balance}</ThemedText>
     </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  badge: {
     flexDirection: 'row',
     alignItems: 'center',
-  },
-  label: {
-    marginRight: 8,
-    fontSize: 14,
-  },
-  pill: {
-    backgroundColor: '#0a7ea4',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
+    backgroundColor: '#FF8C0015',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#FF8C0030',
+    marginLeft: 8,
   },
   amount: {
-    color: '#fff',
-    fontWeight: '600',
+    color: '#FF8C00',
+    fontSize: 14,
+    fontWeight: '700',
   },
 });

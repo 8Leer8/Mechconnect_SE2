@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { View, TouchableOpacity, StyleSheet } from 'react-native';
 import { ThemedText } from './themed-text';
+import { FontAwesome } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { eventBus } from '@/utils/eventBus';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -23,20 +25,23 @@ export default function WalletSection() {
       }
     }
     load();
-    return () => { mounted = false; };
+    const off = eventBus.on('walletChanged', () => load());
+    return () => { mounted = false; off(); };
   }, []);
 
   return (
     <View style={styles.card}>
-      <View style={styles.left}>
-        <ThemedText style={styles.label}>Wallet Balance</ThemedText>
+      <View style={styles.iconCircle}>
+        <FontAwesome name="database" size={18} color="#FF8C00" />
+      </View>
+      <View style={styles.info}>
+        <ThemedText style={styles.label}>Token Balance</ThemedText>
         <ThemedText style={styles.amount}>{balance === null ? '...' : `${balance} tokens`}</ThemedText>
       </View>
-      <View style={styles.right}>
-        <TouchableOpacity style={styles.topUpBtn} onPress={() => router.push('/mechanic/wallet')}>
-          <ThemedText style={styles.topUpText}>Add Tokens</ThemedText>
-        </TouchableOpacity>
-      </View>
+      <TouchableOpacity style={styles.addBtn} onPress={() => router.push('/mechanic/wallet')} activeOpacity={0.7}>
+        <FontAwesome name="plus" size={11} color="#fff" />
+        <ThemedText style={styles.addBtnText}>Add</ThemedText>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -44,26 +49,34 @@ export default function WalletSection() {
 const styles = StyleSheet.create({
   card: {
     backgroundColor: '#1A1C1E',
-    borderRadius: 12,
-    padding: 18,
+    borderRadius: 14,
+    padding: 16,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     borderWidth: 1,
     borderColor: '#2A2C2E',
-    marginHorizontal: 20,
-    marginTop: 12,
-    marginBottom: 12,
+    marginBottom: 16,
   },
-  left: { flex: 1 },
-  label: { fontSize: 13, color: '#8E8E93' },
-  amount: { fontSize: 22, fontWeight: '700', color: '#fff', marginTop: 6 },
-  right: { marginLeft: 12 },
-  topUpBtn: {
+  iconCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#FF8C0015',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  info: { flex: 1 },
+  label: { fontSize: 12, color: '#8E8E93' },
+  amount: { fontSize: 18, fontWeight: '700', color: '#fff', marginTop: 2 },
+  addBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     backgroundColor: '#FF8C00',
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 8,
     borderRadius: 10,
   },
-  topUpText: { color: '#fff', fontWeight: '700' },
+  addBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
 });

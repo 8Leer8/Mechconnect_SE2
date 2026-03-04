@@ -59,7 +59,7 @@ export default function ProfileScreen() {
         headers: { 'Content-Type': 'application/json' },
       });
       if (res.ok) {
-        const data = await res.json() as any;
+        const data = await res.json();
         const p = data.profile || data;
         const n = p?.full_name || `${p?.firstname || ''} ${p?.lastname || ''}`.trim();
         if (n) setName(n);
@@ -77,7 +77,7 @@ export default function ProfileScreen() {
         headers: { 'Content-Type': 'application/json' },
       });
       if (res.ok) {
-        const data = await res.json() as any;
+        const data = await res.json();
         setMyServices(data.services || []);
       }
     } catch (e) {
@@ -110,7 +110,7 @@ export default function ProfileScreen() {
         headers: { 'Content-Type': 'application/json' },
       });
       if (res.ok) {
-        const data = await res.json() as any;
+        const data = await res.json();
         const all: AvailableService[] = data.services || [];
         const myIds = new Set(myServices.map((s) => s.id));
         setAvailableServices(all.filter((s) => !myIds.has(s.id)));

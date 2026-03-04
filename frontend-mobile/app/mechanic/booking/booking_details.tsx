@@ -80,7 +80,7 @@ export default function BookingDetailScreen() {
   const [isPaused, setIsPaused] = useState(false);
 
   useEffect(() => {
-    let interval: NodeJS.Timeout | null = null;
+    let interval: ReturnType<typeof setInterval> | null = null;
     const hasStarted = !!(booking && booking.active_details && booking.active_details.started_at);
     // Only run the ticking interval when the job has started, status is active, AND it is not paused
     if (hasStarted && booking?.status === 'active' && !isPaused) {

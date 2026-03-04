@@ -819,7 +819,7 @@ export default function MapScreen() {
                   (selectedBroadcast && typeof selectedBroadcast.required_tokens === 'number' && tokensBalance !== null && tokensBalance < selectedBroadcast.required_tokens) ? styles.modalAcceptButtonDisabled : null,
                 ]}
                 onPress={handleAcceptBroadcast}
-                disabled={accepting || (selectedBroadcast && typeof selectedBroadcast.required_tokens === 'number' && tokensBalance !== null && tokensBalance < selectedBroadcast.required_tokens)}
+                disabled={accepting || !!(selectedBroadcast && typeof selectedBroadcast.required_tokens === 'number' && tokensBalance !== null && tokensBalance < selectedBroadcast.required_tokens)}
               >
                 {accepting ? (
                   <ActivityIndicator color="#fff" />

@@ -95,9 +95,7 @@ export default function HomeScreen() {
 
       if (homeRes.ok) {
         const result = await homeRes.json() as HomeData;
-        if (!('error' in result)) {
-          setData(result);
-        }
+        setData(result);
       }
 
       if (profileRes.ok) {

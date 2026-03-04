@@ -26,6 +26,7 @@ interface Booking {
   request: {
     id: number;
     type: string;
+    request_type?: string;
     service_location: {
       street_name: string;
       barangay: string;

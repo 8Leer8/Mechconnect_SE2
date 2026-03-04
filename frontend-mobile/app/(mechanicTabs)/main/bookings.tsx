@@ -101,7 +101,7 @@ export default function BookingsScreen() {
         });
         if (!response.ok) throw new Error('Failed to fetch bookings');
         const data = (await response.json()) as MechanicGroupedBookingsResponse;
-        const all: Booking[] = [
+        const rawAll: Booking[] = [
           ...((data.pending?.bookings as Booking[]) || []),
           ...((data.accepted?.bookings as Booking[]) || []),
           ...(data.on_the_way?.bookings || []),
@@ -114,6 +114,13 @@ export default function BookingsScreen() {
           ...(data.reworked?.bookings || []),
           ...(data.disputed?.bookings || []),
         ];
+        // Deduplicate by booking id
+        const seenIds = new Set<number>();
+        const all: Booking[] = rawAll.filter((b) => {
+          if (seenIds.has(b.id)) return false;
+          seenIds.add(b.id);
+          return true;
+        });
         // Ensure any pending_payment items are included (extra safety in case grouped response missed them)
         try {
           const pendingPaymentRes = await fetch(`${API_URL}/bookings/mechanic/bookings/?status=pending_payment`, {
@@ -147,7 +154,7 @@ export default function BookingsScreen() {
           disputed: data.disputed?.count || 0,
         });
         } else {
-        let statusQuery = activeTab;
+        let statusQuery: string = activeTab;
         if (activeTab === 'booked') statusQuery = 'accepted';
         if (activeTab === 'pending') {
           // Include both pending requests and bookings awaiting payment
@@ -166,7 +173,12 @@ export default function BookingsScreen() {
           if (!pendingRes.ok || !pendingPaymentRes.ok) throw new Error('Failed to fetch pending bookings');
           const pendingData = await pendingRes.json() as MechanicStatusBookingsResponse;
           const pendingPaymentData = await pendingPaymentRes.json() as MechanicStatusBookingsResponse;
-          setBookings([...(pendingData.bookings || []), ...(pendingPaymentData.bookings || [])]);
+          const merged = [...(pendingData.bookings || [])];
+          const seenIds = new Set(merged.map(b => b.id));
+          (pendingPaymentData.bookings || []).forEach(b => {
+            if (!seenIds.has(b.id)) { merged.push(b); seenIds.add(b.id); }
+          });
+          setBookings(merged);
           return;
         }
         if (activeTab === 'on_going') {
@@ -186,7 +198,12 @@ export default function BookingsScreen() {
           if (!onTheWayRes.ok || !activeRes.ok) throw new Error('Failed to fetch on-going bookings');
           const onTheWayData = (await onTheWayRes.json()) as MechanicStatusBookingsResponse;
           const activeData = (await activeRes.json()) as MechanicStatusBookingsResponse;
-          setBookings([...(onTheWayData.bookings || []), ...(activeData.bookings || [])]);
+          const merged = [...(onTheWayData.bookings || [])];
+          const seenIds = new Set(merged.map(b => b.id));
+          (activeData.bookings || []).forEach(b => {
+            if (!seenIds.has(b.id)) { merged.push(b); seenIds.add(b.id); }
+          });
+          setBookings(merged);
         } else {
           const response = await fetch(`${API_URL}/bookings/mechanic/bookings/?status=${statusQuery}`, {
             method: 'GET',

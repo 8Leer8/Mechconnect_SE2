@@ -1,18 +1,26 @@
 import React, { useEffect, useState } from 'react';
-import { View, TouchableOpacity, ScrollView, FlatList } from 'react-native';
+import { View, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
-import WalletSection from '@/components/wallet-section';
+import { eventBus } from '@/utils/eventBus';
 import { styles } from '@/style/mechanic/walletScreenStyles';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
+
+const TOKEN_PACKAGES = [
+  { tokens: 10, label: '10' },
+  { tokens: 25, label: '25' },
+  { tokens: 50, label: '50' },
+  { tokens: 100, label: '100' },
+];
 
 export default function WalletScreen() {
   const router = useRouter();
   const [balance, setBalance] = useState<number | null>(null);
   const [transactions, setTransactions] = useState<any[]>([]);
+  const [topUpLoading, setTopUpLoading] = useState<number | null>(null);
 
   useEffect(() => {
     fetchBalance();
@@ -29,31 +37,36 @@ export default function WalletScreen() {
 
   async function topUp(amount: number) {
     try {
+      setTopUpLoading(amount);
       const res = await fetch(`${API_URL}/users/mechanic/wallet/topup/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ tokens: amount, price: 0 })
+        body: JSON.stringify({ tokens: amount, price: 0 }),
       });
       if (!res.ok) return;
       const data = await res.json();
       setBalance(data.tokens_balance ?? balance);
-      // simple local transaction entry
-      setTransactions((t) => [{ id: Date.now(), type: 'topup', tokens: amount, time: new Date().toISOString() }, ...t]);
-      try {
-        const { eventBus } = await import('@/utils/eventBus');
-        eventBus.emit('walletChanged', { tokens_balance: data.tokens_balance ?? balance });
-      } catch (e) {}
-    } catch (e) {}
+      setTransactions((prev) => [
+        { id: Date.now(), type: 'topup', tokens: amount, time: new Date().toISOString() },
+        ...prev,
+      ]);
+      eventBus.emit('walletChanged', { tokens_balance: data.tokens_balance });
+    } catch (e) {} finally {
+      setTopUpLoading(null);
+    }
   }
 
   return (
     <ThemedView style={styles.container}>
-      <Stack.Screen options={{ title: 'Tokens' }} />
+      <Stack.Screen options={{ headerShown: false }} />
 
-      {/* Header similar to bookings */}
+      {/* Header */}
       <View style={styles.header}>
-        <View>
+        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+          <FontAwesome name="chevron-left" size={16} color="#FF8C00" />
+        </TouchableOpacity>
+        <View style={styles.headerCenter}>
           <ThemedText style={styles.headerTitle}>Tokens</ThemedText>
           <ThemedText style={styles.headerSubtitle}>Manage your credits</ThemedText>
         </View>
@@ -62,69 +75,88 @@ export default function WalletScreen() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <WalletSection />
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        {/* Balance Card */}
+        <View style={styles.balanceCard}>
+          <View style={styles.balanceIconCircle}>
+            <FontAwesome name="database" size={28} color="#FF8C00" />
+          </View>
+          <ThemedText style={styles.balanceLabel}>Token Balance</ThemedText>
+          <ThemedText style={styles.balanceValue}>{balance === null ? '...' : balance}</ThemedText>
+          <ThemedText style={styles.balanceSub}>Available tokens</ThemedText>
+        </View>
 
+        {/* Buy Tokens */}
         <View style={styles.section}>
-          <ThemedText style={styles.sectionTitle}>Top up</ThemedText>
-          <View style={styles.topupRow}>
-            <TouchableOpacity style={styles.topupBtn} onPress={() => topUp(10)}>
-              <ThemedText style={styles.topupText}>10 Tokens</ThemedText>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.topupBtn} onPress={() => topUp(25)}>
-              <ThemedText style={styles.topupText}>25 Tokens</ThemedText>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.topupBtn} onPress={() => topUp(50)}>
-              <ThemedText style={styles.topupText}>50 Tokens</ThemedText>
-            </TouchableOpacity>
+          <View style={styles.sectionHeader}>
+            <View style={[styles.sectionDot, { backgroundColor: '#FF8C00' }]} />
+            <ThemedText style={styles.sectionTitle}>Buy Tokens</ThemedText>
+          </View>
+          <View style={styles.packagesGrid}>
+            {TOKEN_PACKAGES.map((pkg) => (
+              <TouchableOpacity
+                key={pkg.tokens}
+                style={styles.packageCard}
+                onPress={() => topUp(pkg.tokens)}
+                disabled={topUpLoading !== null}
+                activeOpacity={0.7}
+              >
+                <View style={styles.packageIconCircle}>
+                  <FontAwesome name="database" size={20} color="#FF8C00" />
+                </View>
+                <ThemedText style={styles.packageAmount}>{pkg.label}</ThemedText>
+                <ThemedText style={styles.packageLabel}>tokens</ThemedText>
+                <View style={styles.packageBuyBtn}>
+                  {topUpLoading === pkg.tokens ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <ThemedText style={styles.packageBuyText}>Buy</ThemedText>
+                  )}
+                </View>
+              </TouchableOpacity>
+            ))}
           </View>
         </View>
 
+        {/* Transactions */}
         <View style={styles.section}>
-          <ThemedText style={styles.sectionTitle}>Transactions</ThemedText>
+          <View style={styles.sectionHeader}>
+            <View style={[styles.sectionDot, { backgroundColor: '#34C759' }]} />
+            <ThemedText style={styles.sectionTitle}>Recent Transactions</ThemedText>
+          </View>
           {transactions.length === 0 ? (
-            <ThemedText style={styles.emptyText}>No transactions yet</ThemedText>
+            <View style={styles.emptyCard}>
+              <FontAwesome name="exchange" size={28} color="#555" />
+              <ThemedText style={styles.emptyTitle}>No Transactions Yet</ThemedText>
+              <ThemedText style={styles.emptySubtext}>Purchase tokens to see your history</ThemedText>
+            </View>
           ) : (
-            <FlatList
-              data={transactions}
-              keyExtractor={(i) => String(i.id)}
-              renderItem={({ item }) => (
-                <View style={styles.txRow}>
-                  <View>
-                    <ThemedText style={styles.txType}>{item.type === 'topup' ? 'Top up' : item.type}</ThemedText>
-                    <ThemedText style={styles.txTime}>{new Date(item.time).toLocaleString()}</ThemedText>
+            <View style={styles.txList}>
+              {transactions.map((item) => (
+                <View key={String(item.id)} style={styles.txRow}>
+                  <View style={styles.txIconCircle}>
+                    <FontAwesome name="arrow-up" size={14} color="#34C759" />
+                  </View>
+                  <View style={styles.txInfo}>
+                    <ThemedText style={styles.txType}>Top up</ThemedText>
+                    <ThemedText style={styles.txTime}>
+                      {new Date(item.time).toLocaleString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </ThemedText>
                   </View>
                   <ThemedText style={styles.txAmount}>+{item.tokens}</ThemedText>
                 </View>
-              )}
-            />
+              ))}
+            </View>
           )}
         </View>
+
         <View style={{ height: 40 }} />
       </ScrollView>
-      {/* Internal bottom navigation for Tokens page only */}
-      <View style={styles.bottomNav}>
-        <TouchableOpacity style={styles.navItem} onPress={() => router.push('/(mechanicTabs)/main/bookings')}>
-          <FontAwesome name="calendar-check-o" size={20} color="#fff" />
-          <ThemedText style={styles.navLabel}>Bookings</ThemedText>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem} onPress={() => router.push('/(mechanicTabs)/main/emergency')}>
-          <FontAwesome name="exclamation-triangle" size={20} color="#fff" />
-          <ThemedText style={styles.navLabel}>Emergency</ThemedText>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem} onPress={() => router.push('/(mechanicTabs)/main/home')}>
-          <FontAwesome name="home" size={20} color="#fff" />
-          <ThemedText style={styles.navLabel}>Home</ThemedText>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem} onPress={() => router.push('/(mechanicTabs)/main/map')}>
-          <FontAwesome name="map-marker" size={20} color="#fff" />
-          <ThemedText style={styles.navLabel}>Map</ThemedText>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem} onPress={() => router.push('/(mechanicTabs)/main/profile')}>
-          <FontAwesome name="user" size={20} color="#fff" />
-          <ThemedText style={styles.navLabel}>Profile</ThemedText>
-        </TouchableOpacity>
-      </View>
     </ThemedView>
   );
 }
