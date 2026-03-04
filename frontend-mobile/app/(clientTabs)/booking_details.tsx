@@ -74,6 +74,8 @@ export default function ClientBookingDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [timer, setTimer] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
 
   const fetchBookingDetail = useCallback(async (silent = false) => {
     if (!bookingId) return;
@@ -95,6 +97,56 @@ export default function ClientBookingDetailScreen() {
       if (!response.ok) throw new Error('Failed to fetch booking details');
       const data = await response.json();
       setBooking((data as any).booking || data);
+      const bookingData = (data as any).booking || data;
+      const currentStatus = bookingData.status;
+
+      // parse helper for total_pause_duration
+      const parseTotalPause = (raw: any) => {
+        let totalPauseSeconds = 0;
+        if (raw) {
+          if (typeof raw === 'number') totalPauseSeconds = Math.floor(raw);
+          else if (typeof raw === 'string') {
+            const parts = raw.split(':').map((p: string) => Number(p));
+            if (parts.length === 3) totalPauseSeconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
+            else if (parts.length === 2) totalPauseSeconds = parts[0] * 60 + parts[1];
+            else totalPauseSeconds = Math.floor(Number(raw)) || 0;
+          }
+        }
+        return totalPauseSeconds;
+      };
+
+      // compute timer based on status
+      if (bookingData.active_details && bookingData.active_details.started_at) {
+        const startedAt = bookingData.active_details.started_at;
+        const pausedAt = bookingData.active_details.paused_at;
+        const totalPauseRaw = bookingData.active_details.total_pause_duration;
+        const totalPauseSeconds = parseTotalPause(totalPauseRaw);
+
+        let elapsedSeconds = 0;
+        if (currentStatus === 'paused' && startedAt && pausedAt) {
+          const startedMs = new Date(startedAt).getTime();
+          const pausedMs = new Date(pausedAt).getTime();
+          if (!isNaN(startedMs) && !isNaN(pausedMs)) {
+            elapsedSeconds = Math.floor((pausedMs - startedMs) / 1000) - Math.floor(totalPauseSeconds);
+          }
+          if (elapsedSeconds < 0) elapsedSeconds = 0;
+          setTimer(Math.floor(elapsedSeconds));
+          setIsPaused(true);
+        } else if (currentStatus === 'active' && startedAt) {
+          const startedMs = new Date(startedAt).getTime();
+          const nowMs = Date.now();
+          if (!isNaN(startedMs)) elapsedSeconds = Math.floor((nowMs - startedMs) / 1000) - Math.floor(totalPauseSeconds);
+          if (elapsedSeconds < 0) elapsedSeconds = 0;
+          setTimer(Math.floor(elapsedSeconds));
+          setIsPaused(false);
+        } else {
+          setTimer(0);
+          setIsPaused(false);
+        }
+      } else {
+        setTimer(0);
+        setIsPaused(false);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
@@ -102,6 +154,18 @@ export default function ClientBookingDetailScreen() {
       setRefreshing(false);
     }
   }, [bookingId]);
+
+  // ticking effect for live timer
+  useEffect(() => {
+    let interval: NodeJS.Timeout | null = null;
+    const hasStarted = !!(booking && booking.active_details && booking.active_details.started_at);
+    if (hasStarted && booking?.status === 'active' && !isPaused) {
+      interval = setInterval(() => {
+        setTimer(prev => prev + 1);
+      }, 1000);
+    }
+    return () => { if (interval) clearInterval(interval); };
+  }, [booking?.active_details?.started_at, booking?.status, isPaused]);
 
   useEffect(() => {
     fetchBookingDetail();
@@ -167,6 +231,13 @@ export default function ClientBookingDetailScreen() {
       hour: '2-digit',
       minute: '2-digit',
     });
+  };
+
+  const formatDuration = (seconds: number) => {
+    const h = Math.floor(seconds / 3600).toString().padStart(2, '0');
+    const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
+    const s = (seconds % 60).toString().padStart(2, '0');
+    return `${h}:${m}:${s}`;
   };
 
   const handleNavigateToLocation = () => {
@@ -258,6 +329,9 @@ export default function ClientBookingDetailScreen() {
                 ? booking.request.type.charAt(0).toUpperCase() + booking.request.type.slice(1) + ' Service'
                 : 'Service Request'}
             </ThemedText>
+            {(booking.status === 'active' || booking.status === 'paused') && booking.active_details?.started_at && (
+              <ThemedText style={styles.timerText}>{formatDuration(timer)}</ThemedText>
+            )}
           </View>
           <ThemedText style={styles.amountLarge}>₱{parseFloat(String(booking.amount_fee || '0')).toFixed(2)}</ThemedText>
         </View>
@@ -587,6 +661,8 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 16,
+    // ensure content can scroll above any fixed action area
+    paddingBottom: 220,
   },
   // Status Card
   statusCard: {
@@ -631,6 +707,12 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: 'bold',
     color: '#34C759',
+  },
+  timerText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#fff',
+    marginTop: 4,
   },
   // Section Card
   sectionCard: {

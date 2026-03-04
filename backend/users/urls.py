@@ -35,4 +35,7 @@ urlpatterns = [
     # Role registration
     path('register-mechanic/', views.register_mechanic, name='register_mechanic'),
     path('register-shop-owner/', views.register_shop_owner, name='register_shop_owner'),
+    # Mechanic wallet endpoints
+    path('mechanic/wallet/', views.mechanic_wallet, name='mechanic_wallet'),
+    path('mechanic/wallet/topup/', views.mechanic_wallet_topup, name='mechanic_wallet_topup'),
 ]

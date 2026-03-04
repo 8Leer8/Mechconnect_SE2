@@ -9,7 +9,8 @@ from ..models import (
     Request, BroadcastRequest, BroadcastOffer, Booking
 )
 from ..serializers import BroadcastRequestSerializer
-from users.models import Account
+from users.models import Account, TokenTransaction
+import math
 
 
 @api_view(['GET'])
@@ -91,6 +92,30 @@ def accept_broadcast_request(request, broadcast_id):
                 }, status=status.HTTP_400_BAD_REQUEST)
             
             # Create or update the offer for this mechanic
+            # Re-lock mechanic row to avoid token race conditions
+            mechanic = mechanic.__class__.objects.select_for_update().get(pk=mechanic.pk)
+
+            # Compute total amount for the request (estimated_price preferred)
+            if estimated_price:
+                total_amount = float(estimated_price)
+            else:
+                total_amount = 0.0
+                for service in broadcast_request.services.all():
+                    total_amount += float(service.minimum_price)
+                for addon_relation in broadcast_request.add_ons.all():
+                    total_amount += float(addon_relation.service_add_on.price)
+
+            # Calculate required tokens as 2% of total, rounded up
+            required_tokens = math.ceil(total_amount * 0.02)
+
+            # Check mechanic has enough tokens
+            if mechanic.tokens_balance < required_tokens:
+                return Response({
+                    'error': 'Insufficient tokens to accept this booking',
+                    'required_tokens': required_tokens,
+                    'current_tokens': mechanic.tokens_balance
+                }, status=status.HTTP_403_FORBIDDEN)
+
             offer, created = BroadcastOffer.objects.get_or_create(
                 broadcast_request=broadcast_request,
                 mechanic=mechanic,
@@ -134,22 +159,22 @@ def accept_broadcast_request(request, broadcast_id):
                 responded_at=timezone.now()
             )
             
-            # Create a booking for this accepted broadcast
-            # Use estimated_price if provided, otherwise calculate from services
-            if estimated_price:
-                total_amount = float(estimated_price)
-            else:
-                total_amount = 0.0
-                for service in broadcast_request.services.all():
-                    total_amount += float(service.minimum_price)
-                
-                for addon_relation in broadcast_request.add_ons.all():
-                    total_amount += float(addon_relation.service_add_on.price)
-            
+            # Create a booking for this accepted broadcast (amount_fee uses total_amount computed above)
             booking = Booking.objects.create(
                 request=base_request,
                 status=Booking.Status.ACCEPTED,
                 amount_fee=total_amount
+            )
+
+            # Deduct required tokens from mechanic wallet and record transaction
+            mechanic.tokens_balance = mechanic.tokens_balance - required_tokens
+            mechanic.save()
+
+            TokenTransaction.objects.create(
+                account=mechanic.account,
+                tokens=-required_tokens,
+                reason='booking_tax',
+                related_booking_id=booking.id
             )
             
             return Response({
@@ -158,7 +183,9 @@ def accept_broadcast_request(request, broadcast_id):
                 'booking_id': booking.id,
                 'offer_id': offer.id,
                 'amount_fee': total_amount,
-                'distance_km': distance_km
+                'distance_km': distance_km,
+                'tokens_deducted': required_tokens,
+                'tokens_remaining': mechanic.tokens_balance
             }, status=status.HTTP_200_OK)
     
     except Account.DoesNotExist:

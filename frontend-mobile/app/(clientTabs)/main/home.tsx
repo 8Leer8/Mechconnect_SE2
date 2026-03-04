@@ -43,16 +43,16 @@ interface RequestDetails {
     name: string;
     minimum_price: number;
   };
-  services?: Array<{
+  services?: {
     id: number;
     name: string;
     minimum_price: number;
-  }>;
-  add_ons?: Array<{
+  }[];
+  add_ons?: {
     id: number;
     name: string;
     price: number;
-  }>;
+  }[];
   status?: string;
 }
 

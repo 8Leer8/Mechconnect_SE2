@@ -4,6 +4,7 @@ from .password_views import *
 from .profile_views import *
 from .role_views import *
 from .discovery_views import *
+from .wallet_views import *
 
 __all__ = [
     # Authentication views
@@ -35,4 +36,6 @@ __all__ = [
     # Discovery views
     'list_mechanics',
     'get_mechanic_profile',
+    'mechanic_wallet',
+    'mechanic_wallet_topup',
 ]

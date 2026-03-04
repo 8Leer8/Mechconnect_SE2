@@ -4,6 +4,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
+import WalletBadge from '@/components/wallet-badge';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -56,6 +57,9 @@ type MechanicGroupedBookingsResponse = {
   accepted?: { bookings: Booking[]; count: number };
   on_the_way?: { bookings: Booking[]; count: number };
   active?: { bookings: Booking[]; count: number };
+  paused?: { bookings: Booking[]; count: number };
+  finished?: { bookings: Booking[]; count: number };
+  pending_payment?: { bookings: Booking[]; count: number };
   completed?: { bookings: Booking[]; count: number };
   cancelled?: { bookings: Booking[]; count: number };
   reworked?: { bookings: Booking[]; count: number };
@@ -101,11 +105,35 @@ export default function BookingsScreen() {
           ...((data.accepted?.bookings as Booking[]) || []),
           ...(data.on_the_way?.bookings || []),
           ...(data.active?.bookings || []),
+          ...(data.paused?.bookings || []),
+          ...(data.finished?.bookings || []),
+          ...(data.pending_payment?.bookings || []),
           ...(data.completed?.bookings || []),
           ...(data.cancelled?.bookings || []),
           ...(data.reworked?.bookings || []),
           ...(data.disputed?.bookings || []),
         ];
+        // Ensure any pending_payment items are included (extra safety in case grouped response missed them)
+        try {
+          const pendingPaymentRes = await fetch(`${API_URL}/bookings/mechanic/bookings/?status=pending_payment`, {
+            method: 'GET',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+          });
+          if (pendingPaymentRes.ok) {
+            const pendingPaymentData = (await pendingPaymentRes.json()) as MechanicStatusBookingsResponse;
+            const pendingPaymentBookings = pendingPaymentData.bookings || [];
+            const existingIds = new Set(all.map((b) => b.id));
+            pendingPaymentBookings.forEach((b) => {
+              if (!existingIds.has(b.id)) {
+                all.push(b);
+                existingIds.add(b.id);
+              }
+            });
+          }
+        } catch (e) {
+          // ignore fetch errors here; grouped response should contain them normally
+        }
         setBookings(all);
         setCounts({
           all: data.total_count || all.length,
@@ -117,11 +145,31 @@ export default function BookingsScreen() {
           reworked: data.reworked?.count || 0,
           disputed: data.disputed?.count || 0,
         });
-      } else {
-        let backendStatus: string = activeTab;
-        if (activeTab === 'booked') backendStatus = 'accepted';
-        // For 'on_going', fetch both 'on_the_way' and 'active' and merge results
+        } else {
+        let statusQuery = activeTab;
+        if (activeTab === 'booked') statusQuery = 'accepted';
+        if (activeTab === 'pending') {
+          // Include both pending requests and bookings awaiting payment
+          const [pendingRes, pendingPaymentRes] = await Promise.all([
+            fetch(`${API_URL}/bookings/mechanic/bookings/?status=pending`, {
+              method: 'GET',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+            }),
+            fetch(`${API_URL}/bookings/mechanic/bookings/?status=pending_payment`, {
+              method: 'GET',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+            }),
+          ]);
+          if (!pendingRes.ok || !pendingPaymentRes.ok) throw new Error('Failed to fetch pending bookings');
+          const pendingData = await pendingRes.json() as MechanicStatusBookingsResponse;
+          const pendingPaymentData = await pendingPaymentRes.json() as MechanicStatusBookingsResponse;
+          setBookings([...(pendingData.bookings || []), ...(pendingPaymentData.bookings || [])]);
+          return;
+        }
         if (activeTab === 'on_going') {
+          // Fetch both on_the_way and active
           const [onTheWayRes, activeRes] = await Promise.all([
             fetch(`${API_URL}/bookings/mechanic/bookings/?status=on_the_way`, {
               method: 'GET',
@@ -134,18 +182,17 @@ export default function BookingsScreen() {
               headers: { 'Content-Type': 'application/json' },
             }),
           ]);
-          if (!onTheWayRes.ok && !activeRes.ok) throw new Error('Failed to fetch bookings');
-          const onTheWayData = onTheWayRes.ok ? ((await onTheWayRes.json()) as MechanicStatusBookingsResponse) : { bookings: [] };
-          const activeData = activeRes.ok ? ((await activeRes.json()) as MechanicStatusBookingsResponse) : { bookings: [] };
+          if (!onTheWayRes.ok || !activeRes.ok) throw new Error('Failed to fetch on-going bookings');
+          const onTheWayData = (await onTheWayRes.json()) as MechanicStatusBookingsResponse;
+          const activeData = (await activeRes.json()) as MechanicStatusBookingsResponse;
           setBookings([...(onTheWayData.bookings || []), ...(activeData.bookings || [])]);
         } else {
-          const response = await fetch(`${API_URL}/bookings/mechanic/bookings/?status=${backendStatus}`, {
+          const response = await fetch(`${API_URL}/bookings/mechanic/bookings/?status=${statusQuery}`, {
             method: 'GET',
             credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
           });
-
-          if (!response.ok) throw new Error('Failed to fetch bookings');
+          if (!response.ok) throw new Error(`Failed to fetch ${activeTab} bookings`);
           const data = (await response.json()) as MechanicStatusBookingsResponse;
           setBookings(data.bookings || []);
         }
@@ -169,6 +216,9 @@ export default function BookingsScreen() {
       case 'accepted': return 'Booked';
       case 'active': return 'On Going';
       case 'on_the_way': return 'On the Way';
+      case 'paused': return 'Paused';
+      case 'finished': return 'Finished';
+      case 'pending_payment': return 'Pending Payment';
       case 'completed': return 'Completed';
       case 'cancelled': return 'Cancelled';
       case 'pending': return 'Pending';
@@ -182,10 +232,13 @@ export default function BookingsScreen() {
       case 'accepted': return '#00B8D9';
       case 'active': return '#FF8C00';
       case 'on_the_way': return '#007AFF';
-      case 'reworked': return '#FFD60A';
+      case 'paused': return '#8E8E93';
+      case 'finished': return '#34C759';
+      case 'pending_payment': return '#FFD60A';
       case 'completed': return '#34C759';
       case 'cancelled': return '#FF3B30';
       case 'pending': return '#8E8E93';
+      case 'reworked': return '#FFD60A';
       case 'disputed': return '#AF52DE';
       default: return '#8E8E93';
     }
@@ -196,6 +249,9 @@ export default function BookingsScreen() {
       case 'accepted': return 'calendar-check-o';
       case 'active': return 'play-circle';
       case 'on_the_way': return 'car';
+      case 'paused': return 'pause-circle';
+      case 'finished': return 'check-circle';
+      case 'pending_payment': return 'money';
       case 'completed': return 'check-circle';
       case 'cancelled': return 'times-circle';
       case 'pending': return 'clock-o';
@@ -348,9 +404,12 @@ export default function BookingsScreen() {
             {bookings.length} {activeTab === 'all' ? 'total' : activeTab} booking{bookings.length !== 1 ? 's' : ''}
           </ThemedText>
         </View>
-        <TouchableOpacity style={styles.refreshButton} onPress={onRefresh}>
-          <FontAwesome name="refresh" size={18} color="#FF8C00" />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity style={styles.refreshButton} onPress={onRefresh}>
+            <FontAwesome name="refresh" size={18} color="#FF8C00" />
+          </TouchableOpacity>
+          <WalletBadge onPress={() => router.push('/mechanic/wallet')} />
+        </View>
       </View>
 
       {renderTabs()}
@@ -394,11 +453,13 @@ export default function BookingsScreen() {
                 activeOpacity={0.7}
                 onPress={() => {
                   if (
-                    booking.status === 'active' ||
-                    booking.status === 'on_the_way' ||
-                    booking.status === 'completed' ||
-                    booking.status === 'reworked'
-                  ) {
+                        booking.status === 'active' ||
+                        booking.status === 'on_the_way' ||
+                        booking.status === 'paused' ||
+                        booking.status === 'completed' ||
+                        booking.status === 'reworked' ||
+                        booking.status === 'pending_payment'
+                      ) {
                     handleViewDetails(booking);
                   }
                 }}
@@ -471,7 +532,7 @@ export default function BookingsScreen() {
                         )}
                       </TouchableOpacity>
                     </View>
-                  ) : (booking.status === 'accepted' || booking.status === 'on_the_way' || booking.status === 'active' || booking.status === 'completed' || booking.status === 'reworked') ? (
+                  ) : (booking.status === 'accepted' || booking.status === 'on_the_way' || booking.status === 'active' || booking.status === 'paused' || booking.status === 'completed' || booking.status === 'reworked' || booking.status === 'pending_payment') ? (
                     <TouchableOpacity
                       style={styles.detailsBtn}
                       onPress={() => handleViewDetails(booking)}

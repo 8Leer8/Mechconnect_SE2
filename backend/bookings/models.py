@@ -61,6 +61,9 @@ class Booking(models.Model):
         ACCEPTED = "accepted"         # Mechanic accepted, waiting to start
         ON_THE_WAY = "on_the_way"    # Mechanic traveling to client
         ACTIVE = "active"            # Job started
+        PAUSED = "paused"            # Job paused
+        FINISHED = "finished"        # Job finished, pending payment
+        PENDING_PAYMENT = "pending_payment" # Pending payment
         COMPLETED = "completed"
         REWORKED = "reworked"
         CANCELLED = "cancelled"
@@ -83,6 +86,13 @@ class ActiveBooking(models.Model):
     new_time = models.DateTimeField(null=True, blank=True)
     new_date = models.DateTimeField(null=True, blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
+    paused_at = models.DateTimeField(null=True, blank=True)
+    total_pause_duration = models.DurationField(default=timezone.timedelta(0))
+    # Legacy/staging fields present in DB; keep in model so ORM supplies values
+    stage = models.CharField(max_length=50, default="")
+    stage_updated_at = models.DateTimeField(default=timezone.now)
+    paused_at = models.DateTimeField(null=True, blank=True)
+    total_pause_duration = models.DurationField(default=timezone.timedelta(0))
 
 class CancelBooking(models.Model):
     booking = models.OneToOneField(Booking, on_delete=models.CASCADE)
@@ -121,6 +131,13 @@ class CompleteBooking(models.Model):
     completed_at = models.DateTimeField(auto_now_add=True)
     total_amount = models.DecimalField(max_digits=10, decimal_places=2)
     notes = models.TextField(null=True, blank=True)
+
+
+class Receipt(models.Model):
+    booking = models.OneToOneField(Booking, on_delete=models.CASCADE)
+    payment_received = models.BooleanField(default=False)
+    receipt_image = models.ImageField(upload_to='bookings/receipts/', null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
 
 
 class BroadcastRequest(models.Model):
