@@ -15,7 +15,7 @@ from services.models import MechanicService
 def list_requests(request):
     """
     Get all requests made by the authenticated client.
-    Returns requests grouped by type: custom, direct, emergency
+    Returns requests grouped by type: custom, direct, emergency, broadcast.
     """
     # Get account_id from session
     account_id = request.session.get('account_id')

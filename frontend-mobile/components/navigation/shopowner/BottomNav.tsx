@@ -6,8 +6,8 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Colors } from '@/constants/theme';
 
 interface BottomNavProps {
-  activeTab: 'home' | 'services' | 'bookings' | 'analytics' | 'profile';
-  onTabPress: (tab: 'home' | 'services' | 'bookings' | 'analytics' | 'profile') => void;
+  activeTab: 'home' | 'services' | 'bookings' | 'analytics' | 'profile' | 'request';
+  onTabPress: (tab: 'home' | 'services' | 'bookings' | 'analytics' | 'profile' | 'request') => void;
 }
 
 export function ShopOwnerBottomNav({ activeTab, onTabPress }: BottomNavProps) {
@@ -20,6 +20,7 @@ export function ShopOwnerBottomNav({ activeTab, onTabPress }: BottomNavProps) {
     { name: 'services', label: 'Services', icon: 'wrench.fill' },
     { name: 'bookings', label: 'Bookings', icon: 'calendar' },
     { name: 'analytics', label: 'Analytics', icon: 'chart.bar.fill' },
+    { name: 'request', label: 'Request', icon: 'envelope.fill' },
     { name: 'profile', label: 'Profile', icon: 'person.fill' },
   ] as const;
 

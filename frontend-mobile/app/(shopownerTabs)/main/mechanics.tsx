@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, ScrollView, RefreshControl, ActivityIndicator, TouchableOpacity, TextInput, Modal, Alert, Image } from 'react-native';
+import { FontAwesome } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { IconSymbol } from '@/components/ui/icon-symbol';
 import { TopNav } from '@/components/navigation';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -154,7 +154,7 @@ export default function ShopOwnerMechanics() {
       <ThemedView style={styles.container}>
         <TopNav onNotificationPress={handleNotificationPress} />
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
+          <ActivityIndicator size="large" color="#FF9500" />
           <ThemedText style={styles.loadingText}>Loading mechanics...</ThemedText>
         </View>
       </ThemedView>
@@ -166,8 +166,14 @@ export default function ShopOwnerMechanics() {
       <ThemedView style={styles.container}>
         <TopNav onNotificationPress={handleNotificationPress} />
         <View style={styles.errorContainer}>
-          <IconSymbol name="exclamationmark.triangle.fill" size={48} color="#FF3B30" />
+          <View style={styles.errorIconWrap}>
+            <FontAwesome name="exclamation-triangle" size={36} color="#FF3B30" />
+          </View>
           <ThemedText style={styles.errorText}>{error || 'No data available'}</ThemedText>
+          <TouchableOpacity style={styles.retryButton} onPress={fetchMechanics} activeOpacity={0.8}>
+            <FontAwesome name="refresh" size={16} color="#fff" />
+            <ThemedText style={styles.retryButtonText}>Retry</ThemedText>
+          </TouchableOpacity>
         </View>
       </ThemedView>
     );
@@ -179,7 +185,7 @@ export default function ShopOwnerMechanics() {
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#007AFF" />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF9500" />
         }
       >
         {/* Header */}
@@ -188,18 +194,20 @@ export default function ShopOwnerMechanics() {
             <ThemedText style={styles.title}>Mechanics</ThemedText>
             <ThemedText style={styles.subtitle}>{mechanicsData.count} total</ThemedText>
           </View>
-          <TouchableOpacity style={styles.addButton} onPress={() => setShowAddModal(true)}>
-            <IconSymbol name="plus.circle.fill" size={24} color="#fff" />
-            <ThemedText style={styles.addButtonText}>Add</ThemedText>
+          <TouchableOpacity style={styles.addButton} onPress={() => setShowAddModal(true)} activeOpacity={0.8}>
+            <FontAwesome name="plus-circle" size={22} color="#fff" />
+            <ThemedText style={styles.addButtonText}>Add Mechanic</ThemedText>
           </TouchableOpacity>
         </View>
 
         {/* Mechanics List */}
         {mechanicsData.mechanics.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <IconSymbol name="person.2.slash" size={64} color="#555" />
+            <View style={styles.emptyIconWrap}>
+              <FontAwesome name="wrench" size={40} color="#FF9500" />
+            </View>
             <ThemedText style={styles.emptyText}>No mechanics yet</ThemedText>
-            <ThemedText style={styles.emptySubtext}>Tap the Add button to hire mechanics</ThemedText>
+            <ThemedText style={styles.emptySubtext}>Tap “Add Mechanic” to search and add mechanics to your shop</ThemedText>
           </View>
         ) : (
           mechanicsData.mechanics.map((mechanic) => (
@@ -209,7 +217,7 @@ export default function ShopOwnerMechanics() {
                   <Image source={{ uri: mechanic.profile_photo }} style={styles.profilePhoto} />
                 ) : (
                   <View style={styles.profilePhotoPlaceholder}>
-                    <IconSymbol name="person.fill" size={32} color="#555" />
+                    <FontAwesome name="user" size={28} color="#666" />
                   </View>
                 )}
                 <View style={styles.mechanicInfo}>
@@ -230,11 +238,11 @@ export default function ShopOwnerMechanics() {
                 
                 <View style={styles.mechanicStats}>
                   <View style={styles.statItem}>
-                    <IconSymbol name="star.fill" size={16} color="#FF9F0A" />
+                    <FontAwesome name="star" size={14} color="#FF9500" />
                     <ThemedText style={styles.statText}>{mechanic.average_rating.toFixed(2)}</ThemedText>
                   </View>
                   <View style={styles.statusBadge}>
-                    <View style={[styles.statusDot, { backgroundColor: mechanic.status === 'available' ? '#34C759' : '#FF9F0A' }]} />
+                    <View style={[styles.statusDot, { backgroundColor: mechanic.status === 'available' ? '#34C759' : '#FF9500' }]} />
                     <ThemedText style={styles.statusText}>
                       {mechanic.status === 'available' ? 'Available' : 'Working'}
                     </ThemedText>
@@ -263,8 +271,8 @@ export default function ShopOwnerMechanics() {
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <ThemedText style={styles.modalTitle}>Add Mechanic</ThemedText>
-              <TouchableOpacity onPress={() => setShowAddModal(false)}>
-                <IconSymbol name="xmark.circle.fill" size={28} color="#888" />
+              <TouchableOpacity onPress={() => setShowAddModal(false)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+                <FontAwesome name="times-circle" size={26} color="#888" />
               </TouchableOpacity>
             </View>
 
@@ -278,7 +286,7 @@ export default function ShopOwnerMechanics() {
 
             <ScrollView style={styles.searchResults}>
               {searchLoading ? (
-                <ActivityIndicator size="small" color="#007AFF" style={styles.searchLoader} />
+                <ActivityIndicator size="small" color="#FF9500" style={styles.searchLoader} />
               ) : searchResults.length === 0 ? (
                 <ThemedText style={styles.noResultsText}>
                   {searchQuery ? 'No mechanics found' : 'Start typing to search'}
@@ -295,7 +303,7 @@ export default function ShopOwnerMechanics() {
                       <Image source={{ uri: mechanic.profile_photo }} style={styles.searchPhoto} />
                     ) : (
                       <View style={styles.searchPhotoPlaceholder}>
-                        <IconSymbol name="person.fill" size={24} color="#555" />
+                        <FontAwesome name="user" size={22} color="#666" />
                       </View>
                     )}
                     <View style={styles.searchResultInfo}>
@@ -304,14 +312,14 @@ export default function ShopOwnerMechanics() {
                       </ThemedText>
                       <ThemedText style={styles.searchResultEmail}>{mechanic.email}</ThemedText>
                       <View style={styles.searchResultStats}>
-                        <IconSymbol name="star.fill" size={14} color="#FF9F0A" />
+                        <FontAwesome name="star" size={12} color="#FF9500" />
                         <ThemedText style={styles.searchResultRating}>{mechanic.average_rating.toFixed(2)}</ThemedText>
                         {mechanic.current_shop && (
                           <ThemedText style={styles.searchResultShop}>• {mechanic.current_shop}</ThemedText>
                         )}
                       </View>
                     </View>
-                    <IconSymbol name="plus.circle.fill" size={24} color="#007AFF" />
+                    <FontAwesome name="plus-circle" size={22} color="#FF9500" />
                   </TouchableOpacity>
                 ))
               )}
@@ -326,7 +334,7 @@ export default function ShopOwnerMechanics() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#151718',
+    backgroundColor: '#0D0D0D',
   },
   scrollContent: {
     padding: 20,
@@ -351,8 +359,32 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 16,
-    color: '#888',
+    color: '#ccc',
     textAlign: 'center',
+  },
+  errorIconWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: '#FF3B3018',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  retryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 20,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    backgroundColor: '#FF9500',
+    borderRadius: 12,
+  },
+  retryButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
   },
   header: {
     flexDirection: 'row',
@@ -361,9 +393,10 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   title: {
-    fontSize: 28,
-    fontWeight: '700',
+    fontSize: 26,
+    fontWeight: '800',
     color: '#fff',
+    letterSpacing: 0.3,
   },
   subtitle: {
     fontSize: 14,
@@ -374,9 +407,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    backgroundColor: '#FF9500',
+    paddingHorizontal: 18,
+    paddingVertical: 12,
     borderRadius: 12,
   },
   addButtonText: {
@@ -387,40 +420,52 @@ const styles = StyleSheet.create({
   emptyContainer: {
     alignItems: 'center',
     paddingVertical: 60,
-    gap: 12,
+    gap: 16,
+  },
+  emptyIconWrap: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    backgroundColor: '#FF950018',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
   },
   emptyText: {
     fontSize: 20,
-    fontWeight: '600',
-    color: '#888',
+    fontWeight: '700',
+    color: '#fff',
   },
   emptySubtext: {
     fontSize: 14,
-    color: '#666',
+    color: '#888',
+    textAlign: 'center',
+    paddingHorizontal: 24,
   },
   mechanicCard: {
-    backgroundColor: '#1E1E1E',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
+    backgroundColor: '#1A1A1A',
+    borderRadius: 18,
+    padding: 18,
+    marginBottom: 14,
     borderWidth: 1,
-    borderColor: '#2A2A2A',
+    borderColor: '#252525',
+    overflow: 'hidden',
   },
   mechanicHeader: {
     flexDirection: 'row',
-    gap: 12,
-    marginBottom: 12,
+    gap: 14,
+    marginBottom: 14,
   },
   profilePhoto: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
   },
   profilePhotoPlaceholder: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#2A2A2A',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#252525',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -471,9 +516,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     paddingHorizontal: 10,
-    paddingVertical: 4,
-    backgroundColor: '#2A2A2A',
-    borderRadius: 12,
+    paddingVertical: 5,
+    backgroundColor: '#252525',
+    borderRadius: 10,
   },
   statusDot: {
     width: 6,
@@ -488,19 +533,22 @@ const styles = StyleSheet.create({
   joinedText: {
     fontSize: 12,
     color: '#666',
-    marginTop: 4,
+    marginTop: 6,
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: '#1E1E1E',
+    backgroundColor: '#141414',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    padding: 20,
-    maxHeight: '80%',
+    padding: 24,
+    maxHeight: '82%',
+    borderWidth: 1,
+    borderBottomWidth: 0,
+    borderColor: '#252525',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -509,17 +557,19 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   modalTitle: {
-    fontSize: 24,
-    fontWeight: '700',
+    fontSize: 22,
+    fontWeight: '800',
     color: '#fff',
   },
   searchInput: {
-    backgroundColor: '#2A2A2A',
-    borderRadius: 12,
+    backgroundColor: '#1E1E1E',
+    borderRadius: 14,
     padding: 16,
     fontSize: 16,
     color: '#fff',
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#252525',
   },
   searchResults: {
     maxHeight: 400,
@@ -536,22 +586,24 @@ const styles = StyleSheet.create({
   searchResultItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    padding: 12,
-    backgroundColor: '#2A2A2A',
-    borderRadius: 12,
-    marginBottom: 8,
+    gap: 14,
+    padding: 14,
+    backgroundColor: '#1E1E1E',
+    borderRadius: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#252525',
   },
   searchPhoto: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
   },
   searchPhotoPlaceholder: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: '#1E1E1E',
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#252525',
     justifyContent: 'center',
     alignItems: 'center',
   },
