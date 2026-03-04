@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     'services',
     'bookings',
     'notification',
+    'storages',
 ]
 
 MIDDLEWARE = [
@@ -146,9 +147,6 @@ USE_TZ = True
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
-# Media files (User uploaded files)
-MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/6.0/ref/settings/#default-auto-field
@@ -219,3 +217,22 @@ EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True') == 'True'
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'noreply@mechconnect.com')
+
+# Supabase Storage Configuration
+USE_S3 = os.environ.get("USE_S3", "False") == "True"
+if USE_S3:
+    print("USE_S3:", USE_S3)
+    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+    AWS_ACCESS_KEY_ID = os.environ.get("SUPABASE_ACCESS_KEY")
+    AWS_SECRET_ACCESS_KEY = os.environ.get("SUPABASE_SECRET_KEY")
+    AWS_STORAGE_BUCKET_NAME = os.environ.get("SUPABASE_STORAGE_BUCKET")
+    AWS_S3_ENDPOINT_URL = os.environ.get("SUPABASE_S3_ENDPOINT")
+    AWS_S3_REGION_NAME = os.environ.get("SUPABASE_S3_REGION")
+    AWS_DEFAULT_ACL = None
+    AWS_QUERYSTRING_AUTH = False
+    AWS_S3_FILE_OVERWRITE = False
+else:
+    # Media files configuration (used for local storage and as fallback)
+    print("USE_S3:", USE_S3)
+    MEDIA_URL = '/media/'
+    MEDIA_ROOT = BASE_DIR / 'media'

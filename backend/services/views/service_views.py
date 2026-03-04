@@ -5,6 +5,7 @@ from rest_framework import status
 
 from ..models import Service, ServiceCategory
 from ..pricing_utils import get_service_price_stats, get_all_services_with_pricing
+from MainBackend.storage_utils import get_media_url
 
 
 @api_view(['GET'])
@@ -23,7 +24,7 @@ def list_services(request):
                 'id': service.id,
                 'name': service.name,
                 'description': service.description,
-                'service_picture': service.service_picture.url if service.service_picture else None,
+                'service_picture': get_media_url(service.service_picture, request),
                 'category': service.category.name if service.category else None,
                 'category_id': service.category.id if service.category else None,
                 'minimum_price': float(service.minimum_price),
@@ -88,7 +89,7 @@ def list_services_with_market_pricing(request):
                 'id': service.id,
                 'name': service.name,
                 'description': service.description,
-                'service_picture': service.service_picture.url if service.service_picture else None,
+                'service_picture': get_media_url(service.service_picture, request),
                 'category': service.category.name if service.category else None,
                 'category_id': service.category.id if service.category else None,
                 'minimum_price': float(service.minimum_price),
@@ -135,7 +136,7 @@ def get_service_detail_with_pricing(request, service_id):
             'id': service.id,
             'name': service.name,
             'description': service.description,
-            'service_picture': service.service_picture.url if service.service_picture else None,
+            'service_picture': get_media_url(service.service_picture, request),
             'category': {
                 'id': service.category.id if service.category else None,
                 'name': service.category.name if service.category else None,

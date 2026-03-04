@@ -4,6 +4,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { TopNav } from '@/components/navigation';
+import { getImageUrl } from '@/lib/imageUtils';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -206,7 +207,7 @@ export default function ShopOwnerMechanics() {
             <View key={mechanic.id} style={styles.mechanicCard}>
               <View style={styles.mechanicHeader}>
                 {mechanic.profile_photo ? (
-                  <Image source={{ uri: mechanic.profile_photo }} style={styles.profilePhoto} />
+                  <Image source={{ uri: getImageUrl(mechanic.profile_photo) || '' }} style={styles.profilePhoto} />
                 ) : (
                   <View style={styles.profilePhotoPlaceholder}>
                     <IconSymbol name="person.fill" size={32} color="#555" />
@@ -292,7 +293,7 @@ export default function ShopOwnerMechanics() {
                     disabled={addingMechanic}
                   >
                     {mechanic.profile_photo ? (
-                      <Image source={{ uri: mechanic.profile_photo }} style={styles.searchPhoto} />
+                      <Image source={{ uri: getImageUrl(mechanic.profile_photo) || '' }} style={styles.searchPhoto} />
                     ) : (
                       <View style={styles.searchPhotoPlaceholder}>
                         <IconSymbol name="person.fill" size={24} color="#555" />

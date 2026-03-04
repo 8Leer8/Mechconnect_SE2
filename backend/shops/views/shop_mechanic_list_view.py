@@ -6,6 +6,7 @@ from django.db.models import Q
 
 from ..models import Shop, ShopMechanic
 from users.models import ShopOwner, Mechanic
+from MainBackend.storage_utils import get_media_url
 
 
 @api_view(['GET'])
@@ -54,7 +55,7 @@ def list_shop_mechanics(request):
                 'middlename': account.middlename,
                 'email': account.email,
                 'username': account.username,
-                'profile_photo': mechanic.profile_photo.url if mechanic.profile_photo else None,
+                'profile_photo': get_media_url(mechanic.profile_photo, request),
                 'contact_number': mechanic.contact_number,
                 'bio': mechanic.bio,
                 'average_rating': float(mechanic.average_rating) if mechanic.average_rating else 0.0,
@@ -235,7 +236,7 @@ def search_available_mechanics(request):
                 'middlename': account.middlename,
                 'email': account.email,
                 'username': account.username,
-                'profile_photo': mechanic.profile_photo.url if mechanic.profile_photo else None,
+                'profile_photo': get_media_url(mechanic.profile_photo, request),
                 'contact_number': mechanic.contact_number,
                 'bio': mechanic.bio,
                 'average_rating': float(mechanic.average_rating) if mechanic.average_rating else 0.0,

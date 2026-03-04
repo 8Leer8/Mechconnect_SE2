@@ -7,6 +7,7 @@ import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { getDistanceKm, getEstimatedPrice } from '@/app/client/request/broadcast/LocationContext';
+import { getImageUrl } from '@/lib/imageUtils';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -660,7 +661,7 @@ export default function MapScreen() {
                     <View style={styles.modalSection}>
                       <ThemedText style={styles.modalSectionTitle}>Concern Photo</ThemedText>
                       <Image 
-                        source={{ uri: selectedBroadcast.concern_picture }} 
+                        source={{ uri: getImageUrl(selectedBroadcast.concern_picture) || '' }} 
                         style={styles.modalConcernImage}
                         resizeMode="cover"
                         onError={(error) => console.error('Image load error:', error.nativeEvent.error)}

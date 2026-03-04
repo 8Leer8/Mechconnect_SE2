@@ -13,6 +13,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { getImageUrl } from '@/lib/imageUtils';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -135,7 +136,7 @@ export default function DiscoverScreen() {
     >
       <View style={styles.cardRow}>
         {mechanic.profile_photo ? (
-          <Image source={{ uri: mechanic.profile_photo }} style={styles.avatar} />
+          <Image source={{ uri: getImageUrl(mechanic.profile_photo) || '' }} style={styles.avatar} />
         ) : (
           <View style={[styles.avatar, styles.avatarPlaceholder]}>
             <ThemedText style={styles.avatarText}>
@@ -165,7 +166,7 @@ export default function DiscoverScreen() {
   const renderShopItem: ListRenderItem<Shop> = useCallback(({ item: shop }) => (
     <View style={styles.card}>
       {shop.service_banner && (
-        <Image source={{ uri: shop.service_banner }} style={styles.shopBanner} />
+        <Image source={{ uri: getImageUrl(shop.service_banner) || '' }} style={styles.shopBanner} />
       )}
       <View style={styles.shopHeader}>
         <View style={styles.shopInfo}>
@@ -192,7 +193,7 @@ export default function DiscoverScreen() {
   const renderServiceItem: ListRenderItem<Service> = useCallback(({ item: service }) => (
     <View style={styles.card}>
       {service.service_picture && (
-        <Image source={{ uri: service.service_picture }} style={styles.servicePicture} />
+        <Image source={{ uri: getImageUrl(service.service_picture) || '' }} style={styles.servicePicture} />
       )}
       <View style={styles.serviceHeader}>
         <View style={{ flex: 1 }}>

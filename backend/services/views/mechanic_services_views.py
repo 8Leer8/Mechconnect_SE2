@@ -9,6 +9,7 @@ from rest_framework.permissions import AllowAny
 
 from users.models import Account
 from ..models import Service, MechanicService
+from MainBackend.storage_utils import get_media_url
 
 
 def _get_mechanic(request):
@@ -60,7 +61,7 @@ def list_my_services(request):
             "description": s.description,
             "price": float(ms.price),  # Mechanic's own price
             "minimum_price": float(s.minimum_price),  # Service minimum price (informational)
-            "service_picture": s.service_picture.url if s.service_picture else None,
+            "service_picture": get_media_url(s.service_picture, request),
             "category": s.category.name if s.category else None,
             "category_id": s.category.id if s.category else None,
         })
