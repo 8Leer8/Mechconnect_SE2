@@ -5,6 +5,7 @@ from .models import (
 )
 from services.models import Service, ServiceAddOn
 from users.models import Account, Client
+from MainBackend.storage_utils import get_media_url
 
 
 class ServiceLocationSerializer(serializers.ModelSerializer):
@@ -178,9 +179,7 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
         """Return full URL for concern picture"""
         if obj.concern_picture:
             request = self.context.get('request')
-            if request:
-                return request.build_absolute_uri(obj.concern_picture.url)
-            return obj.concern_picture.url
+            return get_media_url(obj.concern_picture, request)
         return None
     
     def get_add_ons(self, obj):

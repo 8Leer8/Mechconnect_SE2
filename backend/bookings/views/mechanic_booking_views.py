@@ -525,7 +525,12 @@ def list_mechanic_bookings(request):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        bookings_queryset = bookings_queryset.filter(status=status_filter.lower())
+        # Treat 'active' as including paused bookings so paused items show up
+        # in the mechanic's on-going/active filter.
+        if status_filter.lower() == 'active':
+            bookings_queryset = bookings_queryset.filter(status__in=['active', 'paused'])
+        else:
+            bookings_queryset = bookings_queryset.filter(status=status_filter.lower())
         bookings_data = _serialize_bookings(bookings_queryset)
         return Response(
             {
@@ -539,7 +544,10 @@ def list_mechanic_bookings(request):
     # Group by status (same shape as client_list_bookings) plus 'pending'
     accepted_bookings = bookings_queryset.filter(status="accepted")
     on_the_way_bookings = bookings_queryset.filter(status="on_the_way")
-    active_bookings = bookings_queryset.filter(status="active")
+    # Include paused bookings in the 'active' group so they appear in the
+    # mechanic's on-going view (frontend fetches both on_the_way and active
+    # to build the on-going tab).
+    active_bookings = bookings_queryset.filter(status__in=["active", "paused"])
     paused_bookings = bookings_queryset.filter(status="paused")
     finished_bookings = bookings_queryset.filter(status="finished")
     pending_payment_bookings = bookings_queryset.filter(status="pending_payment")

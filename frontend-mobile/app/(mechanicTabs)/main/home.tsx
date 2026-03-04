@@ -85,7 +85,8 @@ export default function HomeScreen() {
       setError(null);
 
       const [homeRes, bookingsRes, profileRes] = await Promise.all([
-        fetch(`${API_URL}/bookings/home/`, {
+        // Mechanic-specific home endpoint (current bookings + pending requests)
+        fetch(`${API_URL}/bookings/mechanic/home/`, {
           method: 'GET',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },

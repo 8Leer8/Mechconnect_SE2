@@ -6,6 +6,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/client/mechanicProfileStyles';
+import { getImageUrl } from '@/lib/imageUtils';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -165,7 +166,7 @@ export default function MechanicProfileScreen() {
         <View style={styles.profileCard}>
           {profile.profile_photo_url ? (
             <Image
-              source={{ uri: profile.profile_photo_url }}
+              source={{ uri: getImageUrl(profile.profile_photo_url) || '' }}
               style={styles.avatar}
               contentFit="cover"
               cachePolicy="memory-disk"
@@ -337,7 +338,7 @@ export default function MechanicProfileScreen() {
                 <View style={styles.reviewHeader}>
                   {review.reviewer_photo ? (
                     <Image
-                      source={{ uri: review.reviewer_photo }}
+                      source={{ uri: getImageUrl(review.reviewer_photo) || '' }}
                       style={styles.reviewerAvatar}
                       contentFit="cover"
                       cachePolicy="memory-disk"

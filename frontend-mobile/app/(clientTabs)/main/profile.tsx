@@ -5,6 +5,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/client/profileStyles';
+import { getImageUrl } from '@/lib/imageUtils';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -230,7 +231,7 @@ export default function ProfileScreen() {
         <View style={styles.profileCard}>
           {/* Photo */}
           {currentProfile?.profile_photo ? (
-            <Image source={{ uri: currentProfile.profile_photo }} style={styles.profilePhoto} />
+            <Image source={{ uri: getImageUrl(currentProfile.profile_photo) || '' }} style={styles.profilePhoto} />
           ) : (
             <View style={styles.profilePhotoPlaceholder}>
               <FontAwesome name="user" size={36} color="#FF8C00" />

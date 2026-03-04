@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, ScrollView, RefreshControl, ActivityIndicator } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { IconSymbol } from '@/components/ui/icon-symbol';
+import { FontAwesome } from '@expo/vector-icons';
 import { TopNav } from '@/components/navigation';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -68,7 +68,7 @@ export default function ShopOwnerHome() {
       <ThemedView style={styles.container}>
         <TopNav onNotificationPress={handleNotificationPress} />
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
+          <ActivityIndicator size="large" color="#FF9500" />
           <ThemedText style={styles.loadingText}>Loading dashboard...</ThemedText>
         </View>
       </ThemedView>
@@ -80,7 +80,9 @@ export default function ShopOwnerHome() {
       <ThemedView style={styles.container}>
         <TopNav onNotificationPress={handleNotificationPress} />
         <View style={styles.errorContainer}>
-          <IconSymbol name="exclamationmark.triangle.fill" size={48} color="#FF3B30" />
+          <View style={styles.errorIconWrap}>
+            <FontAwesome name="exclamation-triangle" size={32} color="#FF3B30" />
+          </View>
           <ThemedText style={styles.errorText}>{error || 'No data available'}</ThemedText>
         </View>
       </ThemedView>
@@ -93,7 +95,7 @@ export default function ShopOwnerHome() {
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#007AFF" />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF9500" />
         }
       >
         {/* Header */}
@@ -113,7 +115,7 @@ export default function ShopOwnerHome() {
         {/* Verification Badge */}
         {dashboardData.is_verified && (
           <View style={styles.verifiedBadge}>
-            <IconSymbol name="checkmark.seal.fill" size={20} color="#34C759" />
+            <FontAwesome name="check-circle" size={18} color="#34C759" />
             <ThemedText style={styles.verifiedText}>Verified Shop</ThemedText>
           </View>
         )}
@@ -122,8 +124,8 @@ export default function ShopOwnerHome() {
         <View style={styles.statsGrid}>
           {/* Total Mechanics */}
           <View style={styles.statCard}>
-            <View style={[styles.statIconContainer, { backgroundColor: '#007AFF20' }]}>
-              <IconSymbol name="person.2.fill" size={24} color="#007AFF" />
+            <View style={[styles.statIconContainer, { backgroundColor: '#FF950018' }]}>
+              <FontAwesome name="users" size={20} color="#FF9500" />
             </View>
             <ThemedText style={styles.statValue}>{dashboardData.total_mechanics}</ThemedText>
             <ThemedText style={styles.statLabel}>Mechanics</ThemedText>
@@ -131,8 +133,8 @@ export default function ShopOwnerHome() {
 
           {/* Total Services */}
           <View style={styles.statCard}>
-            <View style={[styles.statIconContainer, { backgroundColor: '#34C75920' }]}>
-              <IconSymbol name="wrench.fill" size={24} color="#34C759" />
+            <View style={[styles.statIconContainer, { backgroundColor: '#34C75918' }]}>
+              <FontAwesome name="wrench" size={20} color="#34C759" />
             </View>
             <ThemedText style={styles.statValue}>{dashboardData.total_services}</ThemedText>
             <ThemedText style={styles.statLabel}>Services</ThemedText>
@@ -140,8 +142,8 @@ export default function ShopOwnerHome() {
 
           {/* Active Bookings */}
           <View style={styles.statCard}>
-            <View style={[styles.statIconContainer, { backgroundColor: '#FF9F0A20' }]}>
-              <IconSymbol name="calendar.badge.clock" size={24} color="#FF9F0A" />
+            <View style={[styles.statIconContainer, { backgroundColor: '#FF950018' }]}>
+              <FontAwesome name="calendar-check-o" size={20} color="#FF9500" />
             </View>
             <ThemedText style={styles.statValue}>{dashboardData.active_bookings}</ThemedText>
             <ThemedText style={styles.statLabel}>Active</ThemedText>
@@ -149,8 +151,8 @@ export default function ShopOwnerHome() {
 
           {/* Completed Jobs */}
           <View style={styles.statCard}>
-            <View style={[styles.statIconContainer, { backgroundColor: '#34C75920' }]}>
-              <IconSymbol name="checkmark.circle.fill" size={24} color="#34C759" />
+            <View style={[styles.statIconContainer, { backgroundColor: '#34C75918' }]}>
+              <FontAwesome name="check-circle" size={20} color="#34C759" />
             </View>
             <ThemedText style={styles.statValue}>{dashboardData.completed_jobs}</ThemedText>
             <ThemedText style={styles.statLabel}>Completed</ThemedText>
@@ -160,7 +162,9 @@ export default function ShopOwnerHome() {
         {/* Revenue Card */}
         <View style={styles.revenueCard}>
           <View style={styles.revenueHeader}>
-            <IconSymbol name="dollarsign.circle.fill" size={32} color="#34C759" />
+            <View style={styles.revenueIconCircle}>
+              <FontAwesome name="line-chart" size={20} color="#FF9500" />
+            </View>
             <ThemedText style={styles.revenueLabel}>Total Revenue</ThemedText>
           </View>
           <ThemedText style={styles.revenueValue}>
@@ -171,7 +175,7 @@ export default function ShopOwnerHome() {
         {/* Rating Card */}
         <View style={styles.ratingCard}>
           <View style={styles.ratingHeader}>
-            <IconSymbol name="star.fill" size={28} color="#FF9F0A" />
+            <FontAwesome name="star" size={22} color="#FFCC00" />
             <ThemedText style={styles.ratingLabel}>Average Rating</ThemedText>
           </View>
           <View style={styles.ratingContent}>
@@ -180,11 +184,11 @@ export default function ShopOwnerHome() {
           </View>
           <View style={styles.starsContainer}>
             {[1, 2, 3, 4, 5].map((star) => (
-              <IconSymbol
+              <FontAwesome
                 key={star}
-                name={star <= Math.round(dashboardData.average_rating) ? "star.fill" : "star"}
-                size={20}
-                color="#FF9F0A"
+                name={star <= Math.round(dashboardData.average_rating) ? 'star' : 'star-o'}
+                size={16}
+                color="#FFCC00"
               />
             ))}
           </View>
@@ -214,11 +218,12 @@ export default function ShopOwnerHome() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#151718',
+    backgroundColor: '#0D0D0D',
   },
   scrollContent: {
-    padding: 20,
-    paddingBottom: 40,
+    paddingHorizontal: 20,
+    paddingTop: 56,
+    paddingBottom: 32,
   },
   loadingContainer: {
     flex: 1,
@@ -239,8 +244,16 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 16,
-    color: '#888',
+    color: '#ccc',
     textAlign: 'center',
+  },
+  errorIconWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: '#FF3B3018',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   header: {
     flexDirection: 'row',
@@ -283,11 +296,11 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    backgroundColor: '#34C75920',
+    backgroundColor: '#0F1F12',
     borderRadius: 12,
-    marginBottom: 24,
+    marginBottom: 20,
     borderWidth: 1,
-    borderColor: '#34C759',
+    borderColor: '#1D3B22',
   },
   verifiedText: {
     fontSize: 15,
@@ -303,12 +316,12 @@ const styles = StyleSheet.create({
   statCard: {
     flex: 1,
     minWidth: '47%',
-    backgroundColor: '#1E1E1E',
+    backgroundColor: '#151515',
     borderRadius: 16,
     padding: 16,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#2A2A2A',
+    borderColor: '#252525',
   },
   statIconContainer: {
     width: 48,
@@ -329,12 +342,12 @@ const styles = StyleSheet.create({
     color: '#888',
   },
   revenueCard: {
-    backgroundColor: '#1E1E1E',
+    backgroundColor: '#151515',
     borderRadius: 16,
     padding: 20,
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: '#2A2A2A',
+    borderColor: '#252525',
   },
   revenueHeader: {
     flexDirection: 'row',
@@ -349,15 +362,23 @@ const styles = StyleSheet.create({
   revenueValue: {
     fontSize: 36,
     fontWeight: '700',
-    color: '#34C759',
+    color: '#FF9500',
+  },
+  revenueIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FF950018',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   ratingCard: {
-    backgroundColor: '#1E1E1E',
+    backgroundColor: '#151515',
     borderRadius: 16,
     padding: 20,
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: '#2A2A2A',
+    borderColor: '#252525',
   },
   ratingHeader: {
     flexDirection: 'row',
@@ -375,7 +396,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   ratingValue: {
-    fontSize: 36,
+    fontSize: 30,
     fontWeight: '700',
     color: '#fff',
   },
@@ -388,11 +409,11 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   summaryCard: {
-    backgroundColor: '#1E1E1E',
+    backgroundColor: '#151515',
     borderRadius: 16,
     padding: 20,
     borderWidth: 1,
-    borderColor: '#2A2A2A',
+    borderColor: '#252525',
   },
   summaryTitle: {
     fontSize: 18,
