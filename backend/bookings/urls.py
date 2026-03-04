@@ -25,6 +25,11 @@ urlpatterns = [
     path('direct/services/<int:service_id>/addons/', views.get_service_addons, name='get-service-addons'),
     path('direct/mechanic/create/', views.create_mechanic_direct_request, name='create-mechanic-direct-request'),
     
+    # Shop direct request endpoints (client side)
+    path('direct/shops/', views.get_shops, name='get-shops'),
+    path('direct/shops/<int:shop_id>/services/', views.get_shop_services, name='get-shop-services'),
+    path('direct/shop/create/', views.create_shop_direct_request, name='create-shop-direct-request'),
+    
     # Client booking endpoints
     path('bookings/', views.list_client_bookings, name='list-client-bookings'),
     path('bookings/<int:booking_id>/', views.get_booking_detail, name='get-booking-detail'),
@@ -34,7 +39,15 @@ urlpatterns = [
     path('mechanic/bookings/<int:booking_id>/', views.get_mechanic_booking_detail, name='get-mechanic-booking-detail'),
     path('mechanic/bookings/<int:booking_id>/complete/', views.mechanic_complete_booking, name='mechanic-complete-booking'),
     path('mechanic/bookings/<int:booking_id>/start-travel/', views.mechanic_start_travel, name='mechanic-start-travel'),
+    path('mechanic/bookings/<int:booking_id>/cancel-travel/', views.mechanic_cancel_travel, name='mechanic-cancel-travel'),
     path('mechanic/bookings/<int:booking_id>/start-job/', views.mechanic_start_job, name='mechanic-start-job'),
+    path('mechanic/bookings/<int:booking_id>/cancel-job/', views.mechanic_cancel_job, name='mechanic-cancel-job'),
+    path('mechanic/bookings/<int:booking_id>/pause-job/', views.mechanic_pause_job, name='mechanic-pause-job'),
+    path('mechanic/bookings/<int:booking_id>/resume-job/', views.mechanic_resume_job, name='mechanic-resume-job'),
+    path('mechanic/bookings/<int:booking_id>/finish-job/', views.mechanic_finish_job, name='mechanic-finish-job'),
+    path('mechanic/bookings/<int:booking_id>/payment-received/', views.mechanic_payment_received, name='mechanic-payment-received'),
+    path('mechanic/bookings/<int:booking_id>/revert-stage/', views.mechanic_revert_stage, name='mechanic-revert-stage'),
+    path('mechanic/bookings/<int:booking_id>/cancel-booking/', views.mechanic_cancel_booking, name='mechanic-cancel-booking'),
     path('mechanic/requests/<int:request_id>/accept/', views.mechanic_accept_direct_request, name='mechanic-accept-direct-request'),
     path('mechanic/requests/<int:request_id>/decline/', views.mechanic_decline_direct_request, name='mechanic-decline-direct-request'),
 ]

@@ -6,7 +6,7 @@ from django.db.models import Prefetch
 
 from ..models import (
     Booking, Request, CustomRequest, DirectRequest, EmergencyRequest, 
-    ActiveBooking
+    BroadcastRequest, ActiveBooking
 )
 from ..serializers import BookingSerializer, RequestSerializer
 from users.models import Account
@@ -49,7 +49,7 @@ def home_page(request):
             
             current_bookings = Booking.objects.filter(
                 request__client=client,
-                status__in=['active', 'reworked']
+                status__in=['accepted', 'on_the_way', 'active', 'reworked']
             ).select_related(
                 'request',
                 'request__client',
@@ -86,6 +86,9 @@ def home_page(request):
                             filtered_pending_requests.append(req)
                     elif req.request_type == 'emergency' and hasattr(req, 'emergencyrequest'):
                         filtered_pending_requests.append(req)
+                    elif req.request_type == 'broadcast' and hasattr(req, 'broadcast_request'):
+                        if req.broadcast_request.status == 'searching':
+                            filtered_pending_requests.append(req)
                 except Exception:
                     continue
         
@@ -94,7 +97,7 @@ def home_page(request):
             
             current_bookings = Booking.objects.filter(
                 request__provider=account,
-                status__in=['active', 'reworked']
+                status__in=['accepted', 'on_the_way', 'active', 'reworked']
             ).select_related(
                 'request',
                 'request__client',
@@ -135,7 +138,7 @@ def home_page(request):
             
             current_bookings = Booking.objects.filter(
                 request__provider=account,
-                status__in=['active', 'reworked']
+                status__in=['accepted', 'on_the_way', 'active', 'reworked']
             ).select_related(
                 'request',
                 'request__client',

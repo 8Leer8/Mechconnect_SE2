@@ -60,6 +60,20 @@ class EmergencyRequestSerializer(serializers.ModelSerializer):
         fields = ['id', 'description', 'concern_picture', 'providers_note']
 
 
+class BroadcastRequestDetailSerializer(serializers.ModelSerializer):
+    services = ServiceBasicSerializer(many=True, read_only=True)
+    add_ons = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = BroadcastRequest
+        fields = ['id', 'description', 'concern_picture', 'status', 'services', 'add_ons', 'expires_at']
+    
+    def get_add_ons(self, obj):
+        from .models import BroadcastRequestAddOn
+        add_ons = BroadcastRequestAddOn.objects.filter(broadcast_request=obj).select_related('service_add_on')
+        return ServiceAddOnSerializer([addon.service_add_on for addon in add_ons], many=True).data
+
+
 class RequestSerializer(serializers.ModelSerializer):
     client = AccountBasicSerializer(source='client.account', read_only=True)
     provider = AccountBasicSerializer(read_only=True)
@@ -89,6 +103,12 @@ class RequestSerializer(serializers.ModelSerializer):
                 return EmergencyRequestSerializer(emergency).data
             except EmergencyRequest.DoesNotExist:
                 return None
+        elif obj.request_type == 'broadcast':
+            try:
+                broadcast = obj.broadcast_request
+                return BroadcastRequestDetailSerializer(broadcast).data
+            except BroadcastRequest.DoesNotExist:
+                return None
         return None
 
 
@@ -97,7 +117,7 @@ class ActiveBookingSerializer(serializers.ModelSerializer):
         model = ActiveBooking
         fields = [
             'id', 'before_picture_service', 'is_job_done', 'after_picture_service',
-            'is_rescheduled', 'reason', 'new_time', 'new_date', 'started_at'
+            'is_rescheduled', 'reason', 'new_time', 'new_date', 'started_at', 'paused_at', 'total_pause_duration'
         ]
 
 
@@ -114,8 +134,8 @@ class BookingSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'request', 'amount_fee', 'booked_at', 'updated_at', 'completed_at', 'active_details']
 
     def get_active_details(self, obj):
-        # Show active details if booking is in a relevant status
-        if obj.status in ['active', 'on_the_way', 'accepted']:
+        # Show active details for statuses where mechanic may need them
+        if obj.status in ['active', 'on_the_way', 'accepted', 'paused', 'finished', 'pending_payment']:
             try:
                 active = obj.activebooking
                 return ActiveBookingSerializer(active).data
@@ -142,6 +162,7 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
     services = ServiceBasicSerializer(many=True, read_only=True)
     add_ons = serializers.SerializerMethodField()
     concern_picture = serializers.SerializerMethodField()
+    required_tokens = serializers.SerializerMethodField()
     latitude = serializers.FloatField()
     longitude = serializers.FloatField()
     
@@ -149,8 +170,8 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
         model = BroadcastRequest
         fields = [
             'id', 'description', 'latitude', 'longitude', 
-            'services', 'add_ons', 'created_at', 'expires_at',
-            'status', 'concern_picture'
+            'services', 'add_ons', 'created_at', 'expires_at', 'accepted_at',
+            'status', 'concern_picture', 'required_tokens'
         ]
     
     def get_concern_picture(self, obj):
@@ -166,6 +187,24 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
         from .models import BroadcastRequestAddOn
         add_ons = BroadcastRequestAddOn.objects.filter(broadcast_request=obj).select_related('service_add_on')
         return ServiceAddOnSerializer([addon.service_add_on for addon in add_ons], many=True).data
+
+    def get_required_tokens(self, obj):
+        """Calculate required tokens (2% of total service price) rounded up to integer."""
+        try:
+            total_amount = 0.0
+            for service in obj.services.all():
+                total_amount += float(service.minimum_price)
+
+            from .models import BroadcastRequestAddOn
+            add_ons = BroadcastRequestAddOn.objects.filter(broadcast_request=obj).select_related('service_add_on')
+            for ar in add_ons:
+                total_amount += float(ar.service_add_on.price)
+
+            import math
+            required = math.ceil(total_amount * 0.02)
+            return required
+        except Exception:
+            return 0
 
 
 class BroadcastOfferSerializer(serializers.ModelSerializer):

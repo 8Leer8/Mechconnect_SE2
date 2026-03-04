@@ -27,11 +27,41 @@ interface Booking {
   } | null;
 }
 
+interface ServiceLocation {
+  street_name: string;
+  subdivision_village?: string;
+  barangay: string;
+  city_municipality: string;
+  landmark?: string;
+}
+
+interface RequestDetails {
+  description?: string;
+  quoted_price?: string;
+  service?: {
+    id: number;
+    name: string;
+    minimum_price: number;
+  };
+  services?: {
+    id: number;
+    name: string;
+    minimum_price: number;
+  }[];
+  add_ons?: {
+    id: number;
+    name: string;
+    price: number;
+  }[];
+  status?: string;
+}
+
 interface Request {
   id: number;
   request_type: string;
   created_at: string;
-  request_details: any;
+  request_details: RequestDetails | null;
+  service_location: ServiceLocation | null;
 }
 
 interface HomeData {
@@ -263,32 +293,72 @@ export default function HomeScreen() {
               </View>
 
               {data?.pending_requests && data.pending_requests.length > 0 ? (
-                data.pending_requests.slice(0, 3).map((request) => (
-                  <View key={request.id} style={styles.requestCard}>
-                    <View style={styles.requestCardTop}>
-                      <View style={styles.requestTypeBadge}>
-                        <FontAwesome
-                          name={request.request_type === 'emergency' ? 'exclamation-triangle' : 'file-text-o'}
-                          size={14}
-                          color={request.request_type === 'emergency' ? '#FF3B30' : '#007AFF'}
-                        />
-                        <ThemedText style={[styles.requestTypeText, {
-                          color: request.request_type === 'emergency' ? '#FF3B30' : '#007AFF',
-                        }]}>
-                          {request.request_type.charAt(0).toUpperCase() + request.request_type.slice(1)}
+                data.pending_requests.slice(0, 3).map((request) => {
+                  // Calculate estimated price
+                  let estimatedPrice = 0;
+                  if (request.request_details?.quoted_price) {
+                    estimatedPrice = parseFloat(request.request_details.quoted_price);
+                  } else if (request.request_details?.service?.minimum_price) {
+                    estimatedPrice = request.request_details.service.minimum_price;
+                    if (request.request_details.add_ons) {
+                      estimatedPrice += request.request_details.add_ons.reduce((sum, addon) => sum + addon.price, 0);
+                    }
+                  } else if (request.request_details?.services && request.request_details.services.length > 0) {
+                    estimatedPrice = request.request_details.services.reduce((sum, service) => sum + service.minimum_price, 0);
+                    if (request.request_details.add_ons) {
+                      estimatedPrice += request.request_details.add_ons.reduce((sum, addon) => sum + addon.price, 0);
+                    }
+                  }
+
+                  return (
+                    <View key={request.id} style={styles.requestCard}>
+                      <View style={styles.requestCardTop}>
+                        <View style={styles.requestTypeBadge}>
+                          <FontAwesome
+                            name={request.request_type === 'emergency' ? 'exclamation-triangle' : 
+                                  request.request_type === 'broadcast' ? 'bullhorn' : 'file-text-o'}
+                            size={14}
+                            color={request.request_type === 'emergency' ? '#FF3B30' : 
+                                   request.request_type === 'broadcast' ? '#FF8C00' : '#007AFF'}
+                          />
+                          <ThemedText style={[styles.requestTypeText, {
+                            color: request.request_type === 'emergency' ? '#FF3B30' : 
+                                   request.request_type === 'broadcast' ? '#FF8C00' : '#007AFF',
+                          }]}>
+                            {request.request_type.charAt(0).toUpperCase() + request.request_type.slice(1)}
+                          </ThemedText>
+                        </View>
+                        <ThemedText style={styles.requestTime}>
+                          {new Date(request.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                         </ThemedText>
                       </View>
-                      <ThemedText style={styles.requestTime}>
-                        {new Date(request.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                      </ThemedText>
+                      
+                      {request.request_details?.description && (
+                        <ThemedText style={styles.requestDescription} numberOfLines={2}>
+                          {request.request_details.description}
+                        </ThemedText>
+                      )}
+                      
+                      <View style={styles.requestInfoRow}>
+                        {estimatedPrice > 0 && (
+                          <View style={styles.requestInfoItem}>
+                            <FontAwesome name="money" size={12} color="#34C759" />
+                            <ThemedText style={styles.requestInfoLabel}>Est. Price:</ThemedText>
+                            <ThemedText style={styles.requestPriceText}>₱{estimatedPrice.toFixed(2)}</ThemedText>
+                          </View>
+                        )}
+                        {request.service_location && (
+                          <View style={styles.requestInfoItem}>
+                            <FontAwesome name="map-marker" size={12} color="#FF8C00" />
+                            <ThemedText style={styles.requestInfoLabel} numberOfLines={1}>
+                              {request.service_location.barangay}, {request.service_location.city_municipality}
+                            </ThemedText>
+                          </View>
+                        )}
+                      </View>
                     </View>
-                    {request.request_details?.description && (
-                      <ThemedText style={styles.requestDescription} numberOfLines={2}>
-                        {request.request_details.description}
-                      </ThemedText>
-                    )}
-                  </View>
-                ))
+                  );
+                })
               ) : (
                 <View style={styles.emptyCard}>
                   <FontAwesome name="inbox" size={36} color="#555" />
@@ -443,7 +513,30 @@ const styles = StyleSheet.create({
   },
   requestTypeText: { fontSize: 12, fontWeight: '700' },
   requestTime: { fontSize: 12, color: '#8E8E93' },
-  requestDescription: { fontSize: 13, color: '#8E8E93', lineHeight: 18 },
+  requestDescription: { fontSize: 13, color: '#8E8E93', lineHeight: 18, marginBottom: 10 },
+  requestInfoRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 4,
+  },
+  requestInfoItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    flex: 1,
+    minWidth: '45%',
+  },
+  requestInfoLabel: {
+    fontSize: 11,
+    color: '#8E8E93',
+    flex: 1,
+  },
+  requestPriceText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#34C759',
+  },
   quickActionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   quickActionCard: {
     width: (width - 50) / 2,

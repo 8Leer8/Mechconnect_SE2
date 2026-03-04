@@ -70,15 +70,15 @@ def list_client_bookings(request):
         
         # Apply status filter if provided
         if status_filter:
-            valid_statuses = ['active', 'on_the_way', 'completed', 'cancelled', 'reworked', 'disputed']
+            valid_statuses = ['active', 'on_the_way', 'pending_payment', 'completed', 'cancelled', 'reworked', 'disputed']
             if status_filter.lower() not in valid_statuses:
                 return Response({
                     'error': f'Invalid status. Must be one of: {", ".join(valid_statuses)}'
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-            # For 'active' tab, merge both 'active' and 'on_the_way' statuses
+            # For 'active' tab, merge 'accepted', 'active' and 'on_the_way' statuses
             if status_filter.lower() == 'active':
-                bookings_queryset = bookings_queryset.filter(status__in=['active', 'on_the_way'])
+                bookings_queryset = bookings_queryset.filter(status__in=['accepted', 'active', 'on_the_way', 'pending_payment'])
             else:
                 bookings_queryset = bookings_queryset.filter(status=status_filter.lower())
 
@@ -93,8 +93,8 @@ def list_client_bookings(request):
         
         # If no filter, return bookings grouped by status
         else:
-            # Merge both 'active' and 'on_the_way' for the active group
-            active_bookings = bookings_queryset.filter(status__in=['active', 'on_the_way'])
+            # Merge 'accepted', 'active' and 'on_the_way' for the active group
+            active_bookings = bookings_queryset.filter(status__in=['accepted', 'active', 'on_the_way', 'pending_payment'])
             completed_bookings = bookings_queryset.filter(status='completed')
             cancelled_bookings = bookings_queryset.filter(status='cancelled')
             reworked_bookings = bookings_queryset.filter(status='reworked')
@@ -181,6 +181,13 @@ def get_booking_detail(request, booking_id):
             Prefetch('completebooking', queryset=CompleteBooking.objects.all())
         ).get(id=booking_id, request__client=client)
         
+        # Ensure ActiveBooking exists for runtime details when booking is in a running/finished state
+        if booking.status in ['active', 'paused', 'pending_payment', 'finished', 'on_the_way']:
+            try:
+                ActiveBooking.objects.get_or_create(booking=booking)
+            except Exception:
+                pass
+
         # Serialize booking
         booking_data = _serialize_single_booking(booking)
         
@@ -246,8 +253,8 @@ def _serialize_single_booking(booking):
         } if booking.request.service_location else None,
     }
     
-    # Add status-specific details
-    if booking.status in ['active', 'on_the_way'] and hasattr(booking, 'activebooking'):
+    # Add active booking runtime details when ActiveBooking exists
+    if hasattr(booking, 'activebooking'):
         active = booking.activebooking
         booking_data['active_details'] = {
             'before_picture': active.before_picture_service.url if active.before_picture_service else None,
@@ -258,6 +265,8 @@ def _serialize_single_booking(booking):
             'new_time': active.new_time.isoformat() if active.new_time else None,
             'new_date': active.new_date.isoformat() if active.new_date else None,
             'started_at': active.started_at.isoformat() if active.started_at else None,
+            'paused_at': active.paused_at.isoformat() if getattr(active, 'paused_at', None) else None,
+            'total_pause_duration': str(active.total_pause_duration) if getattr(active, 'total_pause_duration', None) is not None else None,
         }
     
     elif booking.status == 'cancelled' and hasattr(booking, 'cancelbooking'):

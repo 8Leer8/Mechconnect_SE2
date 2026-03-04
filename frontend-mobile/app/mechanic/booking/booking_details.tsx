@@ -12,9 +12,9 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
+import WalletBadge from '@/components/wallet-badge';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
-
 interface BookingDetail {
   id: number;
   status: string;
@@ -48,6 +48,8 @@ interface BookingDetail {
     new_time: string | null;
     new_date: string | null;
     started_at: string | null;
+    paused_at: string | null;
+    total_pause_duration: string | null;
   };
   completion_details?: {
     completed_at: string;
@@ -81,6 +83,22 @@ export default function BookingDetailScreen() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [completing, setCompleting] = useState(false);
+  const [timer, setTimer] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout | null = null;
+    const hasStarted = !!(booking && booking.active_details && booking.active_details.started_at);
+    // Only run the ticking interval when the job has started, status is active, AND it is not paused
+    if (hasStarted && booking?.status === 'active' && !isPaused) {
+      interval = setInterval(() => {
+        setTimer(prevTimer => prevTimer + 1);
+      }, 1000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [booking?.active_details?.started_at, booking?.status, isPaused]);
 
   const fetchBookingDetail = useCallback(async () => {
     if (!bookingId) return;
@@ -94,7 +112,70 @@ export default function BookingDetailScreen() {
 
       if (!response.ok) throw new Error('Failed to fetch booking details');
       const data = await response.json();
-      setBooking(data.booking || data);
+      const bookingData = data.booking || data;
+      setBooking(bookingData);
+      const currentStatus = bookingData.status;
+
+      // Compute accurate paused timer when status is 'paused'
+      if (currentStatus === 'paused' && bookingData.active_details && bookingData.active_details.paused_at) {
+        const pausedAt = bookingData.active_details.paused_at;
+        const startedAt = bookingData.active_details.started_at;
+        const totalPauseRaw = bookingData.active_details.total_pause_duration;
+        // total_pause_duration may be sent as a string like "HH:MM:SS" or number of seconds
+        let totalPauseSeconds = 0;
+        if (totalPauseRaw) {
+          if (typeof totalPauseRaw === 'number') {
+            totalPauseSeconds = Math.floor(totalPauseRaw);
+          } else if (typeof totalPauseRaw === 'string') {
+            const parts = totalPauseRaw.split(':').map((p: string) => Number(p));
+            if (parts.length === 3) totalPauseSeconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
+            else if (parts.length === 2) totalPauseSeconds = parts[0] * 60 + parts[1];
+            else totalPauseSeconds = Math.floor(Number(totalPauseRaw)) || 0;
+          }
+        }
+
+        let elapsedSeconds = 0;
+        if (startedAt && pausedAt) {
+          const startedMs = new Date(startedAt).getTime();
+          const pausedMs = new Date(pausedAt).getTime();
+          if (!isNaN(startedMs) && !isNaN(pausedMs)) {
+            // elapsed while active is from started to paused, minus any accumulated pause duration
+            elapsedSeconds = Math.floor((pausedMs - startedMs) / 1000) - Math.floor(totalPauseSeconds);
+          }
+        }
+        if (elapsedSeconds < 0) elapsedSeconds = 0;
+
+        setTimer(Math.floor(elapsedSeconds));
+        setIsPaused(true);
+      } else if (currentStatus === 'active' && bookingData.active_details && bookingData.active_details.started_at) {
+        // Active and running: compute elapsed since started minus total_pause_duration
+        const startedAt = bookingData.active_details.started_at;
+        const totalPauseRaw = bookingData.active_details.total_pause_duration;
+        let totalPauseSeconds = 0;
+        if (totalPauseRaw) {
+          if (typeof totalPauseRaw === 'number') {
+            totalPauseSeconds = Math.floor(totalPauseRaw);
+          } else if (typeof totalPauseRaw === 'string') {
+            const parts = totalPauseRaw.split(':').map((p: string) => Number(p));
+            if (parts.length === 3) totalPauseSeconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
+            else if (parts.length === 2) totalPauseSeconds = parts[0] * 60 + parts[1];
+            else totalPauseSeconds = Math.floor(Number(totalPauseRaw)) || 0;
+          }
+        }
+
+        let elapsedSeconds = 0;
+        if (startedAt) {
+          const startedMs = new Date(startedAt).getTime();
+          const nowMs = Date.now();
+          if (!isNaN(startedMs)) elapsedSeconds = Math.floor((nowMs - startedMs) / 1000) - Math.floor(totalPauseSeconds);
+        }
+        if (elapsedSeconds < 0) elapsedSeconds = 0;
+        setTimer(Math.floor(elapsedSeconds));
+        setIsPaused(false);
+      } else {
+        setIsPaused(false);
+        setTimer(0);
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to load booking');
     } finally {
@@ -116,12 +197,38 @@ export default function BookingDetailScreen() {
     fetchBookingDetail();
   };
 
+  const handleCompleteBooking = async () => {
+    if (!booking) return;
+    setCompleting(true);
+    try {
+      const response = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/complete/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => null);
+        throw new Error(err?.error || 'Failed to complete booking');
+      }
+      // refresh booking
+      await fetchBookingDetail();
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'Failed to mark booking as complete');
+    } finally {
+      setCompleting(false);
+    }
+  };
+
   // Map backend status to user-friendly label and color
   const getStatusLabel = (status: string) => {
     switch (status) {
       case 'accepted': return 'Booked';
       case 'active': return 'On Going';
       case 'on_the_way': return 'On the Way';
+      case 'paused': return 'Paused';
+      case 'finished': return 'Finished';
+      case 'pending_payment': return 'Pending Payment';
       case 'completed': return 'Completed';
       case 'cancelled': return 'Cancelled';
       case 'pending': return 'Pending';
@@ -135,6 +242,9 @@ export default function BookingDetailScreen() {
       case 'accepted': return '#00B8D9';
       case 'active': return '#FF8C00';
       case 'on_the_way': return '#007AFF';
+      case 'paused': return '#8E8E93';
+      case 'finished': return '#34C759';
+      case 'pending_payment': return '#FFD60A';
       case 'reworked': return '#FFD60A';
       case 'completed': return '#34C759';
       case 'cancelled': return '#FF3B30';
@@ -148,6 +258,9 @@ export default function BookingDetailScreen() {
       case 'accepted': return 'calendar-check-o';
       case 'active': return 'play-circle';
       case 'on_the_way': return 'car';
+      case 'paused': return 'pause-circle';
+      case 'finished': return 'check-circle';
+      case 'pending_payment': return 'money';
       case 'completed': return 'check-circle';
       case 'cancelled': return 'times-circle';
       case 'pending': return 'clock-o';
@@ -166,6 +279,13 @@ export default function BookingDetailScreen() {
       hour: '2-digit',
       minute: '2-digit',
     });
+
+  const formatDuration = (seconds: number) => {
+    const h = Math.floor(seconds / 3600).toString().padStart(2, '0');
+    const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
+    const s = (seconds % 60).toString().padStart(2, '0');
+    return `${h}:${m}:${s}`;
+  };
 
   const handleNavigateToClient = () => {
     if (!booking?.service_location) {
@@ -195,96 +315,52 @@ export default function BookingDetailScreen() {
     });
   };
 
-  const handleCompleteBooking = async () => {
+  // --- New handlers for status transitions ---
+  const [transitioning, setTransitioning] = useState(false);
+  const [paymentConfirmedOnUI, setPaymentConfirmedOnUI] = useState(false);
+
+  const handleStatusUpdate = async (endpoint: string, successMessage: string, errorMessage: string) => {
     if (!booking) return;
+    setTransitioning(true);
+    try {
+      const response = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/${endpoint}/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error((errData as any).error || errorMessage);
+      }
+      Alert.alert('Success', successMessage);
+      fetchBookingDetail();
+    } catch (err: any) {
+      Alert.alert('Error', err.message || errorMessage);
+    } finally {
+      setTransitioning(false);
+    }
+  };
 
+  const handleStartTravel = () => handleStatusUpdate('start-travel', 'Status updated to On The Way!', 'Failed to start travel');
+  const handleCancelTravel = () => {
+    if (!booking) return;
     Alert.alert(
-      'Complete Booking',
-      'Are you sure you want to mark this booking as completed?',
+      'Cancel Travel',
+      'Are you sure you want to cancel travel and revert to previous status?',
       [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Complete',
-          onPress: async () => {
-            try {
-              setCompleting(true);
-              const response = await fetch(
-                `${API_URL}/bookings/mechanic/bookings/${booking.id}/complete/`,
-                {
-                  method: 'POST',
-                  credentials: 'include',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    total_amount: booking.amount_fee,
-                    notes: '',
-                  }),
-                }
-              );
-
-              if (!response.ok) {
-                const errData = await response.json().catch(() => ({}));
-                throw new Error((errData as any).error || 'Failed to complete booking');
-              }
-
-              Alert.alert('Success', 'Booking marked as completed!');
-              fetchBookingDetail();
-            } catch (err: any) {
-              Alert.alert('Error', err.message || 'Failed to complete booking');
-            } finally {
-              setCompleting(false);
-            }
-          },
-        },
+        { text: 'No', style: 'cancel' },
+        { text: 'Yes', onPress: () => handleStatusUpdate('cancel-travel', 'Travel cancelled.', 'Failed to cancel travel') },
       ]
     );
   };
+  const handleStartJob = () => handleStatusUpdate('start-job', 'Status updated to Active!', 'Failed to start job');
+  const handleCancelJob = () => handleStatusUpdate('cancel-job', 'Job cancelled.', 'Failed to cancel job');
+  const handlePauseJob = () => handleStatusUpdate('pause-job', 'Job paused.', 'Failed to pause job');
+  const handleResumeJob = () => handleStatusUpdate('resume-job', 'Job resumed.', 'Failed to resume job');
+  const handleFinishJob = () => handleStatusUpdate('finish-job', 'Job finished. Pending payment.', 'Failed to finish job');
+  const handlePaymentReceived = () => handleStatusUpdate('payment-received', 'Payment received.', 'Failed to confirm payment');
+  const handleCancelBooking = () => handleStatusUpdate('cancel-booking', 'Booking cancelled.', 'Failed to cancel booking');
 
-  // --- New handlers for status transitions ---
-  const [transitioning, setTransitioning] = useState(false);
-
-  const handleStartTravel = async () => {
-    if (!booking) return;
-    setTransitioning(true);
-    try {
-      const response = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/start-travel/`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error((errData as any).error || 'Failed to start travel');
-      }
-      Alert.alert('Success', 'Status updated to On The Way!');
-      fetchBookingDetail();
-    } catch (err: any) {
-      Alert.alert('Error', err.message || 'Failed to start travel');
-    } finally {
-      setTransitioning(false);
-    }
-  };
-
-  const handleStartJob = async () => {
-    if (!booking) return;
-    setTransitioning(true);
-    try {
-      const response = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/start-job/`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error((errData as any).error || 'Failed to start job');
-      }
-      Alert.alert('Success', 'Status updated to Active!');
-      fetchBookingDetail();
-    } catch (err: any) {
-      Alert.alert('Error', err.message || 'Failed to start job');
-    } finally {
-      setTransitioning(false);
-    }
-  };
 
   if (loading) {
     return (
@@ -336,9 +412,223 @@ export default function BookingDetailScreen() {
           <FontAwesome name="chevron-left" size={16} color="#FF8C00" />
         </TouchableOpacity>
         <ThemedText style={styles.headerTitle}>Booking Details</ThemedText>
-        <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
-          <FontAwesome name="refresh" size={16} color="#FF8C00" />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
+            <FontAwesome name="refresh" size={16} color="#FF8C00" />
+          </TouchableOpacity>
+          <WalletBadge onPress={() => router.push('/mechanic/wallet')} />
+        </View>
+      </View>
+
+      {/* Action Buttons */}
+      <View style={styles.actionButtonsContainer}>
+        {/* Accepted: Start Travel (primary) then Cancel Booking (secondary) — full width stacked */}
+        {booking.status === 'accepted' && (
+          <>
+            <View style={{ width: '100%' }}>
+              <TouchableOpacity style={[styles.largePrimaryButton]} onPress={handleStartTravel} disabled={transitioning}>
+                <FontAwesome name="car" size={18} color="#fff" />
+                <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Start Travel</ThemedText>
+              </TouchableOpacity>
+            </View>
+            <View style={{ width: '100%', marginTop: 10 }}>
+              <TouchableOpacity style={[styles.largeSecondaryButton]} onPress={handleCancelBooking} disabled={transitioning}>
+                <FontAwesome name="times" size={18} color="#fff" />
+                <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Cancel Booking</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
+
+        {/* On the way: Start Job (primary) then Cancel Travel (secondary) — full width stacked */}
+        {booking.status === 'on_the_way' && (
+          <>
+            <View style={{ width: '100%' }}>
+              <TouchableOpacity style={[styles.largePrimaryButton]} onPress={handleStartJob} disabled={transitioning}>
+                <FontAwesome name="play" size={18} color="#fff" />
+                <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Start Job</ThemedText>
+              </TouchableOpacity>
+            </View>
+            <View style={{ width: '100%', marginTop: 10 }}>
+              <TouchableOpacity style={[styles.largeSecondaryButton]} onPress={handleCancelTravel} disabled={transitioning}>
+                <FontAwesome name="times" size={18} color="#fff" />
+                <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Cancel Travel</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
+
+        {/* Active: Pause + Go Back (top row) and large Finish (bottom) */}
+        {booking.status === 'active' && (
+          <>
+            <View style={{ width: '100%', flexDirection: 'row', gap: 8 }}>
+              <View style={styles.actionButtonSmallWrapper}>
+                <TouchableOpacity style={[styles.actionButton, styles.pauseButton]} onPress={handlePauseJob} disabled={transitioning}>
+                  <FontAwesome name="pause" size={16} color="#fff" />
+                  <ThemedText style={styles.actionButtonText}>Pause</ThemedText>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.actionButtonSmallWrapper}>
+                <TouchableOpacity style={[styles.actionButton, styles.cancelButton]} onPress={handleCancelJob} disabled={transitioning}>
+                  <FontAwesome name="arrow-left" size={16} color="#fff" />
+                  <ThemedText style={styles.actionButtonText}>Go Back</ThemedText>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View style={styles.fullWidthButtonWrapper}>
+              <TouchableOpacity style={[styles.finishLargeButton]} onPress={handleFinishJob} disabled={transitioning}>
+                <FontAwesome name="flag-checkered" size={18} color="#fff" />
+                <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Finish Job</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
+
+        {/* Paused: Resume + Go Back */}
+        {booking.status === 'paused' && (
+          <>
+            <View style={styles.actionButtonWrapper}>
+              <TouchableOpacity style={[styles.actionButton, styles.resumeButton]} onPress={handleResumeJob} disabled={transitioning}>
+                <FontAwesome name="play" size={16} color="#fff" />
+                <ThemedText style={styles.actionButtonText}>Resume Job</ThemedText>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.actionButtonWrapper}>
+              <TouchableOpacity
+                style={[styles.actionButton, styles.cancelButton]}
+                onPress={async () => {
+                  setTransitioning(true);
+                  try {
+                    // For paused bookings, revert twice to move back to ON_THE_WAY:
+                    // PAUSED -> ACTIVE, then ACTIVE -> ON_THE_WAY
+                    const first = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/revert-stage/`, {
+                      method: 'POST',
+                      credentials: 'include',
+                      headers: { 'Content-Type': 'application/json' },
+                    });
+                    if (!first.ok) {
+                      const err = await first.json().catch(() => null);
+                      throw new Error(err?.error || 'Failed to revert stage');
+                    }
+
+                    // second revert
+                    const second = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/revert-stage/`, {
+                      method: 'POST',
+                      credentials: 'include',
+                      headers: { 'Content-Type': 'application/json' },
+                    });
+                    if (!second.ok) {
+                      const err = await second.json().catch(() => null);
+                      throw new Error(err?.error || 'Failed to revert to on_the_way');
+                    }
+
+                    Alert.alert('Success', 'Reverted to On the Way');
+                    await fetchBookingDetail();
+                  } catch (err: any) {
+                    Alert.alert('Error', err.message || 'Failed to revert stage');
+                  } finally {
+                    setTransitioning(false);
+                  }
+                }}
+                disabled={transitioning}
+              >
+                <FontAwesome name="arrow-left" size={16} color="#fff" />
+                <ThemedText style={styles.actionButtonText}>Go Back</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
+
+        {/* Finished: Accept payment (server) */}
+        {booking.status === 'finished' && (
+          <View style={styles.actionButtonWrapper}>
+            <TouchableOpacity style={[styles.actionButton, styles.paymentReceivedButton]} onPress={handlePaymentReceived} disabled={transitioning}>
+              <FontAwesome name="money" size={16} color="#fff" />
+              <ThemedText style={styles.actionButtonText}>Payment Received</ThemedText>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Pending payment: checkbox, full-width Mark as Complete, then full-width Go Back */}
+        {booking.status === 'pending_payment' && (
+          <View style={{ width: '100%' }}>
+            <TouchableOpacity
+              style={[styles.checkboxRowFull, paymentConfirmedOnUI ? styles.checkboxChecked : styles.checkboxUnchecked]}
+              onPress={() => setPaymentConfirmedOnUI(prev => !prev)}
+              disabled={transitioning}
+            >
+              <FontAwesome name={paymentConfirmedOnUI ? 'check-square' : 'square-o'} size={18} color={paymentConfirmedOnUI ? '#34C759' : '#fff'} />
+              <ThemedText style={[styles.actionButtonText, { marginLeft: 12 }]}>I received payment</ThemedText>
+            </TouchableOpacity>
+
+            <View style={{ marginTop: 12 }}>
+              <TouchableOpacity style={[styles.finishLargeButton, !paymentConfirmedOnUI && styles.disabledButton]} onPress={async () => {
+                if (!paymentConfirmedOnUI) {
+                  Alert.alert('Confirm Payment', 'Please confirm you received payment before marking complete.');
+                  return;
+                }
+                setCompleting(true);
+                try {
+                  const pr = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/payment-received/`, {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                  });
+                  if (!pr.ok) {
+                    const e = await pr.json().catch(() => null);
+                    throw new Error(e?.error || 'Failed to confirm payment');
+                  }
+                  const response = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/complete/`, {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({}),
+                  });
+                  if (!response.ok) {
+                    const err = await response.json().catch(() => null);
+                    throw new Error(err?.error || 'Failed to complete booking');
+                  }
+                  Alert.alert('Success', 'Booking marked as complete');
+                  fetchBookingDetail();
+                } catch (err: any) {
+                  Alert.alert('Error', err.message || 'Failed to mark booking as complete');
+                } finally {
+                  setCompleting(false);
+                }
+              }} disabled={completing || transitioning}>
+                {completing ? <ActivityIndicator color="#fff" /> : <FontAwesome name="check" size={18} color="#fff" />}
+                <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Mark as Complete</ThemedText>
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ marginTop: 12 }}>
+              <TouchableOpacity style={[styles.finishLargeButton, styles.cancelButton]} onPress={async () => {
+                setTransitioning(true);
+                try {
+                  const res = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/revert-stage/`, {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                  });
+                  if (!res.ok) {
+                    const err = await res.json().catch(() => null);
+                    throw new Error(err?.error || 'Failed to revert stage');
+                  }
+                  Alert.alert('Success', 'Reverted to previous stage');
+                  fetchBookingDetail();
+                } catch (err: any) {
+                  Alert.alert('Error', err.message || 'Failed to revert stage');
+                } finally {
+                  setTransitioning(false);
+                }
+              }} disabled={transitioning}>
+                <FontAwesome name="arrow-left" size={18} color="#fff" />
+                <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Go Back</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
       </View>
 
       <ScrollView
@@ -359,6 +649,9 @@ export default function BookingDetailScreen() {
               <View style={[styles.statusBadge, { backgroundColor: getStatusColor(booking.status) }]}> 
                 <ThemedText style={styles.statusBadgeText}>{getStatusLabel(booking.status)}</ThemedText>
               </View>
+              {(booking.status === 'active' || booking.status === 'paused') && booking.active_details?.started_at && (
+                <ThemedText style={styles.timerText}>{formatDuration(timer)}</ThemedText>
+              )}
               <ThemedText style={styles.bookingIdText}>#{booking.id}</ThemedText>
             </View>
             <ThemedText style={styles.serviceType}>
@@ -465,6 +758,37 @@ export default function BookingDetailScreen() {
         </View>
 
         {/* Booking Timeline */}
+        {/* Receipt / Services (shown when pending payment) */}
+        {booking.status === 'pending_payment' && (
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#34C75915' }]}>
+                <FontAwesome name="file-text-o" size={16} color="#34C759" />
+              </View>
+              <ThemedText style={styles.sectionTitle}>Receipt</ThemedText>
+            </View>
+            <View style={styles.receiptList}>
+              <View style={styles.receiptRow}>
+                <ThemedText style={styles.receiptItem}>Service</ThemedText>
+                <ThemedText style={styles.receiptAmount}>{booking.request?.type ? booking.request.type.charAt(0).toUpperCase() + booking.request.type.slice(1) : 'Service'}</ThemedText>
+              </View>
+              <View style={styles.receiptRow}>
+                <ThemedText style={styles.receiptItem}>Quantity</ThemedText>
+                <ThemedText style={styles.receiptAmount}>1</ThemedText>
+              </View>
+              <View style={styles.receiptDivider} />
+              <View style={styles.receiptRow}> 
+                <ThemedText style={styles.receiptTotalLabel}>Total</ThemedText>
+                <ThemedText style={styles.receiptTotalValue}>₱{parseFloat(String(booking.amount_fee || 0)).toFixed(2)}</ThemedText>
+              </View>
+              <View style={styles.receiptRow}> 
+                <ThemedText style={styles.receiptYouLabel}>You receive</ThemedText>
+                <ThemedText style={styles.receiptYouValue}>₱{parseFloat(String(booking.amount_fee || 0)).toFixed(2)}</ThemedText>
+              </View>
+            </View>
+          </View>
+        )}
+
         <View style={styles.sectionCard}>
           <View style={styles.sectionHeader}>
             <View style={[styles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
@@ -555,6 +879,13 @@ export default function BookingDetailScreen() {
                 <ThemedText style={styles.noteText}>{booking.active_details.reason}</ThemedText>
               </View>
             )}
+            {/* Large elapsed timer for mechanic */}
+            {booking.active_details.started_at && (
+              <View style={styles.elapsedRow}>
+                <ThemedText style={styles.elapsedLabel}>Elapsed</ThemedText>
+                <ThemedText style={styles.elapsedValue}>{formatDuration(timer)}</ThemedText>
+              </View>
+            )}
           </View>
         )}
 
@@ -637,68 +968,7 @@ export default function BookingDetailScreen() {
         )}
 
 
-        {/* Action Buttons for status transitions */}
-        {booking.status === 'accepted' && (
-          <View style={styles.actionSection}>
-            <TouchableOpacity
-              style={[styles.completeButton, transitioning && styles.disabledButton]}
-              onPress={handleStartTravel}
-              disabled={transitioning}
-              activeOpacity={0.7}
-            >
-              {transitioning ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <>
-                  <FontAwesome name="car" size={18} color="#fff" />
-                  <ThemedText style={styles.completeButtonText}>Start Travel</ThemedText>
-                </>
-              )}
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {booking.status === 'on_the_way' && (
-          <View style={styles.actionSection}>
-            <TouchableOpacity
-              style={[styles.completeButton, transitioning && styles.disabledButton]}
-              onPress={handleStartJob}
-              disabled={transitioning}
-              activeOpacity={0.7}
-            >
-              {transitioning ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <>
-                  <FontAwesome name="play" size={18} color="#fff" />
-                  <ThemedText style={styles.completeButtonText}>Start Job</ThemedText>
-                </>
-              )}
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {booking.status === 'active' && (
-          <View style={styles.actionSection}>
-            <TouchableOpacity
-              style={[styles.completeButton, completing && styles.disabledButton]}
-              onPress={handleCompleteBooking}
-              disabled={completing}
-              activeOpacity={0.7}
-            >
-              {completing ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <>
-                  <FontAwesome name="check-circle" size={18} color="#fff" />
-                  <ThemedText style={styles.completeButtonText}>Mark as Completed</ThemedText>
-                </>
-              )}
-            </TouchableOpacity>
-          </View>
-        )}
-
-        <View style={{ height: 40 }} />
+        
       </ScrollView>
     </ThemedView>
   );
@@ -774,6 +1044,8 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 16,
+    // ensure content can scroll above the fixed action buttons
+    paddingBottom: 220,
   },
   // Status Card
   statusCard: {
@@ -977,6 +1249,52 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 10,
   },
+
+  /* Receipt styles */
+  receiptList: {
+    paddingHorizontal: 4,
+    paddingBottom: 6,
+  },
+  receiptRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  receiptItem: {
+    fontSize: 14,
+    color: '#ccc',
+  },
+  receiptAmount: {
+    fontSize: 14,
+    color: '#fff',
+    fontWeight: '600',
+  },
+  receiptDivider: {
+    height: 1,
+    backgroundColor: '#222426',
+    marginVertical: 8,
+  },
+  receiptTotalLabel: {
+    fontSize: 14,
+    color: '#8E8E93',
+    fontWeight: '600',
+  },
+  receiptTotalValue: {
+    fontSize: 16,
+    color: '#fff',
+    fontWeight: '800',
+  },
+  receiptYouLabel: {
+    fontSize: 13,
+    color: '#8E8E93',
+    fontWeight: '600',
+  },
+  receiptYouValue: {
+    fontSize: 16,
+    color: '#34C759',
+    fontWeight: '800',
+  },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1017,10 +1335,179 @@ const styles = StyleSheet.create({
     color: '#ccc',
     lineHeight: 18,
   },
+  timerText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#FFD60A',
+  },
+  elapsedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 12,
+    paddingHorizontal: 6,
+  },
+  elapsedLabel: {
+    fontSize: 12,
+    color: '#8E8E93',
+    fontWeight: '600',
+  },
+  elapsedValue: {
+    fontSize: 18,
+    color: '#FFD60A',
+    fontWeight: '700',
+  },
+  actionButtonsContainer: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    bottom: 18,
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 12,
+    backgroundColor: '#0F1112',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#232425',
+    zIndex: 30,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.22,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  actionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    minHeight: 54,
+    borderRadius: 12,
+    borderWidth: 1,
+    justifyContent: 'center',
+  },
+  actionButtonText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 15,
+    marginLeft: 10,
+  },
+  actionButtonWrapper: {
+    width: '48%',
+    paddingHorizontal: 6,
+    marginBottom: 8,
+  },
+  actionButtonSmallWrapper: {
+    width: '49%',
+  },
+  fullWidthButtonWrapper: {
+    width: '100%',
+    marginTop: 8,
+  },
+  actionButtonLargeWrapper: {
+    width: '49%',
+  },
+  checkboxRowFull: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    justifyContent: 'flex-start',
+    backgroundColor: '#111213',
+    borderWidth: 1,
+    borderColor: '#232425',
+  },
+  pendingContainer: {
+    width: '100%',
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'flex-start',
+  },
+  pendingLeft: {
+    flex: 1,
+    paddingRight: 8,
+  },
+  pendingRight: {
+    width: '40%',
+  },
+  startTravelButton: {
+    backgroundColor: '#007AFF',
+  },
+  startJobButton: {
+    backgroundColor: '#FF8C00',
+  },
+  finishJobButton: {
+    backgroundColor: '#34C759',
+  },
+  pauseButton: {
+    backgroundColor: '#8E8E93',
+  },
+  checkboxRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    minWidth: 160,
+  },
+  checkboxChecked: {
+    backgroundColor: '#243A1E',
+  },
+  largePrimaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: '#007AFF',
+    borderRadius: 12,
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: '#1259C8',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  largeSecondaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: '#FF3B30',
+    borderRadius: 12,
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: '#A92A22',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  checkboxUnchecked: {
+    backgroundColor: '#222426',
+  },
+  resumeButton: {
+    backgroundColor: '#007AFF',
+  },
+  paymentReceivedButton: {
+    backgroundColor: '#FFD60A',
+  },
+  completeButton: {
+    backgroundColor: '#34C759',
+  },
+  cancelButton: {
+    backgroundColor: '#FF3B30',
+  },
   // Completion
   completionInfo: {
     gap: 10,
   },
+  // Ensure scroll content has bottom padding so buttons don't cover content
+  // (scrollContent defined earlier with padding; extra bottom padding is applied there)
   completionRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1039,7 +1526,7 @@ const styles = StyleSheet.create({
   actionSection: {
     marginTop: 8,
   },
-  completeButton: {
+  completeLargeButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1048,10 +1535,21 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingVertical: 16,
   },
-  completeButtonText: {
+  completeLargeButtonText: {
     fontSize: 16,
     fontWeight: '700',
     color: '#fff',
+  },
+  finishLargeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: '#34C759',
+    borderRadius: 12,
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
   },
   disabledButton: {
     opacity: 0.6,

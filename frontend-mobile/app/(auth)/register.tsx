@@ -58,7 +58,14 @@ export default function RegisterScreen() {
   const [currentStage, setCurrentStage] = useState(1);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const totalStages = 4;
+  const totalStages = 5;
+  
+  // Email verification states
+  const [emailVerified, setEmailVerified] = useState(false);
+  const [verifiedEmail, setVerifiedEmail] = useState(''); // Track which email was verified
+  const [verificationCode, setVerificationCode] = useState('');
+  const [sendingCode, setSendingCode] = useState(false);
+  const [verifyingCode, setVerifyingCode] = useState(false);
   
   // Location data from PSGC API
   const [regions, setRegions] = useState<any[]>([]);
@@ -205,6 +212,12 @@ export default function RegisterScreen() {
   };
 
   const handleRegister = async () => {
+    // Email verification check
+    if (!emailVerified) {
+      Alert.alert('Error', 'Please verify your email first');
+      return;
+    }
+
     // Basic validation
     if (!formData.firstname || !formData.lastname || !formData.email || 
         !formData.username || !formData.password || !formData.confirm_password) {
@@ -255,6 +268,82 @@ export default function RegisterScreen() {
 
   const updateField = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
+    
+    // Reset email verification if email is changed
+    if (field === 'email' && value !== verifiedEmail) {
+      setEmailVerified(false);
+    }
+  };
+
+  const handleSendVerificationCode = async () => {
+    setSendingCode(true);
+    try {
+      const response = await fetch(`${API_URL}/users/send-verification-code/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email: formData.email }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        Alert.alert('Success', 'Verification code sent to your email!');
+        setCurrentStage(2);
+      } else {
+        const errorMsg = data.error || 'Failed to send verification code';
+        Alert.alert('Error', errorMsg);
+      }
+    } catch (error) {
+      console.error('Send verification code error:', error);
+      Alert.alert('Error', 'Connection failed. Please check your network.');
+    } finally {
+      setSendingCode(false);
+    }
+  };
+
+  const handleVerifyCode = async () => {
+    if (!verificationCode || verificationCode.length !== 6) {
+      Alert.alert('Error', 'Please enter a valid 6-digit code');
+      return;
+    }
+
+    setVerifyingCode(true);
+    try {
+      const response = await fetch(`${API_URL}/users/verify-code/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: formData.email,
+          code: verificationCode,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setEmailVerified(true);
+        setVerifiedEmail(formData.email); // Store the verified email
+        Alert.alert('Success', 'Email verified successfully!');
+        setCurrentStage(3);
+      } else {
+        const errorMsg = data.error || 'Invalid or expired verification code';
+        Alert.alert('Error', errorMsg);
+      }
+    } catch (error) {
+      console.error('Verify code error:', error);
+      Alert.alert('Error', 'Connection failed. Please check your network.');
+    } finally {
+      setVerifyingCode(false);
+    }
+  };
+
+  const handleResendCode = async () => {
+    setVerificationCode('');
+    await handleSendVerificationCode();
   };
 
   const handleNext = () => {
@@ -263,7 +352,18 @@ export default function RegisterScreen() {
         Alert.alert('Error', 'Please fill in all required fields');
         return;
       }
-    } else if (currentStage === 2) {
+      
+      // Check if email is already verified and hasn't changed
+      if (emailVerified && formData.email === verifiedEmail) {
+        // Skip to stage 3 (Security)
+        setCurrentStage(3);
+        return;
+      }
+      
+      // Send verification code when moving from stage 1 to 2
+      handleSendVerificationCode();
+      return;
+    } else if (currentStage === 3) {
       if (!formData.password || !formData.confirm_password) {
         Alert.alert('Error', 'Please fill in password fields');
         return;
@@ -272,7 +372,7 @@ export default function RegisterScreen() {
         Alert.alert('Error', 'Passwords do not match');
         return;
       }
-    } else if (currentStage === 4) {
+    } else if (currentStage === 5) {
       if (!formData.region || !formData.province || !formData.city_municipality || !formData.barangay) {
         Alert.alert('Error', 'Please select your complete address');
         return;
@@ -282,6 +382,12 @@ export default function RegisterScreen() {
   };
 
   const handlePrevious = () => {
+    // If on stage 3 (Security), go back to stage 1 (Personal), skip stage 2 (Email Verification)
+    if (currentStage === 3) {
+      setCurrentStage(1);
+      return;
+    }
+    
     setCurrentStage(prev => Math.max(prev - 1, 1));
   };
 
@@ -292,7 +398,12 @@ export default function RegisterScreen() {
 
   const renderStepIndicator = (stepNum: number, label: string) => {
     const isActive = currentStage === stepNum;
-    const isCompleted = currentStage > stepNum;
+    let isCompleted = currentStage > stepNum;
+    
+    // Mark stage 2 (Email Verification) as completed if email is verified
+    if (stepNum === 2 && emailVerified) {
+      isCompleted = true;
+    }
     
     return (
       <View key={stepNum} style={styles.stepContainer}>
@@ -402,7 +513,56 @@ export default function RegisterScreen() {
       case 2:
         return (
           <>
-            <Text style={styles.sectionTitle}>2. SECURITY & AUTHENTICATION</Text>
+            <Text style={styles.sectionTitle}>2. EMAIL VERIFICATION</Text>
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Verification Code <Text style={styles.required}>*</Text></Text>
+              <View style={styles.inputWrapper}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter 6-digit code"
+                  placeholderTextColor="#999"
+                  value={verificationCode}
+                  onChangeText={setVerificationCode}
+                  keyboardType="number-pad"
+                  maxLength={6}
+                  editable={!verifyingCode}
+                />
+              </View>
+              <Text style={[styles.label, { fontSize: 12, marginTop: 8 }]}>
+                Please check your email ({formData.email}) for the verification code.
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.button, verifyingCode && styles.buttonDisabled]}
+              onPress={handleVerifyCode}
+              disabled={verifyingCode}
+            >
+              {verifyingCode ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.buttonText}>Verify Code</Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.button, styles.buttonSecondary, { marginTop: 12 }]}
+              onPress={handleResendCode}
+              disabled={sendingCode}
+            >
+              {sendingCode ? (
+                <ActivityIndicator color="#FF6B35" />
+              ) : (
+                <Text style={[styles.buttonText, styles.buttonTextSecondary]}>Resend Code</Text>
+              )}
+            </TouchableOpacity>
+          </>
+        );
+
+      case 3:
+        return (
+          <>
+            <Text style={styles.sectionTitle}>3. SECURITY & AUTHENTICATION</Text>
             <View style={styles.inputContainer}>
               <Text style={styles.label}>Password <Text style={styles.required}>*</Text></Text>
               <View style={styles.inputWrapper}>
@@ -457,10 +617,10 @@ export default function RegisterScreen() {
           </>
         );
 
-      case 3:
+      case 4:
         return (
           <>
-            <Text style={styles.sectionTitle}>3. PERSONAL DEMOGRAPHICS</Text>
+            <Text style={styles.sectionTitle}>4. PERSONAL DEMOGRAPHICS</Text>
             <View style={styles.inputContainer}>
               <Text style={styles.label}>Contact Number <Text style={styles.optional}>(Optional)</Text></Text>
               <View style={styles.inputWrapper}>
@@ -518,10 +678,10 @@ export default function RegisterScreen() {
           </>
         );
 
-      case 4:
+      case 5:
         return (
           <>
-            <Text style={styles.sectionTitle}>4. GEOGRAPHICAL LOCATION</Text>
+            <Text style={styles.sectionTitle}>5. GEOGRAPHICAL LOCATION</Text>
             <View style={styles.inputContainer}>
               <Text style={styles.label}>Region <Text style={styles.required}>*</Text></Text>
               <View style={styles.pickerContainer}>
@@ -682,47 +842,54 @@ export default function RegisterScreen() {
             <View style={styles.progressLine} />
             <View style={[styles.progressBar, { width: `${getProgressWidth()}%` }]} />
             {renderStepIndicator(1, 'Personal')}
-            {renderStepIndicator(2, 'Security')}
-            {renderStepIndicator(3, 'Demographics')}
-            {renderStepIndicator(4, 'Location')}
+            {renderStepIndicator(2, 'Verify')}
+            {renderStepIndicator(3, 'Security')}
+            {renderStepIndicator(4, 'Demographics')}
+            {renderStepIndicator(5, 'Location')}
           </View>
         </View>
 
         <View style={styles.formContainer}>
           {renderStage()}
 
-          <View style={styles.buttonContainer}>
-            {currentStage > 1 && (
-              <TouchableOpacity
-                style={[styles.button, styles.buttonSecondary]}
-                onPress={handlePrevious}
-                disabled={loading}
-              >
-                <Text style={[styles.buttonText, styles.buttonTextSecondary]}>Previous</Text>
-              </TouchableOpacity>
-            )}
-            {currentStage < totalStages ? (
-              <TouchableOpacity
-                style={styles.button}
-                onPress={handleNext}
-                disabled={loading}
-              >
-                <Text style={styles.buttonText}>Next</Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity
-                style={[styles.button, styles.buttonSubmit, loading && styles.buttonDisabled]}
-                onPress={handleRegister}
-                disabled={loading}
-              >
-                {loading ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.buttonText}>Create Account</Text>
-                )}
-              </TouchableOpacity>
-            )}
-          </View>
+          {currentStage !== 2 && (
+            <View style={styles.buttonContainer}>
+              {currentStage > 1 && (
+                <TouchableOpacity
+                  style={[styles.button, styles.buttonSecondary]}
+                  onPress={handlePrevious}
+                  disabled={loading || sendingCode || verifyingCode}
+                >
+                  <Text style={[styles.buttonText, styles.buttonTextSecondary]}>Previous</Text>
+                </TouchableOpacity>
+              )}
+              {currentStage < totalStages ? (
+                <TouchableOpacity
+                  style={[styles.button, (loading || sendingCode) && styles.buttonDisabled]}
+                  onPress={handleNext}
+                  disabled={loading || sendingCode}
+                >
+                  {(currentStage === 1 && sendingCode) ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.buttonText}>Next</Text>
+                  )}
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={[styles.button, styles.buttonSubmit, loading && styles.buttonDisabled]}
+                  onPress={handleRegister}
+                  disabled={loading}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.buttonText}>Create Account</Text>
+                  )}
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
 
           <View style={styles.footer}>
             <Text style={styles.footerText}>Already have an account?</Text>

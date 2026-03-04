@@ -8,6 +8,10 @@ urlpatterns = [
     path('logout/', views.logout, name='logout'),
     path('check-session/', views.check_session, name='check_session'),
     
+    # Email verification
+    path('send-verification-code/', views.send_verification_code, name='send_verification_code'),
+    path('verify-code/', views.verify_code, name='verify_code'),
+    
     # Profile management
     path('profile/', views.get_current_user, name='get_current_user'),
     path('profile/update/', views.update_profile, name='update_profile'),
@@ -31,4 +35,7 @@ urlpatterns = [
     # Role registration
     path('register-mechanic/', views.register_mechanic, name='register_mechanic'),
     path('register-shop-owner/', views.register_shop_owner, name='register_shop_owner'),
+    # Mechanic wallet endpoints
+    path('mechanic/wallet/', views.mechanic_wallet, name='mechanic_wallet'),
+    path('mechanic/wallet/topup/', views.mechanic_wallet_topup, name='mechanic_wallet_topup'),
 ]

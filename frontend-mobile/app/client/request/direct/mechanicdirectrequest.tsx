@@ -15,8 +15,16 @@ import { FontAwesome } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Picker } from '@react-native-picker/picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import * as Location from 'expo-location';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
+const PSGC_API_BASE = 'https://psgc.gitlab.io/api';
+
+interface PSGCLocation {
+  code: string;
+  name: string;
+  [key: string]: any;
+}
 
 interface Mechanic {
   id: number;
@@ -82,6 +90,67 @@ export default function MechanicDirectRequestScreen() {
   const [cityMunicipality, setCityMunicipality] = useState('');
   const [barangay, setBarangay] = useState('');
   const [landmark, setLandmark] = useState('');
+
+  // Current location data
+  const [currentLatitude, setCurrentLatitude] = useState<number | null>(null);
+  const [currentLongitude, setCurrentLongitude] = useState<number | null>(null);
+  const [currentAddress, setCurrentAddress] = useState<string>('');
+  const [fetchingLocation, setFetchingLocation] = useState(false);
+
+  // Individual location components from reverse geocoding
+  const [currentStreetName, setCurrentStreetName] = useState<string>('');
+  const [currentSubdivision, setCurrentSubdivision] = useState<string>('');
+  const [currentBarangay, setCurrentBarangay] = useState<string>('');
+  const [currentCity, setCurrentCity] = useState<string>('');
+
+  // PSGC Location data
+  const [regions, setRegions] = useState<PSGCLocation[]>([]);
+  const [provinces, setProvinces] = useState<PSGCLocation[]>([]);
+  const [cities, setCities] = useState<PSGCLocation[]>([]);
+  const [barangays, setBarangays] = useState<PSGCLocation[]>([]);
+
+  const [selectedRegionCode, setSelectedRegionCode] = useState('');
+  const [selectedProvinceCode, setSelectedProvinceCode] = useState('');
+  const [selectedCityCode, setSelectedCityCode] = useState('');
+
+  const [loadingRegions, setLoadingRegions] = useState(false);
+  const [loadingProvinces, setLoadingProvinces] = useState(false);
+  const [loadingCities, setLoadingCities] = useState(false);
+  const [loadingBarangays, setLoadingBarangays] = useState(false);
+
+  // ─── Fetch PSGC Regions on mount ───────────────────────────
+  useEffect(() => {
+    fetchRegions();
+  }, []);
+
+  // Fetch provinces when region is selected
+  useEffect(() => {
+    if (selectedRegionCode) {
+      setSelectedProvinceCode('');
+      setSelectedCityCode('');
+      setCityMunicipality('');
+      setBarangay('');
+      fetchProvinces(selectedRegionCode);
+    }
+  }, [selectedRegionCode]);
+
+  // Fetch cities when province is selected
+  useEffect(() => {
+    if (selectedProvinceCode) {
+      setSelectedCityCode('');
+      setCityMunicipality('');
+      setBarangay('');
+      fetchCities(selectedProvinceCode);
+    }
+  }, [selectedProvinceCode]);
+
+  // Fetch barangays when city is selected
+  useEffect(() => {
+    if (selectedCityCode) {
+      setBarangay('');
+      fetchBarangays(selectedCityCode);
+    }
+  }, [selectedCityCode]);
 
   // ─── Fetch Mechanics ───────────────────────────────────────
   useEffect(() => {
@@ -171,6 +240,151 @@ export default function MechanicDirectRequestScreen() {
     return () => { cancelled = true; };
   }, [selectedServiceId]);
 
+  // ─── PSGC Location API Functions ───────────────────────────
+  const fetchRegions = async () => {
+    setLoadingRegions(true);
+    try {
+      const response = await fetch(`${PSGC_API_BASE}/regions`);
+      const data = await response.json() as PSGCLocation[];
+      const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
+      setRegions(sorted);
+    } catch (error) {
+      console.error('Error fetching regions:', error);
+      Alert.alert('Error', 'Failed to load regions');
+    } finally {
+      setLoadingRegions(false);
+    }
+  };
+
+  const fetchProvinces = async (regionCode: string) => {
+    setLoadingProvinces(true);
+    setCities([]);
+    setBarangays([]);
+    try {
+      const response = await fetch(`${PSGC_API_BASE}/regions/${regionCode}/provinces`);
+      const data = await response.json() as PSGCLocation[];
+      const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
+      setProvinces(sorted);
+    } catch (error) {
+      console.error('Error fetching provinces:', error);
+      Alert.alert('Error', 'Failed to load provinces');
+    } finally {
+      setLoadingProvinces(false);
+    }
+  };
+
+  const fetchCities = async (provinceCode: string) => {
+    setLoadingCities(true);
+    setBarangays([]);
+    try {
+      const response = await fetch(`${PSGC_API_BASE}/provinces/${provinceCode}/cities-municipalities`);
+      const data = await response.json() as PSGCLocation[];
+      const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
+      setCities(sorted);
+    } catch (error) {
+      console.error('Error fetching cities:', error);
+      Alert.alert('Error', 'Failed to load cities/municipalities');
+    } finally {
+      setLoadingCities(false);
+    }
+  };
+
+  const fetchBarangays = async (cityCode: string) => {
+    setLoadingBarangays(true);
+    try {
+      const response = await fetch(`${PSGC_API_BASE}/cities-municipalities/${cityCode}/barangays`);
+      const data = await response.json() as PSGCLocation[];
+      const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
+      setBarangays(sorted);
+    } catch (error) {
+      console.error('Error fetching barangays:', error);
+      Alert.alert('Error', 'Failed to load barangays');
+    } finally {
+      setLoadingBarangays(false);
+    }
+  };
+
+  // ─── Get Current Location ──────────────────────────────────
+  const getCurrentLocation = async () => {
+    if (!selectedProviderId) return;
+    
+    setFetchingLocation(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+
+      if (status !== 'granted') {
+        Alert.alert(
+          'Permission Denied',
+          'Location permission is needed to use current location.'
+        );
+        setFetchingLocation(false);
+        return;
+      }
+
+      const locationPromise = Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+
+      const timeoutPromise = new Promise<null>((resolve) => {
+        setTimeout(() => resolve(null), 10000); // 10 second timeout
+      });
+
+      const location = await Promise.race([locationPromise, timeoutPromise]);
+
+      if (location) {
+        setCurrentLatitude(location.coords.latitude);
+        setCurrentLongitude(location.coords.longitude);
+
+        // Reverse geocode to get address
+        const results = await Location.reverseGeocodeAsync({
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude,
+        });
+
+        if (results && results.length > 0) {
+          const loc = results[0];
+          
+          // Store individual components for database mapping
+          setCurrentStreetName(loc.street || loc.name || '');
+          setCurrentSubdivision(loc.district || '');
+          setCurrentBarangay(loc.subregion || loc.district || '');
+          setCurrentCity(loc.city || '');
+          
+          // Build display address
+          const addressParts = [];
+          if (loc.street) addressParts.push(loc.street);
+          if (loc.subregion) addressParts.push(loc.subregion);
+          if (loc.city) addressParts.push(loc.city);
+          if (loc.region) addressParts.push(loc.region);
+          
+          const fullAddress = addressParts.join(', ');
+          setCurrentAddress(fullAddress || 'GPS Location');
+        } else {
+          // Fallback when reverse geocoding fails
+          setCurrentAddress('GPS Location');
+          setCurrentStreetName('');
+          setCurrentSubdivision('');
+          setCurrentBarangay('');
+          setCurrentCity('');
+        }
+      } else {
+        Alert.alert('Timeout', 'Could not fetch location. Please try again.');
+      }
+    } catch (error) {
+      console.error('Error getting location:', error);
+      Alert.alert('Error', 'Failed to get current location');
+    } finally {
+      setFetchingLocation(false);
+    }
+  };
+
+  // ─── Get current location when switching to Current Location ───
+  useEffect(() => {
+    if (useCurrentLocation && selectedProviderId) {
+      getCurrentLocation();
+    }
+  }, [useCurrentLocation, selectedProviderId]);
+
   const toggleAddOn = (addOnId: number) => {
     if (!selectedProviderId) return;
     setSelectedAddOnIds((prev) =>
@@ -195,8 +409,17 @@ export default function MechanicDirectRequestScreen() {
   const handleSend = async () => {
     if (!selectedProviderId) { Alert.alert('Error', 'Please select a provider first'); return; }
     if (!selectedServiceId) { Alert.alert('Error', 'Please select a service'); return; }
-    if (!useCurrentLocation && (!streetName || !barangay || !cityMunicipality)) {
-      Alert.alert('Error', 'Please fill in all required location fields'); return;
+    
+    if (useCurrentLocation) {
+      if (!currentLatitude || !currentLongitude) {
+        Alert.alert('Error', 'Please wait while we fetch your current location');
+        return;
+      }
+    } else {
+      if (!streetName || !barangay || !cityMunicipality) {
+        Alert.alert('Error', 'Please fill in all required location fields');
+        return;
+      }
     }
 
     setLoading(true);
@@ -210,8 +433,20 @@ export default function MechanicDirectRequestScreen() {
         service_id: selectedServiceId,
         add_on_ids: selectedAddOnIds,
         service_location: useCurrentLocation
-          ? { street_name: 'Current Location', barangay: 'Current', city_municipality: 'Current', landmark: 'User current location' }
-          : { street_name: streetName, barangay, city_municipality: cityMunicipality, landmark: landmark || undefined },
+          ? { 
+              street_name: currentStreetName || 'GPS Location', 
+              subdivision_village: currentSubdivision || undefined,
+              barangay: currentBarangay || 'GPS Location', 
+              city_municipality: currentCity || 'GPS Location', 
+              landmark: `Lat: ${currentLatitude}, Lng: ${currentLongitude}` 
+            }
+          : { 
+              street_name: streetName, 
+              subdivision_village: undefined,
+              barangay, 
+              city_municipality: cityMunicipality, 
+              landmark: landmark || undefined 
+            },
         scheduled_time: useCurrentTime ? new Date().toISOString() : scheduledDateTime.toISOString(),
       };
 
@@ -460,32 +695,136 @@ export default function MechanicDirectRequestScreen() {
               <ThemedText style={[styles.pillText, !useCurrentLocation && styles.pillTextSelected]}>Manual</ThemedText>
             </TouchableOpacity>
           </View>
+          
+          {/* Current Location Display */}
+          {useCurrentLocation && (
+            <View style={styles.currentLocationContainer}>
+              {fetchingLocation ? (
+                <View style={styles.locationLoadingContainer}>
+                  <ActivityIndicator color="#FF8C00" size="small" />
+                  <ThemedText style={styles.locationLoadingText}>Fetching your location...</ThemedText>
+                </View>
+              ) : currentAddress ? (
+                <View style={styles.currentLocationDisplay}>
+                  <FontAwesome name="map-marker" size={16} color="#FF8C00" />
+                  <ThemedText style={styles.currentLocationText}>{currentAddress}</ThemedText>
+                </View>
+              ) : (
+                <ThemedText style={styles.locationPlaceholder}>Location will be fetched automatically</ThemedText>
+              )}
+            </View>
+          )}
+
+          {/* Manual Location Input */}
           {!useCurrentLocation && (
             <View style={styles.inputGroup}>
+              {/* Region Picker */}
+              <View style={[styles.pickerContainer, disabled && styles.disabledContainer]}>
+                {loadingRegions ? (
+                  <ActivityIndicator color="#FF8C00" />
+                ) : (
+                  <Picker
+                    enabled={!disabled}
+                    selectedValue={selectedRegionCode}
+                    onValueChange={(value) => {
+                      setSelectedRegionCode(value);
+                      const region = regions.find(r => r.code === value);
+                      if (region) {
+                        // Region name is stored automatically via selection
+                      }
+                    }}
+                    style={styles.picker}
+                    dropdownIconColor="#FF8C00"
+                  >
+                    <Picker.Item label="Select Region *" value="" />
+                    {regions.map((region) => (
+                      <Picker.Item key={region.code} label={region.name} value={region.code} />
+                    ))}
+                  </Picker>
+                )}
+              </View>
+
+              {/* Province Picker */}
+              <View style={[styles.pickerContainer, disabled && styles.disabledContainer]}>
+                {loadingProvinces ? (
+                  <ActivityIndicator color="#FF8C00" />
+                ) : (
+                  <Picker
+                    enabled={!disabled && !!selectedRegionCode}
+                    selectedValue={selectedProvinceCode}
+                    onValueChange={(value) => {
+                      setSelectedProvinceCode(value);
+                    }}
+                    style={styles.picker}
+                    dropdownIconColor="#FF8C00"
+                  >
+                    <Picker.Item label="Select Province *" value="" />
+                    {provinces.map((province) => (
+                      <Picker.Item key={province.code} label={province.name} value={province.code} />
+                    ))}
+                  </Picker>
+                )}
+              </View>
+
+              {/* City/Municipality Picker */}
+              <View style={[styles.pickerContainer, disabled && styles.disabledContainer]}>
+                {loadingCities ? (
+                  <ActivityIndicator color="#FF8C00" />
+                ) : (
+                  <Picker
+                    enabled={!disabled && !!selectedProvinceCode}
+                    selectedValue={selectedCityCode}
+                    onValueChange={(value) => {
+                      setSelectedCityCode(value);
+                      const city = cities.find(c => c.code === value);
+                      if (city) {
+                        setCityMunicipality(city.name);
+                      }
+                    }}
+                    style={styles.picker}
+                    dropdownIconColor="#FF8C00"
+                  >
+                    <Picker.Item label="Select City/Municipality *" value="" />
+                    {cities.map((city) => (
+                      <Picker.Item key={city.code} label={city.name} value={city.code} />
+                    ))}
+                  </Picker>
+                )}
+              </View>
+
+              {/* Barangay Picker */}
+              <View style={[styles.pickerContainer, disabled && styles.disabledContainer]}>
+                {loadingBarangays ? (
+                  <ActivityIndicator color="#FF8C00" />
+                ) : (
+                  <Picker
+                    enabled={!disabled && !!selectedCityCode}
+                    selectedValue={barangay}
+                    onValueChange={(value) => {
+                      setBarangay(value);
+                    }}
+                    style={styles.picker}
+                    dropdownIconColor="#FF8C00"
+                  >
+                    <Picker.Item label="Select Barangay *" value="" />
+                    {barangays.map((brgy) => (
+                      <Picker.Item key={brgy.code} label={brgy.name} value={brgy.name} />
+                    ))}
+                  </Picker>
+                )}
+              </View>
+
+              {/* Street Name */}
               <TextInput
                 style={[styles.input, disabled && styles.disabledInput]}
-                placeholder="Street Name"
+                placeholder="Street Name *"
                 placeholderTextColor="#555"
                 value={streetName}
                 onChangeText={setStreetName}
                 editable={!disabled}
               />
-              <TextInput
-                style={[styles.input, disabled && styles.disabledInput]}
-                placeholder="City / Municipality"
-                placeholderTextColor="#555"
-                value={cityMunicipality}
-                onChangeText={setCityMunicipality}
-                editable={!disabled}
-              />
-              <TextInput
-                style={[styles.input, disabled && styles.disabledInput]}
-                placeholder="Barangay"
-                placeholderTextColor="#555"
-                value={barangay}
-                onChangeText={setBarangay}
-                editable={!disabled}
-              />
+
+              {/* Landmark */}
               <TextInput
                 style={[styles.input, disabled && styles.disabledInput]}
                 placeholder="Landmark (Optional)"
@@ -751,6 +1090,45 @@ const styles = StyleSheet.create({
     color: '#fff',
     borderWidth: 1,
     borderColor: '#2A2C2E',
+  },
+  // Current Location Display
+  currentLocationContainer: {
+    marginTop: 10,
+  },
+  locationLoadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#1A1C1E',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+  },
+  locationLoadingText: {
+    fontSize: 14,
+    color: '#8E8E93',
+  },
+  currentLocationDisplay: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#1A1C1E',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+  },
+  currentLocationText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#fff',
+  },
+  locationPlaceholder: {
+    fontSize: 13,
+    color: '#8E8E93',
+    textAlign: 'center',
+    padding: 14,
   },
   // Send
   sendBtn: {
