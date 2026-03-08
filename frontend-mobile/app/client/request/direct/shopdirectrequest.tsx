@@ -178,11 +178,12 @@ export default function ShopDirectRequestScreen() {
     if (shopId && shops.length > 0) {
       try {
         const shopIdNum = parseInt(shopId, 10);
-        const shopExists = shops.some(s => s.id === shopIdNum);
-        if (!cancelled && !isNaN(shopIdNum) && shopExists) {
-          setSelectedProviderId(shopIdNum);
-        } else if (!isNaN(shopIdNum) && !shopExists && !cancelled) {
-          Alert.alert('Shop Not Available', 'This shop is not currently available for direct requests. Please select another shop from the dropdown.', [{ text: 'OK' }]);
+        // Check if shop exists by shop_id (actual shop DB ID) and get the provider ID (account ID)
+        const shop = shops.find(s => s.shop_id === shopIdNum);
+        if (!cancelled && !isNaN(shopIdNum) && shop) {
+          setSelectedProviderId(shop.id); // Use the provider ID (shop owner's account ID)
+        } else if (!isNaN(shopIdNum) && !shop && !cancelled) {
+          Alert.alert('Shop Not Available', 'This shop is not currently available for direct requests. Please try again later.', [{ text: 'OK' }]);
         }
       } catch (error) {
         if (!cancelled) console.error('Error parsing shopId:', error);
@@ -505,28 +506,20 @@ export default function ShopDirectRequestScreen() {
       </View>
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Provider Selection */}
+        {/* Provider Display */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <FontAwesome name="building" size={14} color="#FF8C00" />
-            <ThemedText style={styles.sectionTitle}>Select Shop *</ThemedText>
+            <ThemedText style={styles.sectionTitle}>Provider:</ThemedText>
           </View>
-          <View style={styles.pickerContainer}>
-            <Picker
-              selectedValue={selectedProviderId}
-              onValueChange={(value) => setSelectedProviderId(value)}
-              style={styles.picker}
-              dropdownIconColor="#FF8C00"
-            >
-              <Picker.Item label="Choose a shop..." value={null} />
-              {shops.map((shop) => (
-                <Picker.Item 
-                  key={shop.id} 
-                  label={`${shop.name}${shop.is_verified ? ' ✓' : ''}`} 
-                  value={shop.id} 
-                />
-              ))}
-            </Picker>
+          <View style={styles.mechanicDisplayContainer}>
+            <ThemedText style={styles.mechanicDisplayText}>
+              {selectedProviderId 
+                ? shops.find(s => s.id === selectedProviderId)?.name || 'Loading shop name...'
+                : (shopId && shops.length === 0) 
+                  ? 'Loading shop name...' 
+                  : 'No shop selected'}
+            </ThemedText>
           </View>
         </View>
 

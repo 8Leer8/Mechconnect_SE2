@@ -67,10 +67,8 @@ export default function MapScreen() {
       const { status } = await Location.requestForegroundPermissionsAsync();
       
       if (status !== 'granted') {
-        Alert.alert(
-          'Permission Denied',
-          'Location permission is needed to show your current location on the map. Please select a location manually.'
-        );
+        // Permission denied - use fallback location
+        console.log('Location permission denied, using default location');
         const fallbackRegion = {
           latitude: 14.5995,
           longitude: 120.9842,
@@ -114,7 +112,8 @@ export default function MapScreen() {
       }
       setLoading(false);
     } catch (error) {
-      console.error('Error getting location:', error);
+      // Location services unavailable - use fallback silently
+      console.log('Location services unavailable, using default location (Manila)');
       const fallbackRegion = {
         latitude: 14.5995,
         longitude: 120.9842,

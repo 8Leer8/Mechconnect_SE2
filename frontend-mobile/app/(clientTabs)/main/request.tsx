@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import {View, TouchableOpacity, ScrollView, ActivityIndicator, Modal, RefreshControl, } from 'react-native';
+import { View, TouchableOpacity, ScrollView, ActivityIndicator, Modal, RefreshControl } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -81,8 +81,6 @@ interface ErrorResponse {
   error: string;
 }
 
-type TabType = 'custom' | 'direct' | 'broadcast';
-
 // Isolated countdown component — has its own 1s interval so only this re-renders, not the whole screen
 function CountdownBanner({ expiresAt }: { expiresAt: string }) {
   const [now, setNow] = useState(Date.now());
@@ -117,7 +115,6 @@ function CountdownBanner({ expiresAt }: { expiresAt: string }) {
 }
 
 export default function RequestScreen() {
-  const [activeTab, setActiveTab] = useState<TabType>('custom');
   const [customRequests, setCustomRequests] = useState<CustomRequest[]>([]);
   const [directRequests, setDirectRequests] = useState<DirectRequest[]>([]);
   const [broadcastRequests, setBroadcastRequests] = useState<BroadcastRequest[]>([]);
@@ -253,13 +250,7 @@ export default function RequestScreen() {
   };
 
   const handleCreateRequest = () => {
-    if (activeTab === 'direct') {
-      router.push('/client/request/direct/choosePart');
-    } else if (activeTab === 'custom') {
-      router.push('/client/request/custom/mechaniccustomrequest' as any);
-    } else if (activeTab === 'broadcast') {
-      router.push('/client/request/broadcast/broadcastrequest' as any);
-    }
+    router.push('/client/request/main_request_form/main_form' as any);
   };
 
   const getStatusColor = (status: string) => {
@@ -283,12 +274,6 @@ export default function RequestScreen() {
       default: return 'circle';
     }
   };
-
-  const tabs: { key: TabType; label: string; icon: string }[] = [
-    { key: 'custom', label: 'Custom', icon: 'pencil-square-o' },
-    { key: 'direct', label: 'Direct', icon: 'bolt' },
-    { key: 'broadcast', label: 'Broadcast', icon: 'bullhorn' },
-  ];
 
   const renderRequestCard = (
     id: number,
@@ -481,9 +466,7 @@ export default function RequestScreen() {
     });
   };
 
-  const currentRequests =
-    activeTab === 'custom' ? customRequests :
-    activeTab === 'direct' ? directRequests : broadcastRequests;
+  const totalRequests = customRequests.length + directRequests.length + broadcastRequests.length;
 
   return (
     <ThemedView style={styles.container}>
@@ -492,7 +475,7 @@ export default function RequestScreen() {
         <View>
           <ThemedText style={styles.headerTitle}>Requests</ThemedText>
           <ThemedText style={styles.headerSubtitle}>
-            {currentRequests.length} {activeTab} request{currentRequests.length !== 1 ? 's' : ''}
+            {totalRequests} total request{totalRequests !== 1 ? 's' : ''}
           </ThemedText>
         </View>
         <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
@@ -500,38 +483,13 @@ export default function RequestScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Tabs */}
-      <View style={styles.tabRow}>
-        {tabs.map((tab) => (
-          <TouchableOpacity
-            key={tab.key}
-            style={[styles.tab, activeTab === tab.key && styles.activeTab]}
-            onPress={() => setActiveTab(tab.key)}
-            activeOpacity={0.7}
-          >
-            <FontAwesome
-              name={tab.icon as any}
-              size={14}
-              color={activeTab === tab.key ? '#fff' : '#8E8E93'}
-            />
-            <ThemedText style={[styles.tabText, activeTab === tab.key && styles.activeTabText]}>
-              {tab.label}
-            </ThemedText>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {/* Create Button */}
       <View style={styles.createContainer}>
         <TouchableOpacity style={styles.createBtn} onPress={handleCreateRequest} activeOpacity={0.7}>
           <FontAwesome name="plus" size={14} color="#fff" />
-          <ThemedText style={styles.createBtnText}>
-            Create {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} Request
-          </ThemedText>
+          <ThemedText style={styles.createBtnText}>Add Request</ThemedText>
         </TouchableOpacity>
       </View>
 
-      {/* Content */}
       {loading && !refreshing ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#FF8C00" />
@@ -553,9 +511,57 @@ export default function RequestScreen() {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF8C00" />
           }
         >
-          {activeTab === 'custom' && renderCustomRequests()}
-          {activeTab === 'direct' && renderDirectRequests()}
-          {activeTab === 'broadcast' && renderBroadcastRequests()}
+          {/* Display all request types */}
+          {totalRequests === 0 ? (
+            <View style={styles.emptyCard}>
+              <FontAwesome name="inbox" size={36} color="#555" />
+              <ThemedText style={styles.emptyText}>No requests yet</ThemedText>
+              <ThemedText style={{ fontSize: 13, color: '#8E8E93', marginTop: 8, textAlign: 'center' }}>
+                Tap "Add Request" to create your first request
+              </ThemedText>
+            </View>
+          ) : (
+            <>
+              {/* Broadcast Requests Section */}
+              {broadcastRequests.length > 0 && (
+                <View style={{ marginBottom: 16 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, marginBottom: 12 }}>
+                    <FontAwesome name="bullhorn" size={14} color="#FF8C00" style={{ marginRight: 8 }} />
+                    <ThemedText style={{ fontSize: 15, fontWeight: '700', color: '#FF8C00' }}>
+                      Broadcast Requests ({broadcastRequests.length})
+                    </ThemedText>
+                  </View>
+                  {renderBroadcastRequests()}
+                </View>
+              )}
+
+              {/* Custom Requests Section */}
+              {customRequests.length > 0 && (
+                <View style={{ marginBottom: 16 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, marginBottom: 12 }}>
+                    <FontAwesome name="pencil-square-o" size={14} color="#34C759" style={{ marginRight: 8 }} />
+                    <ThemedText style={{ fontSize: 15, fontWeight: '700', color: '#34C759' }}>
+                      Custom Requests ({customRequests.length})
+                    </ThemedText>
+                  </View>
+                  {renderCustomRequests()}
+                </View>
+              )}
+
+              {/* Direct Requests Section */}
+              {directRequests.length > 0 && (
+                <View style={{ marginBottom: 16 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, marginBottom: 12 }}>
+                    <FontAwesome name="bolt" size={14} color="#007AFF" style={{ marginRight: 8 }} />
+                    <ThemedText style={{ fontSize: 15, fontWeight: '700', color: '#007AFF' }}>
+                      Direct Requests ({directRequests.length})
+                    </ThemedText>
+                  </View>
+                  {renderDirectRequests()}
+                </View>
+              )}
+            </>
+          )}
           <View style={{ height: 30 }} />
         </ScrollView>
       )}

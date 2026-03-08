@@ -156,7 +156,11 @@ export default function DiscoverScreen() {
   ), [router]);
 
   const renderShopItem: ListRenderItem<Shop> = useCallback(({ item: shop }) => (
-    <View style={styles.card}>
+    <TouchableOpacity
+      style={styles.card}
+      onPress={() => router.push(`/client/shop/shopprofile?shopId=${shop.id}`)}
+      activeOpacity={0.7}
+    >
       {shop.service_banner && (
         <Image source={{ uri: getImageUrl(shop.service_banner) || '' }} style={styles.shopBanner} />
       )}
@@ -179,8 +183,8 @@ export default function DiscoverScreen() {
         <FontAwesome name="phone" size={12} color="#8E8E93" />
         <ThemedText style={styles.footerText}>{shop.contact_number}</ThemedText>
       </View>
-    </View>
-  ), []);
+    </TouchableOpacity>
+  ), [router]);
 
   const renderServiceItem: ListRenderItem<Service> = useCallback(({ item: service }) => (
     <View style={styles.card}>

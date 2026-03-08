@@ -5,12 +5,15 @@ from rest_framework.permissions import AllowAny
 from django.utils import timezone
 from datetime import timedelta
 import json
+import logging
 
 from ..models import (
     Request, BroadcastRequest, ServiceLocation, BroadcastRequestAddOn
 )
 from users.models import Account
 from services.models import Service, ServiceAddOn
+
+logger = logging.getLogger(__name__)
 
 
 @api_view(['POST'])
@@ -120,15 +123,51 @@ def create_broadcast_request(request):
         # Create broadcast request with expiration (30 minutes from now)
         expires_at = timezone.now() + timedelta(minutes=30)
         
-        broadcast_request = BroadcastRequest.objects.create(
-            request=new_request,
-            description=description,
-            concern_picture=concern_picture,
-            latitude=latitude,
-            longitude=longitude,
-            expires_at=expires_at,
-            status=BroadcastRequest.Status.SEARCHING
-        )
+        # Log image upload attempt
+        if concern_picture:
+            logger.info(f"Uploading concern picture: {concern_picture.name}, size: {concern_picture.size} bytes")
+            logger.info(f"Content type: {concern_picture.content_type}")
+            
+            # Check which storage backend is being used
+            from django.core.files.storage import default_storage
+            logger.info(f"Storage backend: {type(default_storage).__name__}")
+            logger.info(f"Storage backend class: {default_storage.__class__.__module__}.{default_storage.__class__.__name__}")
+        
+        try:
+            broadcast_request = BroadcastRequest.objects.create(
+                request=new_request,
+                description=description,
+                concern_picture=concern_picture,
+                latitude=latitude,
+                longitude=longitude,
+                expires_at=expires_at,
+                status=BroadcastRequest.Status.SEARCHING
+            )
+        except Exception as e:
+            logger.error(f"Error creating broadcast request: {str(e)}")
+            logger.exception("Full exception details:")
+            raise
+        
+        # Verify upload and log result
+        if concern_picture:
+            if broadcast_request.concern_picture:
+                file_url = broadcast_request.concern_picture.url
+                file_name = broadcast_request.concern_picture.name
+                logger.info(f"Image field saved - Name: {file_name}")
+                logger.info(f"Image URL generated: {file_url}")
+                
+                # Verify file exists in storage using direct S3 check
+                from django.core.files.storage import default_storage
+                try:
+                    # Try to actually access the file in S3
+                    file_obj = default_storage.open(file_name, 'rb')
+                    file_obj.close()
+                    logger.info(f"✓ File verified in S3 storage: {file_name}")
+                except Exception as verify_error:
+                    logger.error(f"✗ File verification FAILED: {str(verify_error)}")
+                    logger.exception("Verification error details:")
+            else:
+                logger.error("Image upload failed - concern_picture is None after save")
         
         # Add services
         broadcast_request.services.set(services)

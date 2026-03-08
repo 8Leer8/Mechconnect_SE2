@@ -60,6 +60,19 @@ export const styles = StyleSheet.create({
     color: '#fff',
     backgroundColor: 'transparent',
   },
+  // Mechanic Display (Shop Display)
+  mechanicDisplayContainer: {
+    backgroundColor: '#1A1C1E',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+    padding: 16,
+  },
+  mechanicDisplayText: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#fff',
+  },
   disabledContainer: {
     opacity: 0.35,
   },

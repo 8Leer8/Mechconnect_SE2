@@ -1,13 +1,13 @@
 import { Stack } from 'expo-router';
 import React from 'react';
 
-export default function BroadcastRequestLayout() {
+export default function MainRequestFormLayout() {
   return (
     <Stack
       screenOptions={{
         headerShown: false,
       }}>
-      <Stack.Screen name="broadcastrequest" options={{ headerShown: false }} />
+      <Stack.Screen name="main_form" options={{ headerShown: false }} />
       <Stack.Screen 
         name="map" 
         options={{ 
@@ -15,7 +15,6 @@ export default function BroadcastRequestLayout() {
           presentation: 'modal',
         }} 
       />
-      <Stack.Screen name="broadcastdetail" options={{ headerShown: false }} />
     </Stack>
   );
 }

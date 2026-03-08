@@ -221,18 +221,103 @@ DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'noreply@mechconnect.com')
 # Supabase Storage Configuration
 USE_S3 = os.environ.get("USE_S3", "False") == "True"
 if USE_S3:
+    print("=" * 50)
     print("USE_S3:", USE_S3)
-    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+    print("AWS_ACCESS_KEY_ID:", os.environ.get("SUPABASE_ACCESS_KEY", "NOT SET")[:10] + "...")
+    print("AWS_SECRET_ACCESS_KEY:", os.environ.get("SUPABASE_SECRET_KEY", "NOT SET")[:10] + "...")
+    print("AWS_STORAGE_BUCKET_NAME:", os.environ.get("SUPABASE_STORAGE_BUCKET"))
+    print("AWS_S3_ENDPOINT_URL:", os.environ.get("SUPABASE_S3_ENDPOINT"))
+    print("AWS_S3_REGION_NAME:", os.environ.get("SUPABASE_S3_REGION"))
+    print("=" * 50)
+    
     AWS_ACCESS_KEY_ID = os.environ.get("SUPABASE_ACCESS_KEY")
     AWS_SECRET_ACCESS_KEY = os.environ.get("SUPABASE_SECRET_KEY")
     AWS_STORAGE_BUCKET_NAME = os.environ.get("SUPABASE_STORAGE_BUCKET")
     AWS_S3_ENDPOINT_URL = os.environ.get("SUPABASE_S3_ENDPOINT")
     AWS_S3_REGION_NAME = os.environ.get("SUPABASE_S3_REGION")
+    
+    # Supabase-specific settings
     AWS_DEFAULT_ACL = None
-    AWS_QUERYSTRING_AUTH = False
+    AWS_QUERYSTRING_AUTH = False 
     AWS_S3_FILE_OVERWRITE = False
+    AWS_S3_SIGNATURE_VERSION = 's3v4'
+    AWS_S3_ADDRESSING_STYLE = 'path'  
+    AWS_S3_USE_SSL = True
+    AWS_S3_VERIFY = True
+    
+    AWS_S3_OBJECT_PARAMETERS = {
+        'CacheControl': 'max-age=86400',
+    }
+    STORAGES = {
+        "default": {
+            "BACKEND": "MainBackend.supabase_storage.SupabaseStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+        },
+    }
+    MEDIA_URL = f"https://tsokmagrbtfuuzlemufw.supabase.co/storage/v1/object/public/{AWS_STORAGE_BUCKET_NAME}/"
+    MEDIA_ROOT = ''
 else:
     # Media files configuration (used for local storage and as fallback)
     print("USE_S3:", USE_S3)
     MEDIA_URL = '/media/'
     MEDIA_ROOT = BASE_DIR / 'media'
+    
+    STORAGES = {
+        "default": {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+        },
+    }
+
+# Logging Configuration
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+    'loggers': {
+        'bookings': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'MainBackend.supabase_storage': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'boto3': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'botocore': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        's3transfer': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+}

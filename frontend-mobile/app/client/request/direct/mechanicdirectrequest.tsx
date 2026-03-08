@@ -179,7 +179,7 @@ export default function MechanicDirectRequestScreen() {
         if (!cancelled && !isNaN(mechanicIdNum) && mechanicExists) {
           setSelectedProviderId(mechanicIdNum);
         } else if (!isNaN(mechanicIdNum) && !mechanicExists && !cancelled) {
-          Alert.alert('Mechanic Not Available', 'This mechanic is not currently available for direct requests. Please select another mechanic from the dropdown.', [{ text: 'OK' }]);
+          Alert.alert('Mechanic Not Available', 'This mechanic is not currently available for direct requests. Please try again later.', [{ text: 'OK' }]);
         }
       } catch (error) {
         if (!cancelled) console.error('Error parsing mechanicId:', error);
@@ -502,24 +502,20 @@ export default function MechanicDirectRequestScreen() {
       </View>
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Provider Selection */}
+        {/* Provider Display */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <FontAwesome name="user" size={14} color="#FF8C00" />
-            <ThemedText style={styles.sectionTitle}>Select Mechanic *</ThemedText>
+            <ThemedText style={styles.sectionTitle}>Provider:</ThemedText>
           </View>
-          <View style={styles.pickerContainer}>
-            <Picker
-              selectedValue={selectedProviderId}
-              onValueChange={(value) => setSelectedProviderId(value)}
-              style={styles.picker}
-              dropdownIconColor="#FF8C00"
-            >
-              <Picker.Item label="Choose a mechanic..." value={null} />
-              {mechanics.map((mechanic) => (
-                <Picker.Item key={mechanic.id} label={mechanic.full_name} value={mechanic.id} />
-              ))}
-            </Picker>
+          <View style={styles.mechanicDisplayContainer}>
+            <ThemedText style={styles.mechanicDisplayText}>
+              {selectedProviderId 
+                ? mechanics.find(m => m.id === selectedProviderId)?.full_name || 'Loading provider name...'
+                : (mechanicId && mechanics.length === 0) 
+                  ? 'Loading provider name...' 
+                  : 'No mechanic selected'}
+            </ThemedText>
           </View>
         </View>
 

@@ -6,7 +6,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
-import { getDistanceKm } from '@/app/client/request/broadcast/LocationContext';
+import { getDistanceKm } from '@/app/client/request/main_request_form/LocationContext';
 import { styles } from '@/style/mechanic/bookingLocationMapStyles';
 
 export default function BookingLocationMapScreen() {

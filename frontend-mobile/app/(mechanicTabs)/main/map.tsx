@@ -17,7 +17,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import WalletBadge from '@/components/wallet-badge';
 import { eventBus } from '@/utils/eventBus';
-import { getDistanceKm, getEstimatedPrice } from '@/app/client/request/broadcast/LocationContext';
+import { getDistanceKm, getEstimatedPrice } from '@/app/client/request/main_request_form/LocationContext';
 import { styles } from '@/style/mechanic/mapStyles';
 import { getImageUrl } from '@/lib/imageUtils';
 
