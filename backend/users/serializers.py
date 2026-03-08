@@ -32,12 +32,21 @@ class ClientSerializer(serializers.ModelSerializer):
 
 
 class MechanicSerializer(serializers.ModelSerializer):
+    shop_name = serializers.SerializerMethodField()
+    shop_id = serializers.IntegerField(source='shop.id', read_only=True, allow_null=True)
+    
     class Meta:
         model = Mechanic
         fields = [
             'profile_photo', 'contact_number', 'bio', 'average_rating',
-            'is_working_for_shop', 'status'
+            'is_working_for_shop', 'status', 'shop_id', 'shop_name'
         ]
+    
+    def get_shop_name(self, obj):
+        """Get shop name if mechanic is working for a shop"""
+        if obj.is_working_for_shop and obj.shop:
+            return obj.shop.shop_name
+        return None
 
 
 class ShopOwnerSerializer(serializers.ModelSerializer):

@@ -149,7 +149,7 @@ export default function ClientBookingDetailScreen() {
 
   // ticking effect for live timer
   useEffect(() => {
-    let interval: NodeJS.Timeout | null = null;
+    let interval: ReturnType<typeof setInterval> | null = null;
     const hasStarted = !!(booking && booking.active_details && booking.active_details.started_at);
     if (hasStarted && booking?.status === 'active' && !isPaused) {
       interval = setInterval(() => {
@@ -330,12 +330,17 @@ export default function ClientBookingDetailScreen() {
 
         {/* Provider Information */}
         {booking.provider && (
-          <View style={styles.sectionCard}>
+          <TouchableOpacity 
+            style={styles.sectionCard}
+            onPress={() => router.push(`/client/mechanic/mechanicprofile?mechanicId=${booking.provider?.id}`)}
+            activeOpacity={0.7}
+          >
             <View style={styles.sectionHeader}>
               <View style={[styles.sectionIcon, { backgroundColor: '#007AFF15' }]}>
                 <FontAwesome name="wrench" size={16} color="#007AFF" />
               </View>
               <ThemedText style={styles.sectionTitle}>Mechanic Information</ThemedText>
+              <FontAwesome name="chevron-right" size={16} color="#8E8E93" style={{ marginLeft: 'auto' }} />
             </View>
             <View style={styles.infoGrid}>
               <View style={styles.infoItem}>
@@ -349,7 +354,10 @@ export default function ClientBookingDetailScreen() {
                 </View>
               )}
             </View>
-          </View>
+            <View style={styles.tapHintContainer}>
+              <ThemedText style={styles.tapHintText}>Tap to view mechanic profile</ThemedText>
+            </View>
+          </TouchableOpacity>
         )}
 
         {/* Location Section */}
@@ -584,4 +592,3 @@ export default function ClientBookingDetailScreen() {
     </ThemedView>
   );
 }
-

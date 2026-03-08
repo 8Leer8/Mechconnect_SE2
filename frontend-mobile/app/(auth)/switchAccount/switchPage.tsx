@@ -131,13 +131,41 @@ export default function SwitchRolePage() {
       }
 
       const data = await response.json() as SwitchRoleResponse;
+      
+      // For mechanic role, check if they're working for a shop
+      let mechanicRoute = '/(mechanicTabs)/main/home';
+      if (newRole === 'mechanic') {
+        try {
+          const profileResponse = await fetch(`${API_URL}/users/profile/details/`, {
+            method: 'GET',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+          });
+
+          if (profileResponse.ok) {
+            const profileData = await profileResponse.json();
+            const mechanicProfile = profileData.profile?.current_role_profile?.mechanic;
+            
+            if (mechanicProfile?.is_working_for_shop) {
+              mechanicRoute = '/(mechanicShopTabs)/main/home';
+            }
+          }
+        } catch (profileError) {
+          console.error('Error fetching profile for shop check:', profileError);
+          // Fallback to regular mechanic tabs if error
+        }
+      }
+      
       Alert.alert('Success', data.message || 'Role switched successfully!', [
         {
           text: 'OK',
           onPress: () => {
             // Navigate to appropriate home page based on role
             if (newRole === 'mechanic') {
-              router.replace('/(mechanicTabs)/main/home');
+              router.replace(mechanicRoute as any);
             } else if (newRole === 'shop_owner') {
               router.replace('/(shopownerTabs)/main/home');
             } else if (newRole === 'client') {

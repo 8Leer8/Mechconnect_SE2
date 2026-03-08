@@ -233,7 +233,7 @@ export default function HomeScreen() {
                   <TouchableOpacity
                     key={booking.id}
                     style={styles.jobCard}
-                    onPress={() => router.push({ pathname: '/(clientTabs)/booking_details', params: { bookingId: booking.id.toString() } })}
+                    onPress={() => router.push({ pathname: '/client/booking/booking_details', params: { bookingId: booking.id.toString() } })}
                     activeOpacity={0.7}
                   >
                     <View style={styles.jobCardLeft}>

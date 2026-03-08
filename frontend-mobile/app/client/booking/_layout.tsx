@@ -12,6 +12,7 @@ export default function BookingLayout() {
       <Stack.Screen name="emergency" options={{ headerShown: false }} />
       <Stack.Screen name="disputedbooking" options={{ headerShown: false }} />
       <Stack.Screen name="reworkedbooking" options={{ headerShown: false }} />
+      <Stack.Screen name="booking_details" options={{ headerShown: false }} />
     </Stack>
   );
 }

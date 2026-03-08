@@ -327,4 +327,14 @@ export const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#34C759',
   },
+  // Tap Hint
+  tapHintContainer: {
+    marginTop: 8,
+    alignItems: 'center',
+  },
+  tapHintText: {
+    fontSize: 11,
+    color: '#8E8E93',
+    fontStyle: 'italic',
+  },
 });

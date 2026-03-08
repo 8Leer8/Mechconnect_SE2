@@ -2,7 +2,7 @@ import { Tabs } from 'expo-router';
 import React from 'react';
 import { FontAwesome } from '@expo/vector-icons';
 
-export default function ClientTabLayout() {
+export default function MechanicShopTabLayout() {
   return (
     <Tabs
       screenOptions={{
@@ -28,31 +28,10 @@ export default function ClientTabLayout() {
         },
       }}>
       <Tabs.Screen
-        name="main/booking"
-        options={{
-          title: 'Bookings',
-          tabBarIcon: ({ color }) => <FontAwesome size={20} name="calendar-check-o" color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="main/request"
-        options={{
-          title: 'Requests',
-          tabBarIcon: ({ color }) => <FontAwesome size={20} name="file-text-o" color={color} />,
-        }}
-      />
-      <Tabs.Screen
         name="main/home"
         options={{
-          title: 'Home',
-          tabBarIcon: ({ color }) => <FontAwesome size={20} name="home" color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="main/discover"
-        options={{
-          title: 'Discover',
-          tabBarIcon: ({ color }) => <FontAwesome size={20} name="compass" color={color} />,
+          title: 'Dashboard',
+          tabBarIcon: ({ color }) => <FontAwesome size={20} name="tachometer" color={color} />,
         }}
       />
       <Tabs.Screen
@@ -62,9 +41,8 @@ export default function ClientTabLayout() {
           tabBarIcon: ({ color }) => <FontAwesome size={20} name="user" color={color} />,
         }}
       />
-      {/* Hide non-tab screens */}
+      {/* Hide non-tab routes */}
       <Tabs.Screen name="index" options={{ href: null }} />
-      <Tabs.Screen name="explore" options={{ href: null }} />
     </Tabs>
   );
 }

@@ -222,7 +222,7 @@ export default function BookingScreen() {
                 key={booking.id}
                 style={styles.bookingCard}
                 activeOpacity={0.7}
-                onPress={() => router.push({ pathname: '/(clientTabs)/booking_details', params: { bookingId: booking.id.toString() } })}
+                onPress={() => router.push({ pathname: '/client/booking/booking_details', params: { bookingId: booking.id.toString() } })}
               >
                 {/* Card Top Row */}
                 <View style={styles.cardTopRow}>
@@ -309,7 +309,7 @@ export default function BookingScreen() {
                   <ThemedText style={styles.amount}>₱{parseFloat(String(booking.amount_fee || '0')).toFixed(2)}</ThemedText>
                   <TouchableOpacity
                     style={styles.detailsBtn}
-                    onPress={() => router.push({ pathname: '/(clientTabs)/booking_details', params: { bookingId: booking.id.toString() } })}
+                    onPress={() => router.push({ pathname: '/client/booking/booking_details', params: { bookingId: booking.id.toString() } })}
                   >
                     <ThemedText style={styles.detailsBtnText}>Details</ThemedText>
                     <FontAwesome name="chevron-right" size={11} color="#FF8C00" />
