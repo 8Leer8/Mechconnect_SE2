@@ -7,6 +7,8 @@ from .broadcast_request_views import *
 from .mechanic_broadcast_request_views import *
 from .mechanic_booking_views import *
 from .directrequest import *
+from .request_assignment_views import *
+from .shopowner_booking_views import *
 
 __all__ = [
     # Home views
@@ -47,4 +49,18 @@ __all__ = [
     'mechanic_accept_direct_request',
     'mechanic_decline_direct_request',
     'mechanic_complete_booking',
+
+    # Shop owner booking views
+    'shopowner_accept_direct_request',
+    'shopowner_decline_direct_request',
+    'shopowner_accept_custom_request',
+    'shopowner_decline_custom_request',
+    'list_shopowner_bookings',
+    'get_shopowner_booking_detail',
+
+    # Request assignment views (shop owner)
+    'list_request_assignments',
+    'assign_mechanic',
+    'unassign_mechanic',
+    'update_assignment_role',
 ]

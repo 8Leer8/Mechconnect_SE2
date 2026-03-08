@@ -11,4 +11,9 @@ urlpatterns = [
     path('mechanic/my-services/add/', views.add_my_service, name='add_my_service'),
     path('mechanic/my-services/remove/', views.remove_my_service, name='remove_my_service'),
     path('mechanic/my-services/update-price/', views.update_my_service_price, name='update_my_service_price'),
+    # Shop owner: services the shop offers
+    path('shop/my-services/', views.list_shop_services, name='list_shop_services'),
+    path('shop/my-services/add/', views.add_shop_service, name='add_shop_service'),
+    path('shop/my-services/remove/', views.remove_shop_service, name='remove_shop_service'),
+    path('shop/my-services/update-price/', views.update_shop_service_price, name='update_shop_service_price'),
 ]

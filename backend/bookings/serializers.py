@@ -1,7 +1,8 @@
 from rest_framework import serializers
 from .models import (
     Booking, Request, CustomRequest, DirectRequest, EmergencyRequest,
-    ActiveBooking, ServiceLocation, DirectRequestAddOn, BroadcastRequest, BroadcastOffer
+    ActiveBooking, ServiceLocation, DirectRequestAddOn, BroadcastRequest, BroadcastOffer,
+    RequestAssignment
 )
 from services.models import Service, ServiceAddOn
 from users.models import Account, Client
@@ -75,15 +76,24 @@ class BroadcastRequestDetailSerializer(serializers.ModelSerializer):
         return ServiceAddOnSerializer([addon.service_add_on for addon in add_ons], many=True).data
 
 
+class RequestAssignmentSerializer(serializers.ModelSerializer):
+    mechanic = AccountBasicSerializer(read_only=True)
+
+    class Meta:
+        model = RequestAssignment
+        fields = ['id', 'mechanic', 'role', 'assigned_at']
+
+
 class RequestSerializer(serializers.ModelSerializer):
     client = AccountBasicSerializer(source='client.account', read_only=True)
     provider = AccountBasicSerializer(read_only=True)
     service_location = ServiceLocationSerializer(read_only=True)
     request_details = serializers.SerializerMethodField()
+    assigned_mechanics = RequestAssignmentSerializer(source='assignments', many=True, read_only=True)
     
     class Meta:
         model = Request
-        fields = ['id', 'client', 'provider', 'request_type', 'service_location', 'created_at', 'request_details']
+        fields = ['id', 'client', 'provider', 'request_type', 'service_location', 'created_at', 'request_details', 'assigned_mechanics']
     
     def get_request_details(self, obj):
         if obj.request_type == 'custom':

@@ -24,6 +24,13 @@ export default function ShopOwnerTabLayout() {
         }}
       />
       <Tabs.Screen
+        name="main/jobs"
+        options={{
+          title: 'Jobs',
+          tabBarIcon: ({ color }) => <FontAwesome size={22} name="briefcase" color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="main/home"
         options={{
           title: 'Home',

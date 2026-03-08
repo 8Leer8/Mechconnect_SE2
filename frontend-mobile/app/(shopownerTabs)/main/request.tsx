@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, View, ScrollView, RefreshControl, ActivityIndicator, TouchableOpacity } from 'react-native';
+import { StyleSheet, View, ScrollView, RefreshControl, ActivityIndicator, TouchableOpacity, Alert, Modal, FlatList } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -28,12 +28,37 @@ type HomeResponse = {
 
 type TabType = 'custom' | 'direct' | 'broadcast';
 
+type ShopMechanic = {
+  id: number;
+  account_id: number;
+  firstname: string;
+  lastname: string;
+  profile_photo: string | null;
+  status: string;
+};
+
+type Assignment = {
+  id: number;
+  mechanic: { id: number; firstname: string; lastname: string; username: string };
+  role: 'lead' | 'assistant';
+  assigned_at: string;
+};
+
 export default function ShopOwnerRequestScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingRequest[]>([]);
   const [activeTab, setActiveTab] = useState<TabType>('custom');
+  const [actionLoading, setActionLoading] = useState<number | null>(null);
+
+  // Assign Mechanics modal state
+  const [assignModalVisible, setAssignModalVisible] = useState(false);
+  const [assignRequestId, setAssignRequestId] = useState<number | null>(null);
+  const [shopMechanics, setShopMechanics] = useState<ShopMechanic[]>([]);
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [mechanicsLoading, setMechanicsLoading] = useState(false);
+  const [assigningId, setAssigningId] = useState<number | null>(null);
 
   const fetchRequests = async () => {
     try {
@@ -65,8 +90,168 @@ export default function ShopOwnerRequestScreen() {
     fetchRequests();
   };
 
-  const handleNotificationPress = () => {
-    // placeholder
+  const handleAccept = async (r: PendingRequest) => {
+    const endpoint =
+      r.request_type === 'direct'
+        ? `${API_URL}/bookings/shopowner/requests/${r.id}/accept/`
+        : `${API_URL}/bookings/shopowner/requests/${r.id}/accept-custom/`;
+
+    setActionLoading(r.id);
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        Alert.alert('Error', data.error || 'Failed to accept request');
+        return;
+      }
+      setPending((prev) => prev.filter((p) => p.id !== r.id));
+      // Open assign-mechanics modal for direct requests
+      if (r.request_type === 'direct') {
+        openAssignModal(r.id);
+      } else {
+        Alert.alert('Success', data.message || 'Request accepted');
+      }
+    } catch {
+      Alert.alert('Error', 'Network error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  // ── Assign-Mechanics Modal helpers ──
+
+  const openAssignModal = async (requestId: number) => {
+    setAssignRequestId(requestId);
+    setAssignModalVisible(true);
+    setMechanicsLoading(true);
+    try {
+      // Fetch shop mechanics + existing assignments in parallel
+      const [mechRes, assignRes] = await Promise.all([
+        fetch(`${API_URL}/shops/mechanics/`, {
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        }),
+        fetch(`${API_URL}/bookings/requests/${requestId}/assignments/`, {
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ]);
+
+      if (mechRes.ok) {
+        const mechData = await mechRes.json();
+        setShopMechanics(mechData.mechanics || []);
+      }
+      if (assignRes.ok) {
+        const assignData = await assignRes.json();
+        setAssignments(assignData || []);
+      }
+    } catch {
+      Alert.alert('Error', 'Failed to load mechanics');
+    } finally {
+      setMechanicsLoading(false);
+    }
+  };
+
+  const closeAssignModal = () => {
+    setAssignModalVisible(false);
+    setAssignRequestId(null);
+    setShopMechanics([]);
+    setAssignments([]);
+  };
+
+  const handleAssignMechanic = async (mechanicAccountId: number, role: 'lead' | 'assistant') => {
+    if (!assignRequestId) return;
+    setAssigningId(mechanicAccountId);
+    try {
+      const res = await fetch(
+        `${API_URL}/bookings/requests/${assignRequestId}/assignments/add/`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mechanic_id: mechanicAccountId, role }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        Alert.alert('Error', data.error || 'Failed to assign mechanic');
+        return;
+      }
+      setAssignments((prev) => [...prev, data as Assignment]);
+    } catch {
+      Alert.alert('Error', 'Network error');
+    } finally {
+      setAssigningId(null);
+    }
+  };
+
+  const handleUnassign = async (assignmentId: number) => {
+    if (!assignRequestId) return;
+    try {
+      const res = await fetch(
+        `${API_URL}/bookings/requests/${assignRequestId}/assignments/${assignmentId}/remove/`,
+        {
+          method: 'DELETE',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+      if (!res.ok) {
+        const data = await res.json();
+        Alert.alert('Error', data.error || 'Failed to remove');
+        return;
+      }
+      setAssignments((prev) => prev.filter((a) => a.id !== assignmentId));
+    } catch {
+      Alert.alert('Error', 'Network error');
+    }
+  };
+
+  // IDs of already-assigned mechanics
+  const assignedMechanicIds = new Set(assignments.map((a) => a.mechanic.id));
+  // Available mechanics (from shop, not yet assigned)
+  const availableMechanics = shopMechanics.filter(
+    (m) => !assignedMechanicIds.has(m.account_id)
+  );
+
+  const handleDecline = (r: PendingRequest) => {
+    Alert.alert('Decline Request', 'Are you sure you want to decline this request?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Decline',
+        style: 'destructive',
+        onPress: async () => {
+          const endpoint =
+            r.request_type === 'direct'
+              ? `${API_URL}/bookings/shopowner/requests/${r.id}/decline/`
+              : `${API_URL}/bookings/shopowner/requests/${r.id}/decline-custom/`;
+
+          setActionLoading(r.id);
+          try {
+            const res = await fetch(endpoint, {
+              method: 'POST',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+            });
+            const data = await res.json();
+            if (!res.ok) {
+              Alert.alert('Error', data.error || 'Failed to decline request');
+              return;
+            }
+            Alert.alert('Declined', data.message || 'Request declined');
+            setPending((prev) => prev.filter((p) => p.id !== r.id));
+          } catch {
+            Alert.alert('Error', 'Network error');
+          } finally {
+            setActionLoading(null);
+          }
+        },
+      },
+    ]);
   };
 
   const customRequests = pending.filter((r) => r.request_type === 'custom');
@@ -85,7 +270,7 @@ export default function ShopOwnerRequestScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <TopNav onNotificationPress={handleNotificationPress} />
+      <TopNav onNotificationPress={() => {}} />
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={
@@ -179,11 +364,120 @@ export default function ShopOwnerRequestScreen() {
                       : 'Location'}
                   </ThemedText>
                 </View>
+
+                {(r.request_type === 'direct' || r.request_type === 'custom') && (
+                  <View style={styles.actionRow}>
+                    <TouchableOpacity
+                      style={styles.declineBtn}
+                      onPress={() => handleDecline(r)}
+                      disabled={actionLoading === r.id}
+                    >
+                      <ThemedText style={styles.declineBtnText}>Decline</ThemedText>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.acceptBtn}
+                      onPress={() => handleAccept(r)}
+                      disabled={actionLoading === r.id}
+                    >
+                      {actionLoading === r.id ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <ThemedText style={styles.acceptBtnText}>Accept</ThemedText>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                )}
               </View>
             ))}
           </View>
         )}
       </ScrollView>
+
+      {/* ── Assign Mechanics Modal ── */}
+      <Modal visible={assignModalVisible} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <ThemedText style={styles.modalTitle}>Assign Mechanics</ThemedText>
+              <TouchableOpacity onPress={closeAssignModal}>
+                <IconSymbol name="xmark.circle.fill" size={28} color="#888" />
+              </TouchableOpacity>
+            </View>
+
+            {mechanicsLoading ? (
+              <View style={styles.center}>
+                <ActivityIndicator size="large" color="#FF9500" />
+              </View>
+            ) : (
+              <ScrollView style={styles.modalBody}>
+                {/* Currently assigned */}
+                {assignments.length > 0 && (
+                  <>
+                    <ThemedText style={styles.sectionLabel}>Assigned</ThemedText>
+                    {assignments.map((a) => (
+                      <View key={a.id} style={styles.mechanicRow}>
+                        <View style={styles.mechanicInfo}>
+                          <IconSymbol name="person.fill" size={18} color="#34C759" />
+                          <ThemedText style={styles.mechanicName}>
+                            {a.mechanic.firstname} {a.mechanic.lastname}
+                          </ThemedText>
+                          <View style={[styles.roleBadge, a.role === 'lead' ? styles.roleLead : styles.roleAssistant]}>
+                            <ThemedText style={styles.roleText}>
+                              {a.role === 'lead' ? 'Lead' : 'Assistant'}
+                            </ThemedText>
+                          </View>
+                        </View>
+                        <TouchableOpacity onPress={() => handleUnassign(a.id)}>
+                          <IconSymbol name="minus.circle.fill" size={24} color="#FF3B30" />
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </>
+                )}
+
+                {/* Available to assign */}
+                <ThemedText style={[styles.sectionLabel, { marginTop: assignments.length > 0 ? 20 : 0 }]}>
+                  Shop Mechanics {availableMechanics.length === 0 ? '(none available)' : ''}
+                </ThemedText>
+                {availableMechanics.map((m) => (
+                  <View key={m.account_id} style={styles.mechanicRow}>
+                    <View style={styles.mechanicInfo}>
+                      <IconSymbol name="person.fill" size={18} color="#888" />
+                      <ThemedText style={styles.mechanicName}>
+                        {m.firstname} {m.lastname}
+                      </ThemedText>
+                    </View>
+                    <View style={styles.assignActions}>
+                      {assigningId === m.account_id ? (
+                        <ActivityIndicator size="small" color="#FF9500" />
+                      ) : (
+                        <>
+                          <TouchableOpacity
+                            style={styles.assignLeadBtn}
+                            onPress={() => handleAssignMechanic(m.account_id, 'lead')}
+                          >
+                            <ThemedText style={styles.assignBtnText}>Lead</ThemedText>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={styles.assignAsstBtn}
+                            onPress={() => handleAssignMechanic(m.account_id, 'assistant')}
+                          >
+                            <ThemedText style={styles.assignBtnText}>Assist</ThemedText>
+                          </TouchableOpacity>
+                        </>
+                      )}
+                    </View>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+
+            <TouchableOpacity style={styles.doneBtn} onPress={closeAssignModal}>
+              <ThemedText style={styles.doneBtnText}>Done</ThemedText>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </ThemedView>
   );
 }
@@ -244,5 +538,146 @@ const styles = StyleSheet.create({
   date: { fontSize: 12, color: '#888' },
   row: { marginTop: 10, flexDirection: 'row', alignItems: 'center', gap: 8 },
   rowText: { flex: 1, fontSize: 13, color: '#ccc' },
+  actionRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginTop: 14,
+  },
+  acceptBtn: {
+    backgroundColor: '#34C759',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 90,
+  },
+  acceptBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  declineBtn: {
+    backgroundColor: '#2A2A2A',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 90,
+  },
+  declineBtnText: {
+    color: '#FF3B30',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  // ── Assign Modal styles ──
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'flex-end',
+  },
+  modalContainer: {
+    backgroundColor: '#1E1E1E',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+    paddingBottom: 30,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2A2A2A',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  modalBody: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+  },
+  sectionLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#888',
+    marginBottom: 10,
+    textTransform: 'uppercase',
+  },
+  mechanicRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#252525',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 8,
+  },
+  mechanicInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  mechanicName: {
+    fontSize: 14,
+    color: '#fff',
+    fontWeight: '600',
+  },
+  roleBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  roleLead: {
+    backgroundColor: '#FF950030',
+  },
+  roleAssistant: {
+    backgroundColor: '#34C75930',
+  },
+  roleText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FF9500',
+  },
+  assignActions: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  assignLeadBtn: {
+    backgroundColor: '#FF9500',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  assignAsstBtn: {
+    backgroundColor: '#34C759',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  assignBtnText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  doneBtn: {
+    backgroundColor: '#FF9500',
+    marginHorizontal: 20,
+    marginTop: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  doneBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 16,
+  },
 });
 

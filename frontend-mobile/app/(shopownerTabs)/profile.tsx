@@ -8,6 +8,8 @@ import {
   ActivityIndicator,
   Alert,
   RefreshControl,
+  Modal,
+  TextInput,
 } from 'react-native';
 import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
@@ -60,12 +62,42 @@ interface ActiveRoleResponse {
   active_role: string;
 }
 
+interface MyShopService {
+  id: number;
+  shop_service_id: number;
+  name: string;
+  description: string;
+  price: number;
+  category?: string;
+}
+
+interface AvailableService {
+  id: number;
+  name: string;
+  description: string;
+  minimum_price: number;
+  category?: string;
+}
+
 export default function ShopOwnerProfileScreen() {
   const [profileData, setProfileData] = useState<ProfileData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeRole, setActiveRole] = useState<string>('shop_owner');
+
+  // Service management state
+  const [myServices, setMyServices] = useState<MyShopService[]>([]);
+  const [addModalVisible, setAddModalVisible] = useState(false);
+  const [availableServices, setAvailableServices] = useState<AvailableService[]>([]);
+  const [addingId, setAddingId] = useState<number | null>(null);
+  const [selectedService, setSelectedService] = useState<AvailableService | null>(null);
+  const [priceModalVisible, setPriceModalVisible] = useState(false);
+  const [customPrice, setCustomPrice] = useState<string>('');
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editingService, setEditingService] = useState<MyShopService | null>(null);
+  const [editPrice, setEditPrice] = useState<string>('');
+  const [updatingId, setUpdatingId] = useState<number | null>(null);
 
   const fetchProfileData = useCallback(async () => {
     try {
@@ -107,14 +139,170 @@ export default function ShopOwnerProfileScreen() {
     }
   }, []);
 
+  const fetchMyServices = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/services/shop/my-services/`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setMyServices(data.services || []);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
   useEffect(() => {
     fetchProfileData();
-  }, [fetchProfileData]);
+    fetchMyServices();
+  }, [fetchProfileData, fetchMyServices]);
 
   const onRefresh = () => {
     setRefreshing(true);
-    fetchProfileData();
+    Promise.all([fetchProfileData(), fetchMyServices()]).finally(() => setRefreshing(false));
   };
+
+  // ── Service management handlers ──
+
+  const openAddModal = useCallback(async () => {
+    setAddModalVisible(true);
+    setAvailableServices([]);
+    try {
+      const res = await fetch(`${API_URL}/services/`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const all: AvailableService[] = data.services || [];
+        const myIds = new Set(myServices.map((s) => s.id));
+        setAvailableServices(all.filter((s) => !myIds.has(s.id)));
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, [myServices]);
+
+  const selectServiceForPricing = (service: AvailableService) => {
+    setSelectedService(service);
+    setCustomPrice(service.minimum_price?.toString() || '0');
+    setAddModalVisible(false);
+    setPriceModalVisible(true);
+  };
+
+  const addServiceWithPrice = async () => {
+    if (!selectedService) return;
+    const price = parseFloat(customPrice);
+    if (isNaN(price) || price < 0) {
+      Alert.alert('Invalid Price', 'Please enter a valid price');
+      return;
+    }
+    setAddingId(selectedService.id);
+    try {
+      const res = await fetch(`${API_URL}/services/shop/my-services/add/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ service_id: selectedService.id, price }),
+      });
+      const data = await res.json().catch(() => ({})) as any;
+      if (!res.ok) {
+        Alert.alert('Error', data.error || 'Failed to add service');
+        return;
+      }
+      await fetchMyServices();
+      setPriceModalVisible(false);
+      setSelectedService(null);
+      setCustomPrice('');
+    } catch (e) {
+      Alert.alert('Error', 'Failed to add service');
+    } finally {
+      setAddingId(null);
+    }
+  };
+
+  const cancelPriceInput = () => {
+    setPriceModalVisible(false);
+    setSelectedService(null);
+    setCustomPrice('');
+    setAddModalVisible(true);
+  };
+
+  const openEditModal = (service: MyShopService) => {
+    setEditingService(service);
+    setEditPrice(service.price.toString());
+    setEditModalVisible(true);
+  };
+
+  const updateServicePrice = async () => {
+    if (!editingService) return;
+    const price = parseFloat(editPrice);
+    if (isNaN(price) || price < 0) {
+      Alert.alert('Invalid Price', 'Please enter a valid price');
+      return;
+    }
+    setUpdatingId(editingService.shop_service_id);
+    try {
+      const res = await fetch(`${API_URL}/services/shop/my-services/update-price/`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shop_service_id: editingService.shop_service_id, price }),
+      });
+      const data = await res.json().catch(() => ({})) as any;
+      if (!res.ok) {
+        Alert.alert('Error', data.error || 'Failed to update price');
+        return;
+      }
+      await fetchMyServices();
+      setEditModalVisible(false);
+      setEditingService(null);
+      setEditPrice('');
+    } catch (e) {
+      Alert.alert('Error', 'Failed to update price');
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const cancelEditPrice = () => {
+    setEditModalVisible(false);
+    setEditingService(null);
+    setEditPrice('');
+  };
+
+  const removeService = (svc: MyShopService) => {
+    Alert.alert('Remove', `Remove "${svc.name}" from your shop services?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            const res = await fetch(`${API_URL}/services/shop/my-services/remove/`, {
+              method: 'POST',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ service_id: svc.id }),
+            });
+            if (res.ok) await fetchMyServices();
+            else {
+              const data = await res.json().catch(() => ({})) as any;
+              Alert.alert('Error', data.error || 'Failed to remove');
+            }
+          } catch (e) {
+            Alert.alert('Error', 'Failed to remove');
+          }
+        },
+      },
+    ]);
+  };
+
+  // ── End service management handlers ──
 
   const handleSwitchRole = () => {
     router.push('/(auth)/switchAccount/switchPage');
@@ -309,6 +497,43 @@ export default function ShopOwnerProfileScreen() {
           </View>
         ) : null}
 
+        {/* Shop Services Section */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <ThemedText style={styles.sectionTitle}>Shop Services</ThemedText>
+            <TouchableOpacity style={styles.addBtn} onPress={openAddModal}>
+              <FontAwesome name="plus" size={12} color="#FF9500" />
+              <ThemedText style={styles.addBtnText}>Add</ThemedText>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.sectionBody}>
+            {myServices.length === 0 ? (
+              <View style={styles.emptyServices}>
+                <FontAwesome name="wrench" size={28} color="#555" />
+                <ThemedText style={styles.emptyServicesText}>No services yet</ThemedText>
+                <ThemedText style={styles.emptyServicesSubtext}>Tap Add to offer services</ThemedText>
+              </View>
+            ) : (
+              myServices.map((svc) => (
+                <View key={svc.shop_service_id} style={styles.serviceCard}>
+                  <View style={styles.serviceInfo}>
+                    <ThemedText style={styles.serviceName}>{svc.name}</ThemedText>
+                    <ThemedText style={styles.servicePrice}>₱{svc.price}</ThemedText>
+                  </View>
+                  <View style={styles.serviceActions}>
+                    <TouchableOpacity onPress={() => openEditModal(svc)} style={styles.serviceActionBtn}>
+                      <FontAwesome name="edit" size={18} color="#FF9500" />
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => removeService(svc)} style={styles.serviceActionBtn}>
+                      <FontAwesome name="times-circle" size={18} color="#FF3B30" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))
+            )}
+          </View>
+        </View>
+
         {/* Actions */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
@@ -359,6 +584,133 @@ export default function ShopOwnerProfileScreen() {
 
         <View style={{ height: 32 }} />
       </ScrollView>
+
+      {/* Add service modal - Step 1: Select service */}
+      <Modal visible={addModalVisible} animationType="slide" transparent onRequestClose={() => setAddModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <View style={styles.modalHeader}>
+              <ThemedText style={styles.modalTitle}>Select a service</ThemedText>
+              <TouchableOpacity onPress={() => setAddModalVisible(false)}>
+                <FontAwesome name="times" size={22} color="#fff" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.modalScroll}>
+              {availableServices.length === 0 ? (
+                <ThemedText style={styles.modalEmpty}>No more services to add</ThemedText>
+              ) : (
+                availableServices.map((s) => (
+                  <TouchableOpacity key={s.id} style={styles.availableRow} onPress={() => selectServiceForPricing(s)}>
+                    <View style={{ flex: 1 }}>
+                      <ThemedText style={styles.availableName}>{s.name}</ThemedText>
+                      <ThemedText style={styles.availableDesc}>Suggested: ₱{s.minimum_price}</ThemedText>
+                    </View>
+                    <FontAwesome name="chevron-right" size={16} color="#FF9500" />
+                  </TouchableOpacity>
+                ))
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Price input modal - Step 2: Set price */}
+      <Modal visible={priceModalVisible} animationType="slide" transparent onRequestClose={cancelPriceInput}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <View style={styles.modalHeader}>
+              <TouchableOpacity onPress={cancelPriceInput}>
+                <FontAwesome name="chevron-left" size={18} color="#FF9500" />
+              </TouchableOpacity>
+              <ThemedText style={styles.modalTitle}>Set your price</ThemedText>
+              <View style={{ width: 22 }} />
+            </View>
+            {selectedService && (
+              <View style={styles.priceContent}>
+                <View style={styles.serviceDetailCard}>
+                  <ThemedText style={styles.serviceDetailName}>{selectedService.name}</ThemedText>
+                  <ThemedText style={styles.serviceDetailInfo}>Suggested minimum: ₱{selectedService.minimum_price}</ThemedText>
+                </View>
+                <View style={styles.priceInputSection}>
+                  <ThemedText style={styles.priceLabel}>Your price</ThemedText>
+                  <View style={styles.priceInputWrapper}>
+                    <ThemedText style={styles.currencySymbol}>₱</ThemedText>
+                    <TextInput
+                      style={styles.priceInput}
+                      value={customPrice}
+                      onChangeText={setCustomPrice}
+                      keyboardType="decimal-pad"
+                      placeholder="0.00"
+                      placeholderTextColor="#555"
+                      autoFocus
+                    />
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={[styles.confirmBtn, addingId === selectedService.id && styles.confirmBtnDisabled]}
+                  onPress={addServiceWithPrice}
+                  disabled={addingId === selectedService.id}
+                >
+                  {addingId === selectedService.id ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <ThemedText style={styles.confirmBtnText}>Add Service</ThemedText>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Edit price modal */}
+      <Modal visible={editModalVisible} animationType="slide" transparent onRequestClose={cancelEditPrice}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <View style={styles.modalHeader}>
+              <TouchableOpacity onPress={cancelEditPrice}>
+                <FontAwesome name="times" size={18} color="#FF9500" />
+              </TouchableOpacity>
+              <ThemedText style={styles.modalTitle}>Edit price</ThemedText>
+              <View style={{ width: 22 }} />
+            </View>
+            {editingService && (
+              <View style={styles.priceContent}>
+                <View style={styles.serviceDetailCard}>
+                  <ThemedText style={styles.serviceDetailName}>{editingService.name}</ThemedText>
+                  <ThemedText style={styles.serviceDetailInfo}>Current price: ₱{editingService.price}</ThemedText>
+                </View>
+                <View style={styles.priceInputSection}>
+                  <ThemedText style={styles.priceLabel}>New price</ThemedText>
+                  <View style={styles.priceInputWrapper}>
+                    <ThemedText style={styles.currencySymbol}>₱</ThemedText>
+                    <TextInput
+                      style={styles.priceInput}
+                      value={editPrice}
+                      onChangeText={setEditPrice}
+                      keyboardType="decimal-pad"
+                      placeholder="0.00"
+                      placeholderTextColor="#555"
+                      autoFocus
+                    />
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={[styles.confirmBtn, updatingId === editingService.shop_service_id && styles.confirmBtnDisabled]}
+                  onPress={updateServicePrice}
+                  disabled={updatingId === editingService.shop_service_id}
+                >
+                  {updatingId === editingService.shop_service_id ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <ThemedText style={styles.confirmBtnText}>Update Price</ThemedText>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
     </ThemedView>
   );
 }
@@ -564,6 +916,175 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#888',
     marginTop: 2,
+  },
+  // Service management styles
+  addBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#FF950018',
+  },
+  addBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#FF9500',
+  },
+  emptyServices: {
+    alignItems: 'center',
+    paddingVertical: 20,
+    gap: 8,
+  },
+  emptyServicesText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#888',
+  },
+  emptyServicesSubtext: {
+    fontSize: 12,
+    color: '#666',
+  },
+  serviceCard: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#252525',
+  },
+  serviceInfo: {
+    flex: 1,
+  },
+  serviceName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  servicePrice: {
+    fontSize: 13,
+    color: '#FF9500',
+    marginTop: 2,
+  },
+  serviceActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  serviceActionBtn: {
+    padding: 4,
+  },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'flex-end',
+  },
+  modalBox: {
+    backgroundColor: '#1A1A1A',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+    padding: 20,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  modalScroll: {
+    maxHeight: 400,
+  },
+  modalEmpty: {
+    textAlign: 'center',
+    color: '#888',
+    paddingVertical: 24,
+    fontSize: 14,
+  },
+  availableRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#252525',
+  },
+  availableName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  availableDesc: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: 2,
+  },
+  priceContent: {
+    paddingVertical: 8,
+    gap: 16,
+  },
+  serviceDetailCard: {
+    backgroundColor: '#252525',
+    borderRadius: 12,
+    padding: 14,
+  },
+  serviceDetailName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  serviceDetailInfo: {
+    fontSize: 13,
+    color: '#888',
+    marginTop: 4,
+  },
+  priceInputSection: {
+    gap: 8,
+  },
+  priceLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#ccc',
+  },
+  priceInputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#252525',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    height: 48,
+  },
+  currencySymbol: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FF9500',
+    marginRight: 6,
+  },
+  priceInput: {
+    flex: 1,
+    fontSize: 18,
+    color: '#fff',
+    fontWeight: '600',
+  },
+  confirmBtn: {
+    backgroundColor: '#FF9500',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  confirmBtnDisabled: {
+    opacity: 0.6,
+  },
+  confirmBtnText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
   },
 });
 

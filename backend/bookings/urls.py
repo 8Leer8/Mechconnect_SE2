@@ -50,4 +50,20 @@ urlpatterns = [
     path('mechanic/bookings/<int:booking_id>/cancel-booking/', views.mechanic_cancel_booking, name='mechanic-cancel-booking'),
     path('mechanic/requests/<int:request_id>/accept/', views.mechanic_accept_direct_request, name='mechanic-accept-direct-request'),
     path('mechanic/requests/<int:request_id>/decline/', views.mechanic_decline_direct_request, name='mechanic-decline-direct-request'),
+
+    # Shop owner booking endpoints (accept/decline requests)
+    path('shopowner/requests/<int:request_id>/accept/', views.shopowner_accept_direct_request, name='shopowner-accept-direct-request'),
+    path('shopowner/requests/<int:request_id>/decline/', views.shopowner_decline_direct_request, name='shopowner-decline-direct-request'),
+    path('shopowner/requests/<int:request_id>/accept-custom/', views.shopowner_accept_custom_request, name='shopowner-accept-custom-request'),
+    path('shopowner/requests/<int:request_id>/decline-custom/', views.shopowner_decline_custom_request, name='shopowner-decline-custom-request'),
+
+    # Shop owner booking list/detail
+    path('shopowner/bookings/', views.list_shopowner_bookings, name='list-shopowner-bookings'),
+    path('shopowner/bookings/<int:booking_id>/', views.get_shopowner_booking_detail, name='get-shopowner-booking-detail'),
+
+    # Request assignment endpoints (shop owner assigns mechanics to jobs)
+    path('requests/<int:request_id>/assignments/', views.list_request_assignments, name='list-request-assignments'),
+    path('requests/<int:request_id>/assignments/add/', views.assign_mechanic, name='assign-mechanic'),
+    path('requests/<int:request_id>/assignments/<int:assignment_id>/remove/', views.unassign_mechanic, name='unassign-mechanic'),
+    path('requests/<int:request_id>/assignments/<int:assignment_id>/role/', views.update_assignment_role, name='update-assignment-role'),
 ]
