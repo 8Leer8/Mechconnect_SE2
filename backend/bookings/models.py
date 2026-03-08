@@ -267,3 +267,24 @@ class BroadcastOffer(models.Model):
 
     def __str__(self):
         return f"Offer by Mechanic {self.mechanic_id} for Broadcast {self.broadcast_request_id} - {self.status}"
+
+
+class RequestAssignment(models.Model):
+    """
+    Allows a shop owner to assign multiple mechanics to a single job/request.
+    The Request.provider field is kept as the primary provider for backward compatibility.
+    """
+    class Role(models.TextChoices):
+        LEAD = "lead"
+        ASSISTANT = "assistant"
+
+    request = models.ForeignKey(Request, on_delete=models.CASCADE, related_name="assignments")
+    mechanic = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="job_assignments")
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    role = models.CharField(max_length=50, choices=Role.choices, default=Role.ASSISTANT, blank=True)
+
+    class Meta:
+        unique_together = [['request', 'mechanic']]
+
+    def __str__(self):
+        return f"Assignment: {self.mechanic} -> Request {self.request_id} ({self.role})"
