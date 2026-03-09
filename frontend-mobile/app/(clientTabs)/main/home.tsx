@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import {View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl} from 'react-native';
+import {View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Dimensions} from 'react-native';
 import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/client/homeStyles';
+import { LineChart, BarChart } from 'react-native-chart-kit';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
+const screenWidth = Dimensions.get('window').width;
 
 interface Booking {
   id: number;
@@ -64,9 +66,26 @@ interface Request {
   service_location: ServiceLocation | null;
 }
 
+interface MonthlyData {
+  month: string;
+  count?: number;
+  amount?: number;
+}
+
+interface Statistics {
+  total_bookings: number;
+  average_cost: number;
+  month_spending: number;
+  month_bookings: number;
+  most_used_service: string | null;
+  service_frequency: MonthlyData[];
+  monthly_spending: MonthlyData[];
+}
+
 interface HomeData {
   current_bookings: Booking[];
   pending_requests: Request[];
+  statistics?: Statistics;
 }
 
 export default function HomeScreen() {
@@ -216,6 +235,167 @@ export default function HomeScreen() {
           </View>
         ) : (
           <>
+            {/* Statistics Dashboard */}
+            {data?.statistics && (
+              <>
+                {/* Overview Statistics Cards */}
+                <View style={styles.section}>
+                  <View style={styles.sectionHeader}>
+                    <View style={styles.sectionTitleRow}>
+                      <View style={[styles.sectionDot, { backgroundColor: '#5856D6' }]} />
+                      <ThemedText style={styles.sectionTitle}>Overview</ThemedText>
+                    </View>
+                  </View>
+                  
+                  <View style={styles.statsGrid}>
+                    <View style={[styles.statCard, { backgroundColor: '#FF8C0015' }]}>
+                      <View style={styles.statIconContainer}>
+                        <FontAwesome name="check-circle" size={24} color="#FF8C00" />
+                      </View>
+                      <ThemedText style={styles.statValue}>{data.statistics.total_bookings}</ThemedText>
+                      <ThemedText style={styles.statLabel}>Total Bookings</ThemedText>
+                    </View>
+                    
+                    <View style={[styles.statCard, { backgroundColor: '#34C75915' }]}>
+                      <View style={styles.statIconContainer}>
+                        <FontAwesome name="line-chart" size={24} color="#34C759" />
+                      </View>
+                      <ThemedText style={styles.statValue}>₱{data.statistics.average_cost.toFixed(0)}</ThemedText>
+                      <ThemedText style={styles.statLabel}>Avg Cost</ThemedText>
+                    </View>
+                  </View>
+
+                  <View style={styles.statsGrid}>
+                    <View style={[styles.statCard, { backgroundColor: '#007AFF15' }]}>
+                      <View style={styles.statIconContainer}>
+                        <FontAwesome name="calendar" size={24} color="#007AFF" />
+                      </View>
+                      <ThemedText style={styles.statValue}>{data.statistics.month_bookings}</ThemedText>
+                      <ThemedText style={styles.statLabel}>This Month</ThemedText>
+                    </View>
+                    
+                    <View style={[styles.statCard, { backgroundColor: '#5856D615' }]}>
+                      <View style={styles.statIconContainer}>
+                        <FontAwesome name="money" size={24} color="#5856D6" />
+                      </View>
+                      <ThemedText style={styles.statValue}>₱{data.statistics.month_spending.toFixed(0)}</ThemedText>
+                      <ThemedText style={styles.statLabel}>Month Spending</ThemedText>
+                    </View>
+                  </View>
+
+                  {/* Most Used Service */}
+                  {data.statistics.most_used_service && (
+                    <View style={styles.mostUsedCard}>
+                      <View style={styles.mostUsedLeft}>
+                        <FontAwesome name="star" size={20} color="#FFD700" />
+                      </View>
+                      <View style={styles.mostUsedRight}>
+                        <ThemedText style={styles.mostUsedLabel}>Most Used Service</ThemedText>
+                        <ThemedText style={styles.mostUsedValue}>
+                          {data.statistics.most_used_service.charAt(0).toUpperCase() + data.statistics.most_used_service.slice(1)}
+                        </ThemedText>
+                      </View>
+                    </View>
+                  )}
+                </View>
+
+                {/* Service Frequency Chart */}
+                {data.statistics.service_frequency && data.statistics.service_frequency.length > 0 && (
+                  <View style={styles.section}>
+                    <View style={styles.sectionHeader}>
+                      <View style={styles.sectionTitleRow}>
+                        <View style={[styles.sectionDot, { backgroundColor: '#FF8C00' }]} />
+                        <ThemedText style={styles.sectionTitle}>Service Frequency</ThemedText>
+                      </View>
+                    </View>
+                    
+                    <View style={styles.chartContainer}>
+                      <BarChart
+                        data={{
+                          labels: data.statistics.service_frequency.map(item => item.month),
+                          datasets: [{
+                            data: data.statistics.service_frequency.map(item => item.count || 0)
+                          }]
+                        }}
+                        width={screenWidth - 48}
+                        height={200}
+                        yAxisLabel=""
+                        yAxisSuffix=""
+                        chartConfig={{
+                          backgroundColor: '#1E1E1E',
+                          backgroundGradientFrom: '#2C2C2E',
+                          backgroundGradientTo: '#1C1C1E',
+                          decimalPlaces: 0,
+                          color: (opacity = 1) => `rgba(255, 140, 0, ${opacity})`,
+                          labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
+                          style: { borderRadius: 16 },
+                          propsForBackgroundLines: {
+                            strokeDasharray: '',
+                            stroke: '#3A3A3C',
+                            strokeWidth: 1
+                          }
+                        }}
+                        style={styles.chart}
+                        fromZero={true}
+                      />
+                      <ThemedText style={styles.chartCaption}>Bookings completed per month</ThemedText>
+                    </View>
+                  </View>
+                )}
+
+                {/* Monthly Spending Trend */}
+                {data.statistics.monthly_spending && data.statistics.monthly_spending.length > 0 && (
+                  <View style={styles.section}>
+                    <View style={styles.sectionHeader}>
+                      <View style={styles.sectionTitleRow}>
+                        <View style={[styles.sectionDot, { backgroundColor: '#34C759' }]} />
+                        <ThemedText style={styles.sectionTitle}>Spending Trend</ThemedText>
+                      </View>
+                    </View>
+                    
+                    <View style={styles.chartContainer}>
+                      <LineChart
+                        data={{
+                          labels: data.statistics.monthly_spending.map(item => item.month),
+                          datasets: [{
+                            data: data.statistics.monthly_spending.map(item => item.amount || 0),
+                            color: (opacity = 1) => `rgba(52, 199, 89, ${opacity})`,
+                            strokeWidth: 3
+                          }]
+                        }}
+                        width={screenWidth - 48}
+                        height={200}
+                        yAxisLabel="₱"
+                        yAxisSuffix=""
+                        chartConfig={{
+                          backgroundColor: '#1E1E1E',
+                          backgroundGradientFrom: '#2C2C2E',
+                          backgroundGradientTo: '#1C1C1E',
+                          decimalPlaces: 0,
+                          color: (opacity = 1) => `rgba(52, 199, 89, ${opacity})`,
+                          labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
+                          style: { borderRadius: 16 },
+                          propsForDots: {
+                            r: '5',
+                            strokeWidth: '2',
+                            stroke: '#34C759'
+                          },
+                          propsForBackgroundLines: {
+                            strokeDasharray: '',
+                            stroke: '#3A3A3C',
+                            strokeWidth: 1
+                          }
+                        }}
+                        bezier
+                        style={styles.chart}
+                      />
+                      <ThemedText style={styles.chartCaption}>Total spending over the last 6 months</ThemedText>
+                    </View>
+                  </View>
+                )}
+              </>
+            )}
+
             {/* Current Bookings Section */}
             <View style={styles.section}>
               <View style={styles.sectionHeader}>

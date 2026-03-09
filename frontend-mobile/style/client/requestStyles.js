@@ -374,4 +374,77 @@ export const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#fff',
   },
+
+  // Filter Buttons
+  filterContainer: {
+    paddingVertical: 12,
+    backgroundColor: '#1A1C1E',
+  },
+  filterScrollContent: {
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  filterBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    backgroundColor: '#222426',
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+  },
+  filterBtnActive: {
+    backgroundColor: '#FF8C00',
+    borderColor: '#FF8C00',
+  },
+  filterBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#8E8E93',
+  },
+  filterBtnTextActive: {
+    color: '#fff',
+  },
+
+  // Pagination
+  paginationContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#1A1C1E',
+    borderRadius: 16,
+    padding: 16,
+    marginTop: 16,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+  },
+  paginationBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#FF8C0015',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#FF8C0030',
+  },
+  paginationBtnDisabled: {
+    backgroundColor: '#222426',
+    borderColor: '#2A2C2E',
+  },
+  paginationInfo: {
+    alignItems: 'center',
+    gap: 2,
+  },
+  paginationText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  paginationSubtext: {
+    fontSize: 11,
+    color: '#8E8E93',
+  },
 });

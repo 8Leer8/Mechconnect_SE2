@@ -16,16 +16,30 @@ def list_requests(request):
     """
     Get all requests made by the authenticated client.
     Returns requests grouped by type: custom, direct, emergency, broadcast.
+    Supports pagination and filtering.
+    Query params:
+    - page: page number (default: 1)
+    - page_size: items per page (default: 5)
+    - filter: 'all', 'custom', 'direct', 'broadcast' (default: 'all')
     """
     # Get account_id from session
     account_id = request.session.get('account_id')
+    
+    # Get pagination and filter params
+    page = int(request.GET.get('page', 1))
+    page_size = int(request.GET.get('page_size', 5))
+    filter_type = request.GET.get('filter', 'all')
     
     if not account_id:
         return Response({
             'error': 'Authentication required',
             'custom_requests': [],
             'direct_requests': [],
-            'emergency_requests': []
+            'emergency_requests': [],
+            'broadcast_requests': [],
+            'total_count': 0,
+            'total_pages': 0,
+            'current_page': page
         }, status=status.HTTP_401_UNAUTHORIZED)
     
     try:
@@ -37,13 +51,17 @@ def list_requests(request):
                 'error': 'Only clients can view requests',
                 'custom_requests': [],
                 'direct_requests': [],
-                'emergency_requests': []
+                'emergency_requests': [],
+                'broadcast_requests': [],
+                'total_count': 0,
+                'total_pages': 0,
+                'current_page': page
             }, status=status.HTTP_403_FORBIDDEN)
         
         client = account.client
         
         # Get all requests made by this client
-        all_requests = Request.objects.filter(client=client).select_related(
+        all_requests_query = Request.objects.filter(client=client).select_related(
             'provider',
             'service_location'
         ).prefetch_related(
@@ -51,7 +69,27 @@ def list_requests(request):
             'directrequest',
             'emergencyrequest',
             'broadcast_request'
-        ).order_by('-created_at')
+        )
+        
+        # Apply filter
+        if filter_type == 'custom':
+            all_requests_query = all_requests_query.filter(request_type='custom')
+        elif filter_type == 'direct':
+            all_requests_query = all_requests_query.filter(request_type='direct')
+        elif filter_type == 'broadcast':
+            all_requests_query = all_requests_query.filter(request_type='broadcast')
+        # 'all' means no additional filter
+        
+        all_requests_query = all_requests_query.order_by('-created_at')
+        
+        # Calculate total count and pages
+        total_count = all_requests_query.count()
+        total_pages = (total_count + page_size - 1) // page_size if page_size > 0 else 1
+        
+        # Apply pagination
+        start_index = (page - 1) * page_size
+        end_index = start_index + page_size
+        all_requests = all_requests_query[start_index:end_index]
         
         # Separate by type
         custom_requests = []
@@ -176,7 +214,11 @@ def list_requests(request):
             'direct_requests': direct_requests,
             'emergency_requests': emergency_requests,
             'broadcast_requests': broadcast_requests,
-            'total_count': len(custom_requests) + len(direct_requests) + len(emergency_requests) + len(broadcast_requests)
+            'total_count': total_count,
+            'total_pages': total_pages,
+            'current_page': page,
+            'page_size': page_size,
+            'filter': filter_type
         }, status=status.HTTP_200_OK)
     
     except Account.DoesNotExist:

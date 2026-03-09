@@ -144,4 +144,84 @@ export const styles = StyleSheet.create({
   },
   emptyTitle: { fontSize: 15, fontWeight: '600', color: '#888', marginTop: 12 },
   emptySubtext: { fontSize: 12, color: '#555', marginTop: 4 },
+
+  // Statistics Dashboard Styles
+  statsGrid: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 12,
+  },
+  statCard: {
+    flex: 1,
+    borderRadius: 16,
+    padding: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+  },
+  statIconContainer: {
+    marginBottom: 8,
+  },
+  statValue: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginBottom: 4,
+  },
+  statLabel: {
+    fontSize: 12,
+    color: '#8E8E93',
+    textAlign: 'center',
+  },
+  mostUsedCard: {
+    flexDirection: 'row',
+    backgroundColor: '#1A1C1E',
+    borderRadius: 14,
+    padding: 16,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+    marginTop: 4,
+  },
+  mostUsedLeft: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: '#FFD70020',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
+  },
+  mostUsedRight: {
+    flex: 1,
+  },
+  mostUsedLabel: {
+    fontSize: 12,
+    color: '#8E8E93',
+    marginBottom: 4,
+  },
+  mostUsedValue: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  chartContainer: {
+    backgroundColor: '#1A1C1E',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+    alignItems: 'center',
+  },
+  chart: {
+    marginVertical: 8,
+    borderRadius: 16,
+  },
+  chartCaption: {
+    fontSize: 11,
+    color: '#8E8E93',
+    textAlign: 'center',
+    marginTop: 8,
+  },
 });

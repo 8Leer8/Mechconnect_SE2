@@ -75,6 +75,10 @@ interface RequestsResponse {
   direct_requests: DirectRequest[];
   broadcast_requests: BroadcastRequest[];
   total_count: number;
+  total_pages: number;
+  current_page: number;
+  page_size: number;
+  filter: string;
 }
 
 interface ErrorResponse {
@@ -123,17 +127,27 @@ export default function RequestScreen() {
   const [error, setError] = useState<string | null>(null);
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
   const [requestToDelete, setRequestToDelete] = useState<BroadcastRequest | null>(null);
+  
+  // Pagination and filter states
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const [filter, setFilter] = useState<'all' | 'custom' | 'direct' | 'broadcast'>('all');
+  const pageSize = 5;
 
-  const fetchRequests = async (silent = false) => {
+  const fetchRequests = async (silent = false, page = currentPage, filterType = filter) => {
     try {
       if (!silent) setLoading(true);
       setError(null);
 
-      const response = await fetch(`${API_URL}/bookings/requests/`, {
-        method: 'GET',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
+      const response = await fetch(
+        `${API_URL}/bookings/requests/?page=${page}&page_size=${pageSize}&filter=${filterType}`,
+        {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
 
       if (!response.ok) throw new Error('Failed to fetch requests');
       const data = await response.json() as RequestsResponse;
@@ -141,6 +155,9 @@ export default function RequestScreen() {
       setCustomRequests(data.custom_requests || []);
       setDirectRequests(data.direct_requests || []);
       setBroadcastRequests(data.broadcast_requests || []);
+      setTotalCount(data.total_count || 0);
+      setTotalPages(data.total_pages || 1);
+      setCurrentPage(data.current_page || 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
@@ -159,11 +176,14 @@ export default function RequestScreen() {
           setError(null);
         }
 
-        const response = await fetch(`${API_URL}/bookings/requests/`, {
-          method: 'GET',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        });
+        const response = await fetch(
+          `${API_URL}/bookings/requests/?page=${currentPage}&page_size=${pageSize}&filter=${filter}`,
+          {
+            method: 'GET',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+          }
+        );
 
         if (cancelled) return;
         if (!response.ok) throw new Error('Failed to fetch requests');
@@ -173,6 +193,9 @@ export default function RequestScreen() {
           setCustomRequests(data.custom_requests || []);
           setDirectRequests(data.direct_requests || []);
           setBroadcastRequests(data.broadcast_requests || []);
+          setTotalCount(data.total_count || 0);
+          setTotalPages(data.total_pages || 1);
+          setCurrentPage(data.current_page || 1);
         }
       } catch (err) {
         if (!cancelled) {
@@ -185,11 +208,22 @@ export default function RequestScreen() {
 
     loadData();
     return () => { cancelled = true; };
-  }, []);
+  }, [currentPage, filter]);
 
   const onRefresh = () => {
     setRefreshing(true);
     fetchRequests();
+  };
+
+  const handleFilterChange = (newFilter: 'all' | 'custom' | 'direct' | 'broadcast') => {
+    setFilter(newFilter);
+    setCurrentPage(1); // Reset to first page when filter changes
+  };
+
+  const handlePageChange = (newPage: number) => {
+    if (newPage >= 1 && newPage <= totalPages) {
+      setCurrentPage(newPage);
+    }
   };
 
   const handleCancelRequest = async (requestId: number) => {
@@ -466,7 +500,7 @@ export default function RequestScreen() {
     });
   };
 
-  const totalRequests = customRequests.length + directRequests.length + broadcastRequests.length;
+  const totalRequests = totalCount;
 
   return (
     <ThemedView style={styles.container}>
@@ -481,6 +515,55 @@ export default function RequestScreen() {
         <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
           <FontAwesome name="refresh" size={16} color="#FF8C00" />
         </TouchableOpacity>
+      </View>
+
+      {/* Filter Buttons */}
+      <View style={styles.filterContainer}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScrollContent}>
+          <TouchableOpacity
+            style={[styles.filterBtn, filter === 'all' && styles.filterBtnActive]}
+            onPress={() => handleFilterChange('all')}
+            activeOpacity={0.7}
+          >
+            <FontAwesome name="th-list" size={14} color={filter === 'all' ? '#fff' : '#8E8E93'} />
+            <ThemedText style={[styles.filterBtnText, filter === 'all' && styles.filterBtnTextActive]}>
+              All
+            </ThemedText>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.filterBtn, filter === 'broadcast' && styles.filterBtnActive]}
+            onPress={() => handleFilterChange('broadcast')}
+            activeOpacity={0.7}
+          >
+            <FontAwesome name="bullhorn" size={14} color={filter === 'broadcast' ? '#fff' : '#FF8C00'} />
+            <ThemedText style={[styles.filterBtnText, filter === 'broadcast' && styles.filterBtnTextActive]}>
+              Broadcast
+            </ThemedText>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.filterBtn, filter === 'custom' && styles.filterBtnActive]}
+            onPress={() => handleFilterChange('custom')}
+            activeOpacity={0.7}
+          >
+            <FontAwesome name="pencil-square-o" size={14} color={filter === 'custom' ? '#fff' : '#34C759'} />
+            <ThemedText style={[styles.filterBtnText, filter === 'custom' && styles.filterBtnTextActive]}>
+              Custom
+            </ThemedText>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.filterBtn, filter === 'direct' && styles.filterBtnActive]}
+            onPress={() => handleFilterChange('direct')}
+            activeOpacity={0.7}
+          >
+            <FontAwesome name="bolt" size={14} color={filter === 'direct' ? '#fff' : '#007AFF'} />
+            <ThemedText style={[styles.filterBtnText, filter === 'direct' && styles.filterBtnTextActive]}>
+              Direct
+            </ThemedText>
+          </TouchableOpacity>
+        </ScrollView>
       </View>
 
       <View style={styles.createContainer}>
@@ -562,6 +645,39 @@ export default function RequestScreen() {
               )}
             </>
           )}
+
+          {/* Pagination Controls */}
+          {totalPages > 1 && (
+            <View style={styles.paginationContainer}>
+              <TouchableOpacity
+                style={[styles.paginationBtn, currentPage === 1 && styles.paginationBtnDisabled]}
+                onPress={() => handlePageChange(currentPage - 1)}
+                disabled={currentPage === 1}
+                activeOpacity={0.7}
+              >
+                <FontAwesome name="chevron-left" size={14} color={currentPage === 1 ? '#555' : '#FF8C00'} />
+              </TouchableOpacity>
+
+              <View style={styles.paginationInfo}>
+                <ThemedText style={styles.paginationText}>
+                  Page {currentPage} of {totalPages}
+                </ThemedText>
+                <ThemedText style={styles.paginationSubtext}>
+                  {totalCount} total
+                </ThemedText>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.paginationBtn, currentPage === totalPages && styles.paginationBtnDisabled]}
+                onPress={() => handlePageChange(currentPage + 1)}
+                disabled={currentPage === totalPages}
+                activeOpacity={0.7}
+              >
+                <FontAwesome name="chevron-right" size={14} color={currentPage === totalPages ? '#555' : '#FF8C00'} />
+              </TouchableOpacity>
+            </View>
+          )}
+
           <View style={{ height: 30 }} />
         </ScrollView>
       )}
