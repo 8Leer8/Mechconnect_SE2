@@ -7,11 +7,11 @@ from django.utils import timezone
 from datetime import timedelta
 from collections import Counter
 
-from ..models import (
+from ...models import (
     Booking, Request, CustomRequest, DirectRequest, EmergencyRequest, 
     BroadcastRequest, ActiveBooking
 )
-from ..serializers import BookingSerializer, RequestSerializer
+from ...serializers import BookingSerializer, RequestSerializer
 from users.models import Account
 
 
@@ -43,13 +43,6 @@ def home_page(request):
         if hasattr(account, 'client'):
             client = account.client
             print(f"[DEBUG] Account has client role, Client ID: {client.id}")
-            
-            # Check all bookings for this client (regardless of status)
-            all_client_bookings = Booking.objects.filter(request__client=client)
-            print(f"[DEBUG] Total bookings for client (all statuses): {all_client_bookings.count()}")
-            for booking in all_client_bookings:
-                print(f"[DEBUG] All bookings - ID: {booking.id}, Status: '{booking.status}', Request ID: {booking.request.id}")
-            
             current_bookings = Booking.objects.filter(
                 request__client=client,
                 status__in=['accepted', 'on_the_way', 'active', 'reworked']
@@ -62,11 +55,6 @@ def home_page(request):
             ).prefetch_related(
                 Prefetch('activebooking', queryset=ActiveBooking.objects.all())
             ).order_by('-booked_at')
-            
-            print(f"[DEBUG] Current bookings query count: {current_bookings.count()}")
-            for booking in current_bookings:
-                print(f"[DEBUG] Booking ID: {booking.id}, Status: {booking.status}, Request ID: {booking.request.id}")
-            
             all_requests = Request.objects.filter(
                 client=client
             ).exclude(
@@ -258,9 +246,6 @@ def home_page(request):
         # Add statistics for client role
         if hasattr(account, 'client'):
             data['statistics'] = statistics
-        
-        print(f"[DEBUG] Response data - current_bookings count: {len(data['current_bookings'])}")
-        print(f"[DEBUG] Response data - pending_requests count: {len(data['pending_requests'])}")
         
         return Response(data, status=status.HTTP_200_OK)
     

@@ -7,7 +7,7 @@ from django.db.models import Prefetch
 from django.db import transaction
 import logging
 import traceback
-from ..models import (
+from ...models import (
     Booking,
     Request,
     DirectRequest,
@@ -19,7 +19,7 @@ from ..models import (
 )
 from users.models import Account
 from services.models import MechanicService
-from .client_booking_views import _serialize_bookings, _serialize_single_booking
+from ..client.client_booking_views import _serialize_bookings, _serialize_single_booking
 
 
 

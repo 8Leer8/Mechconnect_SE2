@@ -5,7 +5,7 @@ from rest_framework.permissions import AllowAny
 
 import json
 
-from ..models import (
+from ...models import (
     Request, CustomRequest, DirectRequest, EmergencyRequest,
     ServiceLocation, DirectRequestAddOn
 )

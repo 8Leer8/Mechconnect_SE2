@@ -4,11 +4,11 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django.db.models import Prefetch, Q
 
-from ..models import (
+from ...models import (
     Booking, Request, ActiveBooking, CancelBooking, 
     ReworkBooking, DisputeBooking, CompleteBooking
 )
-from ..serializers import BookingSerializer
+from ...serializers import BookingSerializer
 from users.models import Account
 
 

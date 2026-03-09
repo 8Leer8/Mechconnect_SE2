@@ -7,7 +7,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 
-from ..models import (
+from ...models import (
     Booking,
     Request,
     DirectRequest,
@@ -22,7 +22,7 @@ from ..models import (
 )
 from users.models import Account
 from services.models import ShopService
-from .client_booking_views import _serialize_single_booking, _serialize_bookings
+from ..client.client_booking_views import _serialize_single_booking, _serialize_bookings
 from django.db.models import Prefetch
 
 

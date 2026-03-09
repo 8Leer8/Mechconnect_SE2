@@ -1,14 +1,14 @@
 # Re-export all views from submodules for backward compatibility
-from .client_home_views import *
-from .client_request_create_views import *
-from .client_request_list_views import *
-from .client_booking_views import *
-from .broadcast_request_views import *
-from .mechanic_broadcast_request_views import *
-from .mechanic_booking_views import *
-from .directrequest import *
-from .request_assignment_views import *
-from .shopowner_booking_views import *
+from .client.client_home_views import *
+from .client.client_request_create_views import *
+from .client.client_request_list_views import *
+from .client.client_booking_views import *
+from .client.broadcast_request_views import *
+from .mechanic.mechanic_broadcast_request_views import *
+from .mechanic.mechanic_booking_views import *
+from .client.directrequest import *
+from .shopowner.request_assignment_views import *
+from .shopowner.shopowner_booking_views import *
 
 __all__ = [
     # Home views

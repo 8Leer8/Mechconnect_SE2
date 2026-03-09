@@ -5,7 +5,7 @@ from rest_framework.permissions import AllowAny
 from django.utils import timezone
 from datetime import timedelta
 
-from ..models import Request, DirectRequestAddOn, BroadcastRequest
+from ...models import Request, DirectRequestAddOn, BroadcastRequest
 from users.models import Account
 from services.models import MechanicService
 

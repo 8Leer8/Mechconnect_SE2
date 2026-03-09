@@ -576,7 +576,7 @@ export default function MapScreen() {
                   <View style={styles.jobCardHeader}>
                     <View style={[styles.statusDot, { backgroundColor: '#34C759' }]} />
                     <ThemedText style={styles.jobTitle} numberOfLines={1}>
-                      📢 Broadcast Request
+                      Broadcast Request
                     </ThemedText>
                     <View style={styles.urgentBadge}>
                       <ThemedText style={styles.urgentText}>NEW</ThemedText>
