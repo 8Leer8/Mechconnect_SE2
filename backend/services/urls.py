@@ -5,6 +5,7 @@ urlpatterns = [
     path('', views.list_services, name='list_services'),
     path('with-pricing/', views.list_services_with_market_pricing, name='list_services_with_market_pricing'),
     path('<int:service_id>/detail-with-pricing/', views.get_service_detail_with_pricing, name='get_service_detail_with_pricing'),
+    path('<int:service_id>/providers/', views.get_service_detail_with_providers, name='get_service_detail_with_providers'),
     path('categories/', views.list_service_categories, name='list_service_categories'),
     # Mechanic: services I offer (for profile)
     path('mechanic/my-services/', views.list_my_services, name='list_my_services'),

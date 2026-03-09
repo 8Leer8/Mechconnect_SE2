@@ -21,11 +21,14 @@ def list_client_bookings(request):
     Query Parameters:
     - status: Filter by booking status (active, completed, cancelled, reworked, disputed)
               If not provided, returns all bookings grouped by status
+    - page: Page number (default: 1)
+    - page_size: Number of bookings per page (default: 10)
     
     Returns bookings with full details including:
     - Request information (service location, provider details)
     - Status-specific details (cancellation reason, rework details, etc.)
     - Timestamps and amounts
+    - Pagination info (total_pages, current_page, has_next, has_previous)
     """
     # Get account_id from session
     account_id = request.session.get('account_id')
@@ -45,6 +48,10 @@ def list_client_bookings(request):
             }, status=status.HTTP_403_FORBIDDEN)
         
         client = account.client
+        
+        # Get pagination params
+        page = int(request.query_params.get('page', 1))
+        page_size = int(request.query_params.get('page_size', 10))
         
         # Get status filter from query params
         status_filter = request.query_params.get('status', None)
@@ -76,22 +83,37 @@ def list_client_bookings(request):
                     'error': f'Invalid status. Must be one of: {", ".join(valid_statuses)}'
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-            # For 'active' tab, merge 'accepted', 'active' and 'on_the_way' statuses
+            # For 'active' tab, merge 'accepted', 'active', 'on_the_way', and 'pending_payment' statuses
             if status_filter.lower() == 'active':
                 bookings_queryset = bookings_queryset.filter(status__in=['accepted', 'active', 'on_the_way', 'pending_payment'])
             else:
                 bookings_queryset = bookings_queryset.filter(status=status_filter.lower())
 
+            # Calculate pagination
+            total_count = bookings_queryset.count()
+            total_pages = (total_count + page_size - 1) // page_size if page_size > 0 else 0
+            
+            # Apply pagination
+            start_index = (page - 1) * page_size
+            end_index = start_index + page_size
+            paginated_bookings = bookings_queryset[start_index:end_index]
+            
             # Serialize and return filtered bookings
-            bookings_data = _serialize_bookings(bookings_queryset)
+            bookings_data = _serialize_bookings(paginated_bookings)
 
             return Response({
                 'status': status_filter.lower(),
                 'bookings': bookings_data,
-                'count': len(bookings_data)
+                'count': len(bookings_data),
+                'total_count': total_count,
+                'page': page,
+                'page_size': page_size,
+                'total_pages': total_pages,
+                'has_next': page < total_pages,
+                'has_previous': page > 1,
             }, status=status.HTTP_200_OK)
         
-        # If no filter, return bookings grouped by status
+        # If no filter, return bookings grouped by status (no pagination for grouped view)
         else:
             # Merge 'accepted', 'active' and 'on_the_way' for the active group
             active_bookings = bookings_queryset.filter(status__in=['accepted', 'active', 'on_the_way', 'pending_payment'])

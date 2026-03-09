@@ -6,15 +6,7 @@ export default function MainRequestFormLayout() {
     <Stack
       screenOptions={{
         headerShown: false,
-      }}>
-      <Stack.Screen name="main_form" options={{ headerShown: false }} />
-      <Stack.Screen 
-        name="map" 
-        options={{ 
-          headerShown: false,
-          presentation: 'modal',
-        }} 
-      />
-    </Stack>
+      }}
+    />
   );
 }

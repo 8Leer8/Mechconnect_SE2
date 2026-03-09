@@ -17,6 +17,7 @@ __all__ = [
     'list_services',
     'list_services_with_market_pricing',
     'get_service_detail_with_pricing',
+    'get_service_detail_with_providers',
     'list_service_categories',
     'list_my_services',
     'add_my_service',

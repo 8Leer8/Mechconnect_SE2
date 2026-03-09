@@ -6,16 +6,7 @@ export default function BroadcastRequestLayout() {
     <Stack
       screenOptions={{
         headerShown: false,
-      }}>
-      <Stack.Screen name="broadcastrequest" options={{ headerShown: false }} />
-      <Stack.Screen 
-        name="map" 
-        options={{ 
-          headerShown: false,
-          presentation: 'modal',
-        }} 
-      />
-      <Stack.Screen name="broadcastdetail" options={{ headerShown: false }} />
-    </Stack>
+      }}
+    />
   );
 }

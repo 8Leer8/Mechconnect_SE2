@@ -83,4 +83,26 @@ export const styles = StyleSheet.create({
     borderRadius: 8, backgroundColor: '#FF8C0015',
   },
   detailsBtnText: { fontSize: 12, fontWeight: '600', color: '#FF8C00' },
+  paginationContainer: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 20, paddingVertical: 16, marginTop: 8,
+    backgroundColor: '#1A1C1E', marginHorizontal: 16, borderRadius: 12,
+    borderWidth: 1, borderColor: '#2A2C2E',
+  },
+  paginationBtn: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: '#FF8C0015', justifyContent: 'center', alignItems: 'center',
+  },
+  paginationBtnDisabled: {
+    backgroundColor: '#222426',
+  },
+  paginationInfo: {
+    flex: 1, alignItems: 'center', justifyContent: 'center',
+  },
+  paginationText: {
+    fontSize: 14, fontWeight: '600', color: '#fff',
+  },
+  paginationSubtext: {
+    fontSize: 11, color: '#8E8E93', marginTop: 2,
+  },
 });

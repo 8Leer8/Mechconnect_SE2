@@ -6,8 +6,7 @@ export default function MechanicLayout() {
     <Stack
       screenOptions={{
         headerShown: false,
-      }}>
-      <Stack.Screen name="mechanicprofile" options={{ headerShown: false }} />
-    </Stack>
+      }}
+    />
   );
 }

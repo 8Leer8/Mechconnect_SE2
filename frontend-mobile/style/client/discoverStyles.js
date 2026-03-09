@@ -251,4 +251,19 @@ export const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '600',
   },
+  viewDetailsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#2A2C2E',
+  },
+  viewDetailsText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#FF8C00',
+  },
 });

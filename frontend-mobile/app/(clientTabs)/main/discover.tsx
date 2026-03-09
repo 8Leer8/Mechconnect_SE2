@@ -187,7 +187,11 @@ export default function DiscoverScreen() {
   ), [router]);
 
   const renderServiceItem: ListRenderItem<Service> = useCallback(({ item: service }) => (
-    <View style={styles.card}>
+    <TouchableOpacity
+      style={styles.card}
+      onPress={() => router.push(`/client/service/servicedetail?serviceId=${service.id}`)}
+      activeOpacity={0.7}
+    >
       {service.service_picture && (
         <Image source={{ uri: getImageUrl(service.service_picture) || '' }} style={styles.servicePicture} />
       )}
@@ -205,8 +209,12 @@ export default function DiscoverScreen() {
       {service.description ? (
         <ThemedText style={styles.descText} numberOfLines={3}>{service.description}</ThemedText>
       ) : null}
-    </View>
-  ), []);
+      <View style={styles.viewDetailsRow}>
+        <ThemedText style={styles.viewDetailsText}>View Details</ThemedText>
+        <FontAwesome name="chevron-right" size={12} color="#FF8C00" />
+      </View>
+    </TouchableOpacity>
+  ), [router]);
 
   const keyExtractor = useCallback((item: Mechanic | Shop | Service) => item.id.toString(), []);
 

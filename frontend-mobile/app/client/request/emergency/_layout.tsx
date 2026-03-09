@@ -6,8 +6,7 @@ export default function EmergencyRequestLayout() {
     <Stack
       screenOptions={{
         headerShown: false,
-      }}>
-      <Stack.Screen name="emergencyrequest" options={{ headerShown: false }} />
-    </Stack>
+      }}
+    />
   );
 }

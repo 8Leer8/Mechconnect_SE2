@@ -6,9 +6,7 @@ export default function ShopLayout() {
     <Stack
       screenOptions={{
         headerShown: false,
-      }}>
-      <Stack.Screen name="shopprofile" options={{ headerShown: false }} />
-      <Stack.Screen name="shopserviceprofile" options={{ headerShown: false }} />
-    </Stack>
+      }}
+    />
   );
 }
