@@ -6,6 +6,7 @@ from .models import (
 from django.contrib.auth.hashers import make_password, check_password
 from django.utils import timezone
 from django.db.models import Avg
+from MainBackend.storage_utils import get_media_url
 import re
 
 
@@ -31,12 +32,21 @@ class ClientSerializer(serializers.ModelSerializer):
 
 
 class MechanicSerializer(serializers.ModelSerializer):
+    shop_name = serializers.SerializerMethodField()
+    shop_id = serializers.IntegerField(source='shop.id', read_only=True, allow_null=True)
+    
     class Meta:
         model = Mechanic
         fields = [
             'profile_photo', 'contact_number', 'bio', 'average_rating',
-            'is_working_for_shop', 'status'
+            'is_working_for_shop', 'status', 'shop_id', 'shop_name'
         ]
+    
+    def get_shop_name(self, obj):
+        """Get shop name if mechanic is working for a shop"""
+        if obj.is_working_for_shop and obj.shop:
+            return obj.shop.shop_name
+        return None
 
 
 class ShopOwnerSerializer(serializers.ModelSerializer):
@@ -403,8 +413,7 @@ class MechanicReviewSerializer(serializers.ModelSerializer):
         try:
             if hasattr(obj.reviewer, 'client') and obj.reviewer.client.profile_photo:
                 request = self.context.get('request')
-                if request:
-                    return request.build_absolute_uri(obj.reviewer.client.profile_photo.url)
+                return get_media_url(obj.reviewer.client.profile_photo, request)
         except:
             pass
         return None
@@ -429,8 +438,7 @@ class MechanicServiceSerializer(serializers.ModelSerializer):
         try:
             if obj.service.service_picture:
                 request = self.context.get('request')
-                if request:
-                    return request.build_absolute_uri(obj.service.service_picture.url)
+                return get_media_url(obj.service.service_picture, request)
         except:
             pass
         return None
@@ -507,8 +515,7 @@ class MechanicProfileSerializer(serializers.ModelSerializer):
         """Get absolute URL for profile photo"""
         if obj.profile_photo:
             request = self.context.get('request')
-            if request:
-                return request.build_absolute_uri(obj.profile_photo.url)
+            return get_media_url(obj.profile_photo, request)
         return None
     
     def get_total_reviews(self, obj):
@@ -569,8 +576,7 @@ class MechanicProfileSerializer(serializers.ModelSerializer):
                 # Add service picture URL if available
                 if ms.service.service_picture:
                     request = self.context.get('request')
-                    if request:
-                        service_data['service_picture'] = request.build_absolute_uri(ms.service.service_picture.url)
+                    service_data['service_picture'] = get_media_url(ms.service.service_picture, request)
                 
                 result.append(service_data)
             

@@ -1,12 +1,25 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, View, TouchableOpacity, ScrollView, ActivityIndicator, RefreshControl, Modal, Alert, Image } from 'react-native';
+import {
+  View,
+  TouchableOpacity,
+  ScrollView,
+  ActivityIndicator,
+  RefreshControl,
+  Modal,
+  Alert,
+  Image,
+} from 'react-native';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { getDistanceKm, getEstimatedPrice } from '@/app/client/request/broadcast/LocationContext';
+import WalletBadge from '@/components/wallet-badge';
+import { eventBus } from '@/utils/eventBus';
+import { getDistanceKm, getEstimatedPrice } from '@/app/client/request/main_request_form/LocationContext';
+import { styles } from '@/style/mechanic/mapStyles';
+import { getImageUrl } from '@/lib/imageUtils';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -33,22 +46,23 @@ interface BroadcastRequest {
   description: string;
   latitude: number;
   longitude: number;
-  services: Array<{
+  services: {
     id: number;
     name: string;
     description: string;
     minimum_price: number;
-  }>;
-  add_ons: Array<{
+  }[];
+  add_ons: {
     id: number;
     name: string;
     description: string;
     price: number;
-  }>;
+  }[];
   created_at: string;
   expires_at: string;
   status: string;
   concern_picture?: string;
+  required_tokens?: number;
 }
 
 export default function MapScreen() {
@@ -62,6 +76,7 @@ export default function MapScreen() {
   const [selectedBroadcast, setSelectedBroadcast] = useState<BroadcastRequest | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [accepting, setAccepting] = useState(false);
+  const [tokensBalance, setTokensBalance] = useState<number | null>(null);
   const [currentTime, setCurrentTime] = useState(Date.now());
   
   // Map state
@@ -86,6 +101,7 @@ export default function MapScreen() {
       fetchBroadcasts();
     }, 8000);
     
+    fetchTokensBalance();
     return () => clearInterval(interval);
   }, []);
 
@@ -97,6 +113,17 @@ export default function MapScreen() {
     
     return () => clearInterval(timer);
   }, []);
+
+  const fetchTokensBalance = async () => {
+    try {
+      const res = await fetch(`${API_URL}/users/mechanic/wallet/`, { credentials: 'include' });
+      if (!res.ok) return;
+      const data = await res.json();
+      setTokensBalance(data.tokens_balance ?? 0);
+    } catch (e) {
+      // ignore
+    }
+  };
 
   const initializeMap = async () => {
     try {
@@ -254,6 +281,7 @@ export default function MapScreen() {
   const handleBroadcastPress = (broadcast: BroadcastRequest) => {
     setSelectedBroadcast(broadcast);
     setModalVisible(true);
+    fetchTokensBalance();
   };
 
   // Calculate distance and estimated earnings for a broadcast
@@ -317,6 +345,8 @@ export default function MapScreen() {
               onPress: () => {
                 setModalVisible(false);
                 fetchBroadcasts(); // Refresh broadcasts
+                fetchTokensBalance();
+                try { eventBus.emit('walletChanged'); } catch(e){}
               },
             },
           ]
@@ -379,9 +409,12 @@ export default function MapScreen() {
       {/* Header */}
       <View style={styles.header}>
         <ThemedText style={styles.headerTitle}>Nearby Jobs</ThemedText>
-        <TouchableOpacity style={styles.locationButton}>
-          <FontAwesome name="crosshairs" size={20} color="#fff" />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity style={styles.locationButton}>
+            <FontAwesome name="crosshairs" size={20} color="#fff" />
+          </TouchableOpacity>
+          <WalletBadge onPress={() => router.push('/mechanic/wallet')} />
+        </View>
       </View>
 
       {/* Filter Chips */}
@@ -543,7 +576,7 @@ export default function MapScreen() {
                   <View style={styles.jobCardHeader}>
                     <View style={[styles.statusDot, { backgroundColor: '#34C759' }]} />
                     <ThemedText style={styles.jobTitle} numberOfLines={1}>
-                      📢 Broadcast Request
+                      Broadcast Request
                     </ThemedText>
                     <View style={styles.urgentBadge}>
                       <ThemedText style={styles.urgentText}>NEW</ThemedText>
@@ -660,7 +693,7 @@ export default function MapScreen() {
                     <View style={styles.modalSection}>
                       <ThemedText style={styles.modalSectionTitle}>Concern Photo</ThemedText>
                       <Image 
-                        source={{ uri: selectedBroadcast.concern_picture }} 
+                        source={{ uri: getImageUrl(selectedBroadcast.concern_picture) || '' }} 
                         style={styles.modalConcernImage}
                         resizeMode="cover"
                         onError={(error) => console.error('Image load error:', error.nativeEvent.error)}
@@ -767,12 +800,27 @@ export default function MapScreen() {
               )}
             </ScrollView>
 
-            {/* Accept Button */}
+            {/* Tokens requirement + Accept Button */}
+            <View style={styles.modalSection}>
+              <ThemedText style={styles.modalSectionTitle}>Tokens Required to Accept</ThemedText>
+              <ThemedText style={styles.modalText}>
+                {selectedBroadcast?.required_tokens ? `${selectedBroadcast.required_tokens} tokens` : 'Calculating...'}
+              </ThemedText>
+              <ThemedText style={[styles.modalText, { marginTop: 8 }]}>Your balance: {tokensBalance ?? '...'}</ThemedText>
+              {selectedBroadcast && typeof selectedBroadcast.required_tokens === 'number' && tokensBalance !== null && tokensBalance < selectedBroadcast.required_tokens && (
+                <ThemedText style={{ color: '#FF3B30', marginTop: 8 }}>You need to top up tokens to accept this job.</ThemedText>
+              )}
+            </View>
+
             <View style={styles.modalFooter}>
               <TouchableOpacity
-                style={[styles.modalAcceptButton, accepting && styles.modalAcceptButtonDisabled]}
+                style={[
+                  styles.modalAcceptButton,
+                  accepting && styles.modalAcceptButtonDisabled,
+                  (selectedBroadcast && typeof selectedBroadcast.required_tokens === 'number' && tokensBalance !== null && tokensBalance < selectedBroadcast.required_tokens) ? styles.modalAcceptButtonDisabled : null,
+                ]}
                 onPress={handleAcceptBroadcast}
-                disabled={accepting}
+                disabled={accepting || !!(selectedBroadcast && typeof selectedBroadcast.required_tokens === 'number' && tokensBalance !== null && tokensBalance < selectedBroadcast.required_tokens)}
               >
                 {accepting ? (
                   <ActivityIndicator color="#fff" />
@@ -796,482 +844,3 @@ export default function MapScreen() {
     </ThemedView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#111214',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 60,
-    paddingBottom: 16,
-    backgroundColor: '#1A1C1E',
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  locationButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#FF8C0015',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  filterContainer: {
-    backgroundColor: '#1A1C1E',
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-  },
-  filterChip: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#222426',
-    marginRight: 8,
-  },
-  filterChipActive: {
-    backgroundColor: '#FF8C00',
-  },
-  filterChipText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#8E8E93',
-  },
-  filterChipTextActive: {
-    color: '#fff',
-  },
-  mapContainer: {
-    height: 280,
-    backgroundColor: '#1A1C1E',
-    borderBottomWidth: 1,
-    borderBottomColor: '#2A2C2E',
-    position: 'relative',
-  },
-  map: {
-    flex: 1,
-  },
-  mapLoadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#1A1C1E',
-  },
-  mapLoadingText: {
-    marginTop: 12,
-    fontSize: 14,
-    color: '#8E8E93',
-  },
-  mapOverlay: {
-    position: 'absolute',
-    top: 16,
-    right: 16,
-  },
-  mapStats: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#1E1E1EDD',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-  },
-  mapStatsText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  myLocationButton: {
-    position: 'absolute',
-    bottom: 16,
-    right: 16,
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#FF8C00',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
-  },
-  jobListContainer: {
-    flex: 1,
-    backgroundColor: '#111214',
-  },
-  jobListTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#fff',
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 12,
-  },
-  jobList: {
-    flex: 1,
-    paddingHorizontal: 20,
-  },
-  loader: {
-    marginTop: 40,
-  },
-  errorContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 40,
-  },
-  errorText: {
-    fontSize: 16,
-    color: '#FF3B30',
-    marginTop: 16,
-    textAlign: 'center',
-  },
-  retryButton: {
-    marginTop: 16,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    backgroundColor: '#FF8C00',
-    borderRadius: 8,
-  },
-  retryText: {
-    color: '#fff',
-    fontWeight: '600',
-  },
-  emptyContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 40,
-    marginTop: 40,
-  },
-  emptyText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#fff',
-    marginTop: 16,
-  },
-  emptySubtext: {
-    fontSize: 14,
-    color: '#8E8E93',
-    marginTop: 8,
-    textAlign: 'center',
-  },
-  jobCard: {
-    backgroundColor: '#1A1C1E',
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#2A2C2E',
-  },
-  jobCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 10,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  jobTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#fff',
-    flex: 1,
-  },
-  jobInfo: {
-    marginBottom: 10,
-  },
-  jobInfoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 6,
-  },
-  jobInfoText: {
-    fontSize: 13,
-    color: '#8E8E93',
-    flex: 1,
-  },
-  jobCardFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#2A2C2E',
-  },
-  jobEarnings: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#34C759',
-  },
-  navigateButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#FF8C00',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 8,
-  },
-  navigateText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  broadcastCard: {
-    borderColor: '#34C759',
-    borderWidth: 2,
-    backgroundColor: '#1A1F1A',
-  },
-  broadcastDescription: {
-    fontSize: 14,
-    color: '#E0E0E0',
-    marginBottom: 12,
-    lineHeight: 20,
-  },
-  servicesContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 12,
-  },
-  serviceTag: {
-    backgroundColor: '#2A2C2E',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#34C75940',
-  },
-  serviceTagText: {
-    fontSize: 11,
-    color: '#34C759',
-    fontWeight: '600',
-  },
-  timerContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  timerText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#FF8C00',
-  },
-  acceptButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#34C759',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  acceptText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  urgentBadge: {
-    backgroundColor: '#FF3B30',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 8,
-    marginLeft: 'auto',
-  },
-  urgentText: {
-    fontSize: 10,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: '#1A1C1E',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    height: '85%',
-    paddingTop: 20,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#2A2C2E',
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  modalBody: {
-    flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 16,
-  },
-  modalTimer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: '#2A2C2E',
-    padding: 14,
-    borderRadius: 12,
-    marginBottom: 20,
-  },
-  modalTimerText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  modalSection: {
-    marginBottom: 20,
-  },
-  modalSectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#fff',
-    marginBottom: 12,
-  },
-  modalText: {
-    fontSize: 15,
-    color: '#E0E0E0',
-    lineHeight: 22,
-  },
-  modalServiceItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#222426',
-    padding: 12,
-    borderRadius: 10,
-    marginBottom: 8,
-  },
-  modalServiceInfo: {
-    flex: 1,
-    marginRight: 12,
-  },
-  modalServiceName: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#fff',
-    marginBottom: 4,
-  },
-  modalServiceDesc: {
-    fontSize: 13,
-    color: '#8E8E93',
-  },
-  modalServicePrice: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#34C759',
-  },
-  modalConcernImage: {
-    width: '100%',
-    height: 200,
-    borderRadius: 12,
-    backgroundColor: '#222426',
-    marginTop: 8,
-  },
-  modalPriceBreakdown: {
-    backgroundColor: '#222426',
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 12,
-  },
-  modalPriceRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  modalPriceLabel: {
-    fontSize: 14,
-    color: '#8E8E93',
-  },
-  modalPriceValue: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  modalPriceNote: {
-    paddingTop: 4,
-    borderTopWidth: 1,
-    borderTopColor: '#3A3C3E',
-    marginTop: 8,
-  },
-  modalPriceNoteText: {
-    fontSize: 12,
-    color: '#8E8E93',
-    fontStyle: 'italic',
-  },
-  modalTotal: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#34C75920',
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#34C759',
-    marginBottom: 20,
-  },
-  modalTotalLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  modalTotalValue: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#34C759',
-  },
-  modalFooter: {
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#2A2C2E',
-  },
-  modalAcceptButton: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: '#34C759',
-    paddingVertical: 16,
-    borderRadius: 12,
-    marginBottom: 10,
-  },
-  modalAcceptButtonDisabled: {
-    backgroundColor: '#34C75970',
-  },
-  modalAcceptText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  modalCancelButton: {
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  modalCancelText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#8E8E93',
-  },
-});

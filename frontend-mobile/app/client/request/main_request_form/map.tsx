@@ -1,0 +1,275 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { View, TouchableOpacity, ActivityIndicator, Alert, Platform } from 'react-native';
+import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import * as Location from 'expo-location';
+import { ThemedText } from '@/components/themed-text';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useLocation } from './LocationContext';
+import { styles } from '@/style/client/broadcastMapStyles';
+
+interface LocationData {
+  latitude: number;
+  longitude: number;
+  address: string;
+  streetName: string;
+  city: string;
+  barangay: string;
+}
+
+export default function MapScreen() {
+  const params = useLocalSearchParams();
+  const { setSelectedLocation } = useLocation();
+  const mapRef = useRef<MapView>(null);
+  
+  // Get initial coordinates if passed from broadcast screen
+  const initialLat = params.latitude ? parseFloat(params.latitude as string) : null;
+  const initialLng = params.longitude ? parseFloat(params.longitude as string) : null;
+  
+  const [region, setRegion] = useState<{
+    latitude: number;
+    longitude: number;
+    latitudeDelta: number;
+    longitudeDelta: number;
+  } | null>(null);
+  
+  const [markerLocation, setMarkerLocation] = useState<{
+    latitude: number;
+    longitude: number;
+  } | null>(null);
+  
+  const [loading, setLoading] = useState(true);
+  const [confirming, setConfirming] = useState(false);
+  const [address, setAddress] = useState<string>('');
+
+  useEffect(() => {
+    initializeMap();
+  }, []);
+
+  const initializeMap = async () => {
+    if (initialLat && initialLng) {
+      const initialRegion = {
+        latitude: initialLat,
+        longitude: initialLng,
+        latitudeDelta: 0.0922,
+        longitudeDelta: 0.0421,
+      };
+      setRegion(initialRegion);
+      setMarkerLocation({ latitude: initialLat, longitude: initialLng });
+      await getAddressFromCoords(initialLat, initialLng);
+      setLoading(false);
+      return;
+    }
+    await getCurrentLocation();
+  };
+
+  const getCurrentLocation = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      
+      if (status !== 'granted') {
+        // Permission denied - use fallback location
+        console.log('Location permission denied, using default location');
+        const fallbackRegion = {
+          latitude: 14.5995,
+          longitude: 120.9842,
+          latitudeDelta: 0.0922,
+          longitudeDelta: 0.0421,
+        };
+        setRegion(fallbackRegion);
+        setLoading(false);
+        return;
+      }
+
+      // Get current location with timeout
+      const locationPromise = Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+
+      const timeoutPromise = new Promise<null>((resolve) => {
+        setTimeout(() => resolve(null), 5000); // 5 second timeout
+      });
+
+      const location = await Promise.race([locationPromise, timeoutPromise]);
+
+      if (location) {
+        const currentRegion = {
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude,
+          latitudeDelta: 0.0922,
+          longitudeDelta: 0.0421,
+        };
+        setRegion(currentRegion);
+      } else {
+        // Timeout - use default location
+        console.log('Location fetch timeout, using default location');
+        const fallbackRegion = {
+          latitude: 14.5995,
+          longitude: 120.9842,
+          latitudeDelta: 0.0922,
+          longitudeDelta: 0.0421,
+        };
+        setRegion(fallbackRegion);
+      }
+      setLoading(false);
+    } catch (error) {
+      // Location services unavailable - use fallback silently
+      console.log('Location services unavailable, using default location (Manila)');
+      const fallbackRegion = {
+        latitude: 14.5995,
+        longitude: 120.9842,
+        latitudeDelta: 0.0922,
+        longitudeDelta: 0.0421,
+      };
+      setRegion(fallbackRegion);
+      setLoading(false);
+    }
+  };
+
+  const getAddressFromCoords = async (latitude: number, longitude: number) => {
+    try {
+      const results = await Location.reverseGeocodeAsync({
+        latitude,
+        longitude,
+      });
+
+      if (results && results.length > 0) {
+        const location = results[0];
+        const addressParts = [];
+        
+        if (location.street) addressParts.push(location.street);
+        if (location.subregion) addressParts.push(location.subregion);
+        if (location.city) addressParts.push(location.city);
+        if (location.region) addressParts.push(location.region);
+        
+        const fullAddress = addressParts.join(', ');
+        setAddress(fullAddress);
+      }
+    } catch (error) {
+      console.error('Error getting address:', error);
+      setAddress('Address not available');
+    }
+  };
+
+  const handleMapPress = async (event: any) => {
+    const { latitude, longitude } = event.nativeEvent.coordinate;
+    
+    setMarkerLocation({ latitude, longitude });
+    await getAddressFromCoords(latitude, longitude);
+  };
+
+  const handleConfirm = async () => {
+    if (!markerLocation) {
+      Alert.alert('Error', 'Please select a location on the map');
+      return;
+    }
+
+    setConfirming(true);
+
+    try {
+      const results = await Location.reverseGeocodeAsync({
+        latitude: markerLocation.latitude,
+        longitude: markerLocation.longitude,
+      });
+
+      let locationData: LocationData = {
+        latitude: markerLocation.latitude,
+        longitude: markerLocation.longitude,
+        address: address || 'Location selected',
+        streetName: '',
+        city: '',
+        barangay: '',
+      };
+
+      if (results && results.length > 0) {
+        const location = results[0];
+        locationData = {
+          latitude: markerLocation.latitude,
+          longitude: markerLocation.longitude,
+          address: address,
+          streetName: location.street || location.name || '',
+          city: location.city || location.region || '',
+          barangay: location.district || location.subregion || '',
+        };
+      }
+      
+      // Save location to context and go back
+      setSelectedLocation(locationData);
+      router.back();
+    } catch (error) {
+      console.error('Error confirming location:', error);
+      Alert.alert('Error', 'Failed to confirm location');
+    } finally {
+      setConfirming(false);
+    }
+  };
+
+  if (loading || !region) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#FF8C00" />
+        <ThemedText style={styles.loadingText}>Loading map...</ThemedText>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      <MapView
+        ref={mapRef}
+        style={styles.map}
+        provider={PROVIDER_GOOGLE}
+        initialRegion={region}
+        onPress={handleMapPress}
+        showsUserLocation
+        showsMyLocationButton
+      >
+        {markerLocation && (
+          <Marker
+            coordinate={markerLocation}
+            title="Selected Location"
+            description={address}
+            pinColor="#FF8C00"
+          />
+        )}
+      </MapView>
+      {address && (
+        <View style={styles.addressContainer}>
+          <ThemedText style={styles.addressText}>{address}</ThemedText>
+        </View>
+      )}
+
+      {/* Bottom Controls */}
+      <View style={styles.bottomContainer}>
+        <ThemedText style={styles.instructionText}>
+          Tap on the map to select your location
+        </ThemedText>
+        
+        <View style={styles.buttonContainer}>
+          <TouchableOpacity
+            style={styles.cancelButton}
+            onPress={() => router.back()}
+          >
+            <ThemedText style={styles.cancelButtonText}>Cancel</ThemedText>
+          </TouchableOpacity>
+          
+          <TouchableOpacity
+            style={[
+              styles.confirmButton,
+              !markerLocation && styles.confirmButtonDisabled,
+            ]}
+            onPress={handleConfirm}
+            disabled={!markerLocation || confirming}
+          >
+            {confirming ? (
+              <ActivityIndicator color="#FFF" />
+            ) : (
+              <ThemedText style={styles.confirmButtonText}>
+                Confirm Location
+              </ThemedText>
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  );
+}

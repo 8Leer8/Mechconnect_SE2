@@ -2,8 +2,13 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
+from django.utils import timezone
+from django.core.mail import send_mail
+from django.conf import settings
+import random
+from datetime import timedelta
 
-from ..models import Account, AccountRole
+from ..models import Account, AccountRole, EmailVerification
 from ..serializers import (
     RegisterSerializer, LoginSerializer, AccountSerializer
 )
@@ -125,3 +130,133 @@ def check_session(request):
         return Response({
             'authenticated': False
         }, status=status.HTTP_401_UNAUTHORIZED)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def send_verification_code(request):
+    """
+    Send a 6-digit verification code to the provided email
+    """
+    email = request.data.get('email')
+    
+    if not email:
+        return Response({
+            'error': 'Email is required'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Check if email already exists in Account
+    if Account.objects.filter(email=email).exists():
+        return Response({
+            'error': 'Email is already registered'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Generate 6-digit code
+    verification_code = ''.join([str(random.randint(0, 9)) for _ in range(6)])
+    
+    # Set expiration time (15 minutes from now)
+    expires_at = timezone.now() + timedelta(minutes=15)
+    
+    # Expire any existing pending codes for this email
+    EmailVerification.objects.filter(
+        email=email,
+        status=EmailVerification.Status.PENDING
+    ).update(status=EmailVerification.Status.EXPIRED)
+    
+    # Create new verification record
+    verification = EmailVerification.objects.create(
+        email=email,
+        verification_code=verification_code,
+        expires_at=expires_at
+    )
+    
+    # Send email
+    try:
+        subject = 'MechConnect - Email Verification Code'
+        message = f'''
+Hello,
+
+Your verification code for MechConnect registration is: {verification_code}
+
+This code will expire in 15 minutes.
+
+If you did not request this code, please ignore this email.
+
+Best regards,
+MechConnect Team
+        '''
+        send_mail(
+            subject,
+            message,
+            settings.DEFAULT_FROM_EMAIL,
+            [email],
+            fail_silently=False,
+        )
+        
+        return Response({
+            'message': 'Verification code sent successfully',
+            'expires_in_minutes': 15
+        }, status=status.HTTP_200_OK)
+    except Exception as e:
+        # Log the error but still return success to not expose email sending issues
+        print(f"Email sending error: {str(e)}")
+        return Response({
+            'message': 'Verification code generated successfully',
+            'expires_in_minutes': 15,
+            'note': 'Email service may be unavailable. In development, check console for code.'
+        }, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def verify_code(request):
+    """
+    Verify the 6-digit code for email verification
+    """
+    email = request.data.get('email')
+    code = request.data.get('code')
+    
+    if not email or not code:
+        return Response({
+            'error': 'Email and code are required'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        # Get the most recent pending verification for this email
+        verification = EmailVerification.objects.filter(
+            email=email,
+            status=EmailVerification.Status.PENDING
+        ).order_by('-created_at').first()
+        
+        if not verification:
+            return Response({
+                'error': 'No pending verification found for this email'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if code has expired
+        if timezone.now() > verification.expires_at:
+            verification.status = EmailVerification.Status.EXPIRED
+            verification.save()
+            return Response({
+                'error': 'Verification code has expired. Please request a new code.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Verify the code
+        if verification.verification_code != code:
+            return Response({
+                'error': 'Invalid verification code'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Mark as verified
+        verification.status = EmailVerification.Status.VERIFIED
+        verification.verified_at = timezone.now()
+        verification.save()
+        
+        return Response({
+            'message': 'Email verified successfully'
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        return Response({
+            'error': f'Verification failed: {str(e)}'
+        }, status=status.HTTP_400_BAD_REQUEST)

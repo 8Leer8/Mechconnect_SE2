@@ -59,9 +59,23 @@ class MechanicService(models.Model):
     def __str__(self):
         return f"{self.mechanic} - {self.service} (${self.price})"
 
+
+#Shop Services
 class ShopService(models.Model):
     shop = models.ForeignKey(Shop, on_delete=models.CASCADE)
     service = models.ForeignKey(Service, on_delete=models.CASCADE)
+    price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+        help_text="Shop's price for this service."
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('shop', 'service')
 
 class ShopServiceMechanic(models.Model):
     shop_service = models.ForeignKey(ShopService, on_delete=models.CASCADE)

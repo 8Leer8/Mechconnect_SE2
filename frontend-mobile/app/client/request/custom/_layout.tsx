@@ -6,8 +6,7 @@ export default function CustomRequestLayout() {
     <Stack
       screenOptions={{
         headerShown: false,
-      }}>
-      <Stack.Screen name="mechaniccustomrequest" options={{ headerShown: false }} />
-    </Stack>
+      }}
+    />
   );
 }

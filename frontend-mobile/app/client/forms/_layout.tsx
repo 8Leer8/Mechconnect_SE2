@@ -6,11 +6,7 @@ export default function FormsLayout() {
     <Stack
       screenOptions={{
         headerShown: false,
-      }}>
-      <Stack.Screen name="cancellationform" options={{ headerShown: false }} />
-      <Stack.Screen name="disputeform" options={{ headerShown: false }} />
-      <Stack.Screen name="rescheduleform" options={{ headerShown: false }} />
-      <Stack.Screen name="reworkfomr" options={{ headerShown: false }} />
-    </Stack>
+      }}
+    />
   );
 }

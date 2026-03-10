@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  StyleSheet,
   View,
   TouchableOpacity,
   ScrollView,
@@ -14,6 +13,8 @@ import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
+import { styles } from '@/style/mechanic/profileStyles';
+import WalletSection from '@/components/wallet-section';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -58,7 +59,7 @@ export default function ProfileScreen() {
         headers: { 'Content-Type': 'application/json' },
       });
       if (res.ok) {
-        const data = await res.json() as any;
+        const data = await res.json();
         const p = data.profile || data;
         const n = p?.full_name || `${p?.firstname || ''} ${p?.lastname || ''}`.trim();
         if (n) setName(n);
@@ -76,7 +77,7 @@ export default function ProfileScreen() {
         headers: { 'Content-Type': 'application/json' },
       });
       if (res.ok) {
-        const data = await res.json() as any;
+        const data = await res.json();
         setMyServices(data.services || []);
       }
     } catch (e) {
@@ -109,7 +110,7 @@ export default function ProfileScreen() {
         headers: { 'Content-Type': 'application/json' },
       });
       if (res.ok) {
-        const data = await res.json() as any;
+        const data = await res.json();
         const all: AvailableService[] = data.services || [];
         const myIds = new Set(myServices.map((s) => s.id));
         setAvailableServices(all.filter((s) => !myIds.has(s.id)));
@@ -277,6 +278,9 @@ export default function ProfileScreen() {
           <ThemedText style={styles.name}>{name}</ThemedText>
           <ThemedText style={styles.subtitle}>Mechanic profile</ThemedText>
         </View>
+
+        {/* Wallet Section */}
+        <WalletSection />
 
         {/* Services I offer - connected to backend */}
         <View style={styles.section}>
@@ -495,207 +499,3 @@ export default function ProfileScreen() {
     </ThemedView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#111214' },
-  loader: { marginTop: 100 },
-  scroll: { flex: 1 },
-  scrollContent: { paddingBottom: 24 },
-  header: {
-    backgroundColor: '#1A1C1E',
-    paddingTop: 56,
-    paddingBottom: 20,
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: '#2A2C2E',
-  },
-  avatarPlaceholder: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: '#2A2C2E',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  name: { fontSize: 20, fontWeight: 'bold', color: '#fff', marginBottom: 4 },
-  subtitle: { fontSize: 12, color: '#8E8E93' },
-  section: { marginTop: 20, paddingHorizontal: 16 },
-  sectionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  sectionTitle: { fontSize: 16, fontWeight: '600', color: '#fff' },
-  addBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#FF8C00',
-  },
-  addBtnText: { color: '#FF8C00', fontSize: 14, fontWeight: '600' },
-  emptyCard: {
-    backgroundColor: '#1A1C1E',
-    borderRadius: 14,
-    padding: 24,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#2A2C2E',
-  },
-  emptyText: { color: '#8E8E93', fontSize: 15, marginTop: 10 },
-  emptySubtext: { color: '#555', fontSize: 13, marginTop: 4 },
-  serviceCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#1A1C1E',
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#2A2C2E',
-  },
-  serviceInfo: { flex: 1 },
-  serviceName: { fontSize: 16, fontWeight: '600', color: '#fff' },
-  servicePrice: { fontSize: 14, color: '#FF8C00', marginTop: 2 },
-  serviceActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  editBtn: { padding: 8 },
-  removeBtn: { padding: 8 },
-  menuItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: '#1A1C1E',
-    padding: 14,
-    borderRadius: 14,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#2A2C2E',
-  },
-  menuText: { flex: 1, fontSize: 15, color: '#fff' },
-  logoutItem: { borderColor: '#2A2C2E' },
-  logoutText: { color: '#FF3B30' },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalBox: {
-    backgroundColor: '#1A1C1E',
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    maxHeight: '70%',
-    paddingBottom: 20,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#2A2C2E',
-  },
-  modalTitle: { fontSize: 18, fontWeight: 'bold', color: '#fff' },
-  modalScroll: { maxHeight: 320, padding: 16 },
-  modalEmpty: { color: '#8E8E93', textAlign: 'center', padding: 24 },
-  availableRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    marginBottom: 8,
-    backgroundColor: '#222426',
-    borderWidth: 1,
-    borderColor: '#2A2C2E',
-  },
-  availableInfo: { flex: 1 },
-  availableName: { fontSize: 16, fontWeight: '600', color: '#ECEDEE', marginBottom: 4 },
-  availableDesc: { fontSize: 13, color: '#8E8E93' },
-  backBtn: {
-    padding: 4,
-  },
-  priceContent: {
-    padding: 20,
-  },
-  serviceDetailCard: {
-    backgroundColor: '#222426',
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 24,
-    borderWidth: 1,
-    borderColor: '#2A2C2E',
-  },
-  serviceDetailName: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#fff',
-    marginBottom: 6,
-  },
-  serviceDetailInfo: {
-    fontSize: 14,
-    color: '#8E8E93',
-  },
-  priceInputSection: {
-    marginBottom: 24,
-  },
-  priceLabel: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#fff',
-    marginBottom: 10,
-  },
-  priceInputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#222426',
-    borderRadius: 10,
-    borderWidth: 2,
-    borderColor: '#FF8C00',
-    paddingHorizontal: 16,
-    paddingVertical: 4,
-  },
-  currencySymbol: {
-    fontSize: 24,
-    fontWeight: '600',
-    color: '#FF8C00',
-    marginRight: 8,
-  },
-  priceInput: {
-    flex: 1,
-    fontSize: 24,
-    fontWeight: '600',
-    color: '#fff',
-    paddingVertical: 12,
-  },
-  priceHint: {
-    fontSize: 12,
-    color: '#8E8E93',
-    marginTop: 8,
-  },
-  addServiceBtn: {
-    backgroundColor: '#FF8C00',
-    borderRadius: 10,
-    paddingVertical: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#FF8C00',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 4,
-  },
-  addServiceBtnDisabled: {
-    opacity: 0.6,
-  },
-  addServiceBtnText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#fff',
-  },
-});

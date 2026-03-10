@@ -39,7 +39,31 @@ urlpatterns = [
     path('mechanic/bookings/<int:booking_id>/', views.get_mechanic_booking_detail, name='get-mechanic-booking-detail'),
     path('mechanic/bookings/<int:booking_id>/complete/', views.mechanic_complete_booking, name='mechanic-complete-booking'),
     path('mechanic/bookings/<int:booking_id>/start-travel/', views.mechanic_start_travel, name='mechanic-start-travel'),
+    path('mechanic/bookings/<int:booking_id>/cancel-travel/', views.mechanic_cancel_travel, name='mechanic-cancel-travel'),
     path('mechanic/bookings/<int:booking_id>/start-job/', views.mechanic_start_job, name='mechanic-start-job'),
+    path('mechanic/bookings/<int:booking_id>/cancel-job/', views.mechanic_cancel_job, name='mechanic-cancel-job'),
+    path('mechanic/bookings/<int:booking_id>/pause-job/', views.mechanic_pause_job, name='mechanic-pause-job'),
+    path('mechanic/bookings/<int:booking_id>/resume-job/', views.mechanic_resume_job, name='mechanic-resume-job'),
+    path('mechanic/bookings/<int:booking_id>/finish-job/', views.mechanic_finish_job, name='mechanic-finish-job'),
+    path('mechanic/bookings/<int:booking_id>/payment-received/', views.mechanic_payment_received, name='mechanic-payment-received'),
+    path('mechanic/bookings/<int:booking_id>/revert-stage/', views.mechanic_revert_stage, name='mechanic-revert-stage'),
+    path('mechanic/bookings/<int:booking_id>/cancel-booking/', views.mechanic_cancel_booking, name='mechanic-cancel-booking'),
     path('mechanic/requests/<int:request_id>/accept/', views.mechanic_accept_direct_request, name='mechanic-accept-direct-request'),
     path('mechanic/requests/<int:request_id>/decline/', views.mechanic_decline_direct_request, name='mechanic-decline-direct-request'),
+
+    # Shop owner booking endpoints (accept/decline requests)
+    path('shopowner/requests/<int:request_id>/accept/', views.shopowner_accept_direct_request, name='shopowner-accept-direct-request'),
+    path('shopowner/requests/<int:request_id>/decline/', views.shopowner_decline_direct_request, name='shopowner-decline-direct-request'),
+    path('shopowner/requests/<int:request_id>/accept-custom/', views.shopowner_accept_custom_request, name='shopowner-accept-custom-request'),
+    path('shopowner/requests/<int:request_id>/decline-custom/', views.shopowner_decline_custom_request, name='shopowner-decline-custom-request'),
+
+    # Shop owner booking list/detail
+    path('shopowner/bookings/', views.list_shopowner_bookings, name='list-shopowner-bookings'),
+    path('shopowner/bookings/<int:booking_id>/', views.get_shopowner_booking_detail, name='get-shopowner-booking-detail'),
+
+    # Request assignment endpoints (shop owner assigns mechanics to jobs)
+    path('requests/<int:request_id>/assignments/', views.list_request_assignments, name='list-request-assignments'),
+    path('requests/<int:request_id>/assignments/add/', views.assign_mechanic, name='assign-mechanic'),
+    path('requests/<int:request_id>/assignments/<int:assignment_id>/remove/', views.unassign_mechanic, name='unassign-mechanic'),
+    path('requests/<int:request_id>/assignments/<int:assignment_id>/role/', views.update_assignment_role, name='update-assignment-role'),
 ]

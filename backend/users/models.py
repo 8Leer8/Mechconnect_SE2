@@ -105,6 +105,7 @@ class Mechanic(models.Model):
     is_working_for_shop = models.BooleanField(default=False)
     shop = models.ForeignKey('shops.Shop', on_delete=models.SET_NULL, null=True, blank=True, related_name='mechanics')
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.AVAILABLE)
+    tokens_balance = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -177,4 +178,36 @@ class TokenPurchase(models.Model):
     payment_method = models.CharField(max_length=50, null=True, blank=True)
     status = models.CharField(max_length=50, default='pending')
     purchased_at = models.DateTimeField(auto_now_add=True)
+
+
+class TokenTransaction(models.Model):
+    """Record of token movements (top-ups and deductions).
+
+    Use positive `tokens` for additions and negative for deductions (taxes).
+    """
+    account = models.ForeignKey(Account, on_delete=models.CASCADE)
+    tokens = models.IntegerField()
+    reason = models.CharField(max_length=100)
+    related_booking_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class EmailVerification(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending"
+        VERIFIED = "verified"
+        EXPIRED = "expired"
+    
+    email = models.EmailField()
+    verification_code = models.CharField(max_length=6)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    verified_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['email', 'status']),
+        ]
 

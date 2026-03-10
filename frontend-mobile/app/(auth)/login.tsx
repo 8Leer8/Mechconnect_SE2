@@ -114,8 +114,39 @@ export default function LoginScreen() {
         
         // Navigate based on active role
         if (activeRole === 'mechanic') {
-          Alert.alert('Success', 'Login successful!');
-          router.replace('/(mechanicTabs)/main/home');
+          // Check if mechanic is working for a shop
+          try {
+            const profileResponse = await fetch(`${API_URL}/users/profile/details/`, {
+              method: 'GET',
+              credentials: 'include',
+              headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+              },
+            });
+
+            if (profileResponse.ok) {
+              const profileData = await profileResponse.json();
+              const mechanicProfile = profileData.profile?.current_role_profile?.mechanic;
+              
+              if (mechanicProfile?.is_working_for_shop) {
+                Alert.alert('Success', 'Login successful!');
+                router.replace('/(mechanicShopTabs)/main/home');
+              } else {
+                Alert.alert('Success', 'Login successful!');
+                router.replace('/(mechanicTabs)/main/home');
+              }
+            } else {
+              // Fallback to regular mechanic tabs if can't get profile
+              Alert.alert('Success', 'Login successful!');
+              router.replace('/(mechanicTabs)/main/home');
+            }
+          } catch (profileError) {
+            console.error('Error fetching profile:', profileError);
+            // Fallback to regular mechanic tabs
+            Alert.alert('Success', 'Login successful!');
+            router.replace('/(mechanicTabs)/main/home');
+          }
         } else if (activeRole === 'shop_owner') {
           Alert.alert('Success', 'Login successful!');
           router.replace('/(shopownerTabs)/main/home');

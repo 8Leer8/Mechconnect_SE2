@@ -1,23 +1,14 @@
 # Re-export all views from submodules for backward compatibility
-from .client_home_views import *
-from .client_request_list_views import *
-from .client_request_create_views import *
-from .client_booking_views import *
-from .directrequest import *
-from .broadcast_request_views import create_broadcast_request
-from .mechanic_broadcast_request_views import (
-    get_active_broadcasts,
-    accept_broadcast_request,
-)
-from .mechanic_booking_views import (
-    list_mechanic_bookings,
-    get_mechanic_booking_detail,
-    mechanic_accept_direct_request,
-    mechanic_decline_direct_request,
-    mechanic_complete_booking,
-    mechanic_start_travel,
-    mechanic_start_job,
-)
+from .client.client_home_views import *
+from .client.client_request_create_views import *
+from .client.client_request_list_views import *
+from .client.client_booking_views import *
+from .client.broadcast_request_views import *
+from .mechanic.mechanic_broadcast_request_views import *
+from .mechanic.mechanic_booking_views import *
+from .client.directrequest import *
+from .shopowner.request_assignment_views import *
+from .shopowner.shopowner_booking_views import *
 
 __all__ = [
     # Home views
@@ -58,4 +49,18 @@ __all__ = [
     'mechanic_accept_direct_request',
     'mechanic_decline_direct_request',
     'mechanic_complete_booking',
+
+    # Shop owner booking views
+    'shopowner_accept_direct_request',
+    'shopowner_decline_direct_request',
+    'shopowner_accept_custom_request',
+    'shopowner_decline_custom_request',
+    'list_shopowner_bookings',
+    'get_shopowner_booking_detail',
+
+    # Request assignment views (shop owner)
+    'list_request_assignments',
+    'assign_mechanic',
+    'unassign_mechanic',
+    'update_assignment_role',
 ]

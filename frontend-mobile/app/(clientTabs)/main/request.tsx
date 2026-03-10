@@ -1,17 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import {
-  StyleSheet,
-  View,
-  TouchableOpacity,
-  ScrollView,
-  ActivityIndicator,
-  Modal,
-  RefreshControl,
-} from 'react-native';
+import { View, TouchableOpacity, ScrollView, ActivityIndicator, Modal, RefreshControl } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { styles } from '@/style/client/requestStyles';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -40,11 +33,11 @@ interface DirectRequest {
     name: string;
     price: number;
   };
-  add_ons: Array<{
+  add_ons: {
     id: number;
     name: string;
     price: number;
-  }>;
+  }[];
   status: string;
   service_location: {
     street_name: string;
@@ -61,10 +54,10 @@ interface BroadcastRequest {
   description: string;
   providers_note: string | null;
   concern_picture: string | null;
-  services: Array<{
+  services: {
     id: number;
     name: string;
-  }>;
+  }[];
   status: string;
   service_location: {
     street_name: string;
@@ -82,13 +75,15 @@ interface RequestsResponse {
   direct_requests: DirectRequest[];
   broadcast_requests: BroadcastRequest[];
   total_count: number;
+  total_pages: number;
+  current_page: number;
+  page_size: number;
+  filter: string;
 }
 
 interface ErrorResponse {
   error: string;
 }
-
-type TabType = 'custom' | 'direct' | 'broadcast';
 
 // Isolated countdown component — has its own 1s interval so only this re-renders, not the whole screen
 function CountdownBanner({ expiresAt }: { expiresAt: string }) {
@@ -124,7 +119,6 @@ function CountdownBanner({ expiresAt }: { expiresAt: string }) {
 }
 
 export default function RequestScreen() {
-  const [activeTab, setActiveTab] = useState<TabType>('custom');
   const [customRequests, setCustomRequests] = useState<CustomRequest[]>([]);
   const [directRequests, setDirectRequests] = useState<DirectRequest[]>([]);
   const [broadcastRequests, setBroadcastRequests] = useState<BroadcastRequest[]>([]);
@@ -133,17 +127,27 @@ export default function RequestScreen() {
   const [error, setError] = useState<string | null>(null);
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
   const [requestToDelete, setRequestToDelete] = useState<BroadcastRequest | null>(null);
+  
+  // Pagination and filter states
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const [filter, setFilter] = useState<'all' | 'custom' | 'direct' | 'broadcast'>('all');
+  const pageSize = 5;
 
-  const fetchRequests = async (silent = false) => {
+  const fetchRequests = async (silent = false, page = currentPage, filterType = filter) => {
     try {
       if (!silent) setLoading(true);
       setError(null);
 
-      const response = await fetch(`${API_URL}/bookings/requests/`, {
-        method: 'GET',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
+      const response = await fetch(
+        `${API_URL}/bookings/requests/?page=${page}&page_size=${pageSize}&filter=${filterType}`,
+        {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
 
       if (!response.ok) throw new Error('Failed to fetch requests');
       const data = await response.json() as RequestsResponse;
@@ -151,6 +155,9 @@ export default function RequestScreen() {
       setCustomRequests(data.custom_requests || []);
       setDirectRequests(data.direct_requests || []);
       setBroadcastRequests(data.broadcast_requests || []);
+      setTotalCount(data.total_count || 0);
+      setTotalPages(data.total_pages || 1);
+      setCurrentPage(data.current_page || 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
@@ -169,11 +176,14 @@ export default function RequestScreen() {
           setError(null);
         }
 
-        const response = await fetch(`${API_URL}/bookings/requests/`, {
-          method: 'GET',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        });
+        const response = await fetch(
+          `${API_URL}/bookings/requests/?page=${currentPage}&page_size=${pageSize}&filter=${filter}`,
+          {
+            method: 'GET',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+          }
+        );
 
         if (cancelled) return;
         if (!response.ok) throw new Error('Failed to fetch requests');
@@ -183,6 +193,9 @@ export default function RequestScreen() {
           setCustomRequests(data.custom_requests || []);
           setDirectRequests(data.direct_requests || []);
           setBroadcastRequests(data.broadcast_requests || []);
+          setTotalCount(data.total_count || 0);
+          setTotalPages(data.total_pages || 1);
+          setCurrentPage(data.current_page || 1);
         }
       } catch (err) {
         if (!cancelled) {
@@ -195,11 +208,22 @@ export default function RequestScreen() {
 
     loadData();
     return () => { cancelled = true; };
-  }, []);
+  }, [currentPage, filter]);
 
   const onRefresh = () => {
     setRefreshing(true);
     fetchRequests();
+  };
+
+  const handleFilterChange = (newFilter: 'all' | 'custom' | 'direct' | 'broadcast') => {
+    setFilter(newFilter);
+    setCurrentPage(1); // Reset to first page when filter changes
+  };
+
+  const handlePageChange = (newPage: number) => {
+    if (newPage >= 1 && newPage <= totalPages) {
+      setCurrentPage(newPage);
+    }
   };
 
   const handleCancelRequest = async (requestId: number) => {
@@ -260,13 +284,7 @@ export default function RequestScreen() {
   };
 
   const handleCreateRequest = () => {
-    if (activeTab === 'direct') {
-      router.push('/client/request/direct/choosePart');
-    } else if (activeTab === 'custom') {
-      router.push('/client/request/custom/mechaniccustomrequest' as any);
-    } else if (activeTab === 'broadcast') {
-      router.push('/client/request/broadcast/broadcastrequest' as any);
-    }
+    router.push('/client/request/main_request_form/main_form' as any);
   };
 
   const getStatusColor = (status: string) => {
@@ -290,12 +308,6 @@ export default function RequestScreen() {
       default: return 'circle';
     }
   };
-
-  const tabs: { key: TabType; label: string; icon: string }[] = [
-    { key: 'custom', label: 'Custom', icon: 'pencil-square-o' },
-    { key: 'direct', label: 'Direct', icon: 'bolt' },
-    { key: 'broadcast', label: 'Broadcast', icon: 'bullhorn' },
-  ];
 
   const renderRequestCard = (
     id: number,
@@ -488,9 +500,7 @@ export default function RequestScreen() {
     });
   };
 
-  const currentRequests =
-    activeTab === 'custom' ? customRequests :
-    activeTab === 'direct' ? directRequests : broadcastRequests;
+  const totalRequests = totalCount;
 
   return (
     <ThemedView style={styles.container}>
@@ -499,7 +509,7 @@ export default function RequestScreen() {
         <View>
           <ThemedText style={styles.headerTitle}>Requests</ThemedText>
           <ThemedText style={styles.headerSubtitle}>
-            {currentRequests.length} {activeTab} request{currentRequests.length !== 1 ? 's' : ''}
+            {totalRequests} total request{totalRequests !== 1 ? 's' : ''}
           </ThemedText>
         </View>
         <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
@@ -507,38 +517,62 @@ export default function RequestScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Tabs */}
-      <View style={styles.tabRow}>
-        {tabs.map((tab) => (
+      {/* Filter Buttons */}
+      <View style={styles.filterContainer}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScrollContent}>
           <TouchableOpacity
-            key={tab.key}
-            style={[styles.tab, activeTab === tab.key && styles.activeTab]}
-            onPress={() => setActiveTab(tab.key)}
+            style={[styles.filterBtn, filter === 'all' && styles.filterBtnActive]}
+            onPress={() => handleFilterChange('all')}
             activeOpacity={0.7}
           >
-            <FontAwesome
-              name={tab.icon as any}
-              size={14}
-              color={activeTab === tab.key ? '#fff' : '#8E8E93'}
-            />
-            <ThemedText style={[styles.tabText, activeTab === tab.key && styles.activeTabText]}>
-              {tab.label}
+            <FontAwesome name="th-list" size={14} color={filter === 'all' ? '#fff' : '#8E8E93'} />
+            <ThemedText style={[styles.filterBtnText, filter === 'all' && styles.filterBtnTextActive]}>
+              All
             </ThemedText>
           </TouchableOpacity>
-        ))}
+
+          <TouchableOpacity
+            style={[styles.filterBtn, filter === 'broadcast' && styles.filterBtnActive]}
+            onPress={() => handleFilterChange('broadcast')}
+            activeOpacity={0.7}
+          >
+            <FontAwesome name="bullhorn" size={14} color={filter === 'broadcast' ? '#fff' : '#FF8C00'} />
+            <ThemedText style={[styles.filterBtnText, filter === 'broadcast' && styles.filterBtnTextActive]}>
+              Broadcast
+            </ThemedText>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.filterBtn, filter === 'custom' && styles.filterBtnActive]}
+            onPress={() => handleFilterChange('custom')}
+            activeOpacity={0.7}
+          >
+            <FontAwesome name="pencil-square-o" size={14} color={filter === 'custom' ? '#fff' : '#34C759'} />
+            <ThemedText style={[styles.filterBtnText, filter === 'custom' && styles.filterBtnTextActive]}>
+              Custom
+            </ThemedText>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.filterBtn, filter === 'direct' && styles.filterBtnActive]}
+            onPress={() => handleFilterChange('direct')}
+            activeOpacity={0.7}
+          >
+            <FontAwesome name="bolt" size={14} color={filter === 'direct' ? '#fff' : '#007AFF'} />
+            <ThemedText style={[styles.filterBtnText, filter === 'direct' && styles.filterBtnTextActive]}>
+              Direct
+            </ThemedText>
+          </TouchableOpacity>
+        </ScrollView>
       </View>
 
-      {/* Create Button */}
       <View style={styles.createContainer}>
         <TouchableOpacity style={styles.createBtn} onPress={handleCreateRequest} activeOpacity={0.7}>
           <FontAwesome name="plus" size={14} color="#fff" />
-          <ThemedText style={styles.createBtnText}>
-            Create {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} Request
-          </ThemedText>
+          <ThemedText style={styles.createBtnText}>Add Request</ThemedText>
         </TouchableOpacity>
       </View>
 
-      {/* Content */}
       {loading && !refreshing ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#FF8C00" />
@@ -560,9 +594,90 @@ export default function RequestScreen() {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF8C00" />
           }
         >
-          {activeTab === 'custom' && renderCustomRequests()}
-          {activeTab === 'direct' && renderDirectRequests()}
-          {activeTab === 'broadcast' && renderBroadcastRequests()}
+          {/* Display all request types */}
+          {totalRequests === 0 ? (
+            <View style={styles.emptyCard}>
+              <FontAwesome name="inbox" size={36} color="#555" />
+              <ThemedText style={styles.emptyText}>No requests yet</ThemedText>
+              <ThemedText style={{ fontSize: 13, color: '#8E8E93', marginTop: 8, textAlign: 'center' }}>
+                Tap "Add Request" to create your first request
+              </ThemedText>
+            </View>
+          ) : (
+            <>
+              {/* Broadcast Requests Section */}
+              {broadcastRequests.length > 0 && (
+                <View style={{ marginBottom: 16 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, marginBottom: 12 }}>
+                    <FontAwesome name="bullhorn" size={14} color="#FF8C00" style={{ marginRight: 8 }} />
+                    <ThemedText style={{ fontSize: 15, fontWeight: '700', color: '#FF8C00' }}>
+                      Broadcast Requests ({broadcastRequests.length})
+                    </ThemedText>
+                  </View>
+                  {renderBroadcastRequests()}
+                </View>
+              )}
+
+              {/* Custom Requests Section */}
+              {customRequests.length > 0 && (
+                <View style={{ marginBottom: 16 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, marginBottom: 12 }}>
+                    <FontAwesome name="pencil-square-o" size={14} color="#34C759" style={{ marginRight: 8 }} />
+                    <ThemedText style={{ fontSize: 15, fontWeight: '700', color: '#34C759' }}>
+                      Custom Requests ({customRequests.length})
+                    </ThemedText>
+                  </View>
+                  {renderCustomRequests()}
+                </View>
+              )}
+
+              {/* Direct Requests Section */}
+              {directRequests.length > 0 && (
+                <View style={{ marginBottom: 16 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, marginBottom: 12 }}>
+                    <FontAwesome name="bolt" size={14} color="#007AFF" style={{ marginRight: 8 }} />
+                    <ThemedText style={{ fontSize: 15, fontWeight: '700', color: '#007AFF' }}>
+                      Direct Requests ({directRequests.length})
+                    </ThemedText>
+                  </View>
+                  {renderDirectRequests()}
+                </View>
+              )}
+            </>
+          )}
+
+          {/* Pagination Controls */}
+          {totalPages > 1 && (
+            <View style={styles.paginationContainer}>
+              <TouchableOpacity
+                style={[styles.paginationBtn, currentPage === 1 && styles.paginationBtnDisabled]}
+                onPress={() => handlePageChange(currentPage - 1)}
+                disabled={currentPage === 1}
+                activeOpacity={0.7}
+              >
+                <FontAwesome name="chevron-left" size={14} color={currentPage === 1 ? '#555' : '#FF8C00'} />
+              </TouchableOpacity>
+
+              <View style={styles.paginationInfo}>
+                <ThemedText style={styles.paginationText}>
+                  Page {currentPage} of {totalPages}
+                </ThemedText>
+                <ThemedText style={styles.paginationSubtext}>
+                  {totalCount} total
+                </ThemedText>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.paginationBtn, currentPage === totalPages && styles.paginationBtnDisabled]}
+                onPress={() => handlePageChange(currentPage + 1)}
+                disabled={currentPage === totalPages}
+                activeOpacity={0.7}
+              >
+                <FontAwesome name="chevron-right" size={14} color={currentPage === totalPages ? '#555' : '#FF8C00'} />
+              </TouchableOpacity>
+            </View>
+          )}
+
           <View style={{ height: 30 }} />
         </ScrollView>
       )}
@@ -603,378 +718,3 @@ export default function RequestScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#111214',
-  },
-  // Header
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 60,
-    paddingBottom: 16,
-    backgroundColor: '#1A1C1E',
-  },
-  headerTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  headerSubtitle: {
-    fontSize: 13,
-    color: '#8E8E93',
-    marginTop: 2,
-  },
-  refreshBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#FF8C0015',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  // Tabs
-  tabRow: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    gap: 10,
-  },
-  tab: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 10,
-    borderRadius: 12,
-    backgroundColor: '#1A1C1E',
-    borderWidth: 1,
-    borderColor: '#2A2C2E',
-  },
-  activeTab: {
-    backgroundColor: '#FF8C00',
-    borderColor: '#FF8C00',
-  },
-  tabText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#8E8E93',
-  },
-  activeTabText: {
-    color: '#fff',
-  },
-  // Create Button
-  createContainer: {
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-  },
-  createBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#FF8C00',
-    borderRadius: 12,
-    paddingVertical: 14,
-  },
-  createBtnText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#fff',
-  },
-  // Loading / Error
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  errorContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 40,
-    gap: 12,
-  },
-  errorText: {
-    fontSize: 14,
-    color: '#FF3B30',
-    textAlign: 'center',
-  },
-  retryBtn: {
-    paddingHorizontal: 24,
-    paddingVertical: 10,
-    backgroundColor: '#FF8C00',
-    borderRadius: 10,
-  },
-  retryBtnText: {
-    color: '#fff',
-    fontWeight: '600',
-  },
-  // Scroll
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    padding: 16,
-  },
-  // Card
-  card: {
-    backgroundColor: '#1A1C1E',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#2A2C2E',
-  },
-  cardTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  cardIconCircle: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  cardInfo: {
-    flex: 1,
-  },
-  cardTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#fff',
-  },
-  cardSubtitle: {
-    fontSize: 13,
-    color: '#8E8E93',
-    marginTop: 2,
-  },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  statusBadgeText: {
-    fontSize: 9,
-    fontWeight: 'bold',
-    color: '#fff',
-    letterSpacing: 0.5,
-  },
-  // Card Details
-  cardDetails: {
-    backgroundColor: '#222426',
-    borderRadius: 10,
-    padding: 12,
-    gap: 8,
-    marginBottom: 10,
-  },
-  detailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  detailText: {
-    fontSize: 13,
-    color: '#ccc',
-    flex: 1,
-  },
-  // Booked banner
-  bookedBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#34C75915',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    marginTop: 4,
-  },
-  bookedText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#34C759',
-  },
-  // Cancel button
-  cancelBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    borderWidth: 1,
-    borderColor: '#FF3B3040',
-    borderRadius: 10,
-    paddingVertical: 10,
-    marginTop: 4,
-  },
-  cancelBtnText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#FF3B30',
-  },
-  // Timer
-  timerBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#FF8C0015',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 8,
-  },
-  timerText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#FF8C00',
-  },
-  // Expired
-  expiredSection: {
-    marginBottom: 4,
-  },
-  expiredMsg: {
-    fontSize: 12,
-    color: '#FF3B30',
-    marginBottom: 10,
-  },
-  expiredActions: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  resendBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    backgroundColor: '#FF8C00',
-    borderRadius: 10,
-    paddingVertical: 10,
-  },
-  resendBtnText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  removeBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    borderWidth: 1,
-    borderColor: '#FF3B3040',
-    borderRadius: 10,
-    paddingVertical: 10,
-  },
-  removeBtnText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#FF3B30',
-  },
-  // Empty
-  emptyCard: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 60,
-    gap: 12,
-  },
-  emptyText: {
-    fontSize: 15,
-    color: '#666',
-  },
-  // Modal
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  modalCard: {
-    width: '100%',
-    backgroundColor: '#1A1C1E',
-    borderRadius: 20,
-    padding: 24,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#2A2C2E',
-  },
-  modalIconCircle: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#FF3B3015',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 16,
-  },
-  modalDescBox: {
-    width: '100%',
-    backgroundColor: '#222426',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 14,
-  },
-  modalDescLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#8E8E93',
-    marginBottom: 6,
-  },
-  modalDescText: {
-    fontSize: 14,
-    color: '#ccc',
-    lineHeight: 20,
-  },
-  modalWarning: {
-    fontSize: 13,
-    color: '#FF3B30',
-    textAlign: 'center',
-    marginBottom: 20,
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    gap: 12,
-    width: '100%',
-  },
-  modalCancelBtn: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 14,
-    borderRadius: 12,
-    backgroundColor: '#222426',
-  },
-  modalCancelText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  modalDeleteBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 14,
-    borderRadius: 12,
-    backgroundColor: '#FF3B30',
-  },
-  modalDeleteText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#fff',
-  },
-});

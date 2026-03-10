@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl } from 'react-native';
+import {View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl} from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
+import { styles } from '@/style/client/bookingStyles';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -37,6 +38,13 @@ interface Booking {
 
 interface BookingsResponse {
   bookings: Booking[];
+  count: number;
+  total_count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  has_next: boolean;
+  has_previous: boolean;
 }
 
 type TabType = 'active' | 'completed' | 'cancelled' | 'reworked';
@@ -48,31 +56,41 @@ export default function BookingScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const pageSize = 10;
 
   useEffect(() => {
     if (tab && tab !== activeTab) {
       setActiveTab(tab as TabType);
+      setCurrentPage(1); // Reset to first page when tab changes
     }
   }, [tab]);
 
   useEffect(() => {
     fetchBookings();
-  }, [activeTab]);
+  }, [activeTab, currentPage]);
 
   const fetchBookings = async () => {
     try {
       setLoading(true);
       setError(null);
 
-      const response = await fetch(`${API_URL}/bookings/bookings?status=${activeTab}`, {
-        method: 'GET',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
+      const response = await fetch(
+        `${API_URL}/bookings/bookings?status=${activeTab}&page=${currentPage}&page_size=${pageSize}`,
+        {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
 
       if (!response.ok) throw new Error('Failed to fetch bookings');
       const data = await response.json() as BookingsResponse;
       setBookings(data.bookings || []);
+      setTotalPages(data.total_pages || 1);
+      setTotalCount(data.total_count || 0);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
@@ -84,6 +102,17 @@ export default function BookingScreen() {
   const onRefresh = () => {
     setRefreshing(true);
     fetchBookings();
+  };
+
+  const handleTabChange = (tab: TabType) => {
+    setActiveTab(tab);
+    setCurrentPage(1); // Reset to first page when changing tabs
+  };
+
+  const handlePageChange = (newPage: number) => {
+    if (newPage >= 1 && newPage <= totalPages) {
+      setCurrentPage(newPage);
+    }
   };
 
   const formatDate = (dateString: string) =>
@@ -152,7 +181,7 @@ export default function BookingScreen() {
         <View>
           <ThemedText style={styles.headerTitle}>Bookings</ThemedText>
           <ThemedText style={styles.headerSubtitle}>
-            {bookings.length} {activeTab} booking{bookings.length !== 1 ? 's' : ''}
+            {totalCount} total {activeTab} booking{totalCount !== 1 ? 's' : ''}
           </ThemedText>
         </View>
         <TouchableOpacity style={styles.refreshButton} onPress={onRefresh}>
@@ -173,7 +202,7 @@ export default function BookingScreen() {
             <TouchableOpacity
               key={t}
               style={[styles.tab, isActive && styles.activeTab]}
-              onPress={() => setActiveTab(t)}
+              onPress={() => handleTabChange(t)}
               activeOpacity={0.7}
             >
               <FontAwesome name={getTabIcon(t)} size={14} color={isActive ? '#fff' : '#8E8E93'} style={{ marginRight: 6 }} />
@@ -221,7 +250,7 @@ export default function BookingScreen() {
                 key={booking.id}
                 style={styles.bookingCard}
                 activeOpacity={0.7}
-                onPress={() => router.push({ pathname: '/(clientTabs)/booking_details', params: { bookingId: booking.id.toString() } })}
+                onPress={() => router.push({ pathname: '/client/booking/booking_details', params: { bookingId: booking.id.toString() } })}
               >
                 {/* Card Top Row */}
                 <View style={styles.cardTopRow}>
@@ -308,7 +337,7 @@ export default function BookingScreen() {
                   <ThemedText style={styles.amount}>₱{parseFloat(String(booking.amount_fee || '0')).toFixed(2)}</ThemedText>
                   <TouchableOpacity
                     style={styles.detailsBtn}
-                    onPress={() => router.push({ pathname: '/(clientTabs)/booking_details', params: { bookingId: booking.id.toString() } })}
+                    onPress={() => router.push({ pathname: '/client/booking/booking_details', params: { bookingId: booking.id.toString() } })}
                   >
                     <ThemedText style={styles.detailsBtnText}>Details</ThemedText>
                     <FontAwesome name="chevron-right" size={11} color="#FF8C00" />
@@ -318,93 +347,42 @@ export default function BookingScreen() {
             ))}
           </View>
         )}
+
+        {/* Pagination Controls */}
+        {!loading && !error && totalPages > 1 && (
+          <View style={styles.paginationContainer}>
+            <TouchableOpacity
+              style={[styles.paginationBtn, currentPage === 1 && styles.paginationBtnDisabled]}
+              onPress={() => handlePageChange(currentPage - 1)}
+              disabled={currentPage === 1}
+              activeOpacity={0.7}
+            >
+              <FontAwesome name="chevron-left" size={14} color={currentPage === 1 ? '#555' : '#FF8C00'} />
+            </TouchableOpacity>
+
+            <View style={styles.paginationInfo}>
+              <ThemedText style={styles.paginationText}>
+                Page {currentPage} of {totalPages}
+              </ThemedText>
+              <ThemedText style={styles.paginationSubtext}>
+                Showing {bookings.length} of {totalCount} bookings
+              </ThemedText>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.paginationBtn, currentPage === totalPages && styles.paginationBtnDisabled]}
+              onPress={() => handlePageChange(currentPage + 1)}
+              disabled={currentPage === totalPages}
+              activeOpacity={0.7}
+            >
+              <FontAwesome name="chevron-right" size={14} color={currentPage === totalPages ? '#555' : '#FF8C00'} />
+            </TouchableOpacity>
+          </View>
+        )}
+
         <View style={{ height: 20 }} />
       </ScrollView>
     </ThemedView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#111214' },
-  header: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: 20, paddingTop: 60, paddingBottom: 16,
-    backgroundColor: '#1A1C1E',
-  },
-  headerTitle: { fontSize: 24, fontWeight: 'bold', color: '#fff' },
-  headerSubtitle: { fontSize: 13, color: '#8E8E93', marginTop: 2 },
-  refreshButton: {
-    width: 40, height: 40, borderRadius: 20,
-    backgroundColor: '#FF8C0015', justifyContent: 'center', alignItems: 'center',
-  },
-  tabContainer: { backgroundColor: '#1A1C1E', maxHeight: 56, paddingBottom: 12 },
-  tabScrollContent: { paddingHorizontal: 16, gap: 8 },
-  tab: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 8, paddingHorizontal: 16,
-    borderRadius: 20, backgroundColor: '#222426',
-  },
-  activeTab: { backgroundColor: '#FF8C00' },
-  tabText: { fontSize: 13, fontWeight: '600', color: '#8E8E93' },
-  activeTabText: { color: '#fff' },
-  scrollView: { flex: 1 },
-  scrollContent: { paddingTop: 8 },
-  loader: { marginTop: 40 },
-  errorContainer: { alignItems: 'center', justifyContent: 'center', padding: 40 },
-  errorText: { fontSize: 16, color: '#FF3B30', marginTop: 16, textAlign: 'center' },
-  retryButton: {
-    marginTop: 16, paddingHorizontal: 24, paddingVertical: 12,
-    backgroundColor: '#FF8C00', borderRadius: 10,
-  },
-  retryText: { color: '#fff', fontWeight: '600' },
-  emptyContainer: {
-    alignItems: 'center', justifyContent: 'center', padding: 40, marginTop: 40,
-  },
-  emptyIconCircle: {
-    width: 80, height: 80, borderRadius: 40,
-    backgroundColor: '#1A1C1E', justifyContent: 'center', alignItems: 'center',
-    marginBottom: 16, borderWidth: 1, borderColor: '#2A2C2E',
-  },
-  emptyText: { fontSize: 17, fontWeight: '600', color: '#888' },
-  emptySubtext: { fontSize: 13, color: '#555', marginTop: 6, textAlign: 'center', paddingHorizontal: 20 },
-  bookingsList: { paddingHorizontal: 16, paddingTop: 8 },
-  bookingCard: {
-    backgroundColor: '#1A1C1E', borderRadius: 14, padding: 16,
-    marginBottom: 12, borderWidth: 1, borderColor: '#2A2C2E',
-  },
-  cardTopRow: {
-    flexDirection: 'row', justifyContent: 'space-between',
-    alignItems: 'flex-start', marginBottom: 12,
-  },
-  cardTopLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
-  statusIconCircle: {
-    width: 40, height: 40, borderRadius: 12,
-    justifyContent: 'center', alignItems: 'center',
-  },
-  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 },
-  statusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
-  statusText: { fontSize: 9, fontWeight: 'bold', color: '#fff', letterSpacing: 0.5 },
-  bookingId: { fontSize: 12, color: '#666', fontWeight: '600' },
-  requestType: { fontSize: 14, fontWeight: '600', color: '#ccc' },
-  timeAgo: { fontSize: 11, color: '#666' },
-  cardInfoSection: { gap: 6, marginBottom: 12, paddingLeft: 50 },
-  infoRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  infoText: { fontSize: 12, color: '#8E8E93', flex: 1 },
-  detailBanner: {
-    backgroundColor: '#222426', padding: 10, borderRadius: 8,
-    marginBottom: 12, borderLeftWidth: 3, borderLeftColor: '#FF8C00',
-  },
-  bannerRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  bannerText: { fontSize: 12, color: '#8E8E93' },
-  cardFooter: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingTop: 12, borderTopWidth: 1, borderTopColor: '#222426',
-  },
-  amount: { fontSize: 18, fontWeight: 'bold', color: '#34C759' },
-  detailsBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 14, paddingVertical: 8,
-    borderRadius: 8, backgroundColor: '#FF8C0015',
-  },
-  detailsBtnText: { fontSize: 12, fontWeight: '600', color: '#FF8C00' },
-});

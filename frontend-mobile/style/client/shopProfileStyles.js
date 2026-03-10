@@ -1,0 +1,187 @@
+import { StyleSheet } from 'react-native';
+
+export const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#111214' },
+  errorContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },
+  errorText: { fontSize: 16, color: '#FF3B30', marginTop: 16, textAlign: 'center' },
+  retryBtn: { marginTop: 16, backgroundColor: '#FF8C00', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 10 },
+  retryBtnText: { color: '#fff', fontWeight: '600' },
+
+  // Header
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 56,
+    paddingBottom: 16,
+    paddingHorizontal: 20,
+    backgroundColor: '#1A1C1E',
+    borderBottomWidth: 1,
+    borderBottomColor: '#2A2C2E',
+  },
+  backBtn: { width: 36, height: 36, borderRadius: 12, backgroundColor: '#222426', justifyContent: 'center', alignItems: 'center' },
+  headerTitle: { fontSize: 18, fontWeight: '700', color: '#fff' },
+
+  scroll: { flex: 1 },
+  scrollContent: { paddingBottom: 24 },
+
+  // Profile Card
+  profileCard: {
+    alignItems: 'center',
+    paddingVertical: 28,
+    paddingHorizontal: 20,
+    backgroundColor: '#1A1C1E',
+    borderBottomWidth: 1,
+    borderBottomColor: '#2A2C2E',
+  },
+  banner: { width: '100%', height: 180, borderRadius: 14, marginBottom: 20 },
+  bannerPlaceholder: { backgroundColor: '#222426', justifyContent: 'center', alignItems: 'center' },
+  bannerIcon: { opacity: 0.3 },
+  shopName: { fontSize: 24, fontWeight: 'bold', color: '#fff', marginBottom: 6, textAlign: 'center' },
+  ownerName: { fontSize: 14, color: '#8E8E93', marginBottom: 8 },
+  ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+  starsRow: { flexDirection: 'row', gap: 2 },
+  ratingText: { fontSize: 13, color: '#8E8E93' },
+  noRatingText: { fontSize: 13, color: '#555', fontStyle: 'italic' },
+  
+  // Badges
+  badgesRow: { flexDirection: 'row', gap: 8, marginBottom: 18 },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  statusDot: { width: 8, height: 8, borderRadius: 4 },
+  statusLabel: { fontSize: 12, fontWeight: '700' },
+  verifiedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#34C75910',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#34C75930',
+  },
+  verifiedText: { fontSize: 12, fontWeight: '700', color: '#34C759' },
+
+  // Quick Stats
+  quickStats: {
+    flexDirection: 'row',
+    backgroundColor: '#222426',
+    borderRadius: 14,
+    padding: 14,
+    width: '100%',
+  },
+  stat: { flex: 1, alignItems: 'center' },
+  statValue: { fontSize: 18, fontWeight: 'bold', color: '#fff' },
+  statLabel: { fontSize: 11, color: '#8E8E93', marginTop: 2 },
+  statDivider: { width: 1, height: 32, backgroundColor: '#333', alignSelf: 'center' },
+
+  // Direct Request
+  directRequestBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#FF8C00',
+    width: '100%',
+    paddingVertical: 14,
+    borderRadius: 12,
+    marginTop: 18,
+    shadowColor: '#FF8C00',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  directRequestText: { fontSize: 15, fontWeight: '700', color: '#fff' },
+
+  // Sections
+  section: { paddingHorizontal: 16, marginTop: 20 },
+  sectionTitle: { fontSize: 16, fontWeight: '700', color: '#fff', marginBottom: 12 },
+
+  // Info
+  infoCard: { backgroundColor: '#1A1C1E', borderRadius: 14, borderWidth: 1, borderColor: '#2A2C2E', overflow: 'hidden' },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#222426',
+  },
+  infoIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: '#FF8C0015',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  infoText: { fontSize: 14, color: '#ccc', flex: 1 },
+
+  // Description
+  card: { backgroundColor: '#1A1C1E', padding: 16, borderRadius: 14, borderWidth: 1, borderColor: '#2A2C2E' },
+  descriptionText: { fontSize: 14, color: '#ccc', lineHeight: 22 },
+
+  // Mechanics List
+  mechanicCard: {
+    backgroundColor: '#1A1C1E',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+  },
+  mechanicRow: { flexDirection: 'row', alignItems: 'center' },
+  mechanicAvatar: { width: 48, height: 48, borderRadius: 24, marginRight: 12, borderWidth: 2, borderColor: '#FF8C00' },
+  mechanicAvatarPlaceholder: { backgroundColor: '#FF8C0030', justifyContent: 'center', alignItems: 'center' },
+  mechanicAvatarText: { fontSize: 18, fontWeight: 'bold', color: '#FF8C00' },
+  mechanicInfo: { flex: 1 },
+  mechanicName: { fontSize: 15, fontWeight: '600', color: '#fff', marginBottom: 3 },
+  mechanicRatingRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  mechanicStatusDot: { width: 6, height: 6, borderRadius: 3, marginLeft: 8 },
+  mechanicChevron: { marginLeft: 8 },
+
+  // Services
+  serviceCard: {
+    backgroundColor: '#1A1C1E',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+  },
+  serviceTop: { flexDirection: 'row', alignItems: 'center' },
+  serviceIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#FF8C0015',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  serviceInfo: { flex: 1 },
+  serviceName: { fontSize: 15, fontWeight: '600', color: '#fff' },
+  serviceCategory: { fontSize: 12, color: '#8E8E93', marginTop: 2 },
+  servicePrice: { fontSize: 16, fontWeight: 'bold', color: '#34C759' },
+  serviceDesc: { fontSize: 13, color: '#8E8E93', lineHeight: 20, marginTop: 10, paddingLeft: 52 },
+
+  // Empty
+  emptyCard: {
+    backgroundColor: '#1A1C1E',
+    borderRadius: 14,
+    padding: 28,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+  },
+  emptyText: { fontSize: 14, color: '#555', marginTop: 10 },
+});

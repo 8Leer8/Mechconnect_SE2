@@ -6,9 +6,7 @@ export default function AiRecommendLayout() {
     <Stack
       screenOptions={{
         headerShown: false,
-      }}>
-      <Stack.Screen name="aicustomrequest" options={{ headerShown: false }} />
-      <Stack.Screen name="recommendprovider" options={{ headerShown: false }} />
-    </Stack>
+      }}
+    />
   );
 }

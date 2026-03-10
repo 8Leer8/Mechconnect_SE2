@@ -1,0 +1,205 @@
+import { StyleSheet } from 'react-native';
+
+export const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#111214',
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 60,
+    paddingBottom: 20,
+    backgroundColor: '#1A1C1E',
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  emergencyIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+    backgroundColor: '#FF3B3015',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  headerSubtitle: {
+    fontSize: 12,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+  countBadge: {
+    backgroundColor: '#FF3B30',
+    borderRadius: 16,
+    minWidth: 32,
+    height: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+  },
+  countText: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  scrollView: {
+    flex: 1,
+  },
+  loader: {
+    marginTop: 40,
+  },
+  errorContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 40,
+  },
+  errorText: {
+    fontSize: 16,
+    color: '#FF3B30',
+    marginTop: 16,
+    textAlign: 'center',
+  },
+  retryButton: {
+    marginTop: 16,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    backgroundColor: '#FF3B30',
+    borderRadius: 10,
+  },
+  retryText: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 40,
+    marginTop: 60,
+  },
+  emptyText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#fff',
+    marginTop: 16,
+  },
+  emptySubtext: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  requestsList: {
+    padding: 20,
+  },
+  emergencyCard: {
+    backgroundColor: '#1A1C1E',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#FF3B3040',
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  urgentBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#FF3B30',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  urgentText: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  timeAgo: {
+    fontSize: 12,
+    color: '#FF8C00',
+    fontWeight: '600',
+  },
+  requestId: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginBottom: 16,
+  },
+  infoSection: {
+    marginBottom: 16,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    marginBottom: 12,
+  },
+  clientName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  locationText: {
+    fontSize: 14,
+    color: '#8E8E93',
+    flex: 1,
+  },
+  descriptionBox: {
+    backgroundColor: '#222426',
+    borderRadius: 10,
+    padding: 12,
+    marginTop: 8,
+  },
+  descriptionLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#FF8C00',
+    marginBottom: 6,
+  },
+  descriptionText: {
+    fontSize: 14,
+    color: '#fff',
+    lineHeight: 20,
+  },
+  actionButtons: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  actionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: 10,
+  },
+  acceptBtn: {
+    backgroundColor: '#34C759',
+  },
+  callBtn: {
+    backgroundColor: '#007AFF',
+  },
+  navigateBtn: {
+    backgroundColor: '#FF8C00',
+  },
+  actionBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#fff',
+  },
+});

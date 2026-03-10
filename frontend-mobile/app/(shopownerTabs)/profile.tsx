@@ -1,0 +1,1090 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  StyleSheet,
+  View,
+  ScrollView,
+  TouchableOpacity,
+  Image,
+  ActivityIndicator,
+  Alert,
+  RefreshControl,
+  Modal,
+  TextInput,
+} from 'react-native';
+import { router } from 'expo-router';
+import { ThemedText } from '@/components/themed-text';
+import { ThemedView } from '@/components/themed-view';
+import { FontAwesome } from '@expo/vector-icons';
+
+const API_URL = process.env.EXPO_PUBLIC_API_URL;
+
+interface Address {
+  house_building_number?: string;
+  street_name: string;
+  subdivision_village?: string;
+  barangay: string;
+  city_municipality: string;
+  province: string;
+  region: string;
+  postal_code?: string;
+}
+
+interface RoleProfile {
+  profile_photo?: string | null;
+  contact_number?: string;
+  bio?: string | null;
+}
+
+interface ProfileData {
+  id: number;
+  username: string;
+  email: string;
+  full_name: string;
+  firstname: string;
+  lastname: string;
+  middlename?: string;
+  is_verified: boolean;
+  user_type: string[];
+  available_roles: { value: string; label: string }[];
+  current_role_profile: {
+    client?: RoleProfile;
+    mechanic?: RoleProfile;
+    shop_owner?: RoleProfile;
+  };
+  address?: Address;
+}
+
+interface ProfileResponse {
+  profile: ProfileData;
+}
+
+interface ActiveRoleResponse {
+  active_role: string;
+}
+
+interface MyShopService {
+  id: number;
+  shop_service_id: number;
+  name: string;
+  description: string;
+  price: number;
+  category?: string;
+}
+
+interface AvailableService {
+  id: number;
+  name: string;
+  description: string;
+  minimum_price: number;
+  category?: string;
+}
+
+export default function ShopOwnerProfileScreen() {
+  const [profileData, setProfileData] = useState<ProfileData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [activeRole, setActiveRole] = useState<string>('shop_owner');
+
+  // Service management state
+  const [myServices, setMyServices] = useState<MyShopService[]>([]);
+  const [addModalVisible, setAddModalVisible] = useState(false);
+  const [availableServices, setAvailableServices] = useState<AvailableService[]>([]);
+  const [addingId, setAddingId] = useState<number | null>(null);
+  const [selectedService, setSelectedService] = useState<AvailableService | null>(null);
+  const [priceModalVisible, setPriceModalVisible] = useState(false);
+  const [customPrice, setCustomPrice] = useState<string>('');
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editingService, setEditingService] = useState<MyShopService | null>(null);
+  const [editPrice, setEditPrice] = useState<string>('');
+  const [updatingId, setUpdatingId] = useState<number | null>(null);
+
+  const fetchProfileData = useCallback(async () => {
+    try {
+      setError(null);
+
+      const response = await fetch(`${API_URL}/users/profile/details/`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (response.status === 403 || response.status === 401) {
+        setError('Please login to view your profile');
+        setLoading(false);
+        return;
+      }
+
+      if (!response.ok) throw new Error('Failed to fetch profile data');
+
+      const data = (await response.json()) as ProfileResponse;
+      setProfileData(data.profile);
+
+      // Fetch active role so we know which role profile to emphasize
+      const roleResponse = await fetch(`${API_URL}/users/profile/active-role/`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (roleResponse.ok) {
+        const roleData = (await roleResponse.json()) as ActiveRoleResponse;
+        setActiveRole(roleData.active_role || 'shop_owner');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  const fetchMyServices = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/services/shop/my-services/`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setMyServices(data.services || []);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchProfileData();
+    fetchMyServices();
+  }, [fetchProfileData, fetchMyServices]);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    Promise.all([fetchProfileData(), fetchMyServices()]).finally(() => setRefreshing(false));
+  };
+
+  // ── Service management handlers ──
+
+  const openAddModal = useCallback(async () => {
+    setAddModalVisible(true);
+    setAvailableServices([]);
+    try {
+      const res = await fetch(`${API_URL}/services/`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const all: AvailableService[] = data.services || [];
+        const myIds = new Set(myServices.map((s) => s.id));
+        setAvailableServices(all.filter((s) => !myIds.has(s.id)));
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, [myServices]);
+
+  const selectServiceForPricing = (service: AvailableService) => {
+    setSelectedService(service);
+    setCustomPrice(service.minimum_price?.toString() || '0');
+    setAddModalVisible(false);
+    setPriceModalVisible(true);
+  };
+
+  const addServiceWithPrice = async () => {
+    if (!selectedService) return;
+    const price = parseFloat(customPrice);
+    if (isNaN(price) || price < 0) {
+      Alert.alert('Invalid Price', 'Please enter a valid price');
+      return;
+    }
+    setAddingId(selectedService.id);
+    try {
+      const res = await fetch(`${API_URL}/services/shop/my-services/add/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ service_id: selectedService.id, price }),
+      });
+      const data = await res.json().catch(() => ({})) as any;
+      if (!res.ok) {
+        Alert.alert('Error', data.error || 'Failed to add service');
+        return;
+      }
+      await fetchMyServices();
+      setPriceModalVisible(false);
+      setSelectedService(null);
+      setCustomPrice('');
+    } catch (e) {
+      Alert.alert('Error', 'Failed to add service');
+    } finally {
+      setAddingId(null);
+    }
+  };
+
+  const cancelPriceInput = () => {
+    setPriceModalVisible(false);
+    setSelectedService(null);
+    setCustomPrice('');
+    setAddModalVisible(true);
+  };
+
+  const openEditModal = (service: MyShopService) => {
+    setEditingService(service);
+    setEditPrice(service.price.toString());
+    setEditModalVisible(true);
+  };
+
+  const updateServicePrice = async () => {
+    if (!editingService) return;
+    const price = parseFloat(editPrice);
+    if (isNaN(price) || price < 0) {
+      Alert.alert('Invalid Price', 'Please enter a valid price');
+      return;
+    }
+    setUpdatingId(editingService.shop_service_id);
+    try {
+      const res = await fetch(`${API_URL}/services/shop/my-services/update-price/`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shop_service_id: editingService.shop_service_id, price }),
+      });
+      const data = await res.json().catch(() => ({})) as any;
+      if (!res.ok) {
+        Alert.alert('Error', data.error || 'Failed to update price');
+        return;
+      }
+      await fetchMyServices();
+      setEditModalVisible(false);
+      setEditingService(null);
+      setEditPrice('');
+    } catch (e) {
+      Alert.alert('Error', 'Failed to update price');
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const cancelEditPrice = () => {
+    setEditModalVisible(false);
+    setEditingService(null);
+    setEditPrice('');
+  };
+
+  const removeService = (svc: MyShopService) => {
+    Alert.alert('Remove', `Remove "${svc.name}" from your shop services?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            const res = await fetch(`${API_URL}/services/shop/my-services/remove/`, {
+              method: 'POST',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ service_id: svc.id }),
+            });
+            if (res.ok) await fetchMyServices();
+            else {
+              const data = await res.json().catch(() => ({})) as any;
+              Alert.alert('Error', data.error || 'Failed to remove');
+            }
+          } catch (e) {
+            Alert.alert('Error', 'Failed to remove');
+          }
+        },
+      },
+    ]);
+  };
+
+  // ── End service management handlers ──
+
+  const handleSwitchRole = () => {
+    router.push('/(auth)/switchAccount/switchPage');
+  };
+
+  const handleLogout = () => {
+    Alert.alert('Logout', 'Are you sure you want to logout?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Logout', style: 'destructive', onPress: performLogout },
+    ]);
+  };
+
+  const performLogout = async () => {
+    try {
+      const response = await fetch(`${API_URL}/users/logout/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (response.ok) {
+        router.replace('/(auth)/login');
+      } else {
+        throw new Error('Logout failed');
+      }
+    } catch (err) {
+      Alert.alert('Error', err instanceof Error ? err.message : 'Logout failed');
+    }
+  };
+
+  const formatAddress = (address?: Address): string => {
+    if (!address) return 'No address provided';
+    return [
+      address.house_building_number,
+      address.street_name,
+      address.subdivision_village,
+      address.barangay,
+      address.city_municipality,
+      address.province,
+      address.region,
+    ]
+      .filter(Boolean)
+      .join(', ');
+  };
+
+  const getCurrentProfile = (): RoleProfile | null => {
+    if (!profileData) return null;
+    const profiles = profileData.current_role_profile;
+    if (activeRole === 'client' && profiles.client) return profiles.client;
+    if (activeRole === 'mechanic' && profiles.mechanic) return profiles.mechanic;
+    if (profiles.shop_owner) return profiles.shop_owner;
+    return null;
+  };
+
+  const roleLabel = (role: string) => {
+    if (role === 'shop_owner') return 'Shop Owner';
+    if (role === 'mechanic') return 'Mechanic';
+    if (role === 'client') return 'Client';
+    return role;
+  };
+
+  if (loading) {
+    return (
+      <ThemedView style={styles.container}>
+        <View style={styles.header}>
+          <ThemedText style={styles.headerTitle}>Profile</ThemedText>
+          <ThemedText style={styles.headerSubtitle}>Manage your shop owner account</ThemedText>
+        </View>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#FF9500" />
+          <ThemedText style={styles.loadingText}>Loading profile...</ThemedText>
+        </View>
+      </ThemedView>
+    );
+  }
+
+  if (error || !profileData) {
+    return (
+      <ThemedView style={styles.container}>
+        <View style={styles.header}>
+          <ThemedText style={styles.headerTitle}>Profile</ThemedText>
+          <ThemedText style={styles.headerSubtitle}>Manage your shop owner account</ThemedText>
+        </View>
+        <View style={styles.errorContainer}>
+          <FontAwesome name="exclamation-circle" size={48} color="#FF3B30" />
+          <ThemedText style={styles.errorText}>{error || 'Failed to load profile'}</ThemedText>
+          {error === 'Please login to view your profile' ? (
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={() => router.replace('/(auth)/login')}
+              activeOpacity={0.8}
+            >
+              <ThemedText style={styles.actionButtonText}>Go to Login</ThemedText>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={fetchProfileData}
+              activeOpacity={0.8}
+            >
+              <ThemedText style={styles.actionButtonText}>Retry</ThemedText>
+            </TouchableOpacity>
+          )}
+        </View>
+      </ThemedView>
+    );
+  }
+
+  const currentProfile = getCurrentProfile();
+
+  return (
+    <ThemedView style={styles.container}>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF9500" />
+        }
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Header */}
+        <View style={styles.header}>
+          <ThemedText style={styles.headerTitle}>Profile</ThemedText>
+          <ThemedText style={styles.headerSubtitle}>Shop Owner</ThemedText>
+        </View>
+
+        {/* Top Card */}
+        <View style={styles.topCard}>
+          <View style={styles.avatarWrapper}>
+            {currentProfile?.profile_photo ? (
+              <Image source={{ uri: currentProfile.profile_photo }} style={styles.avatar} />
+            ) : (
+              <View style={styles.avatarPlaceholder}>
+                <FontAwesome name="user" size={32} color="#999" />
+              </View>
+            )}
+            {profileData.is_verified && (
+              <View style={styles.verifiedBadge}>
+                <FontAwesome name="check" size={10} color="#fff" />
+              </View>
+            )}
+          </View>
+          <View style={styles.topCardText}>
+            <ThemedText style={styles.name}>{profileData.full_name || `${profileData.firstname} ${profileData.lastname}`}</ThemedText>
+            <ThemedText style={styles.username}>@{profileData.username}</ThemedText>
+            <ThemedText style={styles.email}>{profileData.email}</ThemedText>
+            <View style={styles.rolePill}>
+              <FontAwesome name="briefcase" size={12} color="#FF9500" />
+              <ThemedText style={styles.rolePillText}>{roleLabel(activeRole)}</ThemedText>
+            </View>
+          </View>
+        </View>
+
+        {/* Info Sections */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <ThemedText style={styles.sectionTitle}>Contact</ThemedText>
+          </View>
+          <View style={styles.sectionBody}>
+            <View style={styles.row}>
+              <FontAwesome name="phone" size={14} color="#888" />
+              <ThemedText style={styles.rowText}>
+                {currentProfile?.contact_number || 'No contact number set'}
+              </ThemedText>
+            </View>
+            <View style={styles.row}>
+              <FontAwesome name="envelope" size={14} color="#888" />
+              <ThemedText style={styles.rowText}>{profileData.email}</ThemedText>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <ThemedText style={styles.sectionTitle}>Address</ThemedText>
+          </View>
+          <View style={styles.sectionBody}>
+            <View style={styles.row}>
+              <FontAwesome name="map-marker" size={16} color="#888" />
+              <ThemedText style={styles.rowText}>{formatAddress(profileData.address)}</ThemedText>
+            </View>
+          </View>
+        </View>
+
+        {currentProfile?.bio ? (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <ThemedText style={styles.sectionTitle}>About</ThemedText>
+            </View>
+            <View style={styles.sectionBody}>
+              <ThemedText style={styles.bioText}>{currentProfile.bio}</ThemedText>
+            </View>
+          </View>
+        ) : null}
+
+        {/* Shop Services Section */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <ThemedText style={styles.sectionTitle}>Shop Services</ThemedText>
+            <TouchableOpacity style={styles.addBtn} onPress={openAddModal}>
+              <FontAwesome name="plus" size={12} color="#FF9500" />
+              <ThemedText style={styles.addBtnText}>Add</ThemedText>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.sectionBody}>
+            {myServices.length === 0 ? (
+              <View style={styles.emptyServices}>
+                <FontAwesome name="wrench" size={28} color="#555" />
+                <ThemedText style={styles.emptyServicesText}>No services yet</ThemedText>
+                <ThemedText style={styles.emptyServicesSubtext}>Tap Add to offer services</ThemedText>
+              </View>
+            ) : (
+              myServices.map((svc) => (
+                <View key={svc.shop_service_id} style={styles.serviceCard}>
+                  <View style={styles.serviceInfo}>
+                    <ThemedText style={styles.serviceName}>{svc.name}</ThemedText>
+                    <ThemedText style={styles.servicePrice}>₱{svc.price}</ThemedText>
+                  </View>
+                  <View style={styles.serviceActions}>
+                    <TouchableOpacity onPress={() => openEditModal(svc)} style={styles.serviceActionBtn}>
+                      <FontAwesome name="edit" size={18} color="#FF9500" />
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => removeService(svc)} style={styles.serviceActionBtn}>
+                      <FontAwesome name="times-circle" size={18} color="#FF3B30" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))
+            )}
+          </View>
+        </View>
+
+        {/* Actions */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <ThemedText style={styles.sectionTitle}>Account</ThemedText>
+          </View>
+          <View style={styles.sectionBody}>
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={handleSwitchRole}
+              activeOpacity={0.8}
+            >
+              <View style={styles.menuLeft}>
+                <View style={[styles.menuIcon, { backgroundColor: '#FF950018' }]}>
+                  <FontAwesome name="exchange" size={16} color="#FF9500" />
+                </View>
+                <View>
+                  <ThemedText style={styles.menuTitle}>Switch Role</ThemedText>
+                  <ThemedText style={styles.menuSubtitle}>
+                    Change between client, mechanic, and shop owner
+                  </ThemedText>
+                </View>
+              </View>
+              <FontAwesome name="chevron-right" size={14} color="#555" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.menuItem, styles.logoutItem]}
+              onPress={handleLogout}
+              activeOpacity={0.8}
+            >
+              <View style={styles.menuLeft}>
+                <View style={[styles.menuIcon, { backgroundColor: '#FF3B3018' }]}>
+                  <FontAwesome name="sign-out" size={16} color="#FF3B30" />
+                </View>
+                <View>
+                  <ThemedText style={[styles.menuTitle, { color: '#FF3B30' }]}>
+                    Logout
+                  </ThemedText>
+                  <ThemedText style={styles.menuSubtitle}>
+                    Sign out from this account
+                  </ThemedText>
+                </View>
+              </View>
+              <FontAwesome name="chevron-right" size={14} color="#555" />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <View style={{ height: 32 }} />
+      </ScrollView>
+
+      {/* Add service modal - Step 1: Select service */}
+      <Modal visible={addModalVisible} animationType="slide" transparent onRequestClose={() => setAddModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <View style={styles.modalHeader}>
+              <ThemedText style={styles.modalTitle}>Select a service</ThemedText>
+              <TouchableOpacity onPress={() => setAddModalVisible(false)}>
+                <FontAwesome name="times" size={22} color="#fff" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.modalScroll}>
+              {availableServices.length === 0 ? (
+                <ThemedText style={styles.modalEmpty}>No more services to add</ThemedText>
+              ) : (
+                availableServices.map((s) => (
+                  <TouchableOpacity key={s.id} style={styles.availableRow} onPress={() => selectServiceForPricing(s)}>
+                    <View style={{ flex: 1 }}>
+                      <ThemedText style={styles.availableName}>{s.name}</ThemedText>
+                      <ThemedText style={styles.availableDesc}>Suggested: ₱{s.minimum_price}</ThemedText>
+                    </View>
+                    <FontAwesome name="chevron-right" size={16} color="#FF9500" />
+                  </TouchableOpacity>
+                ))
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Price input modal - Step 2: Set price */}
+      <Modal visible={priceModalVisible} animationType="slide" transparent onRequestClose={cancelPriceInput}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <View style={styles.modalHeader}>
+              <TouchableOpacity onPress={cancelPriceInput}>
+                <FontAwesome name="chevron-left" size={18} color="#FF9500" />
+              </TouchableOpacity>
+              <ThemedText style={styles.modalTitle}>Set your price</ThemedText>
+              <View style={{ width: 22 }} />
+            </View>
+            {selectedService && (
+              <View style={styles.priceContent}>
+                <View style={styles.serviceDetailCard}>
+                  <ThemedText style={styles.serviceDetailName}>{selectedService.name}</ThemedText>
+                  <ThemedText style={styles.serviceDetailInfo}>Suggested minimum: ₱{selectedService.minimum_price}</ThemedText>
+                </View>
+                <View style={styles.priceInputSection}>
+                  <ThemedText style={styles.priceLabel}>Your price</ThemedText>
+                  <View style={styles.priceInputWrapper}>
+                    <ThemedText style={styles.currencySymbol}>₱</ThemedText>
+                    <TextInput
+                      style={styles.priceInput}
+                      value={customPrice}
+                      onChangeText={setCustomPrice}
+                      keyboardType="decimal-pad"
+                      placeholder="0.00"
+                      placeholderTextColor="#555"
+                      autoFocus
+                    />
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={[styles.confirmBtn, addingId === selectedService.id && styles.confirmBtnDisabled]}
+                  onPress={addServiceWithPrice}
+                  disabled={addingId === selectedService.id}
+                >
+                  {addingId === selectedService.id ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <ThemedText style={styles.confirmBtnText}>Add Service</ThemedText>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Edit price modal */}
+      <Modal visible={editModalVisible} animationType="slide" transparent onRequestClose={cancelEditPrice}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <View style={styles.modalHeader}>
+              <TouchableOpacity onPress={cancelEditPrice}>
+                <FontAwesome name="times" size={18} color="#FF9500" />
+              </TouchableOpacity>
+              <ThemedText style={styles.modalTitle}>Edit price</ThemedText>
+              <View style={{ width: 22 }} />
+            </View>
+            {editingService && (
+              <View style={styles.priceContent}>
+                <View style={styles.serviceDetailCard}>
+                  <ThemedText style={styles.serviceDetailName}>{editingService.name}</ThemedText>
+                  <ThemedText style={styles.serviceDetailInfo}>Current price: ₱{editingService.price}</ThemedText>
+                </View>
+                <View style={styles.priceInputSection}>
+                  <ThemedText style={styles.priceLabel}>New price</ThemedText>
+                  <View style={styles.priceInputWrapper}>
+                    <ThemedText style={styles.currencySymbol}>₱</ThemedText>
+                    <TextInput
+                      style={styles.priceInput}
+                      value={editPrice}
+                      onChangeText={setEditPrice}
+                      keyboardType="decimal-pad"
+                      placeholder="0.00"
+                      placeholderTextColor="#555"
+                      autoFocus
+                    />
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={[styles.confirmBtn, updatingId === editingService.shop_service_id && styles.confirmBtnDisabled]}
+                  onPress={updateServicePrice}
+                  disabled={updatingId === editingService.shop_service_id}
+                >
+                  {updatingId === editingService.shop_service_id ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <ThemedText style={styles.confirmBtnText}>Update Price</ThemedText>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
+    </ThemedView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#0D0D0D',
+  },
+  scrollContent: {
+    paddingHorizontal: 20,
+    paddingTop: 56,
+    paddingBottom: 32,
+  },
+  header: {
+    marginBottom: 20,
+  },
+  headerTitle: {
+    fontSize: 26,
+    fontWeight: '800',
+    color: '#fff',
+    letterSpacing: 0.3,
+  },
+  headerSubtitle: {
+    marginTop: 4,
+    fontSize: 13,
+    color: '#888',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 12,
+    paddingTop: 80,
+  },
+  loadingText: {
+    fontSize: 15,
+    color: '#888',
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+    paddingTop: 80,
+    gap: 16,
+  },
+  errorText: {
+    fontSize: 16,
+    color: '#ccc',
+    textAlign: 'center',
+  },
+  actionButton: {
+    marginTop: 8,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: '#FF9500',
+  },
+  actionButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  topCard: {
+    flexDirection: 'row',
+    padding: 18,
+    borderRadius: 18,
+    backgroundColor: '#151515',
+    borderWidth: 1,
+    borderColor: '#252525',
+    marginBottom: 20,
+  },
+  avatarWrapper: {
+    marginRight: 16,
+  },
+  avatar: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+  },
+  avatarPlaceholder: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#222',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  verifiedBadge: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#34C759',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#151515',
+  },
+  topCardText: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  name: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  username: {
+    fontSize: 13,
+    color: '#888',
+    marginTop: 2,
+  },
+  email: {
+    fontSize: 13,
+    color: '#ccc',
+    marginTop: 4,
+  },
+  rolePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 6,
+    marginTop: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: '#FF950018',
+  },
+  rolePillText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#FF9500',
+  },
+  section: {
+    marginBottom: 18,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  sectionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  sectionBody: {
+    borderRadius: 14,
+    backgroundColor: '#151515',
+    borderWidth: 1,
+    borderColor: '#252525',
+    padding: 14,
+    gap: 8,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  rowText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#ccc',
+  },
+  bioText: {
+    fontSize: 13,
+    color: '#ccc',
+    lineHeight: 20,
+  },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+  },
+  logoutItem: {
+    marginTop: 4,
+  },
+  menuLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  menuIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  menuTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  menuSubtitle: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: 2,
+  },
+  // Service management styles
+  addBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#FF950018',
+  },
+  addBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#FF9500',
+  },
+  emptyServices: {
+    alignItems: 'center',
+    paddingVertical: 20,
+    gap: 8,
+  },
+  emptyServicesText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#888',
+  },
+  emptyServicesSubtext: {
+    fontSize: 12,
+    color: '#666',
+  },
+  serviceCard: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#252525',
+  },
+  serviceInfo: {
+    flex: 1,
+  },
+  serviceName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  servicePrice: {
+    fontSize: 13,
+    color: '#FF9500',
+    marginTop: 2,
+  },
+  serviceActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  serviceActionBtn: {
+    padding: 4,
+  },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'flex-end',
+  },
+  modalBox: {
+    backgroundColor: '#1A1A1A',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+    padding: 20,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  modalScroll: {
+    maxHeight: 400,
+  },
+  modalEmpty: {
+    textAlign: 'center',
+    color: '#888',
+    paddingVertical: 24,
+    fontSize: 14,
+  },
+  availableRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#252525',
+  },
+  availableName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  availableDesc: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: 2,
+  },
+  priceContent: {
+    paddingVertical: 8,
+    gap: 16,
+  },
+  serviceDetailCard: {
+    backgroundColor: '#252525',
+    borderRadius: 12,
+    padding: 14,
+  },
+  serviceDetailName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  serviceDetailInfo: {
+    fontSize: 13,
+    color: '#888',
+    marginTop: 4,
+  },
+  priceInputSection: {
+    gap: 8,
+  },
+  priceLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#ccc',
+  },
+  priceInputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#252525',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    height: 48,
+  },
+  currencySymbol: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FF9500',
+    marginRight: 6,
+  },
+  priceInput: {
+    flex: 1,
+    fontSize: 18,
+    color: '#fff',
+    fontWeight: '600',
+  },
+  confirmBtn: {
+    backgroundColor: '#FF9500',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  confirmBtnDisabled: {
+    opacity: 0.6,
+  },
+  confirmBtnText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
+  },
+});
+

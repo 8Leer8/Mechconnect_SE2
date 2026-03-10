@@ -6,9 +6,7 @@ export default function PaymentLayout() {
     <Stack
       screenOptions={{
         headerShown: false,
-      }}>
-      <Stack.Screen name="checkout" options={{ headerShown: false }} />
-      <Stack.Screen name="checkoutdetail" options={{ headerShown: false }} />
-    </Stack>
+      }}
+    />
   );
 }

@@ -34,10 +34,10 @@ export const styles = StyleSheet.create({
   },
   progressSteps: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'space-around',
     position: 'relative',
     marginBottom: 20,
-    paddingHorizontal: 20,
+    paddingHorizontal: 10,
   },
   progressLine: {
     position: 'absolute',
@@ -59,6 +59,7 @@ export const styles = StyleSheet.create({
   stepContainer: {
     alignItems: 'center',
     zIndex: 3,
+    flex: 1,
   },
   step: {
     width: 30,

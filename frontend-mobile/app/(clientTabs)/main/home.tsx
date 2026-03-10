@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { StyleSheet, View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Dimensions } from 'react-native';
+import {View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Dimensions} from 'react-native';
 import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
+import { styles } from '@/style/client/homeStyles';
+import { LineChart, BarChart } from 'react-native-chart-kit';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
-const { width } = Dimensions.get('window');
+const screenWidth = Dimensions.get('window').width;
 
 interface Booking {
   id: number;
@@ -43,16 +45,16 @@ interface RequestDetails {
     name: string;
     minimum_price: number;
   };
-  services?: Array<{
+  services?: {
     id: number;
     name: string;
     minimum_price: number;
-  }>;
-  add_ons?: Array<{
+  }[];
+  add_ons?: {
     id: number;
     name: string;
     price: number;
-  }>;
+  }[];
   status?: string;
 }
 
@@ -64,9 +66,26 @@ interface Request {
   service_location: ServiceLocation | null;
 }
 
+interface MonthlyData {
+  month: string;
+  count?: number;
+  amount?: number;
+}
+
+interface Statistics {
+  total_bookings: number;
+  average_cost: number;
+  month_spending: number;
+  month_bookings: number;
+  most_used_service: string | null;
+  service_frequency: MonthlyData[];
+  monthly_spending: MonthlyData[];
+}
+
 interface HomeData {
   current_bookings: Booking[];
   pending_requests: Request[];
+  statistics?: Statistics;
 }
 
 export default function HomeScreen() {
@@ -95,9 +114,7 @@ export default function HomeScreen() {
 
       if (homeRes.ok) {
         const result = await homeRes.json() as HomeData;
-        if (!('error' in result)) {
-          setData(result);
-        }
+        setData(result);
       }
 
       if (profileRes.ok) {
@@ -218,6 +235,167 @@ export default function HomeScreen() {
           </View>
         ) : (
           <>
+            {/* Statistics Dashboard */}
+            {data?.statistics && (
+              <>
+                {/* Overview Statistics Cards */}
+                <View style={styles.section}>
+                  <View style={styles.sectionHeader}>
+                    <View style={styles.sectionTitleRow}>
+                      <View style={[styles.sectionDot, { backgroundColor: '#5856D6' }]} />
+                      <ThemedText style={styles.sectionTitle}>Overview</ThemedText>
+                    </View>
+                  </View>
+                  
+                  <View style={styles.statsGrid}>
+                    <View style={[styles.statCard, { backgroundColor: '#FF8C0015' }]}>
+                      <View style={styles.statIconContainer}>
+                        <FontAwesome name="check-circle" size={24} color="#FF8C00" />
+                      </View>
+                      <ThemedText style={styles.statValue}>{data.statistics.total_bookings}</ThemedText>
+                      <ThemedText style={styles.statLabel}>Total Bookings</ThemedText>
+                    </View>
+                    
+                    <View style={[styles.statCard, { backgroundColor: '#34C75915' }]}>
+                      <View style={styles.statIconContainer}>
+                        <FontAwesome name="line-chart" size={24} color="#34C759" />
+                      </View>
+                      <ThemedText style={styles.statValue}>₱{data.statistics.average_cost.toFixed(0)}</ThemedText>
+                      <ThemedText style={styles.statLabel}>Avg Cost</ThemedText>
+                    </View>
+                  </View>
+
+                  <View style={styles.statsGrid}>
+                    <View style={[styles.statCard, { backgroundColor: '#007AFF15' }]}>
+                      <View style={styles.statIconContainer}>
+                        <FontAwesome name="calendar" size={24} color="#007AFF" />
+                      </View>
+                      <ThemedText style={styles.statValue}>{data.statistics.month_bookings}</ThemedText>
+                      <ThemedText style={styles.statLabel}>This Month</ThemedText>
+                    </View>
+                    
+                    <View style={[styles.statCard, { backgroundColor: '#5856D615' }]}>
+                      <View style={styles.statIconContainer}>
+                        <FontAwesome name="money" size={24} color="#5856D6" />
+                      </View>
+                      <ThemedText style={styles.statValue}>₱{data.statistics.month_spending.toFixed(0)}</ThemedText>
+                      <ThemedText style={styles.statLabel}>Month Spending</ThemedText>
+                    </View>
+                  </View>
+
+                  {/* Most Used Service */}
+                  {data.statistics.most_used_service && (
+                    <View style={styles.mostUsedCard}>
+                      <View style={styles.mostUsedLeft}>
+                        <FontAwesome name="star" size={20} color="#FFD700" />
+                      </View>
+                      <View style={styles.mostUsedRight}>
+                        <ThemedText style={styles.mostUsedLabel}>Most Used Service</ThemedText>
+                        <ThemedText style={styles.mostUsedValue}>
+                          {data.statistics.most_used_service.charAt(0).toUpperCase() + data.statistics.most_used_service.slice(1)}
+                        </ThemedText>
+                      </View>
+                    </View>
+                  )}
+                </View>
+
+                {/* Service Frequency Chart */}
+                {data.statistics.service_frequency && data.statistics.service_frequency.length > 0 && (
+                  <View style={styles.section}>
+                    <View style={styles.sectionHeader}>
+                      <View style={styles.sectionTitleRow}>
+                        <View style={[styles.sectionDot, { backgroundColor: '#FF8C00' }]} />
+                        <ThemedText style={styles.sectionTitle}>Service Frequency</ThemedText>
+                      </View>
+                    </View>
+                    
+                    <View style={styles.chartContainer}>
+                      <BarChart
+                        data={{
+                          labels: data.statistics.service_frequency.map(item => item.month),
+                          datasets: [{
+                            data: data.statistics.service_frequency.map(item => item.count || 0)
+                          }]
+                        }}
+                        width={screenWidth - 48}
+                        height={200}
+                        yAxisLabel=""
+                        yAxisSuffix=""
+                        chartConfig={{
+                          backgroundColor: '#1E1E1E',
+                          backgroundGradientFrom: '#2C2C2E',
+                          backgroundGradientTo: '#1C1C1E',
+                          decimalPlaces: 0,
+                          color: (opacity = 1) => `rgba(255, 140, 0, ${opacity})`,
+                          labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
+                          style: { borderRadius: 16 },
+                          propsForBackgroundLines: {
+                            strokeDasharray: '',
+                            stroke: '#3A3A3C',
+                            strokeWidth: 1
+                          }
+                        }}
+                        style={styles.chart}
+                        fromZero={true}
+                      />
+                      <ThemedText style={styles.chartCaption}>Bookings completed per month</ThemedText>
+                    </View>
+                  </View>
+                )}
+
+                {/* Monthly Spending Trend */}
+                {data.statistics.monthly_spending && data.statistics.monthly_spending.length > 0 && (
+                  <View style={styles.section}>
+                    <View style={styles.sectionHeader}>
+                      <View style={styles.sectionTitleRow}>
+                        <View style={[styles.sectionDot, { backgroundColor: '#34C759' }]} />
+                        <ThemedText style={styles.sectionTitle}>Spending Trend</ThemedText>
+                      </View>
+                    </View>
+                    
+                    <View style={styles.chartContainer}>
+                      <LineChart
+                        data={{
+                          labels: data.statistics.monthly_spending.map(item => item.month),
+                          datasets: [{
+                            data: data.statistics.monthly_spending.map(item => item.amount || 0),
+                            color: (opacity = 1) => `rgba(52, 199, 89, ${opacity})`,
+                            strokeWidth: 3
+                          }]
+                        }}
+                        width={screenWidth - 48}
+                        height={200}
+                        yAxisLabel="₱"
+                        yAxisSuffix=""
+                        chartConfig={{
+                          backgroundColor: '#1E1E1E',
+                          backgroundGradientFrom: '#2C2C2E',
+                          backgroundGradientTo: '#1C1C1E',
+                          decimalPlaces: 0,
+                          color: (opacity = 1) => `rgba(52, 199, 89, ${opacity})`,
+                          labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
+                          style: { borderRadius: 16 },
+                          propsForDots: {
+                            r: '5',
+                            strokeWidth: '2',
+                            stroke: '#34C759'
+                          },
+                          propsForBackgroundLines: {
+                            strokeDasharray: '',
+                            stroke: '#3A3A3C',
+                            strokeWidth: 1
+                          }
+                        }}
+                        bezier
+                        style={styles.chart}
+                      />
+                      <ThemedText style={styles.chartCaption}>Total spending over the last 6 months</ThemedText>
+                    </View>
+                  </View>
+                )}
+              </>
+            )}
+
             {/* Current Bookings Section */}
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
@@ -235,7 +413,7 @@ export default function HomeScreen() {
                   <TouchableOpacity
                     key={booking.id}
                     style={styles.jobCard}
-                    onPress={() => router.push({ pathname: '/(clientTabs)/booking_details', params: { bookingId: booking.id.toString() } })}
+                    onPress={() => router.push({ pathname: '/client/booking/booking_details', params: { bookingId: booking.id.toString() } })}
                     activeOpacity={0.7}
                   >
                     <View style={styles.jobCardLeft}>
@@ -411,147 +589,3 @@ export default function HomeScreen() {
     </ThemedView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#111214' },
-  headerContainer: {
-    backgroundColor: '#1A1C1E',
-    paddingTop: 60,
-    paddingBottom: 20,
-    paddingHorizontal: 20,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  headerTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  headerLeft: { flex: 1 },
-  greeting: { fontSize: 14, color: '#8E8E93', fontWeight: '500' },
-  clientName: { fontSize: 22, fontWeight: 'bold', color: '#fff', marginTop: 2 },
-  notificationButton: { position: 'relative' },
-  notifCircle: {
-    width: 44, height: 44, borderRadius: 22,
-    backgroundColor: '#2A2C2E', justifyContent: 'center', alignItems: 'center',
-  },
-  badge: {
-    position: 'absolute', top: -2, right: -2,
-    backgroundColor: '#FF3B30', borderRadius: 10,
-    minWidth: 20, height: 20,
-    justifyContent: 'center', alignItems: 'center',
-    borderWidth: 2, borderColor: '#1A1C1E',
-  },
-  badgeText: { fontSize: 10, fontWeight: 'bold', color: '#fff' },
-  quickStatsRow: {
-    flexDirection: 'row', backgroundColor: '#222426',
-    borderRadius: 16, padding: 16, alignItems: 'center',
-  },
-  quickStat: { flex: 1, alignItems: 'center' },
-  quickStatIcon: {
-    width: 36, height: 36, borderRadius: 12,
-    justifyContent: 'center', alignItems: 'center', marginBottom: 6,
-  },
-  quickStatValue: { fontSize: 20, fontWeight: 'bold', color: '#fff' },
-  quickStatLabel: { fontSize: 11, color: '#8E8E93', marginTop: 2 },
-  quickStatDivider: { width: 1, height: 40, backgroundColor: '#333' },
-  scrollView: { flex: 1 },
-  scrollContent: { paddingTop: 16 },
-  loader: { marginTop: 40 },
-  errorContainer: { alignItems: 'center', justifyContent: 'center', padding: 40 },
-  errorText: { fontSize: 16, color: '#FF3B30', marginTop: 16, textAlign: 'center' },
-  retryButton: {
-    marginTop: 16, paddingHorizontal: 24, paddingVertical: 12,
-    backgroundColor: '#FF8C00', borderRadius: 10,
-  },
-  retryText: { color: '#fff', fontWeight: '600' },
-  section: { paddingHorizontal: 20, marginBottom: 24 },
-  sectionHeader: {
-    flexDirection: 'row', justifyContent: 'space-between',
-    alignItems: 'center', marginBottom: 14,
-  },
-  sectionTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  sectionDot: { width: 8, height: 8, borderRadius: 4 },
-  sectionTitle: { fontSize: 17, fontWeight: '700', color: '#fff' },
-  seeAll: { fontSize: 13, color: '#FF8C00', fontWeight: '600' },
-  jobCard: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#1A1C1E', borderRadius: 14, padding: 14,
-    marginBottom: 10, borderWidth: 1, borderColor: '#2A2C2E',
-  },
-  jobCardLeft: { marginRight: 12 },
-  jobIconCircle: {
-    width: 44, height: 44, borderRadius: 14,
-    justifyContent: 'center', alignItems: 'center',
-  },
-  jobCardCenter: { flex: 1 },
-  jobCardTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
-  jobTitle: { fontSize: 15, fontWeight: '600', color: '#fff', flex: 1 },
-  statusDot: { width: 8, height: 8, borderRadius: 4 },
-  jobInfoRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 },
-  jobInfoText: { fontSize: 12, color: '#8E8E93', flex: 1 },
-  jobCardRight: { alignItems: 'flex-end', marginLeft: 8, gap: 8 },
-  jobAmount: { fontSize: 15, fontWeight: 'bold', color: '#34C759' },
-  requestCard: {
-    backgroundColor: '#1A1C1E', borderRadius: 14, padding: 16,
-    marginBottom: 10, borderWidth: 1, borderColor: '#2A2C2E',
-  },
-  requestCardTop: {
-    flexDirection: 'row', justifyContent: 'space-between',
-    alignItems: 'center', marginBottom: 8,
-  },
-  requestTypeBadge: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8,
-    backgroundColor: '#222426',
-  },
-  requestTypeText: { fontSize: 12, fontWeight: '700' },
-  requestTime: { fontSize: 12, color: '#8E8E93' },
-  requestDescription: { fontSize: 13, color: '#8E8E93', lineHeight: 18, marginBottom: 10 },
-  requestInfoRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginTop: 4,
-  },
-  requestInfoItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    flex: 1,
-    minWidth: '45%',
-  },
-  requestInfoLabel: {
-    fontSize: 11,
-    color: '#8E8E93',
-    flex: 1,
-  },
-  requestPriceText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#34C759',
-  },
-  quickActionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  quickActionCard: {
-    width: (width - 50) / 2,
-    backgroundColor: '#1A1C1E', borderRadius: 14, padding: 18,
-    alignItems: 'center', borderWidth: 1, borderColor: '#2A2C2E',
-  },
-  quickActionIcon: {
-    width: 48, height: 48, borderRadius: 16,
-    justifyContent: 'center', alignItems: 'center', marginBottom: 10,
-  },
-  quickActionLabel: { fontSize: 13, fontWeight: '600', color: '#ccc' },
-  emptyCard: {
-    backgroundColor: '#1A1C1E', borderRadius: 14, padding: 32,
-    alignItems: 'center', borderWidth: 1, borderColor: '#2A2C2E',
-  },
-  emptyTitle: { fontSize: 15, fontWeight: '600', color: '#888', marginTop: 12 },
-  emptySubtext: { fontSize: 12, color: '#555', marginTop: 4 },
-});
