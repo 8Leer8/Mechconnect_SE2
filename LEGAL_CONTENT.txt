@@ -1,0 +1,677 @@
+================================================================================
+                         MECHCONNECT APP LEGAL CONTENT
+================================================================================
+
+Last Updated: March 4, 2026
+
+================================================================================
+                              ABOUT MECHCONNECT
+================================================================================
+
+What is MechConnect?
+
+MechConnect is your trusted on-demand automotive repair and maintenance platform 
+that connects vehicle owners with skilled, verified mechanics and auto repair 
+shops in your area. Whether you need an emergency roadside repair, routine 
+maintenance, or specialized automotive services, MechConnect brings professional 
+help directly to you.
+
+Our Mission
+
+We aim to revolutionize the automotive service industry by making vehicle 
+repairs more accessible, transparent, and convenient. Our platform empowers 
+both vehicle owners and automotive professionals by creating a reliable 
+marketplace built on trust and quality service.
+
+How It Works
+
+FOR CLIENTS:
+- Browse available mechanics and shops in your area
+- Request services through Direct, Custom, Emergency, or Broadcast modes
+- Get real-time pricing and service estimates
+- Track your mechanic's arrival and service progress
+- Pay securely through the app
+- Rate and review service providers
+
+FOR MECHANICS:
+- Register and verify your credentials
+- Set your own service prices and availability
+- Receive service requests from nearby clients
+- Navigate to client locations with built-in maps
+- Build your reputation through customer reviews
+- Grow your business and income
+
+FOR SHOP OWNERS:
+- List your shop services and specialties
+- Manage your team of mechanics
+- Accept service bookings from customers
+- Showcase your business to a wider audience
+- Maintain verified shop credentials
+
+Key Features
+
+✓ Multiple Service Request Types (Direct, Custom, Emergency, Broadcast)
+✓ Real-time Location Tracking
+✓ Secure In-app Payments
+✓ Verified Mechanics & Shops
+✓ Rating & Review System
+✓ Document Verification
+✓ 24/7 Emergency Service Availability
+✓ Transparent Pricing
+✓ Service History & Receipts
+✓ Dispute Resolution Support
+
+Our Commitment
+
+MechConnect is committed to maintaining high standards of service quality and 
+user safety. All mechanics and shops undergo verification processes, and we 
+provide support for dispute resolution to ensure fair treatment for all users.
+
+Contact Us
+
+Email: support@mechconnect.com
+Website: www.mechconnect.com
+Customer Service: Available 24/7 through the app
+
+
+================================================================================
+                            PRIVACY POLICY
+================================================================================
+
+Effective Date: March 4, 2026
+
+MECHCONNECT PRIVACY POLICY
+
+Your privacy is important to us. This Privacy Policy explains how MechConnect 
+("we," "us," or "our") collects, uses, discloses, and safeguards your 
+information when you use our mobile application and services.
+
+Please read this Privacy Policy carefully. By using MechConnect, you agree to 
+the collection and use of information in accordance with this policy.
+
+---
+
+1. INFORMATION WE COLLECT
+
+1.1 Personal Information
+When you register and use MechConnect, we may collect:
+- Full name, email address, username, and password
+- Date of birth and gender
+- Phone number and contact information
+- Home address and service location addresses
+- Profile photographs
+- Government-issued identification documents (for mechanics and shop owners)
+- Professional licenses and certifications (for service providers)
+- Payment information and transaction history
+
+1.2 Location Information
+- Real-time GPS location when using the app
+- Service location addresses
+- Location data for matching clients with nearby mechanics
+- Route and travel information during active bookings
+
+1.3 Usage Information
+- App usage patterns and interactions
+- Service requests and booking history
+- Search queries and preferences
+- Device information (device type, operating system, unique device identifiers)
+- IP address and browser information
+
+1.4 User-Generated Content
+- Service reviews and ratings
+- Photos of vehicle issues, before/after service pictures
+- Messages and communications through the app
+- Custom service request descriptions
+
+1.5 Payment Information
+- Payment method details (securely processed through third-party providers)
+- Transaction history and receipts
+- Billing addresses
+
+---
+
+2. HOW WE USE YOUR INFORMATION
+
+We use the collected information for:
+
+2.1 Service Delivery
+- Connecting clients with mechanics and shops
+- Processing service requests and bookings
+- Facilitating communication between users
+- Navigation and location-based matching
+- Processing payments and generating receipts
+
+2.2 Account Management
+- Creating and managing user accounts
+- Verifying user identities and credentials
+- Managing multi-role accounts (client, mechanic, shop owner)
+- Processing registration and verification requests
+
+2.3 Service Improvement
+- Analyzing usage patterns to improve user experience
+- Developing new features and services
+- Conducting research and analytics
+- Testing and troubleshooting technical issues
+
+2.4 Safety and Security
+- Preventing fraud and unauthorized access
+- Monitoring for suspicious activities
+- Enforcing our Terms and Conditions
+- Resolving disputes and customer support issues
+- Maintaining platform integrity
+
+2.5 Communication
+- Sending booking confirmations and updates
+- Providing customer support
+- Sending notifications about service status
+- Sending promotional offers (with your consent)
+- Responding to inquiries and requests
+
+2.6 Legal Compliance
+- Complying with legal obligations
+- Responding to legal requests and preventing harm
+- Protecting our rights and property
+
+---
+
+3. INFORMATION SHARING AND DISCLOSURE
+
+3.1 With Other Users
+- Service providers can see client names, locations, and service details
+- Clients can see mechanic/shop profiles, ratings, and contact information
+- Public reviews and ratings are visible to all users
+
+3.2 With Service Providers
+- Payment processors (for secure transactions)
+- Cloud storage providers (for data hosting)
+- Map and location services
+- Communication service providers
+
+3.3 For Legal Reasons
+- When required by law or legal process
+- To protect rights, property, or safety
+- In connection with fraud prevention
+- During business transactions (mergers, acquisitions)
+
+3.4 With Your Consent
+- We may share information with third parties when you provide explicit consent
+
+We do NOT sell your personal information to third parties for marketing purposes.
+
+---
+
+4. DATA SECURITY
+
+We implement appropriate technical and organizational security measures:
+- Encryption of sensitive data during transmission
+- Secure storage of personal information
+- Regular security assessments and updates
+- Access controls and authentication
+- Employee training on data protection
+
+However, no method of transmission over the internet is 100% secure. While we 
+strive to protect your information, we cannot guarantee absolute security.
+
+---
+
+5. DATA RETENTION
+
+We retain your information for as long as:
+- Your account remains active
+- Necessary to provide services
+- Required by law or for legal purposes
+- Needed to resolve disputes
+
+You may request deletion of your account and personal data at any time, 
+subject to legal retention requirements.
+
+---
+
+6. YOUR PRIVACY RIGHTS
+
+Depending on your location, you may have the right to:
+
+6.1 Access and Portability
+- Request a copy of your personal information
+- Download your data in a portable format
+
+6.2 Correction
+- Update or correct inaccurate information
+- Modify your profile and preferences
+
+6.3 Deletion
+- Request deletion of your personal information
+- Close your account permanently
+
+6.4 Opt-Out
+- Unsubscribe from marketing communications
+- Disable location services (may limit app functionality)
+- Withdraw consent for data processing
+
+6.5 Object and Restrict
+- Object to certain data processing activities
+- Request restriction of data processing
+
+To exercise these rights, contact us at privacy@mechconnect.com
+
+---
+
+7. CHILDREN'S PRIVACY
+
+MechConnect is not intended for users under 18 years of age. We do not 
+knowingly collect personal information from children. If you believe we have 
+collected information from a child, please contact us immediately.
+
+---
+
+8. LOCATION-BASED SERVICES
+
+MechConnect uses location services to:
+- Match clients with nearby mechanics
+- Calculate distances and estimated arrival times
+- Provide navigation assistance
+- Calculate distance-based pricing
+
+You can disable location services in your device settings, but this will 
+significantly limit app functionality.
+
+---
+
+9. COOKIES AND TRACKING TECHNOLOGIES
+
+We may use cookies, pixels, and similar technologies to:
+- Maintain user sessions
+- Remember preferences and settings
+- Analyze app usage and performance
+- Provide personalized experiences
+
+---
+
+10. INTERNATIONAL DATA TRANSFERS
+
+Your information may be transferred to and processed in countries other than 
+your own. We ensure appropriate safeguards are in place to protect your data 
+in accordance with this Privacy Policy.
+
+---
+
+11. CHANGES TO THIS PRIVACY POLICY
+
+We may update this Privacy Policy from time to time. We will notify you of 
+material changes by:
+- Posting the new policy in the app
+- Sending an email notification
+- Displaying an in-app notice
+
+Continued use of the app after changes constitutes acceptance of the updated 
+policy.
+
+---
+
+12. CONTACT US
+
+If you have questions or concerns about this Privacy Policy:
+
+Email: privacy@mechconnect.com
+Support: Available 24/7 through the app
+Address: [Your Company Address]
+
+For data protection inquiries: dpo@mechconnect.com
+
+
+================================================================================
+                        TERMS AND CONDITIONS
+================================================================================
+
+Effective Date: March 4, 2026
+
+MECHCONNECT TERMS AND CONDITIONS
+
+Welcome to MechConnect. These Terms and Conditions ("Terms") govern your use 
+of the MechConnect mobile application and services ("Service"). By creating an 
+account or using our Service, you agree to be bound by these Terms.
+
+PLEASE READ THESE TERMS CAREFULLY BEFORE USING THE SERVICE.
+
+---
+
+1. ACCEPTANCE OF TERMS
+
+1.1 By accessing or using MechConnect, you agree to these Terms and our 
+Privacy Policy.
+
+1.2 If you do not agree to these Terms, you may not use the Service.
+
+1.3 We reserve the right to modify these Terms at any time. Continued use 
+after changes constitutes acceptance.
+
+1.4 You must be at least 18 years old to use this Service.
+
+---
+
+2. ACCOUNT REGISTRATION
+
+2.1 Account Creation
+- You must provide accurate, current, and complete information
+- You are responsible for maintaining account confidentiality
+- You must not share your account credentials
+- You must notify us immediately of any unauthorized access
+
+2.2 Multiple Roles
+- Users may register for multiple roles (client, mechanic, shop owner)
+- Each role requires separate verification as applicable
+- You must comply with role-specific requirements
+
+2.3 Account Verification
+- Mechanics and shop owners must submit verification documents
+- We reserve the right to verify information and reject applications
+- Verification does not guarantee service quality
+
+2.4 Account Suspension and Termination
+- We may suspend or terminate accounts for Terms violations
+- Users may close their accounts at any time
+- Termination does not affect pending obligations
+
+---
+
+3. USER CONDUCT
+
+3.1 Prohibited Activities
+You agree NOT to:
+- Provide false or misleading information
+- Impersonate others or create fake accounts
+- Harass, threaten, or abuse other users
+- Use the Service for illegal purposes
+- Attempt to hack, disrupt, or damage the platform
+- Scrape or collect user data without permission
+- Post inappropriate, offensive, or harmful content
+- Engage in fraudulent activities
+- Circumvent payment systems
+- Interfere with other users' use of the Service
+
+3.2 Professional Conduct (Mechanics & Shop Owners)
+- Maintain valid licenses and certifications
+- Provide services professionally and safely
+- Honor accepted service requests
+- Communicate honestly about pricing and services
+- Follow safety regulations and industry standards
+- Maintain appropriate insurance coverage
+
+3.3 Client Conduct
+- Provide accurate service location information
+- Be available at the scheduled service time
+- Treat service providers with respect
+- Pay for services as agreed
+- Provide truthful reviews and ratings
+
+---
+
+4. SERVICE TYPES AND BOOKINGS
+
+4.1 Request Types
+
+DIRECT REQUEST
+- Client selects specific mechanic or shop
+- Client chooses from available services
+- Service provider can accept or reject
+- Pricing based on provider's rates
+
+CUSTOM REQUEST
+- Client describes issue or custom need
+- Service provider reviews and provides quote
+- Client accepts or rejects quote
+- Converted to booking upon acceptance
+
+EMERGENCY REQUEST
+- For urgent roadside assistance
+- Matched with available mechanics
+- May include premium/urgent fees
+- Subject to availability
+
+BROADCAST REQUEST
+- Similar to ride-hailing apps
+- Multiple mechanics can view request
+- First to accept gets the booking
+- Pricing includes distance charges (₱10/km, minimum 5km)
+- Request expires after set time limit
+
+4.2 Booking Process
+- Bookings are confirmed when accepted by service provider
+- Both parties receive confirmation notifications
+- Service locations must be accurate and accessible
+- Modifications must be agreed upon by both parties
+
+4.3 Cancellations
+- Clients may cancel before service begins
+- Mechanics may cancel with valid reason
+- Repeated cancellations may result in penalties
+- Cancellation policies may vary by service type
+
+---
+
+5. PRICING AND PAYMENTS
+
+5.1 Service Fees
+- Mechanics set their own service prices
+- Prices displayed include service fees
+- Distance charges apply to broadcast requests (₱10/km, min 5km)
+- Additional fees may apply for emergency services or add-ons
+- Prices are in local currency unless otherwise stated
+
+5.2 Payment Processing
+- Payments are processed through the app
+- We use secure third-party payment processors
+- You authorize us to charge your payment method
+- Payment is required before or upon service completion
+
+5.3 Refunds and Disputes
+- Refunds are handled case-by-case through dispute resolution
+- Service quality disputes may result in partial/full refunds
+- Dispute resolution decisions are final
+- Fraudulent dispute claims may result in account termination
+
+5.4 Platform Fees
+- MechConnect may charge service or platform fees
+- Fees are deducted from service provider earnings
+- Fee structure is subject to change with notice
+
+---
+
+6. RATINGS AND REVIEWS
+
+6.1 Review System
+- Users can rate and review service providers
+- Reviews must be honest and based on actual experiences
+- Fake or malicious reviews are prohibited
+- We reserve the right to remove inappropriate reviews
+
+6.2 Impact of Ratings
+- Low ratings may affect service provider visibility
+- Consistently poor ratings may result in account review
+- High ratings benefit service provider reputation
+
+---
+
+7. SAFETY AND INSURANCE
+
+7.1 User Safety
+- Users are responsible for their own safety
+- Exercise caution when meeting other users
+- Report suspicious behavior immediately
+- We are not responsible for user interactions
+
+7.2 Insurance
+- Mechanics should maintain appropriate liability insurance
+- MechConnect is not an insurance provider
+- We are not responsible for damages or injuries during services
+
+7.3 Vehicle and Property
+- Service providers use appropriate care and skill
+- We are not liable for vehicle damage
+- Disputes should be resolved through our dispute system
+
+---
+
+8. INTELLECTUAL PROPERTY
+
+8.1 Platform Content
+- MechConnect owns all rights to the app and platform
+- Our trademarks, logos, and brand are protected
+- You may not copy, modify, or distribute our content
+
+8.2 User Content
+- You retain ownership of content you upload
+- You grant us license to use your content for platform operations
+- You are responsible for content you post
+- We may remove content that violates these Terms
+
+---
+
+9. PRIVACY AND DATA PROTECTION
+
+9.1 Your privacy is protected by our Privacy Policy
+9.2 We collect and process data as described in the Privacy Policy
+9.3 You consent to data processing by using the Service
+9.4 Location data is used for matching and navigation
+
+---
+
+10. DISPUTE RESOLUTION
+
+10.1 Platform Disputes
+- Service quality disputes are handled through our resolution system
+- Admins review evidence from both parties
+- Decisions may include refunds, warnings, or account actions
+- Resolution decisions are binding
+
+10.2 Between Users
+- Users should attempt to resolve issues directly first
+- Platform dispute system is available for unresolved issues
+- Evidence (photos, messages) should be provided
+
+10.3 Legal Disputes
+- Legal disputes shall be governed by [Your Jurisdiction] law
+- Users agree to attempt mediation before litigation
+- Arbitration may be required for certain disputes
+
+---
+
+11. DISCLAIMERS AND LIMITATIONS OF LIABILITY
+
+11.1 SERVICE "AS IS"
+- The Service is provided "as is" without warranties
+- We do not guarantee uninterrupted or error-free service
+- We do not guarantee specific results or outcomes
+
+11.2 No Guarantee of Quality
+- We facilitate connections but do not provide services directly
+- Service quality depends on individual providers
+- We verify credentials but do not guarantee provider quality
+
+11.3 Limitation of Liability
+- We are not liable for indirect, incidental, or consequential damages
+- Our total liability is limited to amounts paid in the past 12 months
+- We are not liable for user actions or third-party services
+
+11.4 Indemnification
+- You agree to indemnify MechConnect from claims arising from your use
+- This includes your violations of Terms or laws
+- You are responsible for your interactions with other users
+
+---
+
+12. THIRD-PARTY SERVICES
+
+12.1 The app may integrate with third-party services:
+- Payment processors
+- Map and navigation services
+- Cloud storage providers
+
+12.2 Third-party services have their own terms and policies
+12.3 We are not responsible for third-party service issues
+
+---
+
+13. TERMINATION
+
+13.1 We may terminate or suspend accounts for:
+- Terms violations
+- Fraudulent activity
+- Safety concerns
+- Repeated poor ratings or misconduct
+- Legal requirements
+
+13.2 Users may terminate accounts at any time
+13.3 Termination does not affect:
+- Pending payments or obligations
+- Valid legal claims
+- Provisions that should survive termination
+
+---
+
+14. WARNINGS AND PENALTIES
+
+14.1 Warning System
+- Users may receive warnings for Terms violations
+- Repeated violations may result in account suspension
+- Severe violations may result in immediate termination
+
+14.2 Account Bans
+- Banned users cannot create new accounts
+- Bans may be permanent or temporary
+- Ban appeals can be submitted to support
+
+---
+
+15. FORCE MAJEURE
+
+We are not liable for delays or failures due to circumstances beyond our 
+control, including:
+- Natural disasters
+- War or terrorism
+- Government actions
+- Internet service disruptions
+- Pandemics or public health emergencies
+
+---
+
+16. GENERAL PROVISIONS
+
+16.1 Entire Agreement
+These Terms constitute the entire agreement between you and MechConnect
+
+16.2 Severability
+If any provision is found invalid, remaining provisions remain in effect
+
+16.3 Waiver
+Failure to enforce any provision does not waive our right to enforce later
+
+16.4 Assignment
+You may not assign these Terms; we may assign to successors
+
+16.5 Notices
+Notices will be sent via email or in-app notifications
+
+16.6 Language
+English version prevails in case of translation conflicts
+
+---
+
+17. CONTACT INFORMATION
+
+For questions about these Terms:
+
+Email: legal@mechconnect.com
+Support: Available 24/7 through the app
+Address: [Your Company Address]
+
+Customer Service: support@mechconnect.com
+
+---
+
+BY USING MECHCONNECT, YOU ACKNOWLEDGE THAT YOU HAVE READ, UNDERSTOOD, AND 
+AGREE TO BE BOUND BY THESE TERMS AND CONDITIONS.
+
+================================================================================
+                              END OF DOCUMENT
+================================================================================
