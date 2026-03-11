@@ -341,5 +341,75 @@ def _serialize_single_booking(booking):
             'total_amount': float(complete.total_amount),
             'notes': complete.notes,
         }
-    
+    # Attach request-level details (service / services / add-ons) in a separate
+    # block to avoid disturbing the control-flow above. This is used by the
+    # mobile app to prefill mechanic quotations with the availed service.
+    try:
+        req = booking.request
+        rd = {'type': req.request_type}
+
+        # Direct request: single service + possible add-ons
+        if hasattr(req, 'directrequest') and getattr(req, 'directrequest') is not None:
+            try:
+                svc = req.directrequest.service
+                if svc:
+                    rd['service'] = {
+                        'id': svc.id,
+                        'name': svc.name,
+                        'minimum_price': float(svc.minimum_price) if getattr(svc, 'minimum_price', None) is not None else None,
+                    }
+                # collect add-ons for direct requests
+                addons = []
+                from ..models import DirectRequestAddOn
+                for a in DirectRequestAddOn.objects.filter(request=req).select_related('service_add_on'):
+                    sao = a.service_add_on
+                    if sao:
+                        addons.append({'id': sao.id, 'name': sao.name, 'price': float(sao.price)})
+                if addons:
+                    rd['add_ons'] = addons
+            except Exception:
+                pass
+
+        # Broadcast request: multiple services + broadcast add-ons
+        if hasattr(req, 'broadcast_request') and getattr(req, 'broadcast_request') is not None:
+            try:
+                br = req.broadcast_request
+                rd['services'] = []
+                for s in br.services.all():
+                    rd['services'].append({'id': s.id, 'name': s.name, 'minimum_price': float(s.minimum_price) if getattr(s, 'minimum_price', None) is not None else None})
+                # broadcast add-ons
+                addons = []
+                from ..models import BroadcastRequestAddOn
+                for a in BroadcastRequestAddOn.objects.filter(broadcast_request=br).select_related('service_add_on'):
+                    sao = a.service_add_on
+                    if sao:
+                        addons.append({'id': sao.id, 'name': sao.name, 'price': float(sao.price)})
+                if addons:
+                    rd['add_ons'] = addons
+                rd['description'] = br.description
+            except Exception:
+                pass
+
+        # Custom request: description and quoted price if present
+        if hasattr(req, 'customrequest') and getattr(req, 'customrequest') is not None:
+            try:
+                cr = req.customrequest
+                rd['description'] = cr.description
+                rd['quoted_price'] = float(cr.quoted_price) if cr.quoted_price is not None else None
+            except Exception:
+                pass
+
+        # Emergency request: include description
+        if hasattr(req, 'emergencyrequest') and getattr(req, 'emergencyrequest') is not None:
+            try:
+                er = req.emergencyrequest
+                rd['description'] = er.description
+            except Exception:
+                pass
+
+        booking_data['request']['request_details'] = rd
+    except Exception:
+        # never fail serialization for minor request detail issues
+        pass
+
     return booking_data

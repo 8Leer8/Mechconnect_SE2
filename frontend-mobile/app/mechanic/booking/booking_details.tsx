@@ -6,6 +6,7 @@ import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/mechanic/bookingDetailsStyles';
 import WalletBadge from '@/components/wallet-badge';
+import { useRouter } from 'expo-router';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 interface BookingDetail {
@@ -78,6 +79,8 @@ export default function BookingDetailScreen() {
   const [completing, setCompleting] = useState(false);
   const [timer, setTimer] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
+  const routerHook = useRouter();
+  const [quotation, setQuotation] = useState<any | null>(null);
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | null = null;
@@ -184,6 +187,30 @@ export default function BookingDetailScreen() {
     const interval = setInterval(fetchBookingDetail, 15000);
     return () => clearInterval(interval);
   }, [fetchBookingDetail]);
+
+  const fetchQuotation = async () => {
+    if (!bookingId) return;
+    try {
+      const res = await fetch(`${API_URL}/bookings/mechanic/bookings/${bookingId}/quotation/`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!res.ok) {
+        setQuotation(null);
+        return;
+      }
+      const data = await res.json();
+      setQuotation(data);
+    } catch (e) {
+      setQuotation(null);
+    }
+  };
+
+  useEffect(() => {
+    // fetch quotation when booking loads
+    if (bookingId) fetchQuotation();
+  }, [bookingId]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -779,6 +806,46 @@ export default function BookingDetailScreen() {
                 <ThemedText style={styles.receiptYouValue}>₱{parseFloat(String(booking.amount_fee || 0)).toFixed(2)}</ThemedText>
               </View>
             </View>
+          </View>
+        )}
+
+        {/* Quotation card - visible when booking is booked/accepted */}
+        {booking.status === 'accepted' && (
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#007AFF15' }]}>
+                <FontAwesome name="file-text-o" size={16} color="#007AFF" />
+              </View>
+              <ThemedText style={styles.sectionTitle}>Quotation</ThemedText>
+            </View>
+
+            {quotation ? (
+              <View style={{ paddingVertical: 8 }}>
+                {(quotation.items || []).map((it: any, idx: number) => (
+                  <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 }}>
+                    <ThemedText style={{ flex: 1 }}>{it.description || (it.service && `Service #${it.service}`) || 'Item'}</ThemedText>
+                    <ThemedText>₱{(it.unit_price * (it.quantity || 1)).toFixed(2)}</ThemedText>
+                  </View>
+                ))}
+                <View style={{ height: 1, backgroundColor: '#eee', marginVertical: 8 }} />
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <ThemedText style={{ fontWeight: '600' }}>Estimated Total</ThemedText>
+                  <ThemedText style={{ fontWeight: '600' }}>₱{(quotation.total_amount || 0).toFixed(2)}</ThemedText>
+                </View>
+                <View style={{ marginTop: 10 }}>
+                  <TouchableOpacity style={[styles.finishLargeButton]} onPress={() => routerHook.push({ pathname: '/mechanic/booking/quotation_edit', params: { bookingId: String(booking.id) } })}>
+                    <ThemedText style={[styles.actionButtonText, { color: '#fff' }]}>Edit Quotation</ThemedText>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <View style={{ paddingVertical: 8 }}>
+                <ThemedText style={{ marginBottom: 8, color: '#666' }}>No quotation yet. Create one to propose additional services.</ThemedText>
+                <TouchableOpacity style={[styles.finishLargeButton]} onPress={() => routerHook.push({ pathname: '/mechanic/booking/quotation_edit', params: { bookingId: String(booking.id) } })}>
+                  <ThemedText style={[styles.actionButtonText, { color: '#fff' }]}>Create Quotation</ThemedText>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         )}
 
