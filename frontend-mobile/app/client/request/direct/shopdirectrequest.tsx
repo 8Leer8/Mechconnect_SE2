@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   View,
   ScrollView,
@@ -121,10 +121,197 @@ export default function ShopDirectRequestScreen() {
   const [loadingCities, setLoadingCities] = useState(false);
   const [loadingBarangays, setLoadingBarangays] = useState(false);
 
+  // Refs to prevent multiple simultaneous operations
+  const locationFetchInProgress = useRef(false);
+  const isMountedRef = useRef(true);
+
+  // ─── PSGC Location API Functions ───────────────────────────
+  const fetchRegions = useCallback(async () => {
+    setLoadingRegions(true);
+    try {
+      const response = await fetch(`${PSGC_API_BASE}/regions`);
+      const data = await response.json() as PSGCLocation[];
+      const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
+      setRegions(sorted);
+    } catch (error) {
+      console.error('Error fetching regions:', error);
+      Alert.alert('Error', 'Failed to load regions');
+    } finally {
+      setLoadingRegions(false);
+    }
+  }, []);
+
+  const fetchProvinces = useCallback(async (regionCode: string) => {
+    setLoadingProvinces(true);
+    setCities([]);
+    setBarangays([]);
+    try {
+      const response = await fetch(`${PSGC_API_BASE}/regions/${regionCode}/provinces`);
+      const data = await response.json() as PSGCLocation[];
+      const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
+      setProvinces(sorted);
+    } catch (error) {
+      console.error('Error fetching provinces:', error);
+      Alert.alert('Error', 'Failed to load provinces');
+    } finally {
+      setLoadingProvinces(false);
+    }
+  }, []);
+
+  const fetchCities = useCallback(async (provinceCode: string) => {
+    setLoadingCities(true);
+    setBarangays([]);
+    try {
+      const response = await fetch(`${PSGC_API_BASE}/provinces/${provinceCode}/cities-municipalities`);
+      const data = await response.json() as PSGCLocation[];
+      const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
+      setCities(sorted);
+    } catch (error) {
+      console.error('Error fetching cities:', error);
+      Alert.alert('Error', 'Failed to load cities/municipalities');
+    } finally {
+      setLoadingCities(false);
+    }
+  }, []);
+
+  const fetchBarangays = useCallback(async (cityCode: string) => {
+    setLoadingBarangays(true);
+    try {
+      const response = await fetch(`${PSGC_API_BASE}/cities-municipalities/${cityCode}/barangays`);
+      const data = await response.json() as PSGCLocation[];
+      const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
+      setBarangays(sorted);
+    } catch (error) {
+      console.error('Error fetching barangays:', error);
+      Alert.alert('Error', 'Failed to load barangays');
+    } finally {
+      setLoadingBarangays(false);
+    }
+  }, []);
+
+  // ─── Get Current Location ──────────────────────────────────
+  const getCurrentLocation = useCallback(async () => {
+    if (!selectedProviderId) return;
+    
+    // Prevent multiple simultaneous location fetches
+    if (locationFetchInProgress.current) {
+      console.log('Location fetch already in progress, skipping...');
+      return;
+    }
+
+    locationFetchInProgress.current = true;
+    setFetchingLocation(true);
+    
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+
+      if (status !== 'granted') {
+        Alert.alert(
+          'Permission Denied',
+          'Location permission is needed to use current location.'
+        );
+        return;
+      }
+
+      // Get location with timeout
+      const locationPromise = Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+
+      const timeoutPromise = new Promise<null>((_, reject) => {
+        setTimeout(() => reject(new Error('Location fetch timeout')), 8000);
+      });
+
+      const location = await Promise.race([locationPromise, timeoutPromise]);
+
+      if (!isMountedRef.current) return;
+
+      if (location && 'coords' in location) {
+        setCurrentLatitude(location.coords.latitude);
+        setCurrentLongitude(location.coords.longitude);
+
+        // Reverse geocode to get address with timeout
+        try {
+          const geocodePromise = Location.reverseGeocodeAsync({
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+          });
+
+          const geocodeTimeout = new Promise<null>((_, reject) => {
+            setTimeout(() => reject(new Error('Geocoding timeout')), 5000);
+          });
+
+          const results = await Promise.race([geocodePromise, geocodeTimeout]);
+
+          if (!isMountedRef.current) return;
+
+          if (results && Array.isArray(results) && results.length > 0) {
+            const loc = results[0];
+            
+            // Store individual components for database mapping
+            setCurrentStreetName(loc.street || loc.name || '');
+            setCurrentSubdivision(loc.district || '');
+            setCurrentBarangay(loc.subregion || loc.district || '');
+            setCurrentCity(loc.city || '');
+            
+            // Build display address
+            const addressParts = [];
+            if (loc.street) addressParts.push(loc.street);
+            if (loc.subregion) addressParts.push(loc.subregion);
+            if (loc.city) addressParts.push(loc.city);
+            if (loc.region) addressParts.push(loc.region);
+            
+            const fullAddress = addressParts.join(', ');
+            setCurrentAddress(fullAddress || 'GPS Location');
+          } else {
+            // Fallback when reverse geocoding returns no results
+            setCurrentAddress('GPS Location');
+            setCurrentStreetName('');
+            setCurrentSubdivision('');
+            setCurrentBarangay('');
+            setCurrentCity('');
+          }
+        } catch (geocodeError) {
+          console.log('Geocoding failed or timed out, using GPS coordinates only');
+          if (isMountedRef.current) {
+            setCurrentAddress('GPS Location');
+            setCurrentStreetName('');
+            setCurrentSubdivision('');
+            setCurrentBarangay('');
+            setCurrentCity('');
+          }
+        }
+      }
+    } catch (error: any) {
+      console.error('Error getting location:', error);
+      if (isMountedRef.current) {
+        if (error.message === 'Location fetch timeout') {
+          Alert.alert('Timeout', 'Could not get location. Please try again or enter location manually.');
+        } else {
+          Alert.alert('Error', 'Failed to get location. Please try manual entry.');
+        }
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setFetchingLocation(false);
+      }
+      locationFetchInProgress.current = false;
+    }
+  }, [selectedProviderId]);
+
+  // ─── Component mount/unmount tracking ───────────────────────
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      locationFetchInProgress.current = false;
+    };
+  }, []);
+
   // ─── Fetch PSGC Regions on mount ───────────────────────────
   useEffect(() => {
     fetchRegions();
-  }, []);
+  }, [fetchRegions]);
 
   // Fetch provinces when region is selected
   useEffect(() => {
@@ -135,7 +322,7 @@ export default function ShopDirectRequestScreen() {
       setBarangay('');
       fetchProvinces(selectedRegionCode);
     }
-  }, [selectedRegionCode]);
+  }, [selectedRegionCode, fetchProvinces]);
 
   // Fetch cities when province is selected
   useEffect(() => {
@@ -145,7 +332,7 @@ export default function ShopDirectRequestScreen() {
       setBarangay('');
       fetchCities(selectedProvinceCode);
     }
-  }, [selectedProvinceCode]);
+  }, [selectedProvinceCode, fetchCities]);
 
   // Fetch barangays when city is selected
   useEffect(() => {
@@ -153,7 +340,7 @@ export default function ShopDirectRequestScreen() {
       setBarangay('');
       fetchBarangays(selectedCityCode);
     }
-  }, [selectedCityCode]);
+  }, [selectedCityCode, fetchBarangays]);
 
   // ─── Fetch Shops ───────────────────────────────────────
   useEffect(() => {
@@ -244,148 +431,21 @@ export default function ShopDirectRequestScreen() {
     return () => { cancelled = true; };
   }, [selectedServiceId]);
 
-  // ─── PSGC Location API Functions ───────────────────────────
-  const fetchRegions = async () => {
-    setLoadingRegions(true);
-    try {
-      const response = await fetch(`${PSGC_API_BASE}/regions`);
-      const data = await response.json() as PSGCLocation[];
-      const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
-      setRegions(sorted);
-    } catch (error) {
-      console.error('Error fetching regions:', error);
-      Alert.alert('Error', 'Failed to load regions');
-    } finally {
-      setLoadingRegions(false);
-    }
-  };
-
-  const fetchProvinces = async (regionCode: string) => {
-    setLoadingProvinces(true);
-    setCities([]);
-    setBarangays([]);
-    try {
-      const response = await fetch(`${PSGC_API_BASE}/regions/${regionCode}/provinces`);
-      const data = await response.json() as PSGCLocation[];
-      const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
-      setProvinces(sorted);
-    } catch (error) {
-      console.error('Error fetching provinces:', error);
-      Alert.alert('Error', 'Failed to load provinces');
-    } finally {
-      setLoadingProvinces(false);
-    }
-  };
-
-  const fetchCities = async (provinceCode: string) => {
-    setLoadingCities(true);
-    setBarangays([]);
-    try {
-      const response = await fetch(`${PSGC_API_BASE}/provinces/${provinceCode}/cities-municipalities`);
-      const data = await response.json() as PSGCLocation[];
-      const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
-      setCities(sorted);
-    } catch (error) {
-      console.error('Error fetching cities:', error);
-      Alert.alert('Error', 'Failed to load cities/municipalities');
-    } finally {
-      setLoadingCities(false);
-    }
-  };
-
-  const fetchBarangays = async (cityCode: string) => {
-    setLoadingBarangays(true);
-    try {
-      const response = await fetch(`${PSGC_API_BASE}/cities-municipalities/${cityCode}/barangays`);
-      const data = await response.json() as PSGCLocation[];
-      const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
-      setBarangays(sorted);
-    } catch (error) {
-      console.error('Error fetching barangays:', error);
-      Alert.alert('Error', 'Failed to load barangays');
-    } finally {
-      setLoadingBarangays(false);
-    }
-  };
-
-  // ─── Get Current Location ──────────────────────────────────
-  const getCurrentLocation = async () => {
-    if (!selectedProviderId) return;
-    
-    setFetchingLocation(true);
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-
-      if (status !== 'granted') {
-        Alert.alert(
-          'Permission Denied',
-          'Location permission is needed to use current location.'
-        );
-        setFetchingLocation(false);
-        return;
-      }
-
-      const locationPromise = Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
-
-      const timeoutPromise = new Promise<null>((resolve) => {
-        setTimeout(() => resolve(null), 10000); // 10 second timeout
-      });
-
-      const location = await Promise.race([locationPromise, timeoutPromise]);
-
-      if (location) {
-        setCurrentLatitude(location.coords.latitude);
-        setCurrentLongitude(location.coords.longitude);
-
-        // Reverse geocode to get address
-        const results = await Location.reverseGeocodeAsync({
-          latitude: location.coords.latitude,
-          longitude: location.coords.longitude,
-        });
-
-        if (results && results.length > 0) {
-          const loc = results[0];
-          
-          // Store individual components for database mapping
-          setCurrentStreetName(loc.street || loc.name || '');
-          setCurrentSubdivision(loc.district || '');
-          setCurrentBarangay(loc.subregion || loc.district || '');
-          setCurrentCity(loc.city || '');
-          
-          // Build display address
-          const addressParts = [];
-          if (loc.street) addressParts.push(loc.street);
-          if (loc.subregion) addressParts.push(loc.subregion);
-          if (loc.city) addressParts.push(loc.city);
-          if (loc.region) addressParts.push(loc.region);
-          
-          const fullAddress = addressParts.join(', ');
-          setCurrentAddress(fullAddress || 'GPS Location');
-        } else {
-          // Fallback when reverse geocoding fails
-          setCurrentAddress('GPS Location');
-          setCurrentStreetName('');
-          setCurrentSubdivision('');
-          setCurrentBarangay('');
-          setCurrentCity('');
-        }
-      } else {
-        Alert.alert('Timeout', 'Could not fetch location. Please try again.');
-      }
-    } catch (error) {
-      console.error('Error getting location:', error);
-      Alert.alert('Error', 'Failed to get current location');
-    } finally {
-      setFetchingLocation(false);
-    }
-  };
-
   // ─── Get current location when switching to Current Location ───
   useEffect(() => {
-    if (useCurrentLocation && selectedProviderId) {
-      getCurrentLocation();
+    // Only fetch when user actively switches to current location
+    // Don't fetch on initial render or when provider changes
+    if (useCurrentLocation && selectedProviderId && !fetchingLocation) {
+      // Small delay to prevent rapid successive calls
+      const timeoutId = setTimeout(() => {
+        if (isMountedRef.current && !locationFetchInProgress.current) {
+          getCurrentLocation();
+        }
+      }, 300);
+      
+      return () => {
+        clearTimeout(timeoutId);
+      };
     }
   }, [useCurrentLocation, selectedProviderId]);
 
@@ -705,12 +765,31 @@ export default function ShopDirectRequestScreen() {
                   <ThemedText style={styles.locationLoadingText}>Fetching your location...</ThemedText>
                 </View>
               ) : currentAddress ? (
-                <View style={styles.currentLocationDisplay}>
-                  <FontAwesome name="map-marker" size={16} color="#FF8C00" />
-                  <ThemedText style={styles.currentLocationText}>{currentAddress}</ThemedText>
-                </View>
+                <>
+                  <View style={styles.currentLocationDisplay}>
+                    <FontAwesome name="map-marker" size={16} color="#FF8C00" />
+                    <ThemedText style={styles.currentLocationText}>{currentAddress}</ThemedText>
+                  </View>
+                  <TouchableOpacity
+                    style={[styles.refreshBtn, disabled && styles.disabledContainer]}
+                    onPress={getCurrentLocation}
+                    disabled={disabled || fetchingLocation}
+                    activeOpacity={0.7}
+                  >
+                    <FontAwesome name="refresh" size={14} color="#FF8C00" />
+                    <ThemedText style={styles.refreshBtnText}>Refresh Location</ThemedText>
+                  </TouchableOpacity>
+                </>
               ) : (
-                <ThemedText style={styles.locationPlaceholder}>Location will be fetched automatically</ThemedText>
+                <TouchableOpacity
+                  style={[styles.fetchLocationBtn, disabled && styles.disabledContainer]}
+                  onPress={getCurrentLocation}
+                  disabled={disabled || fetchingLocation}
+                  activeOpacity={0.7}
+                >
+                  <FontAwesome name="crosshairs" size={14} color="#FF8C00" />
+                  <ThemedText style={styles.fetchLocationBtnText}>Get Current Location</ThemedText>
+                </TouchableOpacity>
               )}
             </View>
           )}
