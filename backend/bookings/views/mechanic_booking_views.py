@@ -7,7 +7,7 @@ from django.db.models import Prefetch
 from django.db import transaction
 import logging
 import traceback
-from ...models import (
+from ..models import (
     Booking,
     Request,
     DirectRequest,
@@ -17,11 +17,9 @@ from ...models import (
     Receipt,
     CancelBooking,
 )
-from ...models import Quotation, QuotationItem
 from users.models import Account
 from services.models import MechanicService
-from ..client.client_booking_views import _serialize_bookings, _serialize_single_booking
-from ...serializers import QuotationSerializer
+from .client_booking_views import _serialize_bookings, _serialize_single_booking
 
 
 
@@ -286,52 +284,6 @@ def mechanic_payment_received(request, booking_id):
     receipt.save(update_fields=["payment_received"])
 
     return Response({"message": "Payment received. Ready to mark as complete.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
-
-
-
-@api_view(["GET", "POST"])
-@permission_classes([AllowAny])
-def mechanic_quotation(request, booking_id):
-    """GET returns existing quotation for booking; POST creates/updates quotation and its items.
-    Expected POST payload: {"notes": "...", "is_final": true/false, "items": [{"service": <id>|null, "service_add_on": <id>|null, "description": "", "quantity": 1, "unit_price": 100.0}, ...]}"""
-    account, err = _get_mechanic_account(request)
-    if err:
-        return err
-
-    try:
-        booking = Booking.objects.get(id=booking_id, request__provider=account)
-    except Booking.DoesNotExist:
-        return Response({"error": "Booking not found or you do not have permission to access it"}, status=status.HTTP_404_NOT_FOUND)
-
-    # GET: return existing quotation or empty
-    if request.method == 'GET':
-        try:
-            quotation = booking.quotation
-            ser = QuotationSerializer(quotation, context={'request': request})
-            return Response(ser.data, status=status.HTTP_200_OK)
-        except Quotation.DoesNotExist:
-            return Response({"detail": "No quotation found"}, status=status.HTTP_404_NOT_FOUND)
-
-    # POST: create or update
-    if request.method == 'POST':
-        data = request.data or {}
-        ser = QuotationSerializer(data=data, context={'request': request, 'booking': booking, 'mechanic': account})
-        try:
-            # If quotation exists, update instead
-            try:
-                existing = booking.quotation
-            except Quotation.DoesNotExist:
-                existing = None
-
-            if existing:
-                quotation = ser.update(existing, data)
-            else:
-                quotation = ser.create(data)
-
-            return Response(QuotationSerializer(quotation, context={'request': request}).data, status=status.HTTP_200_OK)
-        except Exception as e:
-            logging.getLogger(__name__).error("Quotation save failed: %s", traceback.format_exc())
-            return Response({"error": "Failed to save quotation", "details": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(["POST"])
@@ -825,6 +777,7 @@ def mechanic_decline_direct_request(request, request_id):
             {"error": "Request is not pending"},
             status=status.HTTP_400_BAD_REQUEST,
         )
+
     direct.request_status = DirectRequest.Status.REJECTED
     direct.save(update_fields=["request_status"])
 
@@ -832,41 +785,6 @@ def mechanic_decline_direct_request(request, request_id):
         {"message": "Request declined", "request_id": req.id},
         status=status.HTTP_200_OK,
     )
-
-
-@api_view(["POST"])
-@permission_classes([AllowAny])
-def mechanic_accept_emergency_request(request, request_id):
-    """
-    Mechanic accepts an EMERGENCY request. Assigns the mechanic as provider
-    and creates a Booking + ActiveBooking for the request.
-    """
-    account, err = _get_mechanic_account(request)
-    if err:
-        return err
-
-    try:
-        req = Request.objects.get(id=request_id, request_type="emergency")
-    except Request.DoesNotExist:
-        return Response({"error": "Emergency request not found"}, status=status.HTTP_404_NOT_FOUND)
-
-    # If already assigned to another provider, reject
-    if req.provider and req.provider != account:
-        return Response({"error": "Request already assigned to another provider"}, status=status.HTTP_400_BAD_REQUEST)
-
-    # If booking already exists, reject
-    if hasattr(req, "booking"):
-        return Response({"error": "Request already has a booking"}, status=status.HTTP_400_BAD_REQUEST)
-
-    # Assign provider and create booking
-    req.provider = account
-    req.save(update_fields=["provider"])
-
-    booking = Booking.objects.create(request=req, status=Booking.Status.ACCEPTED, amount_fee=0)
-    ActiveBooking.objects.create(booking=booking)
-
-    data = _serialize_single_booking(booking)
-    return Response({"message": "Emergency request accepted", "booking": data}, status=status.HTTP_201_CREATED)
 
 
 @api_view(["POST"])

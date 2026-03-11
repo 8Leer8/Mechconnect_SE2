@@ -256,3 +256,108 @@ class BroadcastOfferSerializer(serializers.ModelSerializer):
     class Meta:
         model = BroadcastOffer
         fields = ['id', 'broadcast_request', 'mechanic', 'status', 'created_at', 'responded_at']
+
+
+from . import models as booking_models
+
+
+class QuotationItemSerializer(serializers.ModelSerializer):
+    line_total = serializers.SerializerMethodField()
+
+    class Meta:
+        model = booking_models.QuotationItem
+        fields = ['id', 'service', 'service_add_on', 'description', 'quantity', 'unit_price', 'line_total']
+
+    def get_line_total(self, obj):
+        try:
+            return float(obj.line_total)
+        except Exception:
+            return 0.0
+
+
+class QuotationSerializer(serializers.Serializer):
+    id = serializers.IntegerField(read_only=True)
+    booking = serializers.IntegerField(read_only=True)
+    mechanic = AccountBasicSerializer(read_only=True)
+    notes = serializers.CharField(allow_blank=True, allow_null=True, required=False)
+    total_amount = serializers.FloatField(read_only=True)
+    is_final = serializers.BooleanField(required=False)
+    items = serializers.ListField(child=serializers.DictField(), required=False)
+
+    def to_representation(self, instance):
+        # instance is a Quotation model
+        from .models import Quotation, QuotationItem
+        data = {
+            'id': instance.id,
+            'booking': instance.booking.id,
+            'mechanic': AccountBasicSerializer(instance.mechanic).data,
+            'notes': instance.notes,
+            'total_amount': float(instance.total_amount),
+            'is_final': instance.is_final,
+            'created_at': instance.created_at,
+            'updated_at': instance.updated_at,
+            'items': QuotationItemSerializer(QuotationItem.objects.filter(quotation=instance), many=True).data,
+        }
+        return data
+
+    def create(self, validated_data):
+        from .models import Quotation, QuotationItem
+        request = self.context.get('request')
+        booking = self.context.get('booking')
+        mechanic = self.context.get('mechanic')
+
+        items = validated_data.pop('items', []) if isinstance(validated_data, dict) else []
+
+        quotation, _ = Quotation.objects.get_or_create(booking=booking, defaults={
+            'mechanic': mechanic,
+            'notes': validated_data.get('notes', ''),
+            'is_final': validated_data.get('is_final', False),
+        })
+
+        # clear existing items and recreate
+        QuotationItem.objects.filter(quotation=quotation).delete()
+        total = 0
+        for it in items:
+            qitem = QuotationItem.objects.create(
+                quotation=quotation,
+                service_id=it.get('service') if it.get('service') else None,
+                service_add_on_id=it.get('service_add_on') if it.get('service_add_on') else None,
+                description=it.get('description', ''),
+                quantity=it.get('quantity', 1),
+                unit_price=it.get('unit_price', 0),
+            )
+            try:
+                total += float(qitem.line_total)
+            except Exception:
+                pass
+
+        quotation.total_amount = total
+        quotation.notes = validated_data.get('notes', quotation.notes)
+        quotation.is_final = validated_data.get('is_final', quotation.is_final)
+        quotation.save()
+        return quotation
+
+    def update(self, instance, validated_data):
+        from .models import QuotationItem
+        items = validated_data.pop('items', []) if isinstance(validated_data, dict) else []
+        QuotationItem.objects.filter(quotation=instance).delete()
+        total = 0
+        for it in items:
+            qitem = QuotationItem.objects.create(
+                quotation=instance,
+                service_id=it.get('service') if it.get('service') else None,
+                service_add_on_id=it.get('service_add_on') if it.get('service_add_on') else None,
+                description=it.get('description', ''),
+                quantity=it.get('quantity', 1),
+                unit_price=it.get('unit_price', 0),
+            )
+            try:
+                total += float(qitem.line_total)
+            except Exception:
+                pass
+
+        instance.total_amount = total
+        instance.notes = validated_data.get('notes', instance.notes)
+        instance.is_final = validated_data.get('is_final', instance.is_final)
+        instance.save()
+        return instance

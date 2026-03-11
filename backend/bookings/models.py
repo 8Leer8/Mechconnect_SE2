@@ -142,6 +142,32 @@ class Receipt(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 
+class Quotation(models.Model):
+    """An editable quotation attached to a Booking created/updated by the mechanic.
+    Acts like a receipt but editable while the mechanic is on-site."""
+    booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name='quotation')
+    mechanic = models.ForeignKey(Account, on_delete=models.CASCADE)
+    notes = models.TextField(null=True, blank=True)
+    total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    is_final = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class QuotationItem(models.Model):
+    quotation = models.ForeignKey(Quotation, on_delete=models.CASCADE, related_name='items')
+    # one of service or service_add_on may be set, or neither for free-text items
+    service = models.ForeignKey('services.Service', on_delete=models.SET_NULL, null=True, blank=True)
+    service_add_on = models.ForeignKey('services.ServiceAddOn', on_delete=models.SET_NULL, null=True, blank=True)
+    description = models.CharField(max_length=255, null=True, blank=True)
+    quantity = models.PositiveIntegerField(default=1)
+    unit_price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+
+    @property
+    def line_total(self):
+        return self.quantity * self.unit_price
+
+
 class BroadcastRequest(models.Model):
     """
     Broadcast Request - Similar to Uber/Grab ride-hailing flow.
