@@ -68,6 +68,31 @@ export default function ClientBookingDetailScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [timer, setTimer] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
+  const [showRaw, setShowRaw] = useState(false);
+
+  // Derive display quotation: prefer booking.quotation (from API) otherwise build from request.request_details
+  const getDisplayQuotation = () => {
+    if (!booking) return null;
+    const saved = (booking as any).quotation;
+    if (saved && (saved.items || []).length > 0) return saved;
+    const details = (booking as any).request?.request_details || null;
+    if (!details) return null;
+    const items: any[] = [];
+    if (details.service) {
+      const svc: any = details.service;
+      const unit = Number(svc.minimum_price ?? booking?.amount_fee ?? 0) || 0;
+      items.push({ description: svc.name || 'Service', quantity: 1, unit_price: unit, service: svc.id });
+    } else if (Array.isArray(details.services) && details.services.length > 0) {
+      const primary: any = details.services[0];
+      const unit = Number(primary.minimum_price ?? booking?.amount_fee ?? 0) || 0;
+      items.push({ description: primary.name || 'Service', quantity: 1, unit_price: unit, service: primary.id });
+    }
+    if (items.length === 0) return null;
+    const total_amount = items.reduce((s, it) => s + ((Number(it.unit_price) || 0) * (Number(it.quantity) || 1)), 0);
+    return { items, total_amount };
+  };
+
+  const displayQuotation = getDisplayQuotation();
 
   const fetchBookingDetail = useCallback(async (silent = false) => {
     if (!bookingId) return;
@@ -294,6 +319,9 @@ export default function ClientBookingDetailScreen() {
           <FontAwesome name="chevron-left" size={16} color="#FF8C00" />
         </TouchableOpacity>
         <ThemedText style={styles.headerTitle}>Booking #{booking.id}</ThemedText>
+        <TouchableOpacity style={{ marginRight: 12 }} onPress={() => setShowRaw(v => !v)}>
+          <ThemedText style={{ color: '#8E8E93' }}>{showRaw ? 'Hide' : 'Raw'}</ThemedText>
+        </TouchableOpacity>
         <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
           <FontAwesome name="refresh" size={16} color="#FF8C00" />
         </TouchableOpacity>
@@ -360,7 +388,38 @@ export default function ClientBookingDetailScreen() {
           </TouchableOpacity>
         )}
 
+        {/* Quotation (read-only for clients) - show for several statuses */}
+        {(booking.status === 'accepted' || booking.status === 'on_the_way' || booking.status === 'active' || booking.status === 'pending_payment' || booking.status === 'completed') && displayQuotation && (
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#007AFF15' }]}>
+                <FontAwesome name="file-text-o" size={16} color="#007AFF" />
+              </View>
+              <ThemedText style={styles.sectionTitle}>Quotation</ThemedText>
+            </View>
+            <View style={{ paddingVertical: 8 }}>
+              {(displayQuotation.items || []).map((it: any, idx: number) => (
+                <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 }}>
+                  <ThemedText style={{ flex: 1 }}>{it.description || (it.service && `Service #${it.service}`) || 'Item'}</ThemedText>
+                  <ThemedText>₱{((it.unit_price || 0) * (it.quantity || 1)).toFixed(2)}</ThemedText>
+                </View>
+              ))}
+              <View style={{ height: 1, backgroundColor: '#eee', marginVertical: 8 }} />
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <ThemedText style={{ fontWeight: '600' }}>Estimated Total</ThemedText>
+                <ThemedText style={{ fontWeight: '600' }}>₱{parseFloat(String(displayQuotation.total_amount || 0)).toFixed(2)}</ThemedText>
+              </View>
+            </View>
+          </View>
+        )}
+
         {/* Location Section */}
+        {/* Raw booking JSON (debug) */}
+        {showRaw && (
+          <View style={[styles.sectionCard, { backgroundColor: '#111', padding: 12 }]}>
+            <ThemedText style={{ fontSize: 12 }}>{JSON.stringify(booking, null, 2)}</ThemedText>
+          </View>
+        )}
         <View style={styles.sectionCard}>
           <View style={styles.sectionHeader}>
             <View style={[styles.sectionIcon, { backgroundColor: '#FF3B3015' }]}>

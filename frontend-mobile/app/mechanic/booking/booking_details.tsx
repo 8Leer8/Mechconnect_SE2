@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Alert } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -81,6 +81,31 @@ export default function BookingDetailScreen() {
   const [isPaused, setIsPaused] = useState(false);
   const routerHook = useRouter();
   const [quotation, setQuotation] = useState<any | null>(null);
+
+  // Derive a default/display quotation: prefer saved `quotation`, otherwise build from booking.request.request_details
+  const getDisplayQuotation = () => {
+    if (quotation && (quotation.items || []).length > 0) return quotation;
+    const details = (booking && booking.request && (booking.request as any).request_details) || null;
+    if (!details) return null;
+    const items: any[] = [];
+    // direct request: single service
+    if (details.service) {
+      const svc: any = details.service;
+      const unit = Number(svc.minimum_price ?? booking?.amount_fee ?? 0) || 0;
+      items.push({ description: svc.name || 'Service', quantity: 1, unit_price: unit, service: svc.id });
+    }
+    // broadcast: array of services
+    else if (Array.isArray(details.services) && details.services.length > 0) {
+      const primary: any = details.services[0];
+      const unit = Number(primary.minimum_price ?? booking?.amount_fee ?? 0) || 0;
+      items.push({ description: primary.name || 'Service', quantity: 1, unit_price: unit, service: primary.id });
+    }
+    if (items.length === 0) return null;
+    const total_amount = items.reduce((s, it) => s + ((Number(it.unit_price) || 0) * (Number(it.quantity) || 1)), 0);
+    return { items, total_amount };
+  };
+
+  const displayQuotation = getDisplayQuotation();
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | null = null;
@@ -211,6 +236,16 @@ export default function BookingDetailScreen() {
     // fetch quotation when booking loads
     if (bookingId) fetchQuotation();
   }, [bookingId]);
+
+  // Refetch when the screen regains focus (e.g., after editing a quotation)
+  useFocusEffect(
+    React.useCallback(() => {
+      if (!bookingId) return;
+      fetchQuotation();
+      // also refresh booking details to keep amounts in sync
+      fetchBookingDetail();
+    }, [bookingId, fetchBookingDetail])
+  );
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -451,6 +486,8 @@ export default function BookingDetailScreen() {
                 <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Start Travel</ThemedText>
               </TouchableOpacity>
             </View>
+            
+            
             <View style={{ width: '100%', marginTop: 10 }}>
               <TouchableOpacity style={[styles.largeSecondaryButton]} onPress={handleCancelBooking} disabled={transitioning}>
                 <FontAwesome name="times" size={18} color="#fff" />
@@ -786,25 +823,53 @@ export default function BookingDetailScreen() {
                 <FontAwesome name="file-text-o" size={16} color="#34C759" />
               </View>
               <ThemedText style={styles.sectionTitle}>Receipt</ThemedText>
+              <TouchableOpacity
+                onPress={() => routerHook.push({ pathname: '/mechanic/booking/quotation_edit', params: { bookingId: String(booking.id) } })}
+                style={{ marginLeft: 'auto', paddingHorizontal: 8, paddingVertical: 4 }}
+              >
+                <FontAwesome name={quotation ? 'pencil' : 'plus'} size={16} color="#007AFF" />
+              </TouchableOpacity>
             </View>
             <View style={styles.receiptList}>
-              <View style={styles.receiptRow}>
-                <ThemedText style={styles.receiptItem}>Service</ThemedText>
-                <ThemedText style={styles.receiptAmount}>{booking.request?.type ? booking.request.type.charAt(0).toUpperCase() + booking.request.type.slice(1) : 'Service'}</ThemedText>
-              </View>
-              <View style={styles.receiptRow}>
-                <ThemedText style={styles.receiptItem}>Quantity</ThemedText>
-                <ThemedText style={styles.receiptAmount}>1</ThemedText>
-              </View>
-              <View style={styles.receiptDivider} />
-              <View style={styles.receiptRow}> 
-                <ThemedText style={styles.receiptTotalLabel}>Total</ThemedText>
-                <ThemedText style={styles.receiptTotalValue}>₱{parseFloat(String(booking.amount_fee || 0)).toFixed(2)}</ThemedText>
-              </View>
-              <View style={styles.receiptRow}> 
-                <ThemedText style={styles.receiptYouLabel}>You receive</ThemedText>
-                <ThemedText style={styles.receiptYouValue}>₱{parseFloat(String(booking.amount_fee || 0)).toFixed(2)}</ThemedText>
-              </View>
+              {displayQuotation && (displayQuotation.items || []).length > 0 ? (
+                <>
+                  {(displayQuotation.items || []).map((it: any, idx: number) => (
+                    <View key={idx} style={styles.receiptRow}>
+                      <ThemedText style={styles.receiptItem}>{it.description || (it.service && `Service #${it.service}`) || 'Item'}</ThemedText>
+                      <ThemedText style={styles.receiptAmount}>₱{((it.unit_price || 0) * (it.quantity || 1)).toFixed(2)}</ThemedText>
+                    </View>
+                  ))}
+                  <View style={styles.receiptDivider} />
+                  <View style={styles.receiptRow}> 
+                    <ThemedText style={styles.receiptTotalLabel}>Total</ThemedText>
+                    <ThemedText style={styles.receiptTotalValue}>₱{parseFloat(String((displayQuotation.total_amount ?? booking.amount_fee) || 0)).toFixed(2)}</ThemedText>
+                  </View>
+                  <View style={styles.receiptRow}> 
+                    <ThemedText style={styles.receiptYouLabel}>You receive</ThemedText>
+                    <ThemedText style={styles.receiptYouValue}>₱{parseFloat(String((displayQuotation.total_amount ?? booking.amount_fee) || 0)).toFixed(2)}</ThemedText>
+                  </View>
+                </>
+              ) : (
+                <>
+                  <View style={styles.receiptRow}>
+                    <ThemedText style={styles.receiptItem}>Service</ThemedText>
+                    <ThemedText style={styles.receiptAmount}>{booking.request?.type ? booking.request.type.charAt(0).toUpperCase() + booking.request.type.slice(1) : 'Service'}</ThemedText>
+                  </View>
+                  <View style={styles.receiptRow}>
+                    <ThemedText style={styles.receiptItem}>Quantity</ThemedText>
+                    <ThemedText style={styles.receiptAmount}>1</ThemedText>
+                  </View>
+                  <View style={styles.receiptDivider} />
+                  <View style={styles.receiptRow}> 
+                    <ThemedText style={styles.receiptTotalLabel}>Total</ThemedText>
+                    <ThemedText style={styles.receiptTotalValue}>₱{parseFloat(String(booking.amount_fee || 0)).toFixed(2)}</ThemedText>
+                  </View>
+                  <View style={styles.receiptRow}> 
+                    <ThemedText style={styles.receiptYouLabel}>You receive</ThemedText>
+                    <ThemedText style={styles.receiptYouValue}>₱{parseFloat(String(booking.amount_fee || 0)).toFixed(2)}</ThemedText>
+                  </View>
+                </>
+              )}
             </View>
           </View>
         )}
@@ -819,31 +884,65 @@ export default function BookingDetailScreen() {
               <ThemedText style={styles.sectionTitle}>Quotation</ThemedText>
             </View>
 
-            {quotation ? (
+            {displayQuotation && (displayQuotation.items || []).length > 0 ? (
               <View style={{ paddingVertical: 8 }}>
-                {(quotation.items || []).map((it: any, idx: number) => (
+                {(displayQuotation.items || []).map((it: any, idx: number) => (
                   <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 }}>
                     <ThemedText style={{ flex: 1 }}>{it.description || (it.service && `Service #${it.service}`) || 'Item'}</ThemedText>
-                    <ThemedText>₱{(it.unit_price * (it.quantity || 1)).toFixed(2)}</ThemedText>
+                    <ThemedText>₱{((it.unit_price || 0) * (it.quantity || 1)).toFixed(2)}</ThemedText>
                   </View>
                 ))}
                 <View style={{ height: 1, backgroundColor: '#eee', marginVertical: 8 }} />
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                   <ThemedText style={{ fontWeight: '600' }}>Estimated Total</ThemedText>
-                  <ThemedText style={{ fontWeight: '600' }}>₱{(quotation.total_amount || 0).toFixed(2)}</ThemedText>
+                  <ThemedText style={{ fontWeight: '600' }}>₱{parseFloat(String(displayQuotation.total_amount || 0)).toFixed(2)}</ThemedText>
                 </View>
                 <View style={{ marginTop: 10 }}>
                   <TouchableOpacity style={[styles.finishLargeButton]} onPress={() => routerHook.push({ pathname: '/mechanic/booking/quotation_edit', params: { bookingId: String(booking.id) } })}>
-                    <ThemedText style={[styles.actionButtonText, { color: '#fff' }]}>Edit Quotation</ThemedText>
+                    <ThemedText style={[styles.actionButtonText, { color: '#fff' }]}>{quotation ? 'Edit Quotation' : 'Create Quotation'}</ThemedText>
                   </TouchableOpacity>
                 </View>
               </View>
             ) : (
               <View style={{ paddingVertical: 8 }}>
-                <ThemedText style={{ marginBottom: 8, color: '#666' }}>No quotation yet. Create one to propose additional services.</ThemedText>
-                <TouchableOpacity style={[styles.finishLargeButton]} onPress={() => routerHook.push({ pathname: '/mechanic/booking/quotation_edit', params: { bookingId: String(booking.id) } })}>
-                  <ThemedText style={[styles.actionButtonText, { color: '#fff' }]}>Create Quotation</ThemedText>
-                </TouchableOpacity>
+                <ThemedText style={{ marginBottom: 8, color: '#666' }}>No quotation yet.</ThemedText>
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* Quotation card - visible when mechanic is on the way */}
+        {booking.status === 'on_the_way' && (
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#007AFF15' }]}>
+                <FontAwesome name="file-text-o" size={16} color="#007AFF" />
+              </View>
+              <ThemedText style={styles.sectionTitle}>Quotation</ThemedText>
+            </View>
+
+            {displayQuotation && (displayQuotation.items || []).length > 0 ? (
+              <View style={{ paddingVertical: 8 }}>
+                {(displayQuotation.items || []).map((it: any, idx: number) => (
+                  <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 }}>
+                    <ThemedText style={{ flex: 1 }}>{it.description || (it.service && `Service #${it.service}`) || 'Item'}</ThemedText>
+                    <ThemedText>₱{((it.unit_price || 0) * (it.quantity || 1)).toFixed(2)}</ThemedText>
+                  </View>
+                ))}
+                <View style={{ height: 1, backgroundColor: '#eee', marginVertical: 8 }} />
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <ThemedText style={{ fontWeight: '600' }}>Estimated Total</ThemedText>
+                  <ThemedText style={{ fontWeight: '600' }}>₱{parseFloat(String(displayQuotation.total_amount || 0)).toFixed(2)}</ThemedText>
+                </View>
+                <View style={{ marginTop: 10 }}>
+                  <TouchableOpacity style={[styles.finishLargeButton]} onPress={() => routerHook.push({ pathname: '/mechanic/booking/quotation_edit', params: { bookingId: String(booking.id) } })}>
+                    <ThemedText style={[styles.actionButtonText, { color: '#fff' }]}>{quotation ? 'Edit Quotation' : 'Create Quotation'}</ThemedText>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <View style={{ paddingVertical: 8 }}>
+                <ThemedText style={{ marginBottom: 8, color: '#666' }}>No quotation yet.</ThemedText>
               </View>
             )}
           </View>
@@ -922,7 +1021,7 @@ export default function BookingDetailScreen() {
                   size={12}
                   color={booking.active_details.is_job_done ? '#34C759' : '#8E8E93'}
                 />
-                <ThemedText style={[styles.chipText, booking.active_details.is_job_done && { color: '#34C759' }]}>
+                <ThemedText style={[styles.chipText, booking.active_details.is_job_done && { color: '#34C759' }]}> 
                   {booking.active_details.is_job_done ? 'Job Done' : 'In Progress'}
                 </ThemedText>
               </View>
@@ -949,6 +1048,43 @@ export default function BookingDetailScreen() {
           </View>
         )}
 
+        {/* Quotation card - visible when booking is active */}
+        {booking.status === 'active' && (
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#007AFF15' }]}>
+                <FontAwesome name="file-text-o" size={16} color="#007AFF" />
+              </View>
+              <ThemedText style={styles.sectionTitle}>Quotation</ThemedText>
+            </View>
+
+            {displayQuotation && (displayQuotation.items || []).length > 0 ? (
+              <View style={{ paddingVertical: 8 }}>
+                {(displayQuotation.items || []).map((it: any, idx: number) => (
+                  <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 }}>
+                    <ThemedText style={{ flex: 1 }}>{it.description || (it.service && `Service #${it.service}`) || 'Item'}</ThemedText>
+                    <ThemedText>₱{((it.unit_price || 0) * (it.quantity || 1)).toFixed(2)}</ThemedText>
+                  </View>
+                ))}
+                <View style={{ height: 1, backgroundColor: '#eee', marginVertical: 8 }} />
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <ThemedText style={{ fontWeight: '600' }}>Estimated Total</ThemedText>
+                  <ThemedText style={{ fontWeight: '600' }}>₱{parseFloat(String(displayQuotation.total_amount || 0)).toFixed(2)}</ThemedText>
+                </View>
+                <View style={{ marginTop: 10 }}>
+                  <TouchableOpacity style={[styles.finishLargeButton]} onPress={() => routerHook.push({ pathname: '/mechanic/booking/quotation_edit', params: { bookingId: String(booking.id) } })}>
+                    <ThemedText style={[styles.actionButtonText, { color: '#fff' }]}>{quotation ? 'Edit Quotation' : 'Create Quotation'}</ThemedText>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <View style={{ paddingVertical: 8 }}>
+                <ThemedText style={{ marginBottom: 8, color: '#666' }}>No quotation yet.</ThemedText>
+              </View>
+            )}
+          </View>
+        )}
+
         {/* Completion Details */}
         {booking.status === 'completed' && booking.completion_details && (
           <View style={styles.sectionCard}>
@@ -959,16 +1095,39 @@ export default function BookingDetailScreen() {
               <ThemedText style={styles.sectionTitle}>Completion Details</ThemedText>
             </View>
             <View style={styles.completionInfo}>
-              <View style={styles.completionRow}>
-                <ThemedText style={styles.completionLabel}>Total Amount</ThemedText>
-                <ThemedText style={styles.completionAmount}>
-                  ₱{booking.completion_details.total_amount.toFixed(2)}
-                </ThemedText>
+              <View style={styles.receiptList}>
+                {displayQuotation && (displayQuotation.items || []).length > 0 ? (
+                  <>
+                    {(displayQuotation.items || []).map((it: any, idx: number) => (
+                      <View key={idx} style={styles.receiptRow}>
+                        <ThemedText style={styles.receiptItem}>{it.description || (it.service && `Service #${it.service}`) || 'Item'}</ThemedText>
+                        <ThemedText style={styles.receiptAmount}>₱{((it.unit_price || 0) * (it.quantity || 1)).toFixed(2)}</ThemedText>
+                      </View>
+                    ))}
+                    <View style={styles.receiptDivider} />
+                    <View style={styles.receiptRow}>
+                      <ThemedText style={styles.receiptTotalLabel}>Final Total</ThemedText>
+                      <ThemedText style={styles.receiptTotalValue}>₱{parseFloat(String(displayQuotation.total_amount ?? booking.completion_details?.total_amount ?? booking.amount_fee ?? 0)).toFixed(2)}</ThemedText>
+                    </View>
+                    <View style={styles.receiptRow}>
+                      <ThemedText style={styles.receiptYouLabel}>You receive</ThemedText>
+                      <ThemedText style={styles.receiptYouValue}>₱{parseFloat(String(displayQuotation.total_amount ?? booking.completion_details?.total_amount ?? booking.amount_fee ?? 0)).toFixed(2)}</ThemedText>
+                    </View>
+                  </>
+                ) : (
+                  <>
+                    <View style={styles.completionRow}>
+                      <ThemedText style={styles.completionLabel}>Total Amount</ThemedText>
+                      <ThemedText style={styles.completionAmount}>₱{(booking.completion_details?.total_amount ?? 0).toFixed(2)}</ThemedText>
+                    </View>
+                  </>
+                )}
               </View>
-              {booking.completion_details.notes && (
+
+              {booking.completion_details?.notes && (
                 <View style={styles.noteBox}>
                   <ThemedText style={styles.noteLabel}>Notes:</ThemedText>
-                  <ThemedText style={styles.noteText}>{booking.completion_details.notes}</ThemedText>
+                  <ThemedText style={styles.noteText}>{booking.completion_details?.notes}</ThemedText>
                 </View>
               )}
             </View>

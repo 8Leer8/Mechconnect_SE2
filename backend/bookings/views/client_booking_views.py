@@ -4,11 +4,12 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django.db.models import Prefetch, Q
 
-from ...models import (
+from ..models import (
     Booking, Request, ActiveBooking, CancelBooking, 
     ReworkBooking, DisputeBooking, CompleteBooking
 )
-from ...serializers import BookingSerializer
+from ..models import Quotation, QuotationItem
+from ..serializers import BookingSerializer
 from users.models import Account
 
 
@@ -21,14 +22,11 @@ def list_client_bookings(request):
     Query Parameters:
     - status: Filter by booking status (active, completed, cancelled, reworked, disputed)
               If not provided, returns all bookings grouped by status
-    - page: Page number (default: 1)
-    - page_size: Number of bookings per page (default: 10)
     
     Returns bookings with full details including:
     - Request information (service location, provider details)
     - Status-specific details (cancellation reason, rework details, etc.)
     - Timestamps and amounts
-    - Pagination info (total_pages, current_page, has_next, has_previous)
     """
     # Get account_id from session
     account_id = request.session.get('account_id')
@@ -48,10 +46,6 @@ def list_client_bookings(request):
             }, status=status.HTTP_403_FORBIDDEN)
         
         client = account.client
-        
-        # Get pagination params
-        page = int(request.query_params.get('page', 1))
-        page_size = int(request.query_params.get('page_size', 10))
         
         # Get status filter from query params
         status_filter = request.query_params.get('status', None)
@@ -83,37 +77,22 @@ def list_client_bookings(request):
                     'error': f'Invalid status. Must be one of: {", ".join(valid_statuses)}'
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-            # For 'active' tab, merge 'accepted', 'active', 'on_the_way', and 'pending_payment' statuses
+            # For 'active' tab, merge 'accepted', 'active' and 'on_the_way' statuses
             if status_filter.lower() == 'active':
                 bookings_queryset = bookings_queryset.filter(status__in=['accepted', 'active', 'on_the_way', 'pending_payment'])
             else:
                 bookings_queryset = bookings_queryset.filter(status=status_filter.lower())
 
-            # Calculate pagination
-            total_count = bookings_queryset.count()
-            total_pages = (total_count + page_size - 1) // page_size if page_size > 0 else 0
-            
-            # Apply pagination
-            start_index = (page - 1) * page_size
-            end_index = start_index + page_size
-            paginated_bookings = bookings_queryset[start_index:end_index]
-            
             # Serialize and return filtered bookings
-            bookings_data = _serialize_bookings(paginated_bookings)
+            bookings_data = _serialize_bookings(bookings_queryset)
 
             return Response({
                 'status': status_filter.lower(),
                 'bookings': bookings_data,
-                'count': len(bookings_data),
-                'total_count': total_count,
-                'page': page,
-                'page_size': page_size,
-                'total_pages': total_pages,
-                'has_next': page < total_pages,
-                'has_previous': page > 1,
+                'count': len(bookings_data)
             }, status=status.HTTP_200_OK)
         
-        # If no filter, return bookings grouped by status (no pagination for grouped view)
+        # If no filter, return bookings grouped by status
         else:
             # Merge 'accepted', 'active' and 'on_the_way' for the active group
             active_bookings = bookings_queryset.filter(status__in=['accepted', 'active', 'on_the_way', 'pending_payment'])
@@ -341,80 +320,10 @@ def _serialize_single_booking(booking):
             'total_amount': float(complete.total_amount),
             'notes': complete.notes,
         }
-    # Attach request-level details (service / services / add-ons) in a separate
-    # block to avoid disturbing the control-flow above. This is used by the
-    # mobile app to prefill mechanic quotations with the availed service.
+    
+    # Attach quotation if present so mechanic UI (payments/receipt) can show it
     try:
-        req = booking.request
-        rd = {'type': req.request_type}
-
-        # Direct request: single service + possible add-ons
-        if hasattr(req, 'directrequest') and getattr(req, 'directrequest') is not None:
-            try:
-                svc = req.directrequest.service
-                if svc:
-                    rd['service'] = {
-                        'id': svc.id,
-                        'name': svc.name,
-                        'minimum_price': float(svc.minimum_price) if getattr(svc, 'minimum_price', None) is not None else None,
-                    }
-                # collect add-ons for direct requests
-                addons = []
-                from ..models import DirectRequestAddOn
-                for a in DirectRequestAddOn.objects.filter(request=req).select_related('service_add_on'):
-                    sao = a.service_add_on
-                    if sao:
-                        addons.append({'id': sao.id, 'name': sao.name, 'price': float(sao.price)})
-                if addons:
-                    rd['add_ons'] = addons
-            except Exception:
-                pass
-
-        # Broadcast request: multiple services + broadcast add-ons
-        if hasattr(req, 'broadcast_request') and getattr(req, 'broadcast_request') is not None:
-            try:
-                br = req.broadcast_request
-                rd['services'] = []
-                for s in br.services.all():
-                    rd['services'].append({'id': s.id, 'name': s.name, 'minimum_price': float(s.minimum_price) if getattr(s, 'minimum_price', None) is not None else None})
-                # broadcast add-ons
-                addons = []
-                from ..models import BroadcastRequestAddOn
-                for a in BroadcastRequestAddOn.objects.filter(broadcast_request=br).select_related('service_add_on'):
-                    sao = a.service_add_on
-                    if sao:
-                        addons.append({'id': sao.id, 'name': sao.name, 'price': float(sao.price)})
-                if addons:
-                    rd['add_ons'] = addons
-                rd['description'] = br.description
-            except Exception:
-                pass
-
-        # Custom request: description and quoted price if present
-        if hasattr(req, 'customrequest') and getattr(req, 'customrequest') is not None:
-            try:
-                cr = req.customrequest
-                rd['description'] = cr.description
-                rd['quoted_price'] = float(cr.quoted_price) if cr.quoted_price is not None else None
-            except Exception:
-                pass
-
-        # Emergency request: include description
-        if hasattr(req, 'emergencyrequest') and getattr(req, 'emergencyrequest') is not None:
-            try:
-                er = req.emergencyrequest
-                rd['description'] = er.description
-            except Exception:
-                pass
-
-        booking_data['request']['request_details'] = rd
-    except Exception:
-        # never fail serialization for minor request detail issues
-        pass
-
-    # Attach mechanic quotation if one exists for this booking (manual build)
-    try:
-        try:
+        if hasattr(booking, 'quotation') and booking.quotation is not None:
             q = booking.quotation
             qd = {
                 'id': q.id,
@@ -437,11 +346,7 @@ def _serialize_single_booking(booking):
                     'line_total': float(it.line_total) if hasattr(it, 'line_total') else float(it.quantity * it.unit_price),
                 })
             booking_data['quotation'] = qd
-        except Exception:
-            # no related quotation present
-            pass
     except Exception:
-        # don't fail serialization if quotation construction fails
         pass
 
     return booking_data
