@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Linking } from 'react-native';
+import { View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Linking, Alert } from 'react-native';
+import { Image } from 'expo-image';
+import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -24,6 +26,7 @@ interface EmergencyRequest {
   };
   request_details?: {
     description?: string;
+    concern_picture?: string;
     urgency_level?: string;
   };
 }
@@ -44,7 +47,7 @@ export default function EmergencyScreen() {
   const fetchEmergencyRequests = async () => {
     try {
       setError(null);
-      const response = await fetch(`${API_URL}/bookings/home/`, {
+      const response = await fetch(`${API_URL}/bookings/mechanic/emergency/`, {
         method: 'GET',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -52,14 +55,10 @@ export default function EmergencyScreen() {
 
       if (!response.ok) throw new Error('Failed to fetch emergency requests');
       const data = await response.json();
-      
-      // Filter for emergency requests
-      const emergencies = (data.pending_requests || []).filter(
-        (req: any) => req.request_type === 'emergency'
-      );
-      
+      const emergencies = data.emergency_requests || [];
       setRequests(emergencies);
     } catch (err: any) {
+      console.error('[Emergency Page] Error:', err);
       setError(err.message);
     } finally {
       setLoading(false);
@@ -78,10 +77,45 @@ export default function EmergencyScreen() {
     }
   };
 
-  const handleNavigate = (location: any) => {
-    if (location.latitude && location.longitude) {
-      const url = `https://www.google.com/maps/dir/?api=1&destination=${location.latitude},${location.longitude}`;
-      Linking.openURL(url);
+  const handleNavigate = (request: EmergencyRequest) => {
+    if (request.service_location.latitude && request.service_location.longitude) {
+      router.push({
+        pathname: '/mechanic/emergency/emergency_location_map',
+        params: {
+          latitude: request.service_location.latitude.toString(),
+          longitude: request.service_location.longitude.toString(),
+          street: request.service_location.street_name,
+          barangay: request.service_location.barangay,
+          city: request.service_location.city_municipality,
+          clientName: request.client?.name || 'Client',
+        },
+      });
+    }
+  };
+
+  const handleAcceptEmergency = async (requestId: number) => {
+    try {
+      const response = await fetch(`${API_URL}/bookings/mechanic/emergency/${requestId}/accept/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount_fee: 0 }), // Can be updated to show amount input
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        Alert.alert(
+          'Emergency Accepted',
+          'You have accepted this emergency request. The booking has been created.',
+          [{ text: 'OK', onPress: fetchEmergencyRequests }]
+        );
+      } else {
+        Alert.alert('Error', data.error || 'Failed to accept emergency request');
+      }
+    } catch (error) {
+      console.error('Error accepting emergency:', error);
+      Alert.alert('Error', 'An error occurred while accepting the emergency request');
     }
   };
 
@@ -143,9 +177,14 @@ export default function EmergencyScreen() {
             {requests.map((request, index) => (
               <View key={request.id} style={styles.emergencyCard}>
                 <View style={styles.cardHeader}>
-                  <View style={styles.urgentBadge}>
-                    <FontAwesome name="bolt" size={12} color="#fff" />
-                    <ThemedText style={styles.urgentText}>URGENT</ThemedText>
+                  <View style={styles.headerLeft}>
+                    <View style={styles.cardNumberBadge}>
+                      <ThemedText style={styles.cardNumberText}>{index + 1}</ThemedText>
+                    </View>
+                    <View style={styles.urgentBadge}>
+                      <FontAwesome name="bolt" size={12} color="#fff" />
+                      <ThemedText style={styles.urgentText}>URGENT</ThemedText>
+                    </View>
                   </View>
                   <ThemedText style={styles.timeAgo}>{getTimeSince(request.created_at)}</ThemedText>
                 </View>
@@ -158,27 +197,51 @@ export default function EmergencyScreen() {
                     <ThemedText style={styles.clientName}>{request.client?.name || 'Client'}</ThemedText>
                   </View>
 
+                  {request.client?.phone && (
+                    <View style={styles.infoRow}>
+                      <FontAwesome name="phone" size={16} color="#34C759" />
+                      <ThemedText style={styles.phoneNumber}>{request.client.phone}</ThemedText>
+                    </View>
+                  )}
+
                   <View style={styles.infoRow}>
                     <FontAwesome name="map-marker" size={16} color="#FF8C00" />
-                    <ThemedText style={styles.locationText}>
-                      {request.service_location.street_name}, {request.service_location.barangay}, {request.service_location.city_municipality}
-                    </ThemedText>
+                    <View style={styles.locationInfo}>
+                      <ThemedText style={styles.locationText}>
+                        {request.service_location.street_name}, {request.service_location.barangay}, {request.service_location.city_municipality}
+                      </ThemedText>
+                      {request.service_location.latitude && request.service_location.longitude && (
+                        <ThemedText style={styles.coordsText}>
+                          {Number(request.service_location.latitude).toFixed(6)}, {Number(request.service_location.longitude).toFixed(6)}
+                        </ThemedText>
+                      )}
+                    </View>
                   </View>
 
-                  {request.request_details?.description && (
-                    <View style={styles.descriptionBox}>
-                      <ThemedText style={styles.descriptionLabel}>Issue:</ThemedText>
-                      <ThemedText style={styles.descriptionText}>
-                        {request.request_details.description}
-                      </ThemedText>
+                  {request.request_details?.concern_picture && (
+                    <View style={styles.imageContainer}>
+                      <Image 
+                        source={{ uri: request.request_details.concern_picture }} 
+                        style={styles.concernImage}
+                        contentFit="cover"
+                      />
                     </View>
                   )}
                 </View>
 
+                {request.request_details?.description && (
+                  <View style={styles.descriptionBox}>
+                    <ThemedText style={styles.descriptionLabel}>Issue:</ThemedText>
+                    <ThemedText style={styles.descriptionText}>
+                      {request.request_details.description}
+                    </ThemedText>
+                  </View>
+                )}
+
                 <View style={styles.actionButtons}>
                   <TouchableOpacity 
                     style={[styles.actionBtn, styles.acceptBtn]}
-                    onPress={() => console.log('Accept emergency', request.id)}
+                    onPress={() => handleAcceptEmergency(request.id)}
                   >
                     <FontAwesome name="check" size={16} color="#fff" />
                     <ThemedText style={styles.actionBtnText}>Accept</ThemedText>
@@ -196,7 +259,7 @@ export default function EmergencyScreen() {
 
                   <TouchableOpacity 
                     style={[styles.actionBtn, styles.navigateBtn]}
-                    onPress={() => handleNavigate(request.service_location)}
+                    onPress={() => handleNavigate(request)}
                   >
                     <FontAwesome name="location-arrow" size={16} color="#fff" />
                     <ThemedText style={styles.actionBtnText}>Navigate</ThemedText>

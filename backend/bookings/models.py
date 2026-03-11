@@ -9,6 +9,8 @@ class ServiceLocation(models.Model):
     barangay = models.CharField(max_length=100)
     city_municipality = models.CharField(max_length=100)
     landmark = models.CharField(max_length=255, null=True, blank=True)
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
 
 class Request(models.Model):
     class Type(models.TextChoices):
@@ -52,7 +54,7 @@ class DirectRequestAddOn(models.Model):
 
 class EmergencyRequest(models.Model):
     request = models.OneToOneField(Request, on_delete=models.CASCADE)
-    description = models.TextField()
+    description = models.TextField(null=True, blank=True)
     concern_picture = models.ImageField(upload_to='requests/emergency/', null=True, blank=True)
     providers_note = models.TextField(null=True, blank=True)
 

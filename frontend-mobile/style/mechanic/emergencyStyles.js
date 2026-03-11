@@ -114,6 +114,24 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  cardNumberBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FF8C00',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cardNumberText: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
   urgentBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -152,6 +170,11 @@ export const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: '#fff',
+  },
+  phoneNumber: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#34C759',
   },
   locationText: {
     fontSize: 14,
@@ -201,5 +224,24 @@ export const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#fff',
+  },
+  locationInfo: {
+    flex: 1,
+  },
+  coordsText: {
+    fontSize: 11,
+    color: '#555',
+    marginTop: 2,
+    fontFamily: 'monospace',
+  },
+  imageContainer: {
+    marginVertical: 8,
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  concernImage: {
+    width: '100%',
+    height: 180,
+    borderRadius: 10,
   },
 });

@@ -6,6 +6,7 @@ from .client.client_booking_views import *
 from .client.broadcast_request_views import *
 from .mechanic.mechanic_broadcast_request_views import *
 from .mechanic.mechanic_booking_views import *
+from .mechanic.mechanic_emergency_views import *
 from .client.directrequest import *
 from .shopowner.request_assignment_views import *
 from .shopowner.shopowner_booking_views import *
@@ -47,8 +48,12 @@ __all__ = [
     'list_mechanic_bookings',
     'get_mechanic_booking_detail',
     'mechanic_accept_direct_request',
+    'mechanic_accept_emergency_request',
     'mechanic_decline_direct_request',
     'mechanic_complete_booking',
+    
+    # Mechanic emergency views
+    'get_emergency_requests',
 
     # Shop owner booking views
     'shopowner_accept_direct_request',

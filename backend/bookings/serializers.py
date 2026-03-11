@@ -12,7 +12,7 @@ from MainBackend.storage_utils import get_media_url
 class ServiceLocationSerializer(serializers.ModelSerializer):
     class Meta:
         model = ServiceLocation
-        fields = ['id', 'street_name', 'subdivision_village', 'barangay', 'city_municipality', 'landmark']
+        fields = ['id', 'street_name', 'subdivision_village', 'barangay', 'city_municipality', 'landmark', 'latitude', 'longitude']
 
 
 class ServiceBasicSerializer(serializers.ModelSerializer):
@@ -32,9 +32,27 @@ class ServiceAddOnSerializer(serializers.ModelSerializer):
 
 
 class AccountBasicSerializer(serializers.ModelSerializer):
+    name = serializers.SerializerMethodField()
+    phone = serializers.SerializerMethodField()
+    
     class Meta:
         model = Account
-        fields = ['id', 'firstname', 'lastname', 'username', 'email']
+        fields = ['id', 'firstname', 'lastname', 'username', 'email', 'name', 'phone']
+    
+    def get_name(self, obj):
+        return f"{obj.firstname} {obj.lastname}"
+    
+    def get_phone(self, obj):
+        # Try to get phone from client
+        if hasattr(obj, 'client'):
+            return obj.client.contact_number
+        # Try to get phone from mechanic
+        elif hasattr(obj, 'mechanic'):
+            return obj.mechanic.contact_number
+        # Try to get phone from shop owner
+        elif hasattr(obj, 'shopowner'):
+            return obj.shopowner.shop_contact_number
+        return None
 
 
 class CustomRequestSerializer(serializers.ModelSerializer):
@@ -57,9 +75,18 @@ class DirectRequestSerializer(serializers.ModelSerializer):
 
 
 class EmergencyRequestSerializer(serializers.ModelSerializer):
+    concern_picture = serializers.SerializerMethodField()
+    
     class Meta:
         model = EmergencyRequest
         fields = ['id', 'description', 'concern_picture', 'providers_note']
+    
+    def get_concern_picture(self, obj):
+        """Return full URL for concern picture"""
+        if obj.concern_picture:
+            request = self.context.get('request')
+            return get_media_url(obj.concern_picture, request)
+        return None
 
 
 class BroadcastRequestDetailSerializer(serializers.ModelSerializer):
@@ -99,25 +126,31 @@ class RequestSerializer(serializers.ModelSerializer):
         if obj.request_type == 'custom':
             try:
                 custom = obj.customrequest
-                return CustomRequestSerializer(custom).data
+                return CustomRequestSerializer(custom, context=self.context).data
             except CustomRequest.DoesNotExist:
                 return None
         elif obj.request_type == 'direct':
             try:
                 direct = obj.directrequest
-                return DirectRequestSerializer(direct).data
+                return DirectRequestSerializer(direct, context=self.context).data
             except DirectRequest.DoesNotExist:
                 return None
         elif obj.request_type == 'emergency':
             try:
                 emergency = obj.emergencyrequest
-                return EmergencyRequestSerializer(emergency).data
+                return EmergencyRequestSerializer(emergency, context=self.context).data
             except EmergencyRequest.DoesNotExist:
-                return None
+                # Return empty emergency details if record doesn't exist
+                return {
+                    'id': None,
+                    'description': None,
+                    'concern_picture': None,
+                    'providers_note': None
+                }
         elif obj.request_type == 'broadcast':
             try:
                 broadcast = obj.broadcast_request
-                return BroadcastRequestDetailSerializer(broadcast).data
+                return BroadcastRequestDetailSerializer(broadcast, context=self.context).data
             except BroadcastRequest.DoesNotExist:
                 return None
         return None

@@ -216,8 +216,8 @@ def create_direct_request(request):
 def create_emergency_request(request):
     """
     Create a new emergency request
-    Required fields: description, service_location
-    Optional: concern_picture, provider_id
+    Required fields: service_location (must include latitude, longitude)
+    Optional: description, concern_picture, provider_id
     """
     account_id = request.session.get('account_id')
     
@@ -238,14 +238,23 @@ def create_emergency_request(request):
         
         # Extract data
         provider_id = request.data.get('provider_id')
-        description = request.data.get('description')
+        description = request.data.get('description', '')  # Optional
         service_location_data = request.data.get('service_location')
         concern_picture = request.FILES.get('concern_picture')
         
+        # Parse service_location JSON string when sent via FormData
+        if isinstance(service_location_data, str):
+            try:
+                service_location_data = json.loads(service_location_data)
+            except json.JSONDecodeError:
+                return Response({
+                    'error': 'Invalid service_location format'
+                }, status=status.HTTP_400_BAD_REQUEST)
+        
         # Validate required fields
-        if not description or not service_location_data:
+        if not service_location_data:
             return Response({
-                'error': 'Description and service location are required'
+                'error': 'Service location is required for emergency requests'
             }, status=status.HTTP_400_BAD_REQUEST)
         
         # Get provider if specified
@@ -260,11 +269,13 @@ def create_emergency_request(request):
         
         # Create service location
         service_location = ServiceLocation.objects.create(
-            street_name=service_location_data.get('street_name'),
+            street_name=service_location_data.get('street_name', 'Emergency Location'),
             subdivision_village=service_location_data.get('subdivision_village'),
-            barangay=service_location_data.get('barangay'),
-            city_municipality=service_location_data.get('city_municipality'),
-            landmark=service_location_data.get('landmark')
+            barangay=service_location_data.get('barangay', 'Emergency'),
+            city_municipality=service_location_data.get('city_municipality', 'Emergency'),
+            landmark=service_location_data.get('landmark'),
+            latitude=service_location_data.get('latitude'),
+            longitude=service_location_data.get('longitude')
         )
         
         # Create request
@@ -278,7 +289,7 @@ def create_emergency_request(request):
         # Create emergency request
         emergency_request = EmergencyRequest.objects.create(
             request=new_request,
-            description=description,
+            description=description if description else None,
             concern_picture=concern_picture
         )
         

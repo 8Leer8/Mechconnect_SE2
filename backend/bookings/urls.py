@@ -50,6 +50,8 @@ urlpatterns = [
     path('mechanic/bookings/<int:booking_id>/cancel-booking/', views.mechanic_cancel_booking, name='mechanic-cancel-booking'),
     path('mechanic/requests/<int:request_id>/accept/', views.mechanic_accept_direct_request, name='mechanic-accept-direct-request'),
     path('mechanic/requests/<int:request_id>/decline/', views.mechanic_decline_direct_request, name='mechanic-decline-direct-request'),
+    path('mechanic/emergency/<int:request_id>/accept/', views.mechanic_accept_emergency_request, name='mechanic-accept-emergency-request'),
+    path('mechanic/emergency/', views.get_emergency_requests, name='get-emergency-requests'),
 
     # Shop owner booking endpoints (accept/decline requests)
     path('shopowner/requests/<int:request_id>/accept/', views.shopowner_accept_direct_request, name='shopowner-accept-direct-request'),

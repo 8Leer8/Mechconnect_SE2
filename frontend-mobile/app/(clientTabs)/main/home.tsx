@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import {View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Dimensions} from 'react-native';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import {View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Dimensions, Animated} from 'react-native';
 import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/client/homeStyles';
 import { LineChart, BarChart } from 'react-native-chart-kit';
+import EmergencyModal from '@/components/EmergencyModal';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const screenWidth = Dimensions.get('window').width;
@@ -94,6 +95,29 @@ export default function HomeScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [showEmergencyModal, setShowEmergencyModal] = useState(false);
+
+  // Emergency button pulse animation
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const pulseAnimation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1.3,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    pulseAnimation.start();
+    return () => pulseAnimation.stop();
+  }, []);
 
   const fetchAllData = useCallback(async () => {
     try {
@@ -573,11 +597,15 @@ export default function HomeScreen() {
                   </View>
                   <ThemedText style={styles.quickActionLabel}>Discover</ThemedText>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.quickActionCard} onPress={() => router.push('/client/request/broadcast/broadcastrequest' as any)}>
-                  <View style={[styles.quickActionIcon, { backgroundColor: '#FF3B3015' }]}>
+                <TouchableOpacity 
+                  // @ts-ignore - emergencyQuickAction style exists in homeStyles.js
+                  style={[styles.quickActionCard, styles.emergencyQuickAction]} 
+                  onPress={() => setShowEmergencyModal(true)}
+                >
+                  <View style={[styles.quickActionIcon, { backgroundColor: '#FF3B3025' }]}>
                     <FontAwesome name="exclamation-triangle" size={22} color="#FF3B30" />
                   </View>
-                  <ThemedText style={styles.quickActionLabel}>Emergency</ThemedText>
+                  <ThemedText style={[styles.quickActionLabel, { color: '#FF3B30', fontWeight: '700' }]}>Emergency</ThemedText>
                 </TouchableOpacity>
               </View>
             </View>
@@ -586,6 +614,33 @@ export default function HomeScreen() {
           </>
         )}
       </ScrollView>
+      
+      {/* Floating Emergency SOS Button */}
+      <TouchableOpacity 
+        style={styles.emergencyFAB}
+        onPress={() => setShowEmergencyModal(true)}
+        activeOpacity={0.8}
+      >
+        <Animated.View 
+          style={[
+            styles.emergencyPulse,
+            { transform: [{ scale: pulseAnim }] }
+          ]} 
+        />
+        <View style={styles.emergencyFABInner}>
+          <FontAwesome name="exclamation" size={22} color="#fff" />
+          <ThemedText style={styles.emergencyFABText}>SOS</ThemedText>
+        </View>
+      </TouchableOpacity>
+      
+      {/* Emergency Modal */}
+      <EmergencyModal
+        visible={showEmergencyModal}
+        onClose={() => setShowEmergencyModal(false)}
+        onSuccess={() => {
+          fetchAllData(); // Refresh data after successful emergency request
+        }}
+      />
     </ThemedView>
   );
 }

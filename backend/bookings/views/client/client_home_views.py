@@ -151,6 +151,7 @@ def home_page(request):
         
         elif hasattr(account, 'mechanic'):
             mechanic = account.mechanic
+            print(f"[DEBUG] Account has mechanic role, Mechanic ID: {mechanic.id}")
             
             current_bookings = Booking.objects.filter(
                 request__provider=account,
@@ -165,6 +166,7 @@ def home_page(request):
                 Prefetch('activebooking', queryset=ActiveBooking.objects.all())
             ).order_by('-booked_at')
             
+            # Get assigned requests
             all_requests = Request.objects.filter(
                 provider=account
             ).exclude(
@@ -174,9 +176,43 @@ def home_page(request):
                 'client__account',
                 'provider',
                 'service_location'
+            ).prefetch_related(
+                Prefetch('customrequest', queryset=CustomRequest.objects.all()),
+                Prefetch('directrequest', queryset=DirectRequest.objects.all()),
+                Prefetch('emergencyrequest', queryset=EmergencyRequest.objects.all())
             ).order_by('-created_at')
             
+            # Get emergency requests (available to all mechanics)
+            emergency_requests = Request.objects.filter(
+                request_type='emergency',
+                provider__isnull=True
+            ).exclude(
+                booking__isnull=False
+            ).select_related(
+                'client',
+                'client__account',
+                'provider',
+                'service_location'
+            ).prefetch_related(
+                Prefetch('emergencyrequest', queryset=EmergencyRequest.objects.all())
+            ).order_by('-created_at')
+            
+            print(f"[DEBUG] Found {emergency_requests.count()} emergency requests without provider")
+            
+            # Check ALL emergency requests for debugging
+            all_emergency = Request.objects.filter(request_type='emergency').select_related('client__account')
+            print(f"[DEBUG] Total emergency requests in database: {all_emergency.count()}")
+            for er in all_emergency:
+                has_booking = hasattr(er, 'booking')
+                has_emergency_details = hasattr(er, 'emergencyrequest')
+                print(f"[DEBUG] Emergency Request ID: {er.id}, Client: {er.client.account.username if er.client else 'None'}, Provider: {er.provider_id}, Has Booking: {has_booking}, Has EmergencyRequest: {has_emergency_details}")
+            
+            for er in emergency_requests:
+                print(f"[DEBUG] Filtered Emergency Request ID: {er.id}, Client: {er.client.account.username}, Has EmergencyRequest: {hasattr(er, 'emergencyrequest')}")
+            
             filtered_pending_requests = []
+            
+            # Add assigned requests
             for req in all_requests:
                 try:
                     if req.request_type == 'custom' and hasattr(req, 'customrequest'):
@@ -185,10 +221,26 @@ def home_page(request):
                     elif req.request_type == 'direct' and hasattr(req, 'directrequest'):
                         if req.directrequest.request_status == 'pending':
                             filtered_pending_requests.append(req)
-                    elif req.request_type == 'emergency' and hasattr(req, 'emergencyrequest'):
+                    elif req.request_type == 'emergency':
+                        # Add emergency requests even if emergencyrequest doesn't exist
                         filtered_pending_requests.append(req)
                 except Exception:
                     continue
+            
+            # Add all emergency requests (without provider)
+            # Emergency requests should show even without emergencyrequest details
+            for req in emergency_requests:
+                try:
+                    # Add to list regardless of emergencyrequest existence
+                    # since emergency type requests should always be visible
+                    filtered_pending_requests.append(req)
+                    print(f"[DEBUG] Added emergency request {req.id} to filtered list (Has details: {hasattr(req, 'emergencyrequest')})")
+                except Exception as e:
+                    print(f"[DEBUG] Exception adding emergency request {req.id}: {e}")
+                    continue
+            
+            print(f"[DEBUG] Total filtered pending requests for mechanic: {len(filtered_pending_requests)}")
+            print(f"[DEBUG] Emergency requests in filtered list: {sum(1 for r in filtered_pending_requests if r.request_type == 'emergency')}")
         
         elif hasattr(account, 'shopowner'):
             shop_owner = account.shopowner
@@ -226,7 +278,8 @@ def home_page(request):
                     elif req.request_type == 'direct' and hasattr(req, 'directrequest'):
                         if req.directrequest.request_status == 'pending':
                             filtered_pending_requests.append(req)
-                    elif req.request_type == 'emergency' and hasattr(req, 'emergencyrequest'):
+                    elif req.request_type == 'emergency':
+                        # Add emergency requests even if emergencyrequest doesn't exist
                         filtered_pending_requests.append(req)
                 except Exception:
                     continue

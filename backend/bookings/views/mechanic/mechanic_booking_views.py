@@ -745,6 +745,83 @@ def mechanic_accept_direct_request(request, request_id):
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
+def mechanic_accept_emergency_request(request, request_id):
+    """
+    Mechanic accepts an EMERGENCY request and turns it into a Booking.
+    - Assigns the mechanic as the provider
+    - Creates Booking (status=accepted) and ActiveBooking
+    """
+    account, err = _get_mechanic_account(request)
+    if err:
+        return err
+
+    try:
+        req = Request.objects.select_related("client", "provider").get(
+            id=request_id, request_type="emergency"
+        )
+    except Request.DoesNotExist:
+        return Response(
+            {"error": "Emergency request not found"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    # Check if already has a provider
+    if req.provider is not None:
+        return Response(
+            {"error": "Emergency request already accepted by another mechanic"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Check if already has a booking
+    if hasattr(req, "booking"):
+        return Response(
+            {"error": "Request already has a booking"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Must have an EmergencyRequest
+    try:
+        from ...models import EmergencyRequest
+        emergency = EmergencyRequest.objects.get(request=req)
+    except EmergencyRequest.DoesNotExist:
+        return Response(
+            {"error": "Emergency request details not found"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Get amount from request body or default
+    body_amount = request.data.get("amount_fee")
+    total_amount = 0.0
+    if body_amount is not None:
+        try:
+            total_amount = float(body_amount)
+        except (TypeError, ValueError):
+            total_amount = 0.0
+
+    # Assign provider to the request
+    req.provider = account
+    req.save(update_fields=["provider"])
+
+    # Create booking
+    booking = Booking.objects.create(
+        request=req,
+        status=Booking.Status.ACCEPTED,
+        amount_fee=total_amount,
+    )
+    ActiveBooking.objects.create(booking=booking)
+
+    data = _serialize_single_booking(booking)
+    return Response(
+        {
+            "message": "Emergency request accepted and booking created",
+            "booking": data,
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
 def mechanic_decline_direct_request(request, request_id):
     """
     Mechanic declines a DIRECT request.
