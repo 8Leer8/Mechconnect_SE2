@@ -202,11 +202,11 @@ export default function ProfileScreen() {
   const currentRoleLabel = profileData.available_roles.find(r => r.value === activeRole)?.label || activeRole;
 
   const settingsItems = [
-    { icon: 'heart', label: 'Favorites' },
-    { icon: 'cog', label: 'Settings' },
-    { icon: 'shield', label: 'Privacy & Security' },
-    { icon: 'file-text', label: 'Terms & Regulation' },
-    { icon: 'info-circle', label: 'About' },
+    { icon: 'heart', label: 'Favorites', route: null },
+    { icon: 'cog', label: 'Settings', route: null },
+    { icon: 'shield', label: 'Privacy & Security', route: '/client/others/privacysecurity' },
+    { icon: 'file-text', label: 'Terms & Regulation', route: null },
+    { icon: 'info-circle', label: 'About', route: null },
   ];
 
   return (
@@ -296,6 +296,7 @@ export default function ProfileScreen() {
               key={item.label}
               style={[styles.settingRow, index < settingsItems.length - 1 && styles.settingRowBorder]}
               activeOpacity={0.7}
+              onPress={() => item.route && router.push(item.route as any)}
             >
               <View style={[styles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
                 <FontAwesome name={item.icon as any} size={16} color="#FF8C00" />
