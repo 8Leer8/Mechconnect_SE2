@@ -3,7 +3,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 
-from bookings.models import Request, RequestAssignment
+from bookings.models import Request, RequestAssignment, Booking
 from users.models import Account
 
 
@@ -98,6 +98,15 @@ def assign_mechanic(request, request_id):
         mechanic=mechanic_account,
         role=role,
     )
+
+    # If there is an accepted booking for this request, move it to on_the_way so it appears in On Going tab
+    try:
+        booking = Booking.objects.get(request=req)
+        if booking.status == Booking.Status.ACCEPTED:
+            booking.status = Booking.Status.ON_THE_WAY
+            booking.save(update_fields=["status"])
+    except Booking.DoesNotExist:
+        pass
 
     return Response({
         "id": assignment.id,

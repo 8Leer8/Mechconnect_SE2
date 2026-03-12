@@ -191,8 +191,7 @@ export default function ShopOwnerMechanics() {
             <ThemedText style={styles.subtitle}>{mechanicsData.count} total</ThemedText>
           </View>
           <TouchableOpacity style={styles.addButton} onPress={() => setShowAddModal(true)} activeOpacity={0.8}>
-            <FontAwesome name="plus-circle" size={22} color="#fff" />
-            <ThemedText style={styles.addButtonText}>Add Mechanic</ThemedText>
+            <FontAwesome name="plus-circle" size={24} color="#fff" />
           </TouchableOpacity>
         </View>
 
@@ -400,18 +399,12 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   addButton: {
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'center',
     backgroundColor: '#FF9500',
-    paddingHorizontal: 18,
-    paddingVertical: 12,
+    width: 44,
+    height: 44,
     borderRadius: 12,
-  },
-  addButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#fff',
   },
   emptyContainer: {
     alignItems: 'center',

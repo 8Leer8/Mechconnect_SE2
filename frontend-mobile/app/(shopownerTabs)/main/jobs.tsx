@@ -14,6 +14,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { TopNav } from '@/components/navigation';
+import { useRouter } from 'expo-router';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -49,7 +50,27 @@ interface Booking {
   };
 }
 
-type TabType = 'all' | 'accepted' | 'on_going' | 'completed' | 'cancelled';
+type PendingRequest = {
+  id: number;
+  request_type: string;
+  created_at: string;
+  service_location?: {
+    street_name?: string;
+    barangay?: string;
+    city_municipality?: string;
+  } | null;
+  client?: {
+    firstname?: string;
+    lastname?: string;
+  } | null;
+};
+
+type HomeResponse = {
+  pending_requests: PendingRequest[];
+};
+
+type TabType = 'all' | 'requests' | 'accepted' | 'on_going' | 'completed' | 'cancelled';
+type RequestTabType = 'custom' | 'direct' | 'broadcast';
 
 type GroupedResponse = {
   accepted?: { bookings: Booking[]; count: number };
@@ -89,8 +110,12 @@ interface Assignment {
 }
 
 export default function ShopOwnerJobsScreen() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<TabType>('all');
   const [bookings, setBookings] = useState<Booking[]>([]);
+  const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>([]);
+  const [declinedRequests, setDeclinedRequests] = useState<PendingRequest[]>([]);
+  const [requestTab, setRequestTab] = useState<RequestTabType>('custom');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -103,9 +128,14 @@ export default function ShopOwnerJobsScreen() {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [mechanicsLoading, setMechanicsLoading] = useState(false);
   const [assigningId, setAssigningId] = useState<number | null>(null);
+  const [actionLoading, setActionLoading] = useState<number | null>(null);
 
   useEffect(() => {
-    fetchBookings();
+    if (activeTab === 'requests') {
+      fetchRequests();
+    } else {
+      fetchBookings();
+    }
   }, [activeTab]);
 
   const fetchBookings = async () => {
@@ -182,6 +212,25 @@ export default function ShopOwnerJobsScreen() {
         if (!res.ok) throw new Error(`Failed to fetch ${activeTab} bookings`);
         const data = (await res.json()) as FilteredResponse;
         setBookings(data.bookings || []);
+
+        if (statusQuery === 'cancelled') {
+          try {
+            const declRes = await fetch(`${API_URL}/bookings/shopowner/requests/declined/`, {
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+            });
+            if (declRes.ok) {
+              const declData = (await declRes.json()) as { declined_requests: PendingRequest[] };
+              setDeclinedRequests(declData.declined_requests || []);
+            } else {
+              setDeclinedRequests([]);
+            }
+          } catch {
+            setDeclinedRequests([]);
+          }
+        } else {
+          setDeclinedRequests([]);
+        }
       }
     } catch (e: any) {
       setError(e.message);
@@ -191,9 +240,34 @@ export default function ShopOwnerJobsScreen() {
     }
   };
 
+  const fetchRequests = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const res = await fetch(`${API_URL}/bookings/shopowner/requests/`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!res.ok) throw new Error('Failed to fetch requests');
+      const data = (await res.json()) as HomeResponse;
+      setPendingRequests(data.pending_requests || []);
+    } catch (e: any) {
+      setError(e.message || 'Failed to fetch requests');
+      setPendingRequests([]);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
   const onRefresh = () => {
     setRefreshing(true);
-    fetchBookings();
+    if (activeTab === 'requests') {
+      fetchRequests();
+    } else {
+      fetchBookings();
+    }
   };
 
   // ── Status helpers ──
@@ -341,9 +415,87 @@ export default function ShopOwnerJobsScreen() {
   const assignedIds = new Set(assignments.map((a) => a.mechanic.id));
   const availableMechanics = shopMechanics.filter((m) => !assignedIds.has(m.account_id));
 
+  // ── Pending Requests helpers (same backend as old Requests screen) ──
+  const customRequests = pendingRequests.filter((r) => r.request_type === 'custom');
+  const directRequests = pendingRequests.filter((r) => r.request_type === 'direct');
+  const broadcastRequests = pendingRequests.filter(
+    (r) => r.request_type === 'broadcast' || r.request_type === 'emergency'
+  );
+
+  const listToShow =
+    requestTab === 'custom'
+      ? customRequests
+      : requestTab === 'direct'
+      ? directRequests
+      : broadcastRequests;
+
+  const handleAccept = async (r: PendingRequest) => {
+    const endpoint =
+      r.request_type === 'direct'
+        ? `${API_URL}/bookings/shopowner/requests/${r.id}/accept/`
+        : `${API_URL}/bookings/shopowner/requests/${r.id}/accept-custom/`;
+
+    setActionLoading(r.id);
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        Alert.alert('Error', data.error || 'Failed to accept request');
+        return;
+      }
+      setPendingRequests((prev) => prev.filter((p) => p.id !== r.id));
+      Alert.alert('Success', data.message || 'Request accepted');
+    } catch {
+      Alert.alert('Error', 'Network error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDecline = (r: PendingRequest) => {
+    Alert.alert('Decline Request', 'Are you sure you want to decline this request?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Decline',
+        style: 'destructive',
+        onPress: async () => {
+          const endpoint =
+            r.request_type === 'direct'
+              ? `${API_URL}/bookings/shopowner/requests/${r.id}/decline/`
+              : `${API_URL}/bookings/shopowner/requests/${r.id}/decline-custom/`;
+
+          setActionLoading(r.id);
+          try {
+            const res = await fetch(endpoint, {
+              method: 'POST',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+            });
+            const data = await res.json();
+            if (!res.ok) {
+              Alert.alert('Error', data.error || 'Failed to decline request');
+              return;
+            }
+            Alert.alert('Declined', data.message || 'Request declined');
+            setPendingRequests((prev) => prev.filter((p) => p.id !== r.id));
+          } catch {
+            Alert.alert('Error', 'Network error');
+          } finally {
+            setActionLoading(null);
+          }
+        },
+      },
+    ]);
+  };
+
   // ── Tab bar ──
   const tabConfig: { key: TabType; label: string; icon: string }[] = [
     { key: 'all', label: 'All', icon: 'th-list' },
+    { key: 'requests', label: 'Requests', icon: 'envelope' },
     { key: 'accepted', label: 'Accepted', icon: 'calendar-check-o' },
     { key: 'on_going', label: 'On Going', icon: 'play-circle' },
     { key: 'completed', label: 'Completed', icon: 'check-circle' },
@@ -358,43 +510,59 @@ export default function ShopOwnerJobsScreen() {
       <View style={styles.header}>
         <ThemedText style={styles.headerTitle}>Jobs</ThemedText>
         <ThemedText style={styles.headerSub}>
-          {bookings.length} {activeTab === 'all' ? 'total' : activeTab} job{bookings.length !== 1 ? 's' : ''}
+          {activeTab === 'requests'
+            ? `${listToShow.length} pending request${listToShow.length !== 1 ? 's' : ''}`
+            : `${bookings.length} ${activeTab === 'all' ? 'total' : activeTab} job${
+                bookings.length !== 1 ? 's' : ''
+              }`}
         </ThemedText>
       </View>
 
-      {/* Tabs */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.tabScroll}
-        style={styles.tabBar}
-      >
-        {tabConfig.map((t) => {
-          const active = activeTab === t.key;
-          const c = counts[t.key] || 0;
-          return (
-            <TouchableOpacity
-              key={t.key}
-              style={[styles.tab, active && styles.tabActive]}
-              onPress={() => setActiveTab(t.key)}
-            >
-              <FontAwesome name={t.icon as any} size={13} color={active ? '#fff' : '#888'} style={{ marginRight: 5 }} />
-              <ThemedText style={[styles.tabText, active && styles.tabTextActive]}>{t.label}</ThemedText>
-              {c > 0 && activeTab === 'all' && (
-                <View style={[styles.tabBadge, active && styles.tabBadgeActive]}>
-                  <ThemedText style={styles.tabBadgeText}>{c}</ThemedText>
-                </View>
-              )}
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
+      {/* Tabs container */}
+      <View style={styles.tabsContainer}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.tabScroll}
+          style={styles.tabBar}
+        >
+          {tabConfig.map((t) => {
+            const active = activeTab === t.key;
+            const c = counts[t.key] || 0;
+            return (
+              <TouchableOpacity
+                key={t.key}
+                style={[styles.tab, active && styles.tabActive]}
+                onPress={() => setActiveTab(t.key)}
+              >
+                <FontAwesome
+                  name={t.icon as any}
+                  size={13}
+                  color={active ? '#fff' : '#888'}
+                  style={{ marginRight: 5 }}
+                />
+                <ThemedText style={[styles.tabText, active && styles.tabTextActive]}>
+                  {t.label}
+                </ThemedText>
+                {c > 0 && activeTab === 'all' && (
+                  <View style={[styles.tabBadge, active && styles.tabBadgeActive]}>
+                    <ThemedText style={styles.tabBadgeText}>{c}</ThemedText>
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
 
-      {/* Content */}
-      <ScrollView
-        contentContainerStyle={styles.listContent}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF9500" />}
-      >
+      {/* Content container */}
+      <View style={styles.listWrapper}>
+        <ScrollView
+          contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF9500" />
+          }
+        >
         {loading && !refreshing ? (
           <ActivityIndicator size="large" color="#FF9500" style={{ marginTop: 60 }} />
         ) : error ? (
@@ -405,6 +573,249 @@ export default function ShopOwnerJobsScreen() {
               <ThemedText style={styles.retryText}>Retry</ThemedText>
             </TouchableOpacity>
           </View>
+        ) : activeTab === 'requests' ? (
+          <>
+            {/* Inner tabs for Requests: Custom / Direct / Broadcast */}
+            <View style={styles.requestTabsWrapper}>
+              <View style={styles.requestTabsRow}>
+                {(['custom', 'direct', 'broadcast'] as RequestTabType[]).map((tab) => {
+                  const active = requestTab === tab;
+                  const label =
+                    tab === 'custom' ? 'Custom' : tab === 'direct' ? 'Direct' : 'Broadcast';
+                  return (
+                    <TouchableOpacity
+                      key={tab}
+                      style={[
+                        styles.requestTab,
+                        active && styles.requestTabActive,
+                      ]}
+                      onPress={() => setRequestTab(tab)}
+                    >
+                      <ThemedText
+                        style={[
+                          styles.requestTabText,
+                          active && styles.requestTabTextActive,
+                        ]}
+                      >
+                        {label}
+                      </ThemedText>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            {listToShow.length === 0 ? (
+              <View style={styles.center}>
+                <IconSymbol name="tray.fill" size={52} color="#888" />
+                <ThemedText style={styles.emptyText}>
+                  {requestTab === 'custom'
+                    ? 'No custom requests'
+                    : requestTab === 'direct'
+                    ? 'No direct requests'
+                    : 'No broadcast requests'}
+                </ThemedText>
+              </View>
+            ) : (
+              <View style={styles.list}>
+                {listToShow.map((r) => (
+                  <View key={r.id} style={styles.card}>
+                    <View style={styles.cardTop}>
+                      <View style={styles.cardTopLeft}>
+                        <View
+                          style={[
+                            styles.statusDot,
+                            { backgroundColor: '#FF950015' },
+                          ]}
+                        >
+                          <IconSymbol
+                            name="envelope.fill"
+                            size={16}
+                            color="#FF9500"
+                          />
+                        </View>
+                        <View>
+                          <View style={styles.statusRow}>
+                            <View
+                              style={[
+                                styles.statusBadge,
+                                { backgroundColor: '#FF9500' },
+                              ]}
+                            >
+                              <ThemedText style={styles.statusLabel}>
+                                {(r.request_type || 'request').toUpperCase()}
+                              </ThemedText>
+                            </View>
+                          </View>
+                          <ThemedText style={styles.reqType}>
+                            {new Date(r.created_at).toLocaleDateString()}
+                          </ThemedText>
+                        </View>
+                      </View>
+                    </View>
+
+                    <View style={styles.infoSection}>
+                      <View style={styles.infoRow}>
+                        <FontAwesome name="user" size={13} color="#888" />
+                        <ThemedText style={styles.infoText} numberOfLines={1}>
+                          {r.client
+                            ? `${r.client.firstname || ''} ${r.client.lastname || ''}`.trim() ||
+                              'Client'
+                            : 'Client'}
+                        </ThemedText>
+                      </View>
+                      <View style={styles.infoRow}>
+                        <FontAwesome name="map-marker" size={14} color="#888" />
+                        <ThemedText style={styles.infoText} numberOfLines={1}>
+                          {r.service_location
+                            ? `${r.service_location.barangay || ''} ${
+                                r.service_location.city_municipality
+                                  ? `, ${r.service_location.city_municipality}`
+                                  : ''
+                              }`.trim() || 'Location'
+                            : 'Location'}
+                        </ThemedText>
+                      </View>
+                    </View>
+
+                    <View style={styles.cardFooter}>
+                      <View style={styles.footerActions}>
+                        <TouchableOpacity
+                          style={[styles.assignBtn, { backgroundColor: '#2A2A2A' }]}
+                          onPress={() => handleDecline(r)}
+                          disabled={actionLoading === r.id}
+                        >
+                          <ThemedText
+                            style={[
+                              styles.assignBtnText,
+                              { color: '#FF3B30' },
+                            ]}
+                          >
+                            Decline
+                          </ThemedText>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.assignBtn}
+                          onPress={() => handleAccept(r)}
+                          disabled={actionLoading === r.id}
+                        >
+                          {actionLoading === r.id ? (
+                            <ActivityIndicator size="small" color="#FF9500" />
+                          ) : (
+                            <ThemedText style={styles.assignBtnText}>
+                              Accept
+                            </ThemedText>
+                          )}
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+          </>
+        ) : activeTab === 'cancelled' ? (
+          declinedRequests.length === 0 && bookings.length === 0 ? (
+            <View style={styles.center}>
+              <View style={styles.emptyCircle}>
+                <FontAwesome name="inbox" size={40} color="#555" />
+              </View>
+              <ThemedText style={styles.emptyText}>No cancelled jobs or declined requests</ThemedText>
+              <ThemedText style={styles.emptySub}>Declined requests and cancelled jobs will appear here</ThemedText>
+            </View>
+          ) : (
+          <View style={styles.list}>
+            {declinedRequests.map((r) => (
+              <View key={`declined-${r.id}`} style={styles.card}>
+                <View style={styles.cardTop}>
+                  <View style={styles.cardTopLeft}>
+                    <View style={[styles.statusDot, { backgroundColor: '#FF3B3025' }]}>
+                      <FontAwesome name="times-circle" size={16} color="#FF3B30" />
+                    </View>
+                    <View>
+                      <View style={[styles.statusBadge, { backgroundColor: '#FF3B30' }]}>
+                        <ThemedText style={styles.statusLabel}>DECLINED</ThemedText>
+                      </View>
+                      <ThemedText style={styles.reqType}>
+                        {(r.request_type || 'request').toUpperCase()} · {new Date(r.created_at).toLocaleDateString()}
+                      </ThemedText>
+                    </View>
+                  </View>
+                </View>
+                <View style={styles.infoSection}>
+                  <View style={styles.infoRow}>
+                    <FontAwesome name="user" size={13} color="#888" />
+                    <ThemedText style={styles.infoText} numberOfLines={1}>
+                      {r.client
+                        ? `${r.client.firstname || ''} ${r.client.lastname || ''}`.trim() || 'Client'
+                        : 'Client'}
+                    </ThemedText>
+                  </View>
+                  <View style={styles.infoRow}>
+                    <FontAwesome name="map-marker" size={14} color="#888" />
+                    <ThemedText style={styles.infoText} numberOfLines={1}>
+                      {r.service_location
+                        ? `${r.service_location.barangay || ''} ${r.service_location.city_municipality ? `, ${r.service_location.city_municipality}` : ''}`.trim() || 'Location'
+                        : 'Location'}
+                    </ThemedText>
+                  </View>
+                </View>
+              </View>
+            ))}
+            {bookings.map((b) => (
+              <View key={b.id} style={styles.card}>
+                <View style={styles.cardTop}>
+                  <View style={styles.cardTopLeft}>
+                    <View style={[styles.statusDot, { backgroundColor: getStatusColor(b.status) + '25' }]}>
+                      <FontAwesome name={getStatusIcon(b.status)} size={15} color={getStatusColor(b.status)} />
+                    </View>
+                    <View>
+                      <View style={styles.statusRow}>
+                        <View style={[styles.statusBadge, { backgroundColor: getStatusColor(b.status) }]}>
+                          <ThemedText style={styles.statusLabel}>{getStatusLabel(b.status)}</ThemedText>
+                        </View>
+                        <ThemedText style={styles.bookingId}>#{b.id}</ThemedText>
+                      </View>
+                      <ThemedText style={styles.reqType}>
+                        {b.request.type
+                          ? b.request.type.charAt(0).toUpperCase() + b.request.type.slice(1) + ' Service'
+                          : 'Service Request'}
+                      </ThemedText>
+                    </View>
+                  </View>
+                  <ThemedText style={styles.timeAgo}>{getTimeSince(b.booked_at)}</ThemedText>
+                </View>
+                <View style={styles.infoSection}>
+                  <View style={styles.infoRow}>
+                    <FontAwesome name="user" size={13} color="#888" />
+                    <ThemedText style={styles.infoText} numberOfLines={1}>
+                      {b.client
+                        ? `${b.client.firstname || ''} ${b.client.lastname || ''}`.trim() || b.client.name || 'Client'
+                        : 'Client'}
+                    </ThemedText>
+                  </View>
+                  <View style={styles.infoRow}>
+                    <FontAwesome name="map-marker" size={14} color="#888" />
+                    <ThemedText style={styles.infoText} numberOfLines={1}>
+                      {b.service_location
+                        ? `${b.service_location.street_name || ''}, ${b.service_location.barangay || ''}`
+                        : 'No location'}
+                    </ThemedText>
+                  </View>
+                  <View style={styles.infoRow}>
+                    <FontAwesome name="calendar-o" size={13} color="#888" />
+                    <ThemedText style={styles.infoText}>{formatDate(b.booked_at)}</ThemedText>
+                  </View>
+                </View>
+                <View style={styles.cardFooter}>
+                  <ThemedText style={styles.amount}>
+                    ₱{parseFloat(String(b.amount_fee || '0')).toFixed(2)}
+                  </ThemedText>
+                </View>
+              </View>
+            ))}
+          </View>
+          )
         ) : bookings.length === 0 ? (
           <View style={styles.center}>
             <View style={styles.emptyCircle}>
@@ -473,15 +884,52 @@ export default function ShopOwnerJobsScreen() {
                   </ThemedText>
 
                   <View style={styles.footerActions}>
-                    {/* Assign Mechanics button — always available for non-terminal statuses */}
-                    {['accepted', 'on_the_way', 'active', 'paused'].includes(b.status) && (
-                      <TouchableOpacity
-                        style={styles.assignBtn}
-                        onPress={() => openAssignModal(b.request.id)}
-                      >
-                        <FontAwesome name="users" size={12} color="#FF9500" />
-                        <ThemedText style={styles.assignBtnText}>Assign</ThemedText>
-                      </TouchableOpacity>
+                    {activeTab === 'on_going' ? (
+                      <>
+                        <TouchableOpacity
+                          style={[styles.assignBtn, { backgroundColor: '#2A2A2A' }]}
+                          onPress={() =>
+                            router.push({
+                              pathname: '/shopowner/booking/booking_details',
+                              params: { bookingId: b.id.toString() },
+                            })
+                          }
+                        >
+                          <ThemedText
+                            style={[
+                              styles.assignBtnText,
+                              { color: '#FFFFFF' },
+                            ]}
+                          >
+                            View details
+                          </ThemedText>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.assignBtn, { backgroundColor: '#34C759' }]}
+                          // TODO: call complete endpoint then refresh
+                          onPress={() => {}}
+                        >
+                          <ThemedText
+                            style={[
+                              styles.assignBtnText,
+                              { color: '#000000' },
+                            ]}
+                          >
+                            Completed
+                          </ThemedText>
+                        </TouchableOpacity>
+                      </>
+                    ) : (
+                      // Assign Mechanics button — available for non-terminal statuses outside On Going tab
+                      ['accepted', 'on_the_way', 'active', 'paused'].includes(b.status) && (
+                        <TouchableOpacity
+                          style={styles.assignBtn}
+                          onPress={() => openAssignModal(b.request.id)}
+                        >
+                          <FontAwesome name="users" size={12} color="#FF9500" />
+                          <ThemedText style={styles.assignBtnText}>Assign</ThemedText>
+                        </TouchableOpacity>
+                      )
                     )}
                   </View>
                 </View>
@@ -489,8 +937,9 @@ export default function ShopOwnerJobsScreen() {
             ))}
           </View>
         )}
-        <View style={{ height: 20 }} />
-      </ScrollView>
+          <View style={{ height: 20 }} />
+        </ScrollView>
+      </View>
 
       {/* ── Assign Mechanics Modal ── */}
       <Modal visible={assignModalVisible} animationType="slide" transparent>
@@ -588,22 +1037,33 @@ export default function ShopOwnerJobsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#151718' },
-  header: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 4 },
+  header: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 10 },
   headerTitle: { fontSize: 24, fontWeight: '700', color: '#fff' },
   headerSub: { fontSize: 13, color: '#888', marginTop: 2 },
 
-  // Tabs
-  tabBar: { maxHeight: 48, marginBottom: 4 },
-  tabScroll: { paddingHorizontal: 16, gap: 8, alignItems: 'center' },
+  // Tabs (All / Requests / Accepted / ...)
+  tabsContainer: {
+    paddingHorizontal: 16,
+    paddingTop: 2,
+    paddingBottom: 6,
+  },
+  tabBar: { maxHeight: 52 },
+  tabScroll: {
+    paddingHorizontal: 16,
+    paddingVertical: 4,
+    gap: 8,
+    alignItems: 'center',
+  },
   tab: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#1E1E1E',
+    borderRadius: 999,
   },
-  tabActive: { backgroundColor: '#FF9500' },
+  tabActive: {
+    backgroundColor: '#FF9500',
+  },
   tabText: { fontSize: 13, fontWeight: '600', color: '#888' },
   tabTextActive: { color: '#fff' },
   tabBadge: {
@@ -616,8 +1076,43 @@ const styles = StyleSheet.create({
   tabBadgeActive: { backgroundColor: 'rgba(255,255,255,0.25)' },
   tabBadgeText: { fontSize: 11, fontWeight: '700', color: '#fff' },
 
+  // Inner request tabs (Custom / Direct / Broadcast)
+  requestTabsWrapper: {
+    marginTop: 16,
+    marginBottom: 18,
+    paddingHorizontal: 16,
+  },
+  requestTabsRow: {
+    flexDirection: 'row',
+    width: '100%',
+    gap: 8,
+  },
+  requestTab: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: '#1E1E1E',
+  },
+  requestTabActive: {
+    backgroundColor: '#FF9500',
+  },
+  requestTabText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#ccc',
+  },
+  requestTabTextActive: {
+    color: '#fff',
+  },
+
   // List
-  listContent: { paddingHorizontal: 16, paddingBottom: 30 },
+  listWrapper: {
+    flex: 1,
+    paddingTop: 4,
+  },
+  listContent: { paddingHorizontal: 16, paddingTop: 28, paddingBottom: 30 },
   list: { gap: 12 },
   center: { paddingVertical: 60, alignItems: 'center', gap: 12 },
   emptyCircle: {

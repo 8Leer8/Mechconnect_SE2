@@ -167,8 +167,8 @@ export default function ShopOwnerHome() {
             </View>
             <ThemedText style={styles.revenueLabel}>Total Revenue</ThemedText>
           </View>
-          <ThemedText style={styles.revenueValue}>
-            ₱{dashboardData.total_revenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          <ThemedText style={styles.revenueValue} numberOfLines={2} adjustsFontSizeToFit>
+            ₱{Number(dashboardData.total_revenue ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </ThemedText>
         </View>
 
@@ -360,9 +360,10 @@ const styles = StyleSheet.create({
     color: '#888',
   },
   revenueValue: {
-    fontSize: 36,
+    fontSize: 28,
     fontWeight: '700',
     color: '#FF9500',
+    flexShrink: 1,
   },
   revenueIconCircle: {
     width: 40,

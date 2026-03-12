@@ -15,7 +15,7 @@ from services.models import MechanicService, ShopService
 def list_requests(request):
     """
     Get all requests made by the authenticated client.
-    Returns requests grouped by type: custom, direct, emergency, broadcast.
+    Returns requests grouped by type: custom, direct, broadcast (no emergency).
     Supports pagination and filtering.
     Query params:
     - page: page number (default: 1)
@@ -60,15 +60,16 @@ def list_requests(request):
         
         client = account.client
         
-        # Get all requests made by this client
-        all_requests_query = Request.objects.filter(client=client).select_related(
+        # Get all requests made by this client (custom, direct, broadcast only; no emergency)
+        all_requests_query = Request.objects.filter(client=client).exclude(
+            request_type='emergency'
+        ).select_related(
             'provider',
             'shop',
             'service_location'
         ).prefetch_related(
             'customrequest',
             'directrequest',
-            'emergencyrequest',
             'broadcast_request'
         )
         
@@ -175,30 +176,6 @@ def list_requests(request):
                         'price': float(addon.service_add_on.price)
                     } for addon in add_ons],
                     'status': req.directrequest.request_status,
-                    'service_location': {
-                        'street_name': req.service_location.street_name,
-                        'barangay': req.service_location.barangay,
-                        'city_municipality': req.service_location.city_municipality,
-                    } if req.service_location else None,
-                    'created_at': req.created_at.isoformat(),
-                    'has_booking': hasattr(req, 'booking')
-                })
-            elif req.request_type == 'emergency' and hasattr(req, 'emergencyrequest'):
-                emergency_requests.append({
-                    'id': req.id,
-                    'provider': {
-                        'id': req.provider.id,
-                        'name': f"{req.provider.firstname} {req.provider.lastname}"
-                    } if req.provider else None,
-                    'shop': {
-                        'id': req.shop.id,
-                        'shop_name': req.shop.shop_name,
-                        'contact_number': req.shop.contact_number,
-                        'email': req.shop.email
-                    } if req.shop else None,
-                    'description': req.emergencyrequest.description,
-                    'providers_note': req.emergencyrequest.providers_note,
-                    'concern_picture': req.emergencyrequest.concern_picture.url if req.emergencyrequest.concern_picture else None,
                     'service_location': {
                         'street_name': req.service_location.street_name,
                         'barangay': req.service_location.barangay,

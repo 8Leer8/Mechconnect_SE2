@@ -459,11 +459,11 @@ def create_shop_direct_request(request):
             landmark=service_location_data.get('landmark')
         )
         
-        # Create request
+        # Create request: link to shop and shop owner so shop owner sees it in their list
         new_request = Request.objects.create(
             client=client,
-            provider=None,  # No individual provider, request goes to the shop
-            shop=shop,  # Associate request with the shop
+            provider=provider,
+            shop=shop,
             request_type='direct',
             service_location=service_location
         )

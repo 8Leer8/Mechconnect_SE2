@@ -59,11 +59,18 @@ def home_page(request):
                 client=client
             ).exclude(
                 booking__isnull=False
+            ).exclude(
+                request_type='emergency'
             ).select_related(
                 'client',
                 'client__account',
                 'provider',
+                'shop',
                 'service_location'
+            ).prefetch_related(
+                Prefetch('customrequest', queryset=CustomRequest.objects.all()),
+                Prefetch('directrequest', queryset=DirectRequest.objects.all()),
+                Prefetch('broadcast_request', queryset=BroadcastRequest.objects.all()),
             ).order_by('-created_at')
             
             filtered_pending_requests = []
@@ -75,8 +82,6 @@ def home_page(request):
                     elif req.request_type == 'direct' and hasattr(req, 'directrequest'):
                         if req.directrequest.request_status == 'pending':
                             filtered_pending_requests.append(req)
-                    elif req.request_type == 'emergency' and hasattr(req, 'emergencyrequest'):
-                        filtered_pending_requests.append(req)
                     elif req.request_type == 'broadcast' and hasattr(req, 'broadcast_request'):
                         if req.broadcast_request.status == 'searching':
                             filtered_pending_requests.append(req)
@@ -244,7 +249,7 @@ def home_page(request):
         
         elif hasattr(account, 'shopowner'):
             shop_owner = account.shopowner
-            
+
             current_bookings = Booking.objects.filter(
                 request__provider=account,
                 status__in=['accepted', 'on_the_way', 'active', 'reworked']
@@ -257,32 +262,70 @@ def home_page(request):
             ).prefetch_related(
                 Prefetch('activebooking', queryset=ActiveBooking.objects.all())
             ).order_by('-booked_at')
-            
+
+            # Client requests to this shop: by shop or provider (custom, direct, broadcast only; no emergency)
+            request_ids_with_booking = set(
+                Booking.objects.values_list('request_id', flat=True)
+            )
+            try:
+                shop = shop_owner.shop
+            except Exception:
+                shop = None
+            shop_filter = Q(provider=account)
+            if shop is not None:
+                shop_filter = Q(shop=shop) | Q(provider=account)
             all_requests = Request.objects.filter(
-                provider=account
+                shop_filter
             ).exclude(
-                booking__isnull=False
+                id__in=request_ids_with_booking
+            ).exclude(
+                request_type='emergency'
+            ).select_related(
+                'client',
+                'client__account',
+                'provider',
+                'shop',
+                'service_location'
+            ).prefetch_related(
+                Prefetch('customrequest', queryset=CustomRequest.objects.all()),
+                Prefetch('directrequest', queryset=DirectRequest.objects.all()),
+                Prefetch('broadcast_request', queryset=BroadcastRequest.objects.all()),
+            ).order_by('-created_at')
+
+            # Broadcast requests (client broadcast, still searching)
+            broadcast_requests = Request.objects.filter(
+                request_type='broadcast'
+            ).exclude(
+                id__in=request_ids_with_booking
+            ).filter(
+                broadcast_request__status='searching'
             ).select_related(
                 'client',
                 'client__account',
                 'provider',
                 'service_location'
+            ).prefetch_related(
+                Prefetch('broadcast_request', queryset=BroadcastRequest.objects.all()),
             ).order_by('-created_at')
-            
+
             filtered_pending_requests = []
             for req in all_requests:
                 try:
                     if req.request_type == 'custom' and hasattr(req, 'customrequest'):
-                        if req.customrequest.request_status == 'pending':
+                        if req.customrequest.request_status in ['pending', 'quoted']:
                             filtered_pending_requests.append(req)
                     elif req.request_type == 'direct' and hasattr(req, 'directrequest'):
                         if req.directrequest.request_status == 'pending':
                             filtered_pending_requests.append(req)
-                    elif req.request_type == 'emergency':
-                        # Add emergency requests even if emergencyrequest doesn't exist
-                        filtered_pending_requests.append(req)
+                    elif req.request_type == 'broadcast' and hasattr(req, 'broadcast_request'):
+                        if getattr(req.broadcast_request, 'status', None) == 'searching':
+                            filtered_pending_requests.append(req)
                 except Exception:
                     continue
+            for req in broadcast_requests:
+                if req.id not in {r.id for r in filtered_pending_requests}:
+                    filtered_pending_requests.append(req)
+            filtered_pending_requests.sort(key=lambda r: r.created_at, reverse=True)
         
         else:
             return Response({

@@ -54,6 +54,9 @@ urlpatterns = [
     path('mechanic/emergency/<int:request_id>/accept/', views.mechanic_accept_emergency_request, name='mechanic-accept-emergency-request'),
     path('mechanic/emergency/', views.get_emergency_requests, name='get-emergency-requests'),
 
+    # Shop owner: list pending requests (Jobs > Requests tab)
+    path('shopowner/requests/', views.list_shopowner_requests, name='list-shopowner-requests'),
+    path('shopowner/requests/declined/', views.list_shopowner_declined_requests, name='list-shopowner-declined-requests'),
     # Shop owner booking endpoints (accept/decline requests)
     path('shopowner/requests/<int:request_id>/accept/', views.shopowner_accept_direct_request, name='shopowner-accept-direct-request'),
     path('shopowner/requests/<int:request_id>/decline/', views.shopowner_decline_direct_request, name='shopowner-decline-direct-request'),

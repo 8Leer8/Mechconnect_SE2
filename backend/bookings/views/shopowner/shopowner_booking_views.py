@@ -7,6 +7,8 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 
+from django.db.models import Prefetch, Q
+
 from ...models import (
     Booking,
     Request,
@@ -19,11 +21,12 @@ from ...models import (
     CancelBooking,
     ReworkBooking,
     DisputeBooking,
+    BroadcastRequest,
 )
+from ...serializers import RequestSerializer
 from users.models import Account
 from services.models import ShopService
 from ..client.client_booking_views import _serialize_single_booking, _serialize_bookings
-from django.db.models import Prefetch
 
 
 def _get_shopowner_account(request):
@@ -49,6 +52,160 @@ def _get_shopowner_account(request):
     return account, None
 
 
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def list_shopowner_requests(request):
+    """
+    List pending requests for the logged-in shop owner (Jobs > Requests).
+    Returns custom, direct, and broadcast requests sent to this shop (by shop or provider).
+    """
+    account, err = _get_shopowner_account(request)
+    if err:
+        return err
+
+    shop_owner = account.shopowner
+    try:
+        shop = shop_owner.shop
+    except Exception:
+        shop = None
+
+    request_ids_with_booking = set(Booking.objects.values_list("request_id", flat=True))
+    shop_filter = Q(provider=account)
+    if shop is not None:
+        shop_filter = Q(shop=shop) | Q(provider=account)
+
+    all_requests = (
+        Request.objects.filter(shop_filter)
+        .exclude(id__in=request_ids_with_booking)
+        .exclude(request_type="emergency")
+        .select_related(
+            "client",
+            "client__account",
+            "provider",
+            "shop",
+            "service_location",
+        )
+        .prefetch_related(
+            Prefetch("customrequest", queryset=CustomRequest.objects.all()),
+            Prefetch("directrequest", queryset=DirectRequest.objects.all()),
+            Prefetch("broadcast_request", queryset=BroadcastRequest.objects.all()),
+        )
+        .order_by("-created_at")
+    )
+
+    broadcast_requests = (
+        Request.objects.filter(request_type="broadcast")
+        .exclude(id__in=request_ids_with_booking)
+        .filter(broadcast_request__status="searching")
+        .select_related("client", "client__account", "provider", "shop", "service_location")
+        .prefetch_related(Prefetch("broadcast_request", queryset=BroadcastRequest.objects.all()))
+        .order_by("-created_at")
+    )
+
+    filtered_pending_requests = []
+    for req in all_requests:
+        try:
+            if req.request_type == "custom" and hasattr(req, "customrequest"):
+                if req.customrequest.request_status in ["pending", "quoted"]:
+                    filtered_pending_requests.append(req)
+            elif req.request_type == "direct" and hasattr(req, "directrequest"):
+                if req.directrequest.request_status == "pending":
+                    filtered_pending_requests.append(req)
+            elif req.request_type == "broadcast" and hasattr(req, "broadcast_request"):
+                if getattr(req.broadcast_request, "status", None) == "searching":
+                    filtered_pending_requests.append(req)
+        except Exception:
+            continue
+    for req in broadcast_requests:
+        if req.id not in {r.id for r in filtered_pending_requests}:
+            filtered_pending_requests.append(req)
+    filtered_pending_requests.sort(key=lambda r: r.created_at, reverse=True)
+
+    return Response(
+        {"pending_requests": RequestSerializer(filtered_pending_requests, many=True).data},
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def list_shopowner_declined_requests(request):
+    """
+    List declined (cancelled) requests for the logged-in shop owner.
+    Used by Jobs > Cancelled tab to show requests that were declined.
+    """
+    account, err = _get_shopowner_account(request)
+    if err:
+        return err
+
+    shop_owner = account.shopowner
+    try:
+        shop = shop_owner.shop
+    except Exception:
+        shop = None
+
+    shop_filter = Q(provider=account)
+    if shop is not None:
+        shop_filter = Q(shop=shop) | Q(provider=account)
+
+    # Requests that have no booking and are declined (rejected)
+    all_requests = (
+        Request.objects.filter(shop_filter)
+        .exclude(request_type="emergency")
+        .exclude(request_type="broadcast")
+        .select_related(
+            "client",
+            "client__account",
+            "provider",
+            "shop",
+            "service_location",
+        )
+        .prefetch_related(
+            Prefetch("customrequest", queryset=CustomRequest.objects.all()),
+            Prefetch("directrequest", queryset=DirectRequest.objects.all()),
+        )
+        .order_by("-created_at")
+    )
+
+    request_ids_with_booking = set(Booking.objects.values_list("request_id", flat=True))
+    declined = []
+    for req in all_requests:
+        if req.id in request_ids_with_booking:
+            continue
+        try:
+            if req.request_type == "custom" and hasattr(req, "customrequest"):
+                if req.customrequest.request_status == CustomRequest.Status.REJECTED:
+                    declined.append(req)
+            elif req.request_type == "direct" and hasattr(req, "directrequest"):
+                if req.directrequest.request_status == DirectRequest.Status.REJECTED:
+                    declined.append(req)
+        except Exception:
+            continue
+
+    try:
+        data = RequestSerializer(declined, many=True).data
+    except Exception:
+        data = []
+    return Response(
+        {"declined_requests": data},
+        status=status.HTTP_200_OK,
+    )
+
+
+def _get_shopowner_request(request_id, request_type, account):
+    """Get a Request by id and type that belongs to this shop owner (by shop or provider)."""
+    try:
+        shop = account.shopowner.shop
+    except Exception:
+        shop = None
+    q = Request.objects.filter(id=request_id, request_type=request_type)
+    if shop is not None:
+        q = q.filter(Q(shop=shop) | Q(provider=account))
+    else:
+        q = q.filter(provider=account)
+    return q.select_related("client", "shop").first()
+
+
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def shopowner_accept_direct_request(request, request_id):
@@ -59,14 +216,8 @@ def shopowner_accept_direct_request(request, request_id):
     if err:
         return err
 
-    # Get the shop for this shop owner
-    shop = account.shopowner.shop
-
-    try:
-        req = Request.objects.select_related("client", "shop").get(
-            id=request_id, shop=shop, request_type="direct"
-        )
-    except Request.DoesNotExist:
+    req = _get_shopowner_request(request_id, "direct", account)
+    if req is None:
         return Response(
             {"error": "Request not found for this shop owner"},
             status=status.HTTP_404_NOT_FOUND,
@@ -94,7 +245,7 @@ def shopowner_accept_direct_request(request, request_id):
 
     # Calculate total from ShopService price or fallback to service minimum
     try:
-        shop = account.shopowner.shop
+        shop = req.shop or account.shopowner.shop
         shop_service = ShopService.objects.get(shop=shop, service=direct.service)
         base_price = float(shop_service.price)
     except (ShopService.DoesNotExist, Exception):
@@ -140,14 +291,8 @@ def shopowner_decline_direct_request(request, request_id):
     if err:
         return err
 
-    # Get the shop for this shop owner
-    shop = account.shopowner.shop
-
-    try:
-        req = Request.objects.get(
-            id=request_id, shop=shop, request_type="direct"
-        )
-    except Request.DoesNotExist:
+    req = _get_shopowner_request(request_id, "direct", account)
+    if req is None:
         return Response(
             {"error": "Request not found for this shop owner"},
             status=status.HTTP_404_NOT_FOUND,
@@ -187,14 +332,8 @@ def shopowner_accept_custom_request(request, request_id):
     if err:
         return err
 
-    # Get the shop for this shop owner
-    shop = account.shopowner.shop
-
-    try:
-        req = Request.objects.select_related("client", "shop").get(
-            id=request_id, shop=shop, request_type="custom"
-        )
-    except Request.DoesNotExist:
+    req = _get_shopowner_request(request_id, "custom", account)
+    if req is None:
         return Response(
             {"error": "Request not found for this shop owner"},
             status=status.HTTP_404_NOT_FOUND,
@@ -243,12 +382,8 @@ def shopowner_decline_custom_request(request, request_id):
     if err:
         return err
 
-    # Get the shop for this shop owner
-    shop = account.shopowner.shop
-
-    try:
-        req = Request.objects.get(id=request_id, shop=shop, request_type="custom")
-    except Request.DoesNotExist:
+    req = _get_shopowner_request(request_id, "custom", account)
+    if req is None:
         return Response({"error": "Request not found"}, status=status.HTTP_404_NOT_FOUND)
 
     try:

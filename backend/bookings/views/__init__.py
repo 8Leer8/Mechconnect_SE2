@@ -56,6 +56,8 @@ __all__ = [
     'get_emergency_requests',
 
     # Shop owner booking views
+    'list_shopowner_requests',
+    'list_shopowner_declined_requests',
     'shopowner_accept_direct_request',
     'shopowner_decline_direct_request',
     'shopowner_accept_custom_request',
