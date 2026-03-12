@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import Conversation, Message
+from users.models import Account
 
 
 class ParticipantSerializer(serializers.Serializer):
@@ -20,11 +21,16 @@ class MessageSerializer(serializers.ModelSerializer):
 
     def get_is_mine(self, obj):
         request = self.context.get('request') if hasattr(self, 'context') else None
-        try:
-            account_id = request.session.get('account_id') if request and hasattr(request, 'session') else None
-        except Exception:
-            account_id = None
-        return bool(account_id and obj.sender and getattr(obj.sender, 'id', None) == account_id)
+        if request:
+            user = getattr(request, 'user', None)
+            if isinstance(user, Account):
+                return bool(obj.sender and getattr(obj.sender, 'id', None) == getattr(user, 'id', None))
+            try:
+                account_id = request.session.get('account_id')
+            except Exception:
+                account_id = None
+            return bool(account_id and obj.sender and getattr(obj.sender, 'id', None) == account_id)
+        return False
 
 
 class ConversationSerializer(serializers.ModelSerializer):

@@ -59,16 +59,12 @@ export default function BookingChatScreen() {
     setLoading(true);
     try {
       const headers: any = { 'Content-Type': 'application/json' };
-      let aidToUse = resolvedAccountId;
-      if (!aidToUse) {
-        try {
-          const stored = await AsyncStorage.getItem('account_id');
-          if (stored) aidToUse = Number(stored);
-        } catch (e) {
-          // ignore
-        }
+      try {
+        const token = await AsyncStorage.getItem('auth_token');
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+      } catch (e) {
+        // ignore
       }
-      if (aidToUse) headers['X-Account-Id'] = String(aidToUse);
       console.warn('Creating conversation with headers', headers);
       const res = await fetch(`${API_URL}/chat/booking/${bookingId}/`, {
         method: 'POST',
@@ -117,7 +113,10 @@ export default function BookingChatScreen() {
     const fetchMessages = async () => {
       try {
         const headers: any = { 'Content-Type': 'application/json' };
-        if (accountId) headers['X-Account-Id'] = String(accountId);
+        try {
+          const token = await AsyncStorage.getItem('auth_token');
+          if (token) headers['Authorization'] = `Bearer ${token}`;
+        } catch (e) {}
         const resUrl = `${API_URL}/chat/${conversationId}/messages/?mark_read=1`;
         const r = await fetch(resUrl, {
           method: 'GET',
@@ -151,20 +150,13 @@ export default function BookingChatScreen() {
     setSending(true);
     try {
       const headers: any = { 'Content-Type': 'application/json' };
-      let aidToUse = accountId;
-      if (!aidToUse) {
-        try {
-          const stored = await AsyncStorage.getItem('account_id');
-          if (stored) aidToUse = Number(stored);
-        } catch (e) {
-          // ignore
-        }
-      }
-      if (aidToUse) headers['X-Account-Id'] = String(aidToUse);
+      try {
+        const token = await AsyncStorage.getItem('auth_token');
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+      } catch (e) {}
       console.warn('Sending message with headers', headers);
       const res = await fetch(`${API_URL}/chat/${conversationId}/messages/`, {
         method: 'POST',
-        credentials: 'include',
         headers,
         body: JSON.stringify({ content: text.trim() }),
       });

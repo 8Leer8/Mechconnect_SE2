@@ -160,8 +160,13 @@ export default function LoginScreen() {
           if (acctId) {
             await AsyncStorage.setItem('account_id', String(acctId));
           }
+          // If backend included token in login response, persist it for API calls
+          const token = data?.token || null;
+          if (token) {
+            await AsyncStorage.setItem('auth_token', token);
+          }
         } catch (e) {
-          console.warn('Failed to persist account_id', e);
+          console.warn('Failed to persist account_id or token', e);
         }
       } else {
         const errorMessage = data.username?.[0] || data.password?.[0] || data.account?.[0] || 'Login failed';

@@ -1,5 +1,4 @@
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 from django.shortcuts import get_object_or_404
@@ -10,35 +9,21 @@ from users.models import Account
 
 
 def get_current_account(request):
-    # Primary: session-based account id (existing behavior)
+    # Rely on authentication classes to populate `request.user`.
+    user = getattr(request, 'user', None)
+    if user and isinstance(user, Account):
+        return user
+    # Fallback: check session for compatibility with existing web flows
     account_id = request.session.get('account_id')
     if account_id:
         try:
             return Account.objects.get(id=account_id)
         except Account.DoesNotExist:
             return None
-
-    # Fallback (development/testing): allow client to provide account via header
-    # NOTE: this is intentionally permissive for development convenience. For
-    # production, prefer proper session/cookie or token-based auth.
-    hdr = None
-    try:
-        hdr = request.headers.get('X-Account-Id')
-    except Exception:
-        hdr = request.META.get('HTTP_X_ACCOUNT_ID')
-
-    if hdr:
-        try:
-            aid = int(hdr)
-            return Account.objects.filter(id=aid).first()
-        except Exception:
-            return None
-
     return None
 
 
 @api_view(['GET'])
-@permission_classes([AllowAny])
 def list_conversations(request):
     account = get_current_account(request)
     if not account:
@@ -50,7 +35,6 @@ def list_conversations(request):
 
 
 @api_view(['GET', 'POST'])
-@permission_classes([AllowAny])
 def conversation_for_booking(request, booking_id):
     """
     Get or create a conversation linked to a booking id.
@@ -91,7 +75,6 @@ def conversation_for_booking(request, booking_id):
 
 
 @api_view(['POST'])
-@permission_classes([AllowAny])
 def create_conversation(request):
     account = get_current_account(request)
     if not account:
@@ -111,7 +94,6 @@ def create_conversation(request):
 
 
 @api_view(['GET', 'POST'])
-@permission_classes([AllowAny])
 def messages_view(request, pk):
     account = get_current_account(request)
     if not account:

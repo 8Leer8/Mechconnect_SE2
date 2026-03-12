@@ -12,6 +12,9 @@ from ..models import Account, AccountRole, EmailVerification
 from ..serializers import (
     RegisterSerializer, LoginSerializer, AccountSerializer
 )
+import jwt
+from django.conf import settings
+from datetime import datetime, timedelta
 
 
 @api_view(['POST'])
@@ -71,11 +74,46 @@ def login(request):
         else:
             request.session['active_role'] = 'client'  # Default to client
         
-        return Response({
+        # create JWT token to return for API/mobile clients
+        try:
+            exp = datetime.utcnow() + timedelta(minutes=60)
+            payload = {
+                'account_id': account.id,
+                'exp': exp,
+            }
+            token = jwt.encode(payload, settings.SECRET_KEY, algorithm='HS256')
+        except Exception:
+            token = None
+
+        resp = {
             'message': 'Login successful',
             'account': AccountSerializer(account).data,
             'active_role': request.session['active_role']
-        }, status=status.HTTP_200_OK)
+        }
+        if token:
+            resp.update({'token': token, 'expires_at': exp.isoformat()})
+
+        return Response(resp, status=status.HTTP_200_OK)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def token_login(request):
+    """
+    Obtain a simple JWT for API use. Returns { token, expires_at }.
+    """
+    serializer = LoginSerializer(data=request.data)
+    if serializer.is_valid():
+        account = serializer.validated_data['account']
+        # create token payload
+        exp = datetime.utcnow() + timedelta(minutes=60)
+        payload = {
+            'account_id': account.id,
+            'exp': exp,
+        }
+        token = jwt.encode(payload, settings.SECRET_KEY, algorithm='HS256')
+        return Response({'token': token, 'expires_at': exp.isoformat(), 'account': AccountSerializer(account).data}, status=status.HTTP_200_OK)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
