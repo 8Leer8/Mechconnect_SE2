@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator } from 'react-native';
+import { View, ScrollView, TouchableOpacity, TextInput, ActivityIndicator } from 'react-native';
 import { Image } from 'expo-image';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -7,6 +7,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { styles } from '@/style/client/mechanicCustomRequestStyles';
+import { useNotification } from '@/hooks/useNotification';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -34,6 +35,7 @@ interface ProfileAddress {
 }
 
 export default function MechanicCustomRequestScreen() {
+  const { showNotification } = useNotification();
   const [mechanics, setMechanics] = useState<Mechanic[]>([]);
   const [selectedProviderId, setSelectedProviderId] = useState<number | null>(null);
   const [description, setDescription] = useState('');
@@ -93,16 +95,16 @@ export default function MechanicCustomRequestScreen() {
           setLandmark('');
           setUseCurrentLocation(true);
         } else {
-          Alert.alert('No Address Found', 'No address found in your profile. Please enter your location manually.');
+          showNotification({ type: 'warning', title: 'No Address Found', message: 'No address found in your profile. Please enter your location manually.' });
           setUseCurrentLocation(false);
         }
       } else {
-        Alert.alert('Error', 'Failed to fetch your profile address');
+        showNotification({ type: 'error', message: 'Failed to fetch your profile address' });
         setUseCurrentLocation(false);
       }
     } catch (error) {
       console.error('Error fetching profile:', error);
-      Alert.alert('Error', 'Failed to fetch your location');
+      showNotification({ type: 'error', message: 'Failed to fetch your location' });
       setUseCurrentLocation(false);
     } finally {
       setFetchingLocation(false);
@@ -134,7 +136,7 @@ export default function MechanicCustomRequestScreen() {
         setConcernPicture(result.assets[0].uri);
       }
     } catch (error) {
-      Alert.alert('Error', 'Failed to pick image');
+      showNotification({ type: 'error', message: 'Failed to pick image' });
     }
   };
 
@@ -142,7 +144,7 @@ export default function MechanicCustomRequestScreen() {
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Camera permission is required');
+        showNotification({ type: 'warning', title: 'Permission Denied', message: 'Camera permission is required' });
         return;
       }
       const result = await ImagePicker.launchCameraAsync({
@@ -154,17 +156,17 @@ export default function MechanicCustomRequestScreen() {
         setConcernPicture(result.assets[0].uri);
       }
     } catch (error) {
-      Alert.alert('Error', 'Failed to take photo');
+      showNotification({ type: 'error', message: 'Failed to take photo' });
     }
   };
 
   const handleSend = async () => {
     if (!description.trim()) {
-      Alert.alert('Error', 'Please provide a description of your concern');
+      showNotification({ type: 'error', message: 'Please provide a description of your concern' });
       return;
     }
     if (!streetName || !barangay || !cityMunicipality) {
-      Alert.alert('Error', 'Please fill in all required location fields');
+      showNotification({ type: 'error', message: 'Please fill in all required location fields' });
       return;
     }
 
@@ -204,14 +206,13 @@ export default function MechanicCustomRequestScreen() {
       const data = await response.json();
 
       if (response.ok) {
-        Alert.alert('Success', 'Custom request created successfully!', [
-          { text: 'OK', onPress: () => router.back() },
-        ]);
+        showNotification({ type: 'success', message: 'Custom request created successfully!' });
+        router.back();
       } else {
-        Alert.alert('Error', (data as any).error || 'Failed to create custom request');
+        showNotification({ type: 'error', message: (data as any).error || 'Failed to create custom request' });
       }
     } catch (error) {
-      Alert.alert('Error', 'An error occurred while creating the request');
+      showNotification({ type: 'error', message: 'An error occurred while creating the request' });
     } finally {
       setLoading(false);
     }

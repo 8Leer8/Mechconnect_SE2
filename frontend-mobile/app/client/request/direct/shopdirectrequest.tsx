@@ -4,7 +4,6 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
-  Alert,
   ActivityIndicator,
   Platform,
 } from 'react-native';
@@ -16,6 +15,7 @@ import { Picker } from '@react-native-picker/picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Location from 'expo-location';
 import { styles } from '@/style/client/shopDirectRequestStyles';
+import { useNotification } from '@/hooks/useNotification';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const PSGC_API_BASE = 'https://psgc.gitlab.io/api';
@@ -70,6 +70,7 @@ interface CreateRequestResponse {
 }
 
 export default function ShopDirectRequestScreen() {
+  const { showNotification } = useNotification();
   const params = useLocalSearchParams<{ shopId?: string | string[] }>();
   const shopId = typeof params.shopId === 'string' ? params.shopId : Array.isArray(params.shopId) ? params.shopId[0] : undefined;
   const [shops, setShops] = useState<Shop[]>([]);
@@ -135,7 +136,7 @@ export default function ShopDirectRequestScreen() {
       setRegions(sorted);
     } catch (error) {
       console.error('Error fetching regions:', error);
-      Alert.alert('Error', 'Failed to load regions');
+      showNotification({ type: 'error', message: 'Failed to load regions' });
     } finally {
       setLoadingRegions(false);
     }
@@ -152,7 +153,7 @@ export default function ShopDirectRequestScreen() {
       setProvinces(sorted);
     } catch (error) {
       console.error('Error fetching provinces:', error);
-      Alert.alert('Error', 'Failed to load provinces');
+      showNotification({ type: 'error', message: 'Failed to load provinces' });
     } finally {
       setLoadingProvinces(false);
     }
@@ -168,7 +169,7 @@ export default function ShopDirectRequestScreen() {
       setCities(sorted);
     } catch (error) {
       console.error('Error fetching cities:', error);
-      Alert.alert('Error', 'Failed to load cities/municipalities');
+      showNotification({ type: 'error', message: 'Failed to load cities/municipalities' });
     } finally {
       setLoadingCities(false);
     }
@@ -183,7 +184,7 @@ export default function ShopDirectRequestScreen() {
       setBarangays(sorted);
     } catch (error) {
       console.error('Error fetching barangays:', error);
-      Alert.alert('Error', 'Failed to load barangays');
+      showNotification({ type: 'error', message: 'Failed to load barangays' });
     } finally {
       setLoadingBarangays(false);
     }
@@ -206,10 +207,7 @@ export default function ShopDirectRequestScreen() {
       const { status } = await Location.requestForegroundPermissionsAsync();
 
       if (status !== 'granted') {
-        Alert.alert(
-          'Permission Denied',
-          'Location permission is needed to use current location.'
-        );
+        showNotification({ type: 'warning', title: 'Permission Denied', message: 'Location permission is needed to use current location.' });
         return;
       }
 
@@ -286,9 +284,9 @@ export default function ShopDirectRequestScreen() {
       console.error('Error getting location:', error);
       if (isMountedRef.current) {
         if (error.message === 'Location fetch timeout') {
-          Alert.alert('Timeout', 'Could not get location. Please try again or enter location manually.');
+          showNotification({ type: 'warning', title: 'Timeout', message: 'Could not get location. Please try again or enter location manually.' });
         } else {
-          Alert.alert('Error', 'Failed to get location. Please try manual entry.');
+          showNotification({ type: 'error', message: 'Failed to get location. Please try manual entry.' });
         }
       }
     } finally {
@@ -370,7 +368,7 @@ export default function ShopDirectRequestScreen() {
         if (!cancelled && !isNaN(shopIdNum) && shop) {
           setSelectedProviderId(shop.id); // Use the provider ID (shop owner's account ID)
         } else if (!isNaN(shopIdNum) && !shop && !cancelled) {
-          Alert.alert('Shop Not Available', 'This shop is not currently available for direct requests. Please try again later.', [{ text: 'OK' }]);
+          showNotification({ type: 'warning', title: 'Shop Not Available', message: 'This shop is not currently available for direct requests. Please try again later.' });
         }
       } catch (error) {
         if (!cancelled) console.error('Error parsing shopId:', error);
@@ -471,17 +469,17 @@ export default function ShopDirectRequestScreen() {
 
   // ─── Send ──────────────────────────────────────────────────
   const handleSend = async () => {
-    if (!selectedProviderId) { Alert.alert('Error', 'Please select a shop first'); return; }
-    if (!selectedServiceId) { Alert.alert('Error', 'Please select a service'); return; }
+    if (!selectedProviderId) { showNotification({ type: 'error', message: 'Please select a shop first' }); return; }
+    if (!selectedServiceId) { showNotification({ type: 'error', message: 'Please select a service' }); return; }
     
     if (useCurrentLocation) {
       if (!currentLatitude || !currentLongitude) {
-        Alert.alert('Error', 'Please wait while we fetch your current location');
+        showNotification({ type: 'error', message: 'Please wait while we fetch your current location' });
         return;
       }
     } else {
       if (!streetName || !barangay || !cityMunicipality) {
-        Alert.alert('Error', 'Please fill in all required location fields');
+        showNotification({ type: 'error', message: 'Please fill in all required location fields' });
         return;
       }
     }
@@ -524,12 +522,13 @@ export default function ShopDirectRequestScreen() {
       const data = await response.json() as CreateRequestResponse;
 
       if (response.ok) {
-        Alert.alert('Success', data.message || 'Request created successfully!', [{ text: 'OK', onPress: () => router.back() }]);
+        showNotification({ type: 'success', message: data.message || 'Request created successfully!' });
+        router.back();
       } else {
-        Alert.alert('Error', data.error || 'Failed to create request');
+        showNotification({ type: 'error', message: data.error || 'Failed to create request' });
       }
     } catch (error) {
-      Alert.alert('Error', 'An error occurred while creating the request');
+      showNotification({ type: 'error', message: 'An error occurred while creating the request' });
     } finally {
       setLoading(false);
     }

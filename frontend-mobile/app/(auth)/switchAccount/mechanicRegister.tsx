@@ -9,6 +9,7 @@ import {
   TextInput,
   Image,
 } from 'react-native';
+import { useNotification } from '@/hooks/useNotification';
 import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -35,6 +36,7 @@ interface Document {
 }
 
 export default function MechanicRegister() {
+  const { showNotification } = useNotification();
   const [loading, setLoading] = useState(false);
   const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
   const [contactNumber, setContactNumber] = useState('');
@@ -49,7 +51,7 @@ export default function MechanicRegister() {
     const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
     
     if (!permissionResult.granted) {
-      Alert.alert('Permission Required', 'Please allow access to your photo library');
+      showNotification({ type: 'warning', title: 'Permission Required', message: 'Please allow access to your photo library' });
       return;
     }
 
@@ -75,7 +77,7 @@ export default function MechanicRegister() {
           onPress: async () => {
             const permission = await ImagePicker.requestCameraPermissionsAsync();
             if (!permission.granted) {
-              Alert.alert('Permission Required', 'Please allow camera access');
+              showNotification({ type: 'warning', title: 'Permission Required', message: 'Please allow camera access' });
               return;
             }
 
@@ -164,12 +166,12 @@ export default function MechanicRegister() {
   const handleRegister = async () => {
     // Validate contact number
     if (!contactNumber.trim()) {
-      Alert.alert('Validation Error', 'Please enter your contact number');
+      showNotification({ type: 'error', title: 'Validation Error', message: 'Please enter your contact number' });
       return;
     }
 
     if (!/^[\d\s\-\+\(\)]+$/.test(contactNumber)) {
-      Alert.alert('Validation Error', 'Please enter a valid contact number');
+      showNotification({ type: 'error', title: 'Validation Error', message: 'Please enter a valid contact number' });
       return;
     }
 
@@ -231,21 +233,13 @@ export default function MechanicRegister() {
       const data = await response.json() as MechanicRegisterResponse;
 
       if (response.ok) {
-        Alert.alert(
-          'Success',
-          'Mechanic profile created successfully!',
-          [
-            {
-              text: 'OK',
-              onPress: () => router.back(),
-            },
-          ]
-        );
+        showNotification({ type: 'success', title: 'Success', message: 'Mechanic profile created successfully!' });
+        router.back();
       } else {
-        Alert.alert('Error', data.error || 'Failed to register as mechanic');
+        showNotification({ type: 'error', message: data.error || 'Failed to register as mechanic' });
       }
     } catch (err) {
-      Alert.alert('Error', err instanceof Error ? err.message : 'Failed to register');
+      showNotification({ type: 'error', message: err instanceof Error ? err.message : 'Failed to register' });
       console.error('Registration error:', err);
     } finally {
       setLoading(false);

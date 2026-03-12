@@ -6,7 +6,6 @@ import {
   ActivityIndicator,
   RefreshControl,
   Modal,
-  Alert,
   TextInput,
 } from 'react-native';
 import { router } from 'expo-router';
@@ -15,6 +14,8 @@ import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/mechanic/profileStyles';
 import WalletSection from '@/components/wallet-section';
+import { useNotification } from '@/hooks/useNotification';
+import { useConfirmation } from '@/hooks/useConfirmation';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -36,6 +37,8 @@ interface AvailableService {
 }
 
 export default function ProfileScreen() {
+  const { showNotification } = useNotification();
+  const { confirm } = useConfirmation();
   const [name, setName] = useState<string>('Mechanic');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -132,7 +135,7 @@ export default function ProfileScreen() {
     
     const price = parseFloat(customPrice);
     if (isNaN(price) || price < 0) {
-      Alert.alert('Invalid Price', 'Please enter a valid price');
+      showNotification({ type: 'error', title: 'Invalid Price', message: 'Please enter a valid price' });
       return;
     }
 
@@ -149,7 +152,7 @@ export default function ProfileScreen() {
       });
       const data = await res.json().catch(() => ({})) as any;
       if (!res.ok) {
-        Alert.alert('Error', data.error || 'Failed to add service');
+        showNotification({ type: 'error', message: data.error || 'Failed to add service' });
         return;
       }
       await fetchMyServices();
@@ -157,7 +160,7 @@ export default function ProfileScreen() {
       setSelectedService(null);
       setCustomPrice('');
     } catch (e) {
-      Alert.alert('Error', 'Failed to add service');
+      showNotification({ type: 'error', message: 'Failed to add service' });
     } finally {
       setAddingId(null);
     }
@@ -181,7 +184,7 @@ export default function ProfileScreen() {
     
     const price = parseFloat(editPrice);
     if (isNaN(price) || price < 0) {
-      Alert.alert('Invalid Price', 'Please enter a valid price');
+      showNotification({ type: 'error', title: 'Invalid Price', message: 'Please enter a valid price' });
       return;
     }
 
@@ -198,7 +201,7 @@ export default function ProfileScreen() {
       });
       const data = await res.json().catch(() => ({})) as any;
       if (!res.ok) {
-        Alert.alert('Error', data.error || 'Failed to update price');
+        showNotification({ type: 'error', message: data.error || 'Failed to update price' });
         return;
       }
       await fetchMyServices();
@@ -206,7 +209,7 @@ export default function ProfileScreen() {
       setEditingService(null);
       setEditPrice('');
     } catch (e) {
-      Alert.alert('Error', 'Failed to update price');
+      showNotification({ type: 'error', message: 'Failed to update price' });
     } finally {
       setUpdatingId(null);
     }
@@ -218,31 +221,30 @@ export default function ProfileScreen() {
     setEditPrice('');
   };
 
-  const removeService = (svc: MyService) => {
-    Alert.alert('Remove', `Remove "${svc.name}" from your services?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Remove',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            const res = await fetch(`${API_URL}/services/mechanic/my-services/remove/`, {
-              method: 'POST',
-              credentials: 'include',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ service_id: svc.id }),
-            });
-            if (res.ok) await fetchMyServices();
-            else {
-              const data = await res.json().catch(() => ({})) as any;
-              Alert.alert('Error', data.error || 'Failed to remove');
-            }
-          } catch (e) {
-            Alert.alert('Error', 'Failed to remove');
-          }
-        },
-      },
-    ]);
+  const removeService = async (svc: MyService) => {
+    const ok = await confirm({
+      type: 'danger',
+      title: 'Remove Service',
+      message: `Remove "${svc.name}" from your services?`,
+      confirmText: 'Remove',
+      cancelText: 'Keep',
+    });
+    if (!ok) return;
+    try {
+      const res = await fetch(`${API_URL}/services/mechanic/my-services/remove/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ service_id: svc.id }),
+      });
+      if (res.ok) await fetchMyServices();
+      else {
+        const data = await res.json().catch(() => ({})) as any;
+        showNotification({ type: 'error', message: data.error || 'Failed to remove' });
+      }
+    } catch (e) {
+      showNotification({ type: 'error', message: 'Failed to remove' });
+    }
   };
 
   const handleLogout = async () => {

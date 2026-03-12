@@ -4,7 +4,6 @@ import {
   TextInput,
   TouchableOpacity,
   Text,
-  Alert,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
@@ -15,6 +14,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { FontAwesome } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { styles } from '../../style/auth/registerStyles';
+import { useNotification } from '@/hooks/useNotification';
 
 // For Android Emulator use: http://10.0.2.2:8000/api/users
 // For iOS Simulator use: http://localhost:8000/api/users
@@ -34,6 +34,7 @@ interface RegisterResponse {
 
 export default function RegisterScreen() {
   const router = useRouter();
+  const { showNotification } = useNotification();
   const [formData, setFormData] = useState({
     firstname: '',
     lastname: '',
@@ -129,7 +130,7 @@ export default function RegisterScreen() {
       setRegions(sorted);
     } catch (error) {
       console.error('Error fetching regions:', error);
-      Alert.alert('Error', 'Failed to load regions');
+      showNotification({ type: 'error', message: 'Failed to load regions' });
     } finally {
       setLoadingRegions(false);
     }
@@ -146,7 +147,7 @@ export default function RegisterScreen() {
       setProvinces(sorted);
     } catch (error) {
       console.error('Error fetching provinces:', error);
-      Alert.alert('Error', 'Failed to load provinces');
+      showNotification({ type: 'error', message: 'Failed to load provinces' });
     } finally {
       setLoadingProvinces(false);
     }
@@ -162,7 +163,7 @@ export default function RegisterScreen() {
       setCities(sorted);
     } catch (error) {
       console.error('Error fetching cities:', error);
-      Alert.alert('Error', 'Failed to load cities/municipalities');
+      showNotification({ type: 'error', message: 'Failed to load cities/municipalities' });
     } finally {
       setLoadingCities(false);
     }
@@ -177,7 +178,7 @@ export default function RegisterScreen() {
       setBarangays(sorted);
     } catch (error) {
       console.error('Error fetching barangays:', error);
-      Alert.alert('Error', 'Failed to load barangays');
+      showNotification({ type: 'error', message: 'Failed to load barangays' });
     } finally {
       setLoadingBarangays(false);
     }
@@ -214,25 +215,25 @@ export default function RegisterScreen() {
   const handleRegister = async () => {
     // Email verification check
     if (!emailVerified) {
-      Alert.alert('Error', 'Please verify your email first');
+      showNotification({ type: 'warning', message: 'Please verify your email first' });
       return;
     }
 
     // Basic validation
     if (!formData.firstname || !formData.lastname || !formData.email || 
         !formData.username || !formData.password || !formData.confirm_password) {
-      Alert.alert('Error', 'Please fill in all required fields');
+      showNotification({ type: 'error', message: 'Please fill in all required fields' });
       return;
     }
 
     // Location validation
     if (!formData.region || !formData.province || !formData.city_municipality || !formData.barangay) {
-      Alert.alert('Error', 'Please select your complete address (Region, Province, City/Municipality, and Barangay)');
+      showNotification({ type: 'error', message: 'Please select your complete address (Region, Province, City/Municipality, and Barangay)' });
       return;
     }
 
     if (formData.password !== formData.confirm_password) {
-      Alert.alert('Error', 'Passwords do not match');
+      showNotification({ type: 'error', message: 'Passwords do not match' });
       return;
     }
 
@@ -249,18 +250,17 @@ export default function RegisterScreen() {
       const data = await response.json() as RegisterResponse;
 
       if (response.ok) {
-        Alert.alert('Success', 'Registration successful! Please login.', [
-          { text: 'OK', onPress: () => router.replace('../(auth)/login' as any) }
-        ]);
+        showNotification({ type: 'success', message: 'Registration successful! Please login.' });
+        setTimeout(() => router.replace('../(auth)/login' as any), 1500);
       } else {
         const errorMessages = Object.entries(data)
           .map(([key, value]) => `${key}: ${Array.isArray(value) ? value[0] : value}`)
           .join('\n');
-        Alert.alert('Error', errorMessages);
+        showNotification({ type: 'error', message: errorMessages });
       }
     } catch (error) {
       console.error('Registration error:', error);
-      Alert.alert('Error', 'Connection failed. Please check your network.');
+      showNotification({ type: 'error', message: 'Connection failed. Please check your network.' });
     } finally {
       setLoading(false);
     }
@@ -289,15 +289,15 @@ export default function RegisterScreen() {
       const data = await response.json();
 
       if (response.ok) {
-        Alert.alert('Success', 'Verification code sent to your email!');
+        showNotification({ type: 'success', message: 'Verification code sent to your email!' });
         setCurrentStage(2);
       } else {
         const errorMsg = data.error || 'Failed to send verification code';
-        Alert.alert('Error', errorMsg);
+        showNotification({ type: 'error', message: errorMsg });
       }
     } catch (error) {
       console.error('Send verification code error:', error);
-      Alert.alert('Error', 'Connection failed. Please check your network.');
+      showNotification({ type: 'error', message: 'Connection failed. Please check your network.' });
     } finally {
       setSendingCode(false);
     }
@@ -305,7 +305,7 @@ export default function RegisterScreen() {
 
   const handleVerifyCode = async () => {
     if (!verificationCode || verificationCode.length !== 6) {
-      Alert.alert('Error', 'Please enter a valid 6-digit code');
+      showNotification({ type: 'error', message: 'Please enter a valid 6-digit code' });
       return;
     }
 
@@ -327,15 +327,15 @@ export default function RegisterScreen() {
       if (response.ok) {
         setEmailVerified(true);
         setVerifiedEmail(formData.email); // Store the verified email
-        Alert.alert('Success', 'Email verified successfully!');
+        showNotification({ type: 'success', message: 'Email verified successfully!' });
         setCurrentStage(3);
       } else {
         const errorMsg = data.error || 'Invalid or expired verification code';
-        Alert.alert('Error', errorMsg);
+        showNotification({ type: 'error', message: errorMsg });
       }
     } catch (error) {
       console.error('Verify code error:', error);
-      Alert.alert('Error', 'Connection failed. Please check your network.');
+      showNotification({ type: 'error', message: 'Connection failed. Please check your network.' });
     } finally {
       setVerifyingCode(false);
     }
@@ -349,7 +349,7 @@ export default function RegisterScreen() {
   const handleNext = () => {
     if (currentStage === 1) {
       if (!formData.firstname || !formData.lastname || !formData.email || !formData.username) {
-        Alert.alert('Error', 'Please fill in all required fields');
+        showNotification({ type: 'error', message: 'Please fill in all required fields' });
         return;
       }
       
@@ -365,16 +365,16 @@ export default function RegisterScreen() {
       return;
     } else if (currentStage === 3) {
       if (!formData.password || !formData.confirm_password) {
-        Alert.alert('Error', 'Please fill in password fields');
+        showNotification({ type: 'error', message: 'Please fill in password fields' });
         return;
       }
       if (formData.password !== formData.confirm_password) {
-        Alert.alert('Error', 'Passwords do not match');
+        showNotification({ type: 'error', message: 'Passwords do not match' });
         return;
       }
     } else if (currentStage === 5) {
       if (!formData.region || !formData.province || !formData.city_municipality || !formData.barangay) {
-        Alert.alert('Error', 'Please select your complete address');
+        showNotification({ type: 'error', message: 'Please select your complete address' });
         return;
       }
     }

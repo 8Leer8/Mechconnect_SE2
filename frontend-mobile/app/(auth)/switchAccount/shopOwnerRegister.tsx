@@ -16,6 +16,7 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { useNotification } from '@/hooks/useNotification';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -35,6 +36,7 @@ interface Document {
 }
 
 export default function ShopOwnerRegister() {
+  const { showNotification } = useNotification();
   const [loading, setLoading] = useState(false);
   
   // Owner information
@@ -63,7 +65,7 @@ export default function ShopOwnerRegister() {
     const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
     
     if (!permissionResult.granted) {
-      Alert.alert('Permission Required', 'Please allow access to your photo library');
+      showNotification({ type: 'warning', title: 'Permission Required', message: 'Please allow access to your photo library' });
       return;
     }
 
@@ -93,7 +95,7 @@ export default function ShopOwnerRegister() {
           onPress: async () => {
             const permission = await ImagePicker.requestCameraPermissionsAsync();
             if (!permission.granted) {
-              Alert.alert('Permission Required', 'Please allow camera access');
+              showNotification({ type: 'warning', title: 'Permission Required', message: 'Please allow camera access' });
               return;
             }
 
@@ -208,38 +210,38 @@ export default function ShopOwnerRegister() {
   const handleRegister = async () => {
     // Validate required fields
     if (!profilePhoto) {
-      Alert.alert('Validation Error', 'Please upload your profile photo');
+      showNotification({ type: 'error', title: 'Validation Error', message: 'Please upload your profile photo' });
       return;
     }
 
     if (!ownerContactNumber.trim()) {
-      Alert.alert('Validation Error', 'Please enter your contact number');
+      showNotification({ type: 'error', title: 'Validation Error', message: 'Please enter your contact number' });
       return;
     }
 
     if (!/^[\d\s\-\+\(\)]+$/.test(ownerContactNumber)) {
-      Alert.alert('Validation Error', 'Please enter a valid owner contact number');
+      showNotification({ type: 'error', title: 'Validation Error', message: 'Please enter a valid owner contact number' });
       return;
     }
 
     if (!shopName.trim()) {
-      Alert.alert('Validation Error', 'Please enter your shop name');
+      showNotification({ type: 'error', title: 'Validation Error', message: 'Please enter your shop name' });
       return;
     }
 
     if (!shopContactNumber.trim()) {
-      Alert.alert('Validation Error', 'Please enter your shop contact number');
+      showNotification({ type: 'error', title: 'Validation Error', message: 'Please enter your shop contact number' });
       return;
     }
 
     if (!/^[\d\s\-\+\(\)]+$/.test(shopContactNumber)) {
-      Alert.alert('Validation Error', 'Please enter a valid shop contact number');
+      showNotification({ type: 'error', title: 'Validation Error', message: 'Please enter a valid shop contact number' });
       return;
     }
 
     // Validate email if provided
     if (shopEmail.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(shopEmail)) {
-      Alert.alert('Validation Error', 'Please enter a valid email address');
+      showNotification({ type: 'error', title: 'Validation Error', message: 'Please enter a valid email address' });
       return;
     }
 
@@ -374,24 +376,16 @@ export default function ShopOwnerRegister() {
       }
 
       if (response.ok) {
-        Alert.alert(
-          'Success',
-          'Shop owner profile created successfully!',
-          [
-            {
-              text: 'OK',
-              onPress: () => router.back(),
-            },
-          ]
-        );
+        showNotification({ type: 'success', title: 'Success', message: 'Shop owner profile created successfully!' });
+        router.back();
       } else {
         console.error('Registration failed:', data);
-        Alert.alert('Error', data.error || 'Failed to register as shop owner');
+        showNotification({ type: 'error', message: data.error || 'Failed to register as shop owner' });
       }
     } catch (err) {
       console.error('Registration error:', err);
       const errorMessage = err instanceof Error ? err.message : 'Failed to register';
-      Alert.alert('Error', errorMessage);
+      showNotification({ type: 'error', message: errorMessage });
     } finally {
       setLoading(false);
     }

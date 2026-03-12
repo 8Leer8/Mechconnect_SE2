@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, ScrollView, RefreshControl, ActivityIndicator, TouchableOpacity, TextInput, Modal, Alert, Image } from 'react-native';
+import { StyleSheet, View, ScrollView, RefreshControl, ActivityIndicator, TouchableOpacity, TextInput, Modal, Image } from 'react-native';
 import { FontAwesome } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { TopNav } from '@/components/navigation';
 import { getImageUrl } from '@/lib/imageUtils';
+import { useNotification } from '@/hooks/useNotification';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -34,6 +35,7 @@ interface MechanicsListData {
 }
 
 export default function ShopOwnerMechanics() {
+  const { showNotification } = useNotification();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [mechanicsData, setMechanicsData] = useState<MechanicsListData | null>(null);
@@ -87,7 +89,7 @@ export default function ShopOwnerMechanics() {
       setSearchResults(data.mechanics);
     } catch (err) {
       console.error('Search error:', err);
-      Alert.alert('Error', 'Failed to search mechanics');
+      showNotification({ type: 'error', message: 'Failed to search mechanics' });
     } finally {
       setSearchLoading(false);
     }
@@ -109,13 +111,13 @@ export default function ShopOwnerMechanics() {
         throw new Error(data.error || 'Failed to add mechanic');
       }
 
-      Alert.alert('Success', 'Mechanic added successfully!');
+      showNotification({ type: 'success', message: 'Mechanic added successfully!' });
       setShowAddModal(false);
       setSearchQuery('');
       setSearchResults([]);
       fetchMechanics();
     } catch (err) {
-      Alert.alert('Error', err instanceof Error ? err.message : 'Failed to add mechanic');
+      showNotification({ type: 'error', message: err instanceof Error ? err.message : 'Failed to add mechanic' });
     } finally {
       setAddingMechanic(false);
     }

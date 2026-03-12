@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator, Animated } from 'react-native';
+import { View, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Animated } from 'react-native';
 import { Image } from 'expo-image';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -8,6 +8,7 @@ import { router, useFocusEffect } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useLocation } from './LocationContext';
 import { styles } from '@/style/client/broadcastRequestStyles';
+import { useNotification } from '@/hooks/useNotification';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -29,6 +30,7 @@ interface CreateRequestResponse {
 }
 
 export default function MainRequestFormScreen() {
+  const { showNotification } = useNotification();
   const { selectedLocation, setSelectedLocation } = useLocation();
   
   // Mode state
@@ -72,7 +74,7 @@ export default function MainRequestFormScreen() {
       } catch (error) {
         if (!cancelled) {
           console.error('Error fetching services:', error);
-          Alert.alert('Error', 'Failed to load services');
+          showNotification({ type: 'error', message: 'Failed to load services' });
         }
       } finally {
         if (!cancelled) setFetchingServices(false);
@@ -134,7 +136,7 @@ export default function MainRequestFormScreen() {
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Camera permission is required');
+        showNotification({ type: 'warning', title: 'Permission Denied', message: 'Camera permission is required' });
         return;
       }
       const result = await ImagePicker.launchCameraAsync({
@@ -144,7 +146,7 @@ export default function MainRequestFormScreen() {
       });
       if (!result.canceled && result.assets[0]) setConcernPicture(result.assets[0].uri);
     } catch (error) {
-      Alert.alert('Error', 'Failed to take photo');
+      showNotification({ type: 'error', message: 'Failed to take photo' });
     }
   };
 
@@ -162,19 +164,19 @@ export default function MainRequestFormScreen() {
   // ─── Submit Broadcast Request ──────────────────────────────
   const sendBroadcastRequest = async () => {
     if (selectedServiceIds.length === 0) {
-      Alert.alert('Error', 'Please select at least one service');
+      showNotification({ type: 'error', message: 'Please select at least one service' });
       return;
     }
     if (!description.trim()) {
-      Alert.alert('Error', 'Please provide a description');
+      showNotification({ type: 'error', message: 'Please provide a description' });
       return;
     }
     if (!selectedAddress) {
-      Alert.alert('Error', 'Please select a location from the map');
+      showNotification({ type: 'error', message: 'Please select a location from the map' });
       return;
     }
     if (!latitude || !longitude) {
-      Alert.alert('Error', 'Please select a location from the map');
+      showNotification({ type: 'error', message: 'Please select a location from the map' });
       return;
     }
 
@@ -210,14 +212,13 @@ export default function MainRequestFormScreen() {
       const data = (await response.json()) as CreateRequestResponse;
 
       if (response.ok) {
-        Alert.alert('Success', 'Broadcast request created! Nearby mechanics will be notified.', [
-          { text: 'OK', onPress: () => router.back() },
-        ]);
+        showNotification({ type: 'success', message: 'Broadcast request created! Nearby mechanics will be notified.' });
+        router.back();
       } else {
-        Alert.alert('Error', data.error || 'Failed to create broadcast request');
+        showNotification({ type: 'error', message: data.error || 'Failed to create broadcast request' });
       }
     } catch (error) {
-      Alert.alert('Error', 'An error occurred while creating the request');
+      showNotification({ type: 'error', message: 'An error occurred while creating the request' });
     } finally {
       setLoading(false);
     }
@@ -226,7 +227,7 @@ export default function MainRequestFormScreen() {
   // ─── Submit Custom Request ─────────────────────────────────
   const sendCustomRequest = async () => {
     if (!description.trim()) {
-      Alert.alert('Error', 'Please provide a description of your concern');
+      showNotification({ type: 'error', message: 'Please provide a description of your concern' });
       return;
     }
 
@@ -255,14 +256,13 @@ export default function MainRequestFormScreen() {
       const data = await response.json();
 
       if (response.ok) {
-        Alert.alert('Success', 'Custom request created successfully!', [
-          { text: 'OK', onPress: () => router.back() },
-        ]);
+        showNotification({ type: 'success', message: 'Custom request created successfully!' });
+        router.back();
       } else {
-        Alert.alert('Error', (data as any).error || 'Failed to create custom request');
+        showNotification({ type: 'error', message: (data as any).error || 'Failed to create custom request' });
       }
     } catch (error) {
-      Alert.alert('Error', 'An error occurred while creating the request');
+      showNotification({ type: 'error', message: 'An error occurred while creating the request' });
     } finally {
       setLoading(false);
     }

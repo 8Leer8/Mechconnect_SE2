@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, TouchableOpacity, ActivityIndicator, Alert, Platform } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { ThemedText } from '@/components/themed-text';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useLocation } from './LocationContext';
 import { styles } from '@/style/client/broadcastMapStyles';
+import { useNotification } from '@/hooks/useNotification';
 
 interface LocationData {
   latitude: number;
@@ -17,6 +18,7 @@ interface LocationData {
 }
 
 export default function MapScreen() {
+  const { showNotification } = useNotification();
   const params = useLocalSearchParams();
   const { setSelectedLocation } = useLocation();
   const mapRef = useRef<MapView>(null);
@@ -159,7 +161,7 @@ export default function MapScreen() {
 
   const handleConfirm = async () => {
     if (!markerLocation) {
-      Alert.alert('Error', 'Please select a location on the map');
+      showNotification({ type: 'error', message: 'Please select a location on the map' });
       return;
     }
 
@@ -197,7 +199,7 @@ export default function MapScreen() {
       router.back();
     } catch (error) {
       console.error('Error confirming location:', error);
-      Alert.alert('Error', 'Failed to confirm location');
+      showNotification({ type: 'error', message: 'Failed to confirm location' });
     } finally {
       setConfirming(false);
     }

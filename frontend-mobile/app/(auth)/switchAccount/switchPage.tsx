@@ -5,12 +5,12 @@ import {
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
 import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import { useNotification } from '@/hooks/useNotification';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -41,6 +41,7 @@ interface SwitchRoleResponse {
 }
 
 export default function SwitchRolePage() {
+  const { showNotification } = useNotification();
   const [loading, setLoading] = useState(true);
   const [roleData, setRoleData] = useState<UserRoleData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -159,26 +160,19 @@ export default function SwitchRolePage() {
         }
       }
       
-      Alert.alert('Success', data.message || 'Role switched successfully!', [
-        {
-          text: 'OK',
-          onPress: () => {
-            // Navigate to appropriate home page based on role
-            if (newRole === 'mechanic') {
-              router.replace(mechanicRoute as any);
-            } else if (newRole === 'shop_owner') {
-              router.replace('/(shopownerTabs)/main/home');
-            } else if (newRole === 'client') {
-              router.replace('/(clientTabs)/main/home');
-            } else {
-              // Default to go back
-              router.back();
-            }
-          },
-        },
-      ]);
+      showNotification({ type: 'success', message: data.message || 'Role switched successfully!' });
+      // Navigate to appropriate home page based on role
+      if (newRole === 'mechanic') {
+        router.replace(mechanicRoute as any);
+      } else if (newRole === 'shop_owner') {
+        router.replace('/(shopownerTabs)/main/home');
+      } else if (newRole === 'client') {
+        router.replace('/(clientTabs)/main/home');
+      } else {
+        router.back();
+      }
     } catch (err) {
-      Alert.alert('Error', err instanceof Error ? err.message : 'Failed to switch role');
+      showNotification({ type: 'error', message: err instanceof Error ? err.message : 'Failed to switch role' });
       console.error('Error switching role:', err);
     } finally {
       setLoading(false);

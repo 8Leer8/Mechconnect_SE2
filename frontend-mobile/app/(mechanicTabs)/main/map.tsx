@@ -6,7 +6,6 @@ import {
   ActivityIndicator,
   RefreshControl,
   Modal,
-  Alert,
   Image,
 } from 'react-native';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
@@ -20,6 +19,7 @@ import { eventBus } from '@/utils/eventBus';
 import { getDistanceKm, getEstimatedPrice } from '@/app/client/request/main_request_form/LocationContext';
 import { styles } from '@/style/mechanic/mapStyles';
 import { getImageUrl } from '@/lib/imageUtils';
+import { useNotification } from '@/hooks/useNotification';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -52,6 +52,7 @@ interface BroadcastRequest {
 
 export default function MapScreen() {
   const mapRef = useRef<MapView>(null);
+  const { showNotification } = useNotification();
 
   const [broadcasts, setBroadcasts] = useState<BroadcastRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -261,45 +262,18 @@ export default function MapScreen() {
       const data = await response.json() as any;
 
       if (response.ok) {
-        Alert.alert(
-          'Success!',
-          'You have accepted the broadcast request. Check your bookings.',
-          [
-            {
-              text: 'View Booking',
-              onPress: () => {
-                setModalVisible(false);
-                router.push('/(mechanicTabs)/main/bookings');
-              },
-            },
-            {
-              text: 'OK',
-              onPress: () => {
-                setModalVisible(false);
-                fetchBroadcasts(); // Refresh broadcasts
-                fetchTokensBalance();
-                try { eventBus.emit('walletChanged'); } catch(e){}
-              },
-            },
-          ]
-        );
+        showNotification({ type: 'success', title: 'Accepted!', message: 'You have accepted the broadcast request. Check your bookings.' });
+        setModalVisible(false);
+        fetchBroadcasts(true);
+        fetchTokensBalance();
+        try { eventBus.emit('walletChanged'); } catch(e){}
       } else {
-        Alert.alert(
-          'Already Taken',
-          data.error || 'This broadcast is no longer available. Another mechanic was faster.',
-          [
-            {
-              text: 'OK',
-              onPress: () => {
-                setModalVisible(false);
-                fetchBroadcasts(); // Refresh broadcasts
-              },
-            },
-          ]
-        );
+        showNotification({ type: 'warning', title: 'Already Taken', message: data.error || 'This broadcast is no longer available. Another mechanic was faster.' });
+        setModalVisible(false);
+        fetchBroadcasts(true);
       }
     } catch (err: any) {
-      Alert.alert('Error', 'Failed to accept broadcast request');
+      showNotification({ type: 'error', message: 'Failed to accept broadcast request' });
       console.error('Error accepting broadcast:', err);
     } finally {
       setAccepting(false);

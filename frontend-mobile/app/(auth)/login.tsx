@@ -4,7 +4,6 @@ import {
   TextInput,
   TouchableOpacity,
   Text,
-  Alert,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
@@ -13,6 +12,7 @@ import {
 import { useRouter } from 'expo-router';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '../../style/auth/loginStyles';
+import { useNotification } from '@/hooks/useNotification';
 
 // For Android Emulator use: http://10.0.2.2:8000/api/users
 // For iOS Simulator use: http://localhost:8000/api/users
@@ -35,6 +35,7 @@ interface ActiveRoleResponse {
 
 export default function LoginScreen() {
   const router = useRouter();
+  const { showNotification } = useNotification();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -44,16 +45,13 @@ export default function LoginScreen() {
 
   const handleLogin = async () => {
     if (!username || !password) {
-      Alert.alert('Error', 'Please fill in all fields');
+      showNotification({ type: 'error', message: 'Please fill in all fields' });
       return;
     }
 
     // Check if API_URL is defined
     if (!API_URL) {
-      Alert.alert(
-        'Configuration Error', 
-        'API URL is not configured. Please check your .env file.'
-      );
+      showNotification({ type: 'error', title: 'Configuration Error', message: 'API URL is not configured. Please check your .env file.' });
       return;
     }
 
@@ -130,34 +128,34 @@ export default function LoginScreen() {
               const mechanicProfile = profileData.profile?.current_role_profile?.mechanic;
               
               if (mechanicProfile?.is_working_for_shop) {
-                Alert.alert('Success', 'Login successful!');
+                showNotification({ type: 'success', message: 'Login successful!' });
                 router.replace('/(mechanicShopTabs)/main/home');
               } else {
-                Alert.alert('Success', 'Login successful!');
+                showNotification({ type: 'success', message: 'Login successful!' });
                 router.replace('/(mechanicTabs)/main/home');
               }
             } else {
               // Fallback to regular mechanic tabs if can't get profile
-              Alert.alert('Success', 'Login successful!');
+              showNotification({ type: 'success', message: 'Login successful!' });
               router.replace('/(mechanicTabs)/main/home');
             }
           } catch (profileError) {
             console.error('Error fetching profile:', profileError);
             // Fallback to regular mechanic tabs
-            Alert.alert('Success', 'Login successful!');
+            showNotification({ type: 'success', message: 'Login successful!' });
             router.replace('/(mechanicTabs)/main/home');
           }
         } else if (activeRole === 'shop_owner') {
-          Alert.alert('Success', 'Login successful!');
+          showNotification({ type: 'success', message: 'Login successful!' });
           router.replace('/(shopownerTabs)/main/home');
         } else {
           // Default to client
-          Alert.alert('Success', 'Login successful!');
+          showNotification({ type: 'success', message: 'Login successful!' });
           router.replace('/(clientTabs)/main/home');
         }
       } else {
         const errorMessage = data.username?.[0] || data.password?.[0] || data.account?.[0] || 'Login failed';
-        Alert.alert('Error', errorMessage);
+        showNotification({ type: 'error', message: errorMessage });
       }
     } catch (error: any) {
       console.error('Login error:', error);
@@ -169,7 +167,7 @@ export default function LoginScreen() {
         errorMessage = `Connection failed: ${error.message}`;
       }
       
-      Alert.alert('Error', errorMessage);
+      showNotification({ type: 'error', message: errorMessage });
     } finally {
       setLoading(false);
     }

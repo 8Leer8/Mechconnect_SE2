@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import {View, ScrollView, TouchableOpacity, Image, ActivityIndicator, Alert, RefreshControl, } from 'react-native';
+import {View, ScrollView, TouchableOpacity, Image, ActivityIndicator, RefreshControl, } from 'react-native';
 import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/client/profileStyles';
 import { getImageUrl } from '@/lib/imageUtils';
+import { useNotification } from '@/hooks/useNotification';
+import { useConfirmation } from '@/hooks/useConfirmation';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -55,6 +57,8 @@ interface ActiveRoleResponse {
 }
 
 export default function ProfileScreen() {
+  const { showNotification } = useNotification();
+  const { confirm } = useConfirmation();
   const [profileData, setProfileData] = useState<ProfileData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -114,11 +118,15 @@ export default function ProfileScreen() {
     router.push('/(auth)/switchAccount/switchPage');
   };
 
-  const handleLogout = () => {
-    Alert.alert('Logout', 'Are you sure you want to logout?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Logout', style: 'destructive', onPress: performLogout },
-    ]);
+  const handleLogout = async () => {
+    const ok = await confirm({
+      type: 'danger',
+      title: 'Logout',
+      message: 'Are you sure you want to logout?',
+      confirmText: 'Logout',
+      cancelText: 'Cancel',
+    });
+    if (ok) performLogout();
   };
 
   const performLogout = async () => {
@@ -135,7 +143,7 @@ export default function ProfileScreen() {
         throw new Error('Logout failed');
       }
     } catch (err) {
-      Alert.alert('Error', err instanceof Error ? err.message : 'Logout failed');
+      showNotification({ type: 'error', message: err instanceof Error ? err.message : 'Logout failed' });
     }
   };
 

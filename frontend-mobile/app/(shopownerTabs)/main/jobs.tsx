@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
-  Alert,
   Modal,
 } from 'react-native';
 import { FontAwesome } from '@expo/vector-icons';
@@ -15,6 +14,8 @@ import { ThemedView } from '@/components/themed-view';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { TopNav } from '@/components/navigation';
 import { useRouter } from 'expo-router';
+import { useNotification } from '@/hooks/useNotification';
+import { useConfirmation } from '@/hooks/useConfirmation';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -111,6 +112,8 @@ interface Assignment {
 
 export default function ShopOwnerJobsScreen() {
   const router = useRouter();
+  const { showNotification } = useNotification();
+  const { confirm } = useConfirmation();
   const [activeTab, setActiveTab] = useState<TabType>('all');
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>([]);
@@ -355,7 +358,7 @@ export default function ShopOwnerJobsScreen() {
         setAssignments(ad || []);
       }
     } catch {
-      Alert.alert('Error', 'Failed to load mechanics');
+      showNotification({ type: 'error', message: 'Failed to load mechanics' });
     } finally {
       setMechanicsLoading(false);
     }
@@ -383,12 +386,12 @@ export default function ShopOwnerJobsScreen() {
       );
       const data = await res.json();
       if (!res.ok) {
-        Alert.alert('Error', data.error || 'Failed to assign');
+        showNotification({ type: 'error', message: data.error || 'Failed to assign' });
         return;
       }
       setAssignments((prev) => [...prev, data as Assignment]);
     } catch {
-      Alert.alert('Error', 'Network error');
+      showNotification({ type: 'error', message: 'Network error' });
     } finally {
       setAssigningId(null);
     }
@@ -403,12 +406,12 @@ export default function ShopOwnerJobsScreen() {
       );
       if (!res.ok) {
         const d = await res.json();
-        Alert.alert('Error', d.error || 'Failed to remove');
+        showNotification({ type: 'error', message: d.error || 'Failed to remove' });
         return;
       }
       setAssignments((prev) => prev.filter((a) => a.id !== assignmentId));
     } catch {
-      Alert.alert('Error', 'Network error');
+      showNotification({ type: 'error', message: 'Network error' });
     }
   };
 
@@ -444,52 +447,51 @@ export default function ShopOwnerJobsScreen() {
       });
       const data = await res.json();
       if (!res.ok) {
-        Alert.alert('Error', data.error || 'Failed to accept request');
+        showNotification({ type: 'error', message: data.error || 'Failed to accept request' });
         return;
       }
       setPendingRequests((prev) => prev.filter((p) => p.id !== r.id));
-      Alert.alert('Success', data.message || 'Request accepted');
+      showNotification({ type: 'success', message: data.message || 'Request accepted' });
     } catch {
-      Alert.alert('Error', 'Network error');
+      showNotification({ type: 'error', message: 'Network error' });
     } finally {
       setActionLoading(null);
     }
   };
 
-  const handleDecline = (r: PendingRequest) => {
-    Alert.alert('Decline Request', 'Are you sure you want to decline this request?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Decline',
-        style: 'destructive',
-        onPress: async () => {
-          const endpoint =
-            r.request_type === 'direct'
-              ? `${API_URL}/bookings/shopowner/requests/${r.id}/decline/`
-              : `${API_URL}/bookings/shopowner/requests/${r.id}/decline-custom/`;
+  const handleDecline = async (r: PendingRequest) => {
+    const ok = await confirm({
+      type: 'danger',
+      title: 'Decline Request',
+      message: 'Are you sure you want to decline this request?',
+      confirmText: 'Decline',
+      cancelText: 'Cancel',
+    });
+    if (!ok) return;
+    const endpoint =
+      r.request_type === 'direct'
+        ? `${API_URL}/bookings/shopowner/requests/${r.id}/decline/`
+        : `${API_URL}/bookings/shopowner/requests/${r.id}/decline-custom/`;
 
-          setActionLoading(r.id);
-          try {
-            const res = await fetch(endpoint, {
-              method: 'POST',
-              credentials: 'include',
-              headers: { 'Content-Type': 'application/json' },
-            });
-            const data = await res.json();
-            if (!res.ok) {
-              Alert.alert('Error', data.error || 'Failed to decline request');
-              return;
-            }
-            Alert.alert('Declined', data.message || 'Request declined');
-            setPendingRequests((prev) => prev.filter((p) => p.id !== r.id));
-          } catch {
-            Alert.alert('Error', 'Network error');
-          } finally {
-            setActionLoading(null);
-          }
-        },
-      },
-    ]);
+    setActionLoading(r.id);
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showNotification({ type: 'error', message: data.error || 'Failed to decline request' });
+        return;
+      }
+      showNotification({ type: 'info', message: data.message || 'Request declined' });
+      setPendingRequests((prev) => prev.filter((p) => p.id !== r.id));
+    } catch {
+      showNotification({ type: 'error', message: 'Network error' });
+    } finally {
+      setActionLoading(null);
+    }
   };
 
   // ── Tab bar ──

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Alert } from 'react-native';
+import { View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl } from 'react-native';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -7,6 +7,8 @@ import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/mechanic/bookingDetailsStyles';
 import WalletBadge from '@/components/wallet-badge';
 import { useRouter } from 'expo-router';
+import { useNotification } from '@/hooks/useNotification';
+import { useConfirmation } from '@/hooks/useConfirmation';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 interface BookingDetail {
@@ -72,6 +74,8 @@ interface BookingDetail {
 
 export default function BookingDetailScreen() {
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
+  const { showNotification } = useNotification();
+  const { confirm } = useConfirmation();
   const [booking, setBooking] = useState<BookingDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -269,7 +273,7 @@ export default function BookingDetailScreen() {
       // refresh booking
       await fetchBookingDetail();
     } catch (err: any) {
-      Alert.alert('Error', err.message || 'Failed to mark booking as complete');
+      showNotification({ type: 'error', message: err.message || 'Failed to mark booking as complete' });
     } finally {
       setCompleting(false);
     }
@@ -344,7 +348,7 @@ export default function BookingDetailScreen() {
 
   const handleNavigateToClient = () => {
     if (!booking?.service_location) {
-      Alert.alert('No Location', 'No service location available for this booking.');
+      showNotification({ type: 'warning', message: 'No service location available for this booking.' });
       return;
     }
 
@@ -387,34 +391,64 @@ export default function BookingDetailScreen() {
         const errData = await response.json().catch(() => ({}));
         throw new Error((errData as any).error || errorMessage);
       }
-      Alert.alert('Success', successMessage);
+      showNotification({ type: 'success', message: successMessage });
       fetchBookingDetail();
     } catch (err: any) {
-      Alert.alert('Error', err.message || errorMessage);
+      showNotification({ type: 'error', message: err.message || errorMessage });
     } finally {
       setTransitioning(false);
     }
   };
 
   const handleStartTravel = () => handleStatusUpdate('start-travel', 'Status updated to On The Way!', 'Failed to start travel');
-  const handleCancelTravel = () => {
+  const handleCancelTravel = async () => {
     if (!booking) return;
-    Alert.alert(
-      'Cancel Travel',
-      'Are you sure you want to cancel travel and revert to previous status?',
-      [
-        { text: 'No', style: 'cancel' },
-        { text: 'Yes', onPress: () => handleStatusUpdate('cancel-travel', 'Travel cancelled.', 'Failed to cancel travel') },
-      ]
-    );
+    const ok = await confirm({
+      type: 'warning',
+      title: 'Cancel Travel',
+      message: 'Are you sure you want to cancel travel and revert to previous status?',
+      confirmText: 'Cancel Travel',
+      cancelText: 'Keep Going',
+    });
+    if (ok) handleStatusUpdate('cancel-travel', 'Travel cancelled.', 'Failed to cancel travel');
   };
   const handleStartJob = () => handleStatusUpdate('start-job', 'Status updated to Active!', 'Failed to start job');
-  const handleCancelJob = () => handleStatusUpdate('cancel-job', 'Job cancelled.', 'Failed to cancel job');
+  const handleCancelJob = async () => {
+    if (!booking) return;
+    const ok = await confirm({
+      type: 'warning',
+      title: 'Go Back',
+      message: 'Are you sure you want to go back? This will revert the job to On the Way.',
+      confirmText: 'Go Back',
+      cancelText: 'Stay',
+    });
+    if (ok) handleStatusUpdate('cancel-job', 'Job cancelled.', 'Failed to cancel job');
+  };
   const handlePauseJob = () => handleStatusUpdate('pause-job', 'Job paused.', 'Failed to pause job');
   const handleResumeJob = () => handleStatusUpdate('resume-job', 'Job resumed.', 'Failed to resume job');
-  const handleFinishJob = () => handleStatusUpdate('finish-job', 'Job finished. Pending payment.', 'Failed to finish job');
+  const handleFinishJob = async () => {
+    if (!booking) return;
+    const ok = await confirm({
+      type: 'success',
+      title: 'Finish Job',
+      message: 'Are you sure you want to finish this job? This will move the booking to pending payment.',
+      confirmText: 'Finish',
+      cancelText: 'Not Yet',
+    });
+    if (ok) handleStatusUpdate('finish-job', 'Job finished. Pending payment.', 'Failed to finish job');
+  };
   const handlePaymentReceived = () => handleStatusUpdate('payment-received', 'Payment received.', 'Failed to confirm payment');
-  const handleCancelBooking = () => handleStatusUpdate('cancel-booking', 'Booking cancelled.', 'Failed to cancel booking');
+  const handleCancelBooking = async () => {
+    if (!booking) return;
+    const ok = await confirm({
+      type: 'danger',
+      title: 'Cancel Booking',
+      message: 'Are you sure you want to cancel this booking? This action cannot be undone.',
+      confirmText: 'Cancel Booking',
+      cancelText: 'Keep Booking',
+    });
+    if (ok) handleStatusUpdate('cancel-booking', 'Booking cancelled.', 'Failed to cancel booking');
+  };
 
 
   if (loading) {
@@ -555,6 +589,14 @@ export default function BookingDetailScreen() {
               <TouchableOpacity
                 style={[styles.actionButton, styles.cancelButton]}
                 onPress={async () => {
+                  const ok = await confirm({
+                    type: 'warning',
+                    title: 'Go Back',
+                    message: 'Are you sure you want to go back? This will revert the job to On the Way.',
+                    confirmText: 'Go Back',
+                    cancelText: 'Stay',
+                  });
+                  if (!ok) return;
                   setTransitioning(true);
                   try {
                     // For paused bookings, revert twice to move back to ON_THE_WAY:
@@ -580,10 +622,10 @@ export default function BookingDetailScreen() {
                       throw new Error(err?.error || 'Failed to revert to on_the_way');
                     }
 
-                    Alert.alert('Success', 'Reverted to On the Way');
+                    showNotification({ type: 'success', message: 'Reverted to On the Way' });
                     await fetchBookingDetail();
                   } catch (err: any) {
-                    Alert.alert('Error', err.message || 'Failed to revert stage');
+                    showNotification({ type: 'error', message: err.message || 'Failed to revert stage' });
                   } finally {
                     setTransitioning(false);
                   }
@@ -622,9 +664,17 @@ export default function BookingDetailScreen() {
             <View style={{ marginTop: 12 }}>
               <TouchableOpacity style={[styles.finishLargeButton, !paymentConfirmedOnUI && styles.disabledButton]} onPress={async () => {
                 if (!paymentConfirmedOnUI) {
-                  Alert.alert('Confirm Payment', 'Please confirm you received payment before marking complete.');
+                  showNotification({ type: 'warning', title: 'Confirm Payment', message: 'Please confirm you received payment before marking complete.' });
                   return;
                 }
+                const ok = await confirm({
+                  type: 'success',
+                  title: 'Mark as Complete',
+                  message: 'Are you sure you want to mark this booking as complete?',
+                  confirmText: 'Mark Complete',
+                  cancelText: 'Not Yet',
+                });
+                if (!ok) return;
                 setCompleting(true);
                 try {
                   const pr = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/payment-received/`, {
@@ -646,10 +696,10 @@ export default function BookingDetailScreen() {
                     const err = await response.json().catch(() => null);
                     throw new Error(err?.error || 'Failed to complete booking');
                   }
-                  Alert.alert('Success', 'Booking marked as complete');
+                  showNotification({ type: 'success', message: 'Booking marked as complete' });
                   fetchBookingDetail();
                 } catch (err: any) {
-                  Alert.alert('Error', err.message || 'Failed to mark booking as complete');
+                  showNotification({ type: 'error', message: err.message || 'Failed to mark booking as complete' });
                 } finally {
                   setCompleting(false);
                 }
@@ -661,6 +711,14 @@ export default function BookingDetailScreen() {
 
             <View style={{ marginTop: 12 }}>
               <TouchableOpacity style={[styles.finishLargeButton, styles.cancelButton]} onPress={async () => {
+                const ok = await confirm({
+                  type: 'warning',
+                  title: 'Go Back',
+                  message: 'Are you sure you want to revert to the previous stage?',
+                  confirmText: 'Go Back',
+                  cancelText: 'Stay',
+                });
+                if (!ok) return;
                 setTransitioning(true);
                 try {
                   const res = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/revert-stage/`, {
@@ -672,10 +730,10 @@ export default function BookingDetailScreen() {
                     const err = await res.json().catch(() => null);
                     throw new Error(err?.error || 'Failed to revert stage');
                   }
-                  Alert.alert('Success', 'Reverted to previous stage');
+                  showNotification({ type: 'success', message: 'Reverted to previous stage' });
                   fetchBookingDetail();
                 } catch (err: any) {
-                  Alert.alert('Error', err.message || 'Failed to revert stage');
+                  showNotification({ type: 'error', message: err.message || 'Failed to revert stage' });
                 } finally {
                   setTransitioning(false);
                 }

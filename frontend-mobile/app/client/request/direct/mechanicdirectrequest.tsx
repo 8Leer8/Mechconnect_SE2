@@ -4,7 +4,6 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
-  Alert,
   ActivityIndicator,
   Platform,
 } from 'react-native';
@@ -16,6 +15,7 @@ import { Picker } from '@react-native-picker/picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Location from 'expo-location';
 import { styles } from '@/style/client/mechanicDirectRequestStyles';
+import { useNotification } from '@/hooks/useNotification';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const PSGC_API_BASE = 'https://psgc.gitlab.io/api';
@@ -67,6 +67,7 @@ interface CreateRequestResponse {
 }
 
 export default function MechanicDirectRequestScreen() {
+  const { showNotification } = useNotification();
   const params = useLocalSearchParams<{ mechanicId?: string | string[] }>();
   const mechanicId = typeof params.mechanicId === 'string' ? params.mechanicId : Array.isArray(params.mechanicId) ? params.mechanicId[0] : undefined;
   const [mechanics, setMechanics] = useState<Mechanic[]>([]);
@@ -179,7 +180,7 @@ export default function MechanicDirectRequestScreen() {
         if (!cancelled && !isNaN(mechanicIdNum) && mechanicExists) {
           setSelectedProviderId(mechanicIdNum);
         } else if (!isNaN(mechanicIdNum) && !mechanicExists && !cancelled) {
-          Alert.alert('Mechanic Not Available', 'This mechanic is not currently available for direct requests. Please try again later.', [{ text: 'OK' }]);
+          showNotification({ type: 'warning', title: 'Mechanic Not Available', message: 'This mechanic is not currently available for direct requests. Please try again later.' });
         }
       } catch (error) {
         if (!cancelled) console.error('Error parsing mechanicId:', error);
@@ -250,7 +251,7 @@ export default function MechanicDirectRequestScreen() {
       setRegions(sorted);
     } catch (error) {
       console.error('Error fetching regions:', error);
-      Alert.alert('Error', 'Failed to load regions');
+      showNotification({ type: 'error', message: 'Failed to load regions' });
     } finally {
       setLoadingRegions(false);
     }
@@ -267,7 +268,7 @@ export default function MechanicDirectRequestScreen() {
       setProvinces(sorted);
     } catch (error) {
       console.error('Error fetching provinces:', error);
-      Alert.alert('Error', 'Failed to load provinces');
+      showNotification({ type: 'error', message: 'Failed to load provinces' });
     } finally {
       setLoadingProvinces(false);
     }
@@ -283,7 +284,7 @@ export default function MechanicDirectRequestScreen() {
       setCities(sorted);
     } catch (error) {
       console.error('Error fetching cities:', error);
-      Alert.alert('Error', 'Failed to load cities/municipalities');
+      showNotification({ type: 'error', message: 'Failed to load cities/municipalities' });
     } finally {
       setLoadingCities(false);
     }
@@ -298,7 +299,7 @@ export default function MechanicDirectRequestScreen() {
       setBarangays(sorted);
     } catch (error) {
       console.error('Error fetching barangays:', error);
-      Alert.alert('Error', 'Failed to load barangays');
+      showNotification({ type: 'error', message: 'Failed to load barangays' });
     } finally {
       setLoadingBarangays(false);
     }
@@ -313,10 +314,7 @@ export default function MechanicDirectRequestScreen() {
       const { status } = await Location.requestForegroundPermissionsAsync();
 
       if (status !== 'granted') {
-        Alert.alert(
-          'Permission Denied',
-          'Location permission is needed to use current location.'
-        );
+        showNotification({ type: 'warning', title: 'Permission Denied', message: 'Location permission is needed to use current location.' });
         setFetchingLocation(false);
         return;
       }
@@ -368,11 +366,11 @@ export default function MechanicDirectRequestScreen() {
           setCurrentCity('');
         }
       } else {
-        Alert.alert('Timeout', 'Could not fetch location. Please try again.');
+        showNotification({ type: 'warning', title: 'Timeout', message: 'Could not fetch location. Please try again.' });
       }
     } catch (error) {
       console.error('Error getting location:', error);
-      Alert.alert('Error', 'Failed to get current location');
+      showNotification({ type: 'error', message: 'Failed to get current location' });
     } finally {
       setFetchingLocation(false);
     }
@@ -407,17 +405,17 @@ export default function MechanicDirectRequestScreen() {
 
   // ─── Send ──────────────────────────────────────────────────
   const handleSend = async () => {
-    if (!selectedProviderId) { Alert.alert('Error', 'Please select a provider first'); return; }
-    if (!selectedServiceId) { Alert.alert('Error', 'Please select a service'); return; }
+    if (!selectedProviderId) { showNotification({ type: 'error', message: 'Please select a provider first' }); return; }
+    if (!selectedServiceId) { showNotification({ type: 'error', message: 'Please select a service' }); return; }
     
     if (useCurrentLocation) {
       if (!currentLatitude || !currentLongitude) {
-        Alert.alert('Error', 'Please wait while we fetch your current location');
+        showNotification({ type: 'error', message: 'Please wait while we fetch your current location' });
         return;
       }
     } else {
       if (!streetName || !barangay || !cityMunicipality) {
-        Alert.alert('Error', 'Please fill in all required location fields');
+        showNotification({ type: 'error', message: 'Please fill in all required location fields' });
         return;
       }
     }
@@ -460,12 +458,13 @@ export default function MechanicDirectRequestScreen() {
       const data = await response.json() as CreateRequestResponse;
 
       if (response.ok) {
-        Alert.alert('Success', data.message || 'Request created successfully!', [{ text: 'OK', onPress: () => router.back() }]);
+        showNotification({ type: 'success', message: data.message || 'Request created successfully!' });
+        router.back();
       } else {
-        Alert.alert('Error', data.error || 'Failed to create request');
+        showNotification({ type: 'error', message: data.error || 'Failed to create request' });
       }
     } catch (error) {
-      Alert.alert('Error', 'An error occurred while creating the request');
+      showNotification({ type: 'error', message: 'An error occurred while creating the request' });
     } finally {
       setLoading(false);
     }

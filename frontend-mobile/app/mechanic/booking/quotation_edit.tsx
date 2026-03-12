@@ -1,17 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { View, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator } from 'react-native';
+import { View, TextInput, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useThemeColor } from '@/hooks/use-theme-color';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/mechanic/bookingDetailsStyles';
+import { useNotification } from '@/hooks/useNotification';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
 export default function QuotationEdit() {
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
   const router = useRouter();
+  const { showNotification } = useNotification();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [notes, setNotes] = useState('');
@@ -113,10 +115,10 @@ export default function QuotationEdit() {
         const err = await res.json().catch(() => null);
         throw new Error(err?.error || 'Failed to save quotation');
       }
-      Alert.alert('Saved', 'Quotation saved successfully');
+      showNotification({ type: 'success', title: 'Saved', message: 'Quotation saved successfully' });
       router.back();
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to save');
+      showNotification({ type: 'error', message: e.message || 'Failed to save' });
     } finally {
       setSaving(false);
     }

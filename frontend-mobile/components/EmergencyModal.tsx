@@ -4,7 +4,6 @@ import {
   Modal,
   TouchableOpacity,
   TextInput,
-  Alert,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
@@ -18,6 +17,7 @@ import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
+import { useNotification } from '@/hooks/useNotification';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const { height } = Dimensions.get('window');
@@ -29,6 +29,7 @@ interface EmergencyModalProps {
 }
 
 export default function EmergencyModal({ visible, onClose, onSuccess }: EmergencyModalProps) {
+  const { showNotification } = useNotification();
   const [description, setDescription] = useState('');
   const [concernPicture, setConcernPicture] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -56,11 +57,7 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
       const { status } = await Location.requestForegroundPermissionsAsync();
 
       if (status !== 'granted') {
-        Alert.alert(
-          'Location Permission Required',
-          'Emergency requests require your location to help mechanics find you quickly.',
-          [{ text: 'OK' }]
-        );
+        showNotification({ type: 'warning', title: 'Location Permission Required', message: 'Emergency requests require your location to help mechanics find you quickly.' });
         setFetchingLocation(false);
         return;
       }
@@ -84,7 +81,7 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
       });
     } catch (error) {
       console.error('Error getting location:', error);
-      Alert.alert('Error', 'Failed to get your current location. Please try again.');
+      showNotification({ type: 'error', message: 'Failed to get your current location. Please try again.' });
     } finally {
       setFetchingLocation(false);
     }
@@ -94,7 +91,7 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Camera permission is required to take photos');
+        showNotification({ type: 'warning', title: 'Permission Denied', message: 'Camera permission is required to take photos' });
         return;
       }
 
@@ -108,13 +105,13 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
         setConcernPicture(result.assets[0].uri);
       }
     } catch (error) {
-      Alert.alert('Error', 'Failed to take photo');
+      showNotification({ type: 'error', message: 'Failed to take photo' });
     }
   };
 
   const handleSubmit = async () => {
     if (!location) {
-      Alert.alert('Error', 'Location is required for emergency requests. Please enable location services.');
+      showNotification({ type: 'error', message: 'Location is required for emergency requests. Please enable location services.' });
       return;
     }
 
@@ -158,25 +155,15 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
       const data = await response.json();
 
       if (response.ok) {
-        Alert.alert(
-          'Emergency Request Sent',
-          'Your emergency request has been sent to nearby mechanics. Help is on the way!',
-          [
-            {
-              text: 'OK',
-              onPress: () => {
-                onClose();
-                onSuccess?.();
-              },
-            },
-          ]
-        );
+        showNotification({ type: 'success', title: 'Emergency Request Sent', message: 'Your emergency request has been sent to nearby mechanics. Help is on the way!' });
+        onClose();
+        onSuccess?.();
       } else {
-        Alert.alert('Error', (data as any).error || 'Failed to send emergency request');
+        showNotification({ type: 'error', message: (data as any).error || 'Failed to send emergency request' });
       }
     } catch (error) {
       console.error('Error sending emergency request:', error);
-      Alert.alert('Error', 'An error occurred while sending the emergency request');
+      showNotification({ type: 'error', message: 'An error occurred while sending the emergency request' });
     } finally {
       setLoading(false);
     }

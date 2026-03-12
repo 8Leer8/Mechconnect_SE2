@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Linking, Alert } from 'react-native';
+import { View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Linking } from 'react-native';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/mechanic/emergencyStyles';
+import { useNotification } from '@/hooks/useNotification';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -32,6 +33,7 @@ interface EmergencyRequest {
 }
 
 export default function EmergencyScreen() {
+  const { showNotification } = useNotification();
   const [requests, setRequests] = useState<EmergencyRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -105,17 +107,14 @@ export default function EmergencyScreen() {
       const data = await response.json();
 
       if (response.ok) {
-        Alert.alert(
-          'Emergency Accepted',
-          'You have accepted this emergency request. The booking has been created.',
-          [{ text: 'OK', onPress: fetchEmergencyRequests }]
-        );
+        showNotification({ type: 'success', title: 'Emergency Accepted', message: 'You have accepted this emergency request. The booking has been created.' });
+        fetchEmergencyRequests();
       } else {
-        Alert.alert('Error', data.error || 'Failed to accept emergency request');
+        showNotification({ type: 'error', message: data.error || 'Failed to accept emergency request' });
       }
     } catch (error) {
       console.error('Error accepting emergency:', error);
-      Alert.alert('Error', 'An error occurred while accepting the emergency request');
+      showNotification({ type: 'error', message: 'An error occurred while accepting the emergency request' });
     }
   };
 

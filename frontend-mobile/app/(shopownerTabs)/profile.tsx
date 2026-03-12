@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   Image,
   ActivityIndicator,
-  Alert,
   RefreshControl,
   Modal,
   TextInput,
@@ -15,6 +14,8 @@ import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
+import { useNotification } from '@/hooks/useNotification';
+import { useConfirmation } from '@/hooks/useConfirmation';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -80,6 +81,8 @@ interface AvailableService {
 }
 
 export default function ShopOwnerProfileScreen() {
+  const { showNotification } = useNotification();
+  const { confirm } = useConfirmation();
   const [profileData, setProfileData] = useState<ProfileData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -198,7 +201,7 @@ export default function ShopOwnerProfileScreen() {
     if (!selectedService) return;
     const price = parseFloat(customPrice);
     if (isNaN(price) || price < 0) {
-      Alert.alert('Invalid Price', 'Please enter a valid price');
+      showNotification({ type: 'error', title: 'Invalid Price', message: 'Please enter a valid price' });
       return;
     }
     setAddingId(selectedService.id);
@@ -211,7 +214,7 @@ export default function ShopOwnerProfileScreen() {
       });
       const data = await res.json().catch(() => ({})) as any;
       if (!res.ok) {
-        Alert.alert('Error', data.error || 'Failed to add service');
+        showNotification({ type: 'error', message: data.error || 'Failed to add service' });
         return;
       }
       await fetchMyServices();
@@ -219,7 +222,7 @@ export default function ShopOwnerProfileScreen() {
       setSelectedService(null);
       setCustomPrice('');
     } catch (e) {
-      Alert.alert('Error', 'Failed to add service');
+      showNotification({ type: 'error', message: 'Failed to add service' });
     } finally {
       setAddingId(null);
     }
@@ -242,7 +245,7 @@ export default function ShopOwnerProfileScreen() {
     if (!editingService) return;
     const price = parseFloat(editPrice);
     if (isNaN(price) || price < 0) {
-      Alert.alert('Invalid Price', 'Please enter a valid price');
+      showNotification({ type: 'error', title: 'Invalid Price', message: 'Please enter a valid price' });
       return;
     }
     setUpdatingId(editingService.shop_service_id);
@@ -255,7 +258,7 @@ export default function ShopOwnerProfileScreen() {
       });
       const data = await res.json().catch(() => ({})) as any;
       if (!res.ok) {
-        Alert.alert('Error', data.error || 'Failed to update price');
+        showNotification({ type: 'error', message: data.error || 'Failed to update price' });
         return;
       }
       await fetchMyServices();
@@ -263,7 +266,7 @@ export default function ShopOwnerProfileScreen() {
       setEditingService(null);
       setEditPrice('');
     } catch (e) {
-      Alert.alert('Error', 'Failed to update price');
+      showNotification({ type: 'error', message: 'Failed to update price' });
     } finally {
       setUpdatingId(null);
     }
@@ -275,31 +278,30 @@ export default function ShopOwnerProfileScreen() {
     setEditPrice('');
   };
 
-  const removeService = (svc: MyShopService) => {
-    Alert.alert('Remove', `Remove "${svc.name}" from your shop services?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Remove',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            const res = await fetch(`${API_URL}/services/shop/my-services/remove/`, {
-              method: 'POST',
-              credentials: 'include',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ service_id: svc.id }),
-            });
-            if (res.ok) await fetchMyServices();
-            else {
-              const data = await res.json().catch(() => ({})) as any;
-              Alert.alert('Error', data.error || 'Failed to remove');
-            }
-          } catch (e) {
-            Alert.alert('Error', 'Failed to remove');
-          }
-        },
-      },
-    ]);
+  const removeService = async (svc: MyShopService) => {
+    const ok = await confirm({
+      type: 'danger',
+      title: 'Remove Service',
+      message: `Remove "${svc.name}" from your shop services?`,
+      confirmText: 'Remove',
+      cancelText: 'Keep',
+    });
+    if (!ok) return;
+    try {
+      const res = await fetch(`${API_URL}/services/shop/my-services/remove/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ service_id: svc.id }),
+      });
+      if (res.ok) await fetchMyServices();
+      else {
+        const data = await res.json().catch(() => ({})) as any;
+        showNotification({ type: 'error', message: data.error || 'Failed to remove' });
+      }
+    } catch (e) {
+      showNotification({ type: 'error', message: 'Failed to remove' });
+    }
   };
 
   // ── End service management handlers ──
@@ -308,11 +310,15 @@ export default function ShopOwnerProfileScreen() {
     router.push('/(auth)/switchAccount/switchPage');
   };
 
-  const handleLogout = () => {
-    Alert.alert('Logout', 'Are you sure you want to logout?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Logout', style: 'destructive', onPress: performLogout },
-    ]);
+  const handleLogout = async () => {
+    const ok = await confirm({
+      type: 'danger',
+      title: 'Logout',
+      message: 'Are you sure you want to logout?',
+      confirmText: 'Logout',
+      cancelText: 'Cancel',
+    });
+    if (ok) performLogout();
   };
 
   const performLogout = async () => {
@@ -329,7 +335,7 @@ export default function ShopOwnerProfileScreen() {
         throw new Error('Logout failed');
       }
     } catch (err) {
-      Alert.alert('Error', err instanceof Error ? err.message : 'Logout failed');
+      showNotification({ type: 'error', message: err instanceof Error ? err.message : 'Logout failed' });
     }
   };
 
