@@ -25,6 +25,12 @@ interface BookingDetail {
     name: string;
     email: string;
   } | null;
+  shop?: {
+    id: number;
+    shop_name: string;
+    contact_number: string;
+    email: string;
+  } | null;
   service_location?: {
     street_name: string;
     subdivision_village?: string;
@@ -384,6 +390,44 @@ export default function ClientBookingDetailScreen() {
             </View>
             <View style={styles.tapHintContainer}>
               <ThemedText style={styles.tapHintText}>Tap to view mechanic profile</ThemedText>
+            </View>
+          </TouchableOpacity>
+        )}
+
+        {/* Shop Information */}
+        {booking.shop && (
+          <TouchableOpacity 
+            style={styles.sectionCard}
+            onPress={() => router.push(`/client/shop/shopprofile?shopId=${booking.shop?.id}`)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
+                <FontAwesome name="building" size={16} color="#FF8C00" />
+              </View>
+              <ThemedText style={styles.sectionTitle}>Shop Information</ThemedText>
+              <FontAwesome name="chevron-right" size={16} color="#8E8E93" style={{ marginLeft: 'auto' }} />
+            </View>
+            <View style={styles.infoGrid}>
+              <View style={styles.infoItem}>
+                <ThemedText style={styles.infoLabel}>Shop Name</ThemedText>
+                <ThemedText style={styles.infoValue}>{booking.shop.shop_name}</ThemedText>
+              </View>
+              {booking.shop.contact_number && (
+                <View style={styles.infoItem}>
+                  <ThemedText style={styles.infoLabel}>Contact</ThemedText>
+                  <ThemedText style={styles.infoValue}>{booking.shop.contact_number}</ThemedText>
+                </View>
+              )}
+              {booking.shop.email && (
+                <View style={styles.infoItem}>
+                  <ThemedText style={styles.infoLabel}>Email</ThemedText>
+                  <ThemedText style={styles.infoValue}>{booking.shop.email}</ThemedText>
+                </View>
+              )}
+            </View>
+            <View style={styles.tapHintContainer}>
+              <ThemedText style={styles.tapHintText}>Tap to view shop profile</ThemedText>
             </View>
           </TouchableOpacity>
         )}

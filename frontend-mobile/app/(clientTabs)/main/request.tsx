@@ -11,6 +11,7 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL;
 interface CustomRequest {
   id: number;
   provider: { id: number; name: string } | null;
+  shop: { id: number; shop_name: string; contact_number: string; email: string } | null;
   description: string;
   status: string;
   quoted_price: number | null;
@@ -28,6 +29,7 @@ interface CustomRequest {
 interface DirectRequest {
   id: number;
   provider: { id: number; name: string } | null;
+  shop: { id: number; shop_name: string; contact_number: string; email: string } | null;
   service: {
     id: number;
     name: string;
@@ -51,6 +53,7 @@ interface DirectRequest {
 interface BroadcastRequest {
   id: number;
   provider: { id: number; name: string } | null;
+  shop: { id: number; shop_name: string; contact_number: string; email: string } | null;
   description: string;
   providers_note: string | null;
   concern_picture: string | null;
@@ -387,7 +390,11 @@ export default function RequestScreen() {
 
     return customRequests.map((r) => {
       const details: { icon: string; text: string }[] = [];
-      if (r.provider) details.push({ icon: 'wrench', text: r.provider.name });
+      if (r.shop) {
+        details.push({ icon: 'building', text: r.shop.shop_name });
+      } else if (r.provider) {
+        details.push({ icon: 'wrench', text: r.provider.name });
+      }
       if (r.quoted_price) details.push({ icon: 'tag', text: `₱${parseFloat(String(r.quoted_price || '0')).toFixed(2)}` });
       if (r.service_location) details.push({ icon: 'map-marker', text: `${r.service_location.street_name}, ${r.service_location.barangay}, ${r.service_location.city_municipality}` });
       details.push({ icon: 'calendar', text: new Date(r.created_at).toLocaleDateString() });
@@ -418,7 +425,11 @@ export default function RequestScreen() {
         { icon: 'tag', text: `₱${totalPrice.toFixed(2)}` },
       ];
       if (r.add_ons.length > 0) details.push({ icon: 'plus-circle', text: r.add_ons.map(a => a.name).join(', ') });
-      if (r.provider) details.push({ icon: 'wrench', text: r.provider.name });
+      if (r.shop) {
+        details.push({ icon: 'building', text: r.shop.shop_name });
+      } else if (r.provider) {
+        details.push({ icon: 'wrench', text: r.provider.name });
+      }
       if (r.service_location) details.push({ icon: 'map-marker', text: `${r.service_location.street_name}, ${r.service_location.barangay}, ${r.service_location.city_municipality}` });
       details.push({ icon: 'calendar', text: new Date(r.created_at).toLocaleDateString() });
 
@@ -444,7 +455,11 @@ export default function RequestScreen() {
 
       const details: { icon: string; text: string }[] = [];
       if (r.services?.length > 0) details.push({ icon: 'list', text: r.services.map(s => s.name).join(', ') });
-      if (r.provider) details.push({ icon: 'wrench', text: r.provider.name });
+      if (r.shop) {
+        details.push({ icon: 'building', text: r.shop.shop_name });
+      } else if (r.provider) {
+        details.push({ icon: 'wrench', text: r.provider.name });
+      }
       if (r.service_location) details.push({ icon: 'map-marker', text: `${r.service_location.street_name}, ${r.service_location.barangay}, ${r.service_location.city_municipality}` });
       details.push({ icon: 'calendar', text: new Date(r.created_at).toLocaleDateString() });
 

@@ -2,6 +2,7 @@ from django.db import models
 from django.utils import timezone
 from users.models import Client, Account, Admin, Mechanic
 from services.models import Service, ServiceAddOn
+from shops.models import Shop
 
 class ServiceLocation(models.Model):
     street_name = models.CharField(max_length=100)
@@ -21,6 +22,7 @@ class Request(models.Model):
 
     client = models.ForeignKey(Client, on_delete=models.CASCADE)
     provider = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="provided_requests", null=True, blank=True)
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name="shop_requests", null=True, blank=True)
     request_type = models.CharField(max_length=20, choices=Type.choices)
     service_location = models.ForeignKey(ServiceLocation, on_delete=models.CASCADE, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

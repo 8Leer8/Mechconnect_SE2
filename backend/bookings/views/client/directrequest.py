@@ -462,7 +462,8 @@ def create_shop_direct_request(request):
         # Create request
         new_request = Request.objects.create(
             client=client,
-            provider=provider,
+            provider=None,  # No individual provider, request goes to the shop
+            shop=shop,  # Associate request with the shop
             request_type='direct',
             service_location=service_location
         )

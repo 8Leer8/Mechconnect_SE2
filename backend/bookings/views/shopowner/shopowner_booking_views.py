@@ -59,9 +59,12 @@ def shopowner_accept_direct_request(request, request_id):
     if err:
         return err
 
+    # Get the shop for this shop owner
+    shop = account.shopowner.shop
+
     try:
-        req = Request.objects.select_related("client", "provider").get(
-            id=request_id, provider=account, request_type="direct"
+        req = Request.objects.select_related("client", "shop").get(
+            id=request_id, shop=shop, request_type="direct"
         )
     except Request.DoesNotExist:
         return Response(
@@ -137,9 +140,12 @@ def shopowner_decline_direct_request(request, request_id):
     if err:
         return err
 
+    # Get the shop for this shop owner
+    shop = account.shopowner.shop
+
     try:
         req = Request.objects.get(
-            id=request_id, provider=account, request_type="direct"
+            id=request_id, shop=shop, request_type="direct"
         )
     except Request.DoesNotExist:
         return Response(
@@ -181,9 +187,12 @@ def shopowner_accept_custom_request(request, request_id):
     if err:
         return err
 
+    # Get the shop for this shop owner
+    shop = account.shopowner.shop
+
     try:
-        req = Request.objects.select_related("client", "provider").get(
-            id=request_id, provider=account, request_type="custom"
+        req = Request.objects.select_related("client", "shop").get(
+            id=request_id, shop=shop, request_type="custom"
         )
     except Request.DoesNotExist:
         return Response(
@@ -234,8 +243,11 @@ def shopowner_decline_custom_request(request, request_id):
     if err:
         return err
 
+    # Get the shop for this shop owner
+    shop = account.shopowner.shop
+
     try:
-        req = Request.objects.get(id=request_id, provider=account, request_type="custom")
+        req = Request.objects.get(id=request_id, shop=shop, request_type="custom")
     except Request.DoesNotExist:
         return Response({"error": "Request not found"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -256,14 +268,15 @@ def shopowner_decline_custom_request(request, request_id):
 # ── Shop owner booking list / detail ──────────────────────────────
 
 def _shopowner_bookings_queryset(account):
-    """Base queryset for all bookings where provider = this shopowner account."""
+    """Base queryset for all bookings where shop = this shopowner's shop."""
+    shop = account.shopowner.shop
     return (
-        Booking.objects.filter(request__provider=account)
+        Booking.objects.filter(request__shop=shop)
         .select_related(
             "request",
             "request__client",
             "request__client__account",
-            "request__provider",
+            "request__shop",
             "request__service_location",
         )
         .prefetch_related(

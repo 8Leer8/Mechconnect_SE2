@@ -7,7 +7,7 @@ from datetime import timedelta
 
 from ...models import Request, DirectRequestAddOn, BroadcastRequest
 from users.models import Account
-from services.models import MechanicService
+from services.models import MechanicService, ShopService
 
 
 @api_view(['GET'])
@@ -63,6 +63,7 @@ def list_requests(request):
         # Get all requests made by this client
         all_requests_query = Request.objects.filter(client=client).select_related(
             'provider',
+            'shop',
             'service_location'
         ).prefetch_related(
             'customrequest',
@@ -105,6 +106,12 @@ def list_requests(request):
                         'id': req.provider.id,
                         'name': f"{req.provider.firstname} {req.provider.lastname}"
                     } if req.provider else None,
+                    'shop': {
+                        'id': req.shop.id,
+                        'shop_name': req.shop.shop_name,
+                        'contact_number': req.shop.contact_number,
+                        'email': req.shop.email
+                    } if req.shop else None,
                     'description': req.customrequest.description,
                     'status': req.customrequest.request_status,
                     'quoted_price': float(req.customrequest.quoted_price) if req.customrequest.quoted_price else None,
@@ -122,9 +129,20 @@ def list_requests(request):
                 # Get add-ons for this request
                 add_ons = DirectRequestAddOn.objects.filter(request=req).select_related('service_add_on')
                 
-                # Get the mechanic's price for this service
+                # Get the price for this service (shop or mechanic)
                 service_price = req.directrequest.service.minimum_price  # Default to minimum_price
-                if req.provider and hasattr(req.provider, 'mechanic'):
+                if req.shop:
+                    # For shop requests, get shop's price
+                    try:
+                        shop_service = ShopService.objects.get(
+                            shop=req.shop,
+                            service=req.directrequest.service
+                        )
+                        service_price = shop_service.price
+                    except ShopService.DoesNotExist:
+                        pass  # Use minimum_price as fallback
+                elif req.provider and hasattr(req.provider, 'mechanic'):
+                    # For mechanic requests, get mechanic's price
                     try:
                         mechanic_service = MechanicService.objects.get(
                             mechanic=req.provider.mechanic,
@@ -140,10 +158,16 @@ def list_requests(request):
                         'id': req.provider.id,
                         'name': f"{req.provider.firstname} {req.provider.lastname}"
                     } if req.provider else None,
+                    'shop': {
+                        'id': req.shop.id,
+                        'shop_name': req.shop.shop_name,
+                        'contact_number': req.shop.contact_number,
+                        'email': req.shop.email
+                    } if req.shop else None,
                     'service': {
                         'id': req.directrequest.service.id,
                         'name': req.directrequest.service.name,
-                        'price': float(service_price)  # Use mechanic's specific price
+                        'price': float(service_price)  # Use shop's or mechanic's specific price
                     },
                     'add_ons': [{
                         'id': addon.service_add_on.id,
@@ -166,6 +190,12 @@ def list_requests(request):
                         'id': req.provider.id,
                         'name': f"{req.provider.firstname} {req.provider.lastname}"
                     } if req.provider else None,
+                    'shop': {
+                        'id': req.shop.id,
+                        'shop_name': req.shop.shop_name,
+                        'contact_number': req.shop.contact_number,
+                        'email': req.shop.email
+                    } if req.shop else None,
                     'description': req.emergencyrequest.description,
                     'providers_note': req.emergencyrequest.providers_note,
                     'concern_picture': req.emergencyrequest.concern_picture.url if req.emergencyrequest.concern_picture else None,
@@ -192,6 +222,12 @@ def list_requests(request):
                         'id': req.provider.id,
                         'name': f"{req.provider.firstname} {req.provider.lastname}"
                     } if req.provider else None,
+                    'shop': {
+                        'id': req.shop.id,
+                        'shop_name': req.shop.shop_name,
+                        'contact_number': req.shop.contact_number,
+                        'email': req.shop.email
+                    } if req.shop else None,
                     'description': req.broadcast_request.description,
                     'services': [{
                         'id': service.id,

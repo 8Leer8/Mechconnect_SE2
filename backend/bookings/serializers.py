@@ -6,6 +6,7 @@ from .models import (
 )
 from services.models import Service, ServiceAddOn
 from users.models import Account, Client
+from shops.models import Shop
 from MainBackend.storage_utils import get_media_url
 
 
@@ -53,6 +54,12 @@ class AccountBasicSerializer(serializers.ModelSerializer):
         elif hasattr(obj, 'shopowner'):
             return obj.shopowner.shop_contact_number
         return None
+
+
+class ShopBasicSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Shop
+        fields = ['id', 'shop_name', 'contact_number', 'email']
 
 
 class CustomRequestSerializer(serializers.ModelSerializer):
@@ -114,13 +121,14 @@ class RequestAssignmentSerializer(serializers.ModelSerializer):
 class RequestSerializer(serializers.ModelSerializer):
     client = AccountBasicSerializer(source='client.account', read_only=True)
     provider = AccountBasicSerializer(read_only=True)
+    shop = ShopBasicSerializer(read_only=True)
     service_location = ServiceLocationSerializer(read_only=True)
     request_details = serializers.SerializerMethodField()
     assigned_mechanics = RequestAssignmentSerializer(source='assignments', many=True, read_only=True)
     
     class Meta:
         model = Request
-        fields = ['id', 'client', 'provider', 'request_type', 'service_location', 'created_at', 'request_details', 'assigned_mechanics']
+        fields = ['id', 'client', 'provider', 'shop', 'request_type', 'service_location', 'created_at', 'request_details', 'assigned_mechanics']
     
     def get_request_details(self, obj):
         if obj.request_type == 'custom':

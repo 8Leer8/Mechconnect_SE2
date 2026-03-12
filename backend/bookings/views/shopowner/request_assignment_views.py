@@ -65,8 +65,14 @@ def assign_mechanic(request, request_id):
     account, err = _get_provider_account(request)
     if err:
         return err
+    
+    # Get request filtering by shop if shop owner, or provider if mechanic
     try:
-        req = Request.objects.get(id=request_id, provider=account)
+        if hasattr(account, 'shopowner'):
+            shop = account.shopowner.shop
+            req = Request.objects.get(id=request_id, shop=shop)
+        else:
+            req = Request.objects.get(id=request_id, provider=account)
     except Request.DoesNotExist:
         return Response({"error": "Request not found or you are not the provider."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -113,8 +119,14 @@ def unassign_mechanic(request, request_id, assignment_id):
     account, err = _get_provider_account(request)
     if err:
         return err
+    
+    # Get request filtering by shop if shop owner, or provider if mechanic
     try:
-        req = Request.objects.get(id=request_id, provider=account)
+        if hasattr(account, 'shopowner'):
+            shop = account.shopowner.shop
+            req = Request.objects.get(id=request_id, shop=shop)
+        else:
+            req = Request.objects.get(id=request_id, provider=account)
     except Request.DoesNotExist:
         return Response({"error": "Request not found or you are not the provider."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -137,8 +149,14 @@ def update_assignment_role(request, request_id, assignment_id):
     account, err = _get_provider_account(request)
     if err:
         return err
+    
+    # Get request filtering by shop if shop owner, or provider if mechanic
     try:
-        req = Request.objects.get(id=request_id, provider=account)
+        if hasattr(account, 'shopowner'):
+            shop = account.shopowner.shop
+            req = Request.objects.get(id=request_id, shop=shop)
+        else:
+            req = Request.objects.get(id=request_id, provider=account)
     except Request.DoesNotExist:
         return Response({"error": "Request not found or you are not the provider."}, status=status.HTTP_404_NOT_FOUND)
 

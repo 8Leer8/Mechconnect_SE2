@@ -92,21 +92,21 @@ def shop_owner_dashboard(request):
             id__in=shop_mechanic_ids
         ).values_list('account_id', flat=True)
         
-        # 3. Active bookings (bookings where provider is one of shop's mechanics)
+        # 3. Active bookings (bookings where shop is the provider OR one of shop's mechanics)
         active_bookings = Booking.objects.filter(
-            request__provider_id__in=shop_mechanic_accounts,
+            Q(request__shop=shop) | Q(request__provider_id__in=shop_mechanic_accounts),
             status=Booking.Status.ACTIVE
         ).count()
         
         # 4. Completed jobs
         completed_jobs = Booking.objects.filter(
-            request__provider_id__in=shop_mechanic_accounts,
+            Q(request__shop=shop) | Q(request__provider_id__in=shop_mechanic_accounts),
             status=Booking.Status.COMPLETED
         ).count()
         
         # 5. Total revenue from completed bookings
         revenue_data = CompleteBooking.objects.filter(
-            booking__request__provider_id__in=shop_mechanic_accounts
+            Q(booking__request__shop=shop) | Q(booking__request__provider_id__in=shop_mechanic_accounts)
         ).aggregate(
             total_revenue=Sum('total_amount')
         )
