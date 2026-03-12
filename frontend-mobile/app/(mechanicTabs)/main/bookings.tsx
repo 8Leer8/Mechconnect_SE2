@@ -96,7 +96,7 @@ export default function BookingsScreen() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
-  const pageSize = 10;
+  const pageSize = 5;
 
   useEffect(() => {
     if (tab && tab !== activeTab) {
