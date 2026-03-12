@@ -71,11 +71,6 @@ export default function ShopOwnerMechanics() {
   };
 
   const searchAvailableMechanics = async (query: string) => {
-    if (!query.trim()) {
-      setSearchResults([]);
-      return;
-    }
-
     try {
       setSearchLoading(true);
       const response = await fetch(`${API_URL}/shops/mechanics/search/?search=${encodeURIComponent(query)}`, {
@@ -290,7 +285,7 @@ export default function ShopOwnerMechanics() {
                 <ActivityIndicator size="small" color="#FF9500" style={styles.searchLoader} />
               ) : searchResults.length === 0 ? (
                 <ThemedText style={styles.noResultsText}>
-                  {searchQuery ? 'No mechanics found' : 'Start typing to search'}
+                  No mechanics found
                 </ThemedText>
               ) : (
                 searchResults.map((mechanic) => (
