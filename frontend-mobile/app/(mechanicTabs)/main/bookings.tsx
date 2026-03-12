@@ -3,6 +3,7 @@ import { View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, 
 import { router, useLocalSearchParams } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { useThemeColor } from '@/hooks/use-theme-color';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/mechanic/bookingsStyles';
 import WalletBadge from '@/components/wallet-badge';
@@ -97,6 +98,7 @@ export default function BookingsScreen() {
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const pageSize = 5;
+  const dividerColor = useThemeColor({ light: '#eee', dark: '#2A2C2E' }, 'background');
 
   useEffect(() => {
     if (tab && tab !== activeTab) {
@@ -491,6 +493,24 @@ export default function BookingsScreen() {
                         : 'No location specified'}
                     </ThemedText>
                   </View>
+
+                  {/* Quotation preview for completed bookings (read-only) */}
+                  {booking.status === 'completed' && (booking as any).quotation && (
+                    <ThemedView lightColor="#fff" darkColor="#1A1C1E" style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, marginTop: 8 }}>
+                      <ThemedText style={{ fontSize: 14, fontWeight: '600', marginBottom: 6 }}>Quotation</ThemedText>
+                      {((booking as any).quotation.items || []).map((it: any, idx: number) => (
+                        <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 }}>
+                          <ThemedText style={{ flex: 1 }}>{it.description || (it.service && `Service #${it.service}`) || 'Item'}</ThemedText>
+                          <ThemedText>₱{(((it.unit_price || 0) * (it.quantity || 1)) || 0).toFixed(2)}</ThemedText>
+                        </View>
+                      ))}
+                      <View style={{ height: 1, backgroundColor: dividerColor, marginVertical: 8 }} />
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                        <ThemedText style={{ fontWeight: '600' }}>Estimated Total</ThemedText>
+                        <ThemedText style={{ fontWeight: '600' }}>₱{parseFloat(String((booking as any).quotation.total_amount || 0)).toFixed(2)}</ThemedText>
+                      </View>
+                    </ThemedView>
+                  )}
 
                   <View style={styles.infoRow}>
                     <FontAwesome name="calendar-o" size={13} color="#8E8E93" />
