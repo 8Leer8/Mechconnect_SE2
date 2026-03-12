@@ -534,7 +534,8 @@ def list_mechanic_bookings(request):
 
     status_filter = request.query_params.get("status", None)
     page = int(request.query_params.get("page", 1))
-    page_size = int(request.query_params.get("page_size", 10))
+    # Default page size for mechanic listing set to 5
+    page_size = int(request.query_params.get("page_size", 5))
 
     # All bookings where this mechanic is the provider
     bookings_queryset = (
