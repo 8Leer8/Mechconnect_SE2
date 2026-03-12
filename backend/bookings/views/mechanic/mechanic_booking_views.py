@@ -3,7 +3,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 from django.utils import timezone
-from django.db.models import Prefetch
+from django.db.models import Prefetch, Sum
 from django.db import transaction
 import logging
 import traceback
@@ -711,7 +711,7 @@ def list_mechanic_bookings(request):
             status=status.HTTP_200_OK,
         )
 
-    # No status filter: return counts only (lightweight for tab badges)
+    # No status filter: return counts + aggregate stats (lightweight for tab badges / home screen)
     accepted_count = bookings_queryset.filter(status="accepted").count()
     on_the_way_count = bookings_queryset.filter(status="on_the_way").count()
     active_count = bookings_queryset.filter(status__in=["active", "paused"]).count()
@@ -722,6 +722,11 @@ def list_mechanic_bookings(request):
     reworked_count = bookings_queryset.filter(status="reworked").count()
     disputed_count = bookings_queryset.filter(status="disputed").count()
     pending_count = _count_pending_direct_requests(account)
+
+    # Single DB aggregate — much cheaper than fetching all completed records
+    total_earnings = bookings_queryset.filter(status="completed").aggregate(
+        total=Sum("amount_fee")
+    )["total"] or 0
 
     return Response(
         {
@@ -736,6 +741,7 @@ def list_mechanic_bookings(request):
             "reworked": {"count": reworked_count},
             "disputed": {"count": disputed_count},
             "total_count": bookings_queryset.count() + pending_count,
+            "total_earnings": float(total_earnings),
         },
         status=status.HTTP_200_OK,
     )

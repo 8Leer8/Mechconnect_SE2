@@ -219,9 +219,10 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
+    justifyContent: 'space-between',
   },
   quickActionCard: {
-    width: (width - 58) / 2,
+    width: '48.5%',
     backgroundColor: '#1A1C1E',
     borderRadius: 14,
     padding: 18,

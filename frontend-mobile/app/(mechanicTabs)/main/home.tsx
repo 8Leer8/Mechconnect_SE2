@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   ScrollView,
@@ -9,6 +9,7 @@ import {
   Linking,
 } from 'react-native';
 import { router } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -27,13 +28,13 @@ interface Booking {
     id: number;
     type: string;
     request_type?: string;
-    service_location: {
+    service_location?: {
       street_name: string;
       barangay: string;
       city_municipality: string;
     };
   };
-  client: {
+  client?: {
     firstname: string;
     lastname: string;
   };
@@ -44,77 +45,61 @@ interface Booking {
   } | null;
 }
 
-interface PendingRequest {
-  id: number;
-  request_type: string;
-  created_at: string;
-  client?: {
-    firstname: string;
-    lastname: string;
-  };
-  service_location?: {
-    street_name: string;
-    barangay: string;
-    city_municipality: string;
-  };
-}
-
-interface HomeData {
-  current_bookings: Booking[];
-  pending_requests: PendingRequest[];
-}
-
 interface GroupedBookings {
-  active: { bookings: Booking[]; count: number };
-  completed: { bookings: Booking[]; count: number };
-  cancelled: { bookings: Booking[]; count: number };
-  pending?: { bookings: any[]; count: number };
+  active: { count: number };
+  completed: { count: number };
+  cancelled: { count: number };
+  pending?: { count: number };
   total_count: number;
+  total_earnings: number;
 }
 
 export default function HomeScreen() {
-  const [homeData, setHomeData] = useState<HomeData | null>(null);
+  const [activeJobs, setActiveJobs] = useState<Booking[]>([]);
+  const [pendingRequests, setPendingRequests] = useState<Booking[]>([]);
   const [stats, setStats] = useState<GroupedBookings | null>(null);
   const [mechanicName, setMechanicName] = useState<string>('Mechanic');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetchAllData = useCallback(async () => {
+  const fetchSections = useCallback(async () => {
     try {
       setError(null);
 
-      const [homeRes, bookingsRes, profileRes] = await Promise.all([
-        // Mechanic-specific home endpoint (current bookings + pending requests)
-        fetch(`${API_URL}/bookings/mechanic/home/`, {
-          method: 'GET',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        }),
-        fetch(`${API_URL}/bookings/mechanic/bookings/`, {
-          method: 'GET',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        }),
-        fetch(`${API_URL}/users/profile/details/`, {
-          method: 'GET',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        }),
+      const opts = { method: 'GET', credentials: 'include' as RequestCredentials, headers: { 'Content-Type': 'application/json' } };
+
+      // All 4 requests in one round-trip; the no-status stats call now returns total_earnings
+      // via a single SQL Sum aggregate — no need for a separate heavy fetch.
+      const [acceptedRes, onGoingRes, pendingRes, statsRes, profileRes] = await Promise.all([
+        fetch(`${API_URL}/bookings/mechanic/bookings/?status=accepted&page_size=10`, opts),
+        fetch(`${API_URL}/bookings/mechanic/bookings/?status=on_going&page_size=10`, opts),
+        fetch(`${API_URL}/bookings/mechanic/bookings/?status=pending&page_size=5`, opts),
+        fetch(`${API_URL}/bookings/mechanic/bookings/`, opts),
+        fetch(`${API_URL}/users/profile/details/`, opts),
       ]);
 
-      if (homeRes.ok) {
-        const result = await homeRes.json();
-        setHomeData(result);
-      }
+      const [acceptedData, onGoingData, pendingData, statsData, profileData] = await Promise.all([
+        acceptedRes.ok ? acceptedRes.json() : Promise.resolve(null),
+        onGoingRes.ok ? onGoingRes.json() : Promise.resolve(null),
+        pendingRes.ok ? pendingRes.json() : Promise.resolve(null),
+        statsRes.ok ? statsRes.json() : Promise.resolve(null),
+        profileRes.ok ? profileRes.json() : Promise.resolve(null),
+      ]);
 
-      if (bookingsRes.ok) {
-        const result = await bookingsRes.json();
-        setStats(result);
-      }
+      // Merge accepted + on_going, sort newest first, cap at 5
+      const accepted: Booking[] = acceptedData?.bookings ?? [];
+      const onGoing: Booking[] = onGoingData?.bookings ?? [];
+      const merged = [...accepted, ...onGoing]
+        .sort((a, b) => new Date(b.booked_at).getTime() - new Date(a.booked_at).getTime())
+        .slice(0, 5);
+      setActiveJobs(merged);
 
-      if (profileRes.ok) {
-        const profileData = await profileRes.json();
+      setPendingRequests(pendingData?.bookings ?? []);
+
+      if (statsData) setStats(statsData);
+
+      if (profileData) {
         const p = profileData.profile || profileData;
         const n = p?.full_name || `${p?.firstname || ''} ${p?.lastname || ''}`.trim();
         if (n) setMechanicName(n);
@@ -127,22 +112,22 @@ export default function HomeScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    fetchAllData();
-
-    // Silently refresh dashboard every 30 seconds
-    const interval = setInterval(fetchAllData, 30000);
-    return () => clearInterval(interval);
-  }, [fetchAllData]);
+  // Re-fetch whenever the tab comes into focus
+  useFocusEffect(useCallback(() => {
+    fetchSections();
+  }, [fetchSections]));
 
   const onRefresh = () => {
     setRefreshing(true);
-    fetchAllData();
+    fetchSections();
   };
 
   const getStatusColor = (status: string) => {
     switch (status) {
+      case 'accepted': return '#007AFF';
+      case 'on_the_way': return '#FF9500';
       case 'active': return '#FF8C00';
+      case 'paused': return '#FFD60A';
       case 'completed': return '#34C759';
       case 'reworked': return '#FFD60A';
       case 'cancelled': return '#FF3B30';
@@ -158,13 +143,10 @@ export default function HomeScreen() {
     return 'Good Evening';
   };
 
-  const totalEarnings = stats?.completed?.bookings?.reduce(
-    (sum: number, b: any) => sum + parseFloat(String(b.amount_fee || '0')), 0
-  ) || 0;
-
   const activeCount = stats?.active?.count || 0;
   const pendingCount = stats?.pending?.count || 0;
   const completedCount = stats?.completed?.count || 0;
+  const totalEarnings = stats?.total_earnings ?? 0;
 
   return (
     <ThemedView style={styles.container}>
@@ -243,7 +225,7 @@ export default function HomeScreen() {
           <View style={styles.errorContainer}>
             <FontAwesome name="exclamation-circle" size={48} color="#FF3B30" />
             <ThemedText style={styles.errorText}>{error}</ThemedText>
-            <TouchableOpacity style={styles.retryButton} onPress={fetchAllData}>
+            <TouchableOpacity style={styles.retryButton} onPress={fetchSections}>
               <ThemedText style={styles.retryText}>Retry</ThemedText>
             </TouchableOpacity>
           </View>
@@ -261,8 +243,8 @@ export default function HomeScreen() {
                 </TouchableOpacity>
               </View>
 
-              {homeData?.current_bookings && homeData.current_bookings.length > 0 ? (
-                homeData.current_bookings.slice(0, 3).map((booking) => (
+              {activeJobs.length > 0 ? (
+                activeJobs.map((booking) => (
                   <TouchableOpacity
                     key={booking.id}
                     style={styles.jobCard}
@@ -277,7 +259,7 @@ export default function HomeScreen() {
                     <View style={styles.jobCardCenter}>
                       <View style={styles.jobCardTitleRow}>
                         <ThemedText style={styles.jobTitle} numberOfLines={1}>
-                          {booking.request?.request_type ? `${booking.request.request_type.charAt(0).toUpperCase() + booking.request.request_type.slice(1)} Service` : 'Service Request'}
+                          {booking.request?.type ? `${booking.request.type.charAt(0).toUpperCase() + booking.request.type.slice(1)} Service` : 'Service Request'}
                         </ThemedText>
                         <View style={[styles.statusDot, { backgroundColor: getStatusColor(booking.status) }]} />
                       </View>
@@ -327,55 +309,47 @@ export default function HomeScreen() {
                 </TouchableOpacity>
               </View>
 
-              {homeData?.pending_requests && homeData.pending_requests.length > 0 ? (
-                homeData.pending_requests.slice(0, 3).map((request) => (
-                  <View key={request.id} style={styles.requestCard}>
+              {pendingRequests.length > 0 ? (
+                pendingRequests.map((req) => (
+                  <View key={req.id} style={styles.requestCard}>
                     <View style={styles.requestCardTop}>
                       <View style={styles.requestTypeContainer}>
-                        <View style={[styles.requestTypeBadge, {
-                          backgroundColor: request.request_type === 'emergency' ? '#FF3B3020' : '#007AFF20',
-                        }]}>
-                          <FontAwesome
-                            name={request.request_type === 'emergency' ? 'exclamation-triangle' : 'file-text-o'}
-                            size={14}
-                            color={request.request_type === 'emergency' ? '#FF3B30' : '#007AFF'}
-                          />
-                          <ThemedText style={[styles.requestTypeText, {
-                            color: request.request_type === 'emergency' ? '#FF3B30' : '#007AFF',
-                          }]}>
-                            {request.request_type.charAt(0).toUpperCase() + request.request_type.slice(1)}
+                        <View style={[styles.requestTypeBadge, { backgroundColor: '#007AFF20' }]}>
+                          <FontAwesome name="file-text-o" size={14} color="#007AFF" />
+                          <ThemedText style={[styles.requestTypeText, { color: '#007AFF' }]}>
+                            Direct Request
                           </ThemedText>
                         </View>
                       </View>
                       <ThemedText style={styles.requestTime}>
-                        {new Date(request.created_at).toLocaleDateString('en-US', {
+                        {new Date(req.booked_at).toLocaleDateString('en-US', {
                           month: 'short', day: 'numeric',
                         })}
                       </ThemedText>
                     </View>
-                    {request.client && (
+                    {req.client && (
                       <View style={styles.requestInfoRow}>
                         <FontAwesome name="user-o" size={12} color="#8E8E93" />
                         <ThemedText style={styles.requestInfoText}>
-                          {`${request.client.firstname || ''} ${request.client.lastname || ''}`.trim()}
+                          {`${req.client.firstname || ''} ${req.client.lastname || ''}`.trim()}
                         </ThemedText>
                       </View>
                     )}
-                    {request.service_location && (
+                    {req.service_location && (
                       <View style={styles.requestInfoRow}>
                         <FontAwesome name="map-marker" size={12} color="#8E8E93" />
                         <ThemedText style={styles.requestInfoText} numberOfLines={1}>
-                          {request.service_location.barangay}, {request.service_location.city_municipality}
+                          {req.service_location.barangay}, {req.service_location.city_municipality}
                         </ThemedText>
                       </View>
                     )}
                     <View style={styles.requestActions}>
-                      <TouchableOpacity style={styles.declineButton}>
-                        <ThemedText style={styles.declineText}>Decline</ThemedText>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.acceptButton}>
-                        <FontAwesome name="check" size={12} color="#fff" />
-                        <ThemedText style={styles.acceptText}>Accept</ThemedText>
+                      <TouchableOpacity
+                        style={styles.acceptButton}
+                        onPress={() => router.push({ pathname: '/(mechanicTabs)/main/bookings', params: { tab: 'pending' } })}
+                      >
+                        <FontAwesome name="eye" size={12} color="#fff" />
+                        <ThemedText style={styles.acceptText}>View</ThemedText>
                       </TouchableOpacity>
                     </View>
                   </View>
