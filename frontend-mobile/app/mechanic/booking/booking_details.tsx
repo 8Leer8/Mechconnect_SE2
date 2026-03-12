@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
+// Ensure the router header is hidden for this route so only the in-page header shows
+export const screenOptions = { headerShown: false } as const;
 import { View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl } from 'react-native';
-import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
+import { router, useLocalSearchParams, useFocusEffect, useNavigation } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -75,6 +77,7 @@ interface BookingDetail {
 
 export default function BookingDetailScreen() {
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
+  const navigation = useNavigation();
   const { showNotification } = useNotification();
   const { confirm } = useConfirmation();
   const [booking, setBooking] = useState<BookingDetail | null>(null);
@@ -113,6 +116,9 @@ export default function BookingDetailScreen() {
   const displayQuotation = getDisplayQuotation();
 
   useEffect(() => {
+    try { navigation.setOptions && navigation.setOptions({ headerShown: false }); } catch (e) {}
+    try { navigation.getParent && navigation.getParent()?.setOptions && navigation.getParent()?.setOptions({ headerShown: false }); } catch (e) {}
+    try { navigation.getParent && navigation.getParent()?.getParent && navigation.getParent()?.getParent()?.setOptions && navigation.getParent()?.getParent()?.setOptions({ headerShown: false }); } catch (e) {}
     let interval: ReturnType<typeof setInterval> | null = null;
     const hasStarted = !!(booking && booking.active_details && booking.active_details.started_at);
     // Only run the ticking interval when the job has started, status is active, AND it is not paused
@@ -800,6 +806,24 @@ export default function BookingDetailScreen() {
             )}
           </View>
         </View>
+
+        {/* Chat Section */}
+        <TouchableOpacity
+          style={styles.sectionCard}
+          onPress={() => router.push({ pathname: '/chat/booking_chat', params: { bookingId: String(booking.id) } })}
+          activeOpacity={0.8}
+        >
+          <View style={styles.sectionHeader}>
+            <View style={[styles.sectionIcon, { backgroundColor: '#007AFF15' }]}> 
+              <FontAwesome name="comments" size={16} color="#007AFF" />
+            </View>
+            <ThemedText style={styles.sectionTitle}>Chat with Client</ThemedText>
+            <FontAwesome name="chevron-right" size={16} color="#8E8E93" style={{ marginLeft: 'auto' }} />
+          </View>
+          <View style={{ paddingVertical: 8 }}>
+            <ThemedText style={{ color: '#666' }}>Open the booking chat to message the client.</ThemedText>
+          </View>
+        </TouchableOpacity>
 
         {/* Location Section */}
         <View style={styles.sectionCard}>

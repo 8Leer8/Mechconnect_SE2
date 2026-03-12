@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View,
   TextInput,
@@ -152,6 +153,15 @@ export default function LoginScreen() {
           // Default to client
           showNotification({ type: 'success', message: 'Login successful!' });
           router.replace('/(clientTabs)/main/home');
+        }
+        // Persist account id locally for development flow (used by chat fallback)
+        try {
+          const acctId = data?.account?.id || (data?.account && data.account.id) || null;
+          if (acctId) {
+            await AsyncStorage.setItem('account_id', String(acctId));
+          }
+        } catch (e) {
+          console.warn('Failed to persist account_id', e);
         }
       } else {
         const errorMessage = data.username?.[0] || data.password?.[0] || data.account?.[0] || 'Login failed';
