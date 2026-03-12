@@ -16,6 +16,7 @@ from ..models import (
     CompleteBooking,
     Receipt,
     CancelBooking,
+    Quotation,
 )
 from users.models import Account
 from services.models import MechanicService
@@ -487,6 +488,8 @@ def list_mechanic_bookings(request):
         .prefetch_related(
             Prefetch("activebooking", queryset=ActiveBooking.objects.all()),
             Prefetch("completebooking", queryset=CompleteBooking.objects.all()),
+            # Prefetch mechanic quotation and its items so list responses include them without extra queries
+            Prefetch("quotation", queryset=Quotation.objects.prefetch_related('items')),
         )
         .order_by("-booked_at")
     )
