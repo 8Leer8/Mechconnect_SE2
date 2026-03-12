@@ -228,25 +228,7 @@ export default function HomeScreen() {
             )}
           </TouchableOpacity>
         </View>
-
-        {/* Quick Stats Row */}
-        <View style={styles.quickStatsRow}>
-          <View style={styles.quickStat}>
-            <View style={[styles.quickStatIcon, { backgroundColor: 'rgba(255, 140, 0, 0.2)' }]}>
-              <FontAwesome name="wrench" size={16} color="#FF8C00" />
-            </View>
-            <ThemedText style={styles.quickStatValue}>{activeCount}</ThemedText>
-            <ThemedText style={styles.quickStatLabel}>Active</ThemedText>
-          </View>
-          <View style={styles.quickStatDivider} />
-          <View style={styles.quickStat}>
-            <View style={[styles.quickStatIcon, { backgroundColor: 'rgba(0, 122, 255, 0.2)' }]}>
-              <FontAwesome name="clock-o" size={16} color="#007AFF" />
-            </View>
-            <ThemedText style={styles.quickStatValue}>{pendingCount}</ThemedText>
-            <ThemedText style={styles.quickStatLabel}>Pending</ThemedText>
-          </View>
-        </View>
+        
       </View>
 
       <ScrollView
@@ -257,6 +239,27 @@ export default function HomeScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF8C00" />
         }
       >
+        {/* Quick Stats Row (now scrollable) */}
+        <View style={{ paddingHorizontal: 20, marginBottom: 16 }}>
+          <View style={styles.quickStatsRow}>
+            <View style={styles.quickStat}>
+              <View style={[styles.quickStatIcon, { backgroundColor: 'rgba(255, 140, 0, 0.2)' }]}>
+                <FontAwesome name="wrench" size={16} color="#FF8C00" />
+              </View>
+              <ThemedText style={styles.quickStatValue}>{activeCount}</ThemedText>
+              <ThemedText style={styles.quickStatLabel}>Active</ThemedText>
+            </View>
+            <View style={styles.quickStatDivider} />
+            <View style={styles.quickStat}>
+              <View style={[styles.quickStatIcon, { backgroundColor: 'rgba(0, 122, 255, 0.2)' }]}>
+                <FontAwesome name="clock-o" size={16} color="#007AFF" />
+              </View>
+              <ThemedText style={styles.quickStatValue}>{pendingCount}</ThemedText>
+              <ThemedText style={styles.quickStatLabel}>Pending</ThemedText>
+            </View>
+          </View>
+        </View>
+
         {loading && !refreshing ? (
           <SkeletonClientHome />
         ) : error ? (
@@ -269,6 +272,45 @@ export default function HomeScreen() {
           </View>
         ) : (
           <>
+            {/* Quick Actions */}
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <View style={styles.sectionTitleRow}>
+                  <View style={[styles.sectionDot, { backgroundColor: '#34C759' }]} />
+                  <ThemedText style={styles.sectionTitle}>Quick Actions</ThemedText>
+                </View>
+              </View>
+              <View style={styles.quickActionsGrid}>
+                <TouchableOpacity style={styles.quickActionCard} onPress={() => router.push('/(clientTabs)/main/booking')}>
+                  <View style={[styles.quickActionIcon, { backgroundColor: '#FF8C0015' }]}>
+                    <FontAwesome name="calendar-check-o" size={22} color="#FF8C00" />
+                  </View>
+                  <ThemedText style={styles.quickActionLabel}>My Bookings</ThemedText>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.quickActionCard} onPress={() => router.push('/(clientTabs)/main/request')}>
+                  <View style={[styles.quickActionIcon, { backgroundColor: '#007AFF15' }]}>
+                    <FontAwesome name="file-text-o" size={22} color="#007AFF" />
+                  </View>
+                  <ThemedText style={styles.quickActionLabel}>My Requests</ThemedText>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.quickActionCard} onPress={() => router.push('/(clientTabs)/main/discover')}>
+                  <View style={[styles.quickActionIcon, { backgroundColor: '#34C75915' }]}>
+                    <FontAwesome name="compass" size={22} color="#34C759" />
+                  </View>
+                  <ThemedText style={styles.quickActionLabel}>Discover</ThemedText>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  // @ts-ignore - emergencyQuickAction style exists in homeStyles.js
+                  style={[styles.quickActionCard, styles.emergencyQuickAction]} 
+                  onPress={() => setShowEmergencyModal(true)}
+                >
+                  <View style={[styles.quickActionIcon, { backgroundColor: '#FF3B3025' }]}>
+                    <FontAwesome name="exclamation-triangle" size={22} color="#FF3B30" />
+                  </View>
+                  <ThemedText style={[styles.quickActionLabel, { color: '#FF3B30', fontWeight: '700' }]}>Emergency</ThemedText>
+                </TouchableOpacity>
+              </View>
+            </View>
             {/* Statistics Dashboard */}
             {data?.statistics && (
               <>
@@ -578,46 +620,6 @@ export default function HomeScreen() {
                   <ThemedText style={styles.emptySubtext}>Create a request to find a mechanic</ThemedText>
                 </View>
               )}
-            </View>
-
-            {/* Quick Actions */}
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <View style={styles.sectionTitleRow}>
-                  <View style={[styles.sectionDot, { backgroundColor: '#34C759' }]} />
-                  <ThemedText style={styles.sectionTitle}>Quick Actions</ThemedText>
-                </View>
-              </View>
-              <View style={styles.quickActionsGrid}>
-                <TouchableOpacity style={styles.quickActionCard} onPress={() => router.push('/(clientTabs)/main/booking')}>
-                  <View style={[styles.quickActionIcon, { backgroundColor: '#FF8C0015' }]}>
-                    <FontAwesome name="calendar-check-o" size={22} color="#FF8C00" />
-                  </View>
-                  <ThemedText style={styles.quickActionLabel}>My Bookings</ThemedText>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.quickActionCard} onPress={() => router.push('/(clientTabs)/main/request')}>
-                  <View style={[styles.quickActionIcon, { backgroundColor: '#007AFF15' }]}>
-                    <FontAwesome name="file-text-o" size={22} color="#007AFF" />
-                  </View>
-                  <ThemedText style={styles.quickActionLabel}>My Requests</ThemedText>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.quickActionCard} onPress={() => router.push('/(clientTabs)/main/discover')}>
-                  <View style={[styles.quickActionIcon, { backgroundColor: '#34C75915' }]}>
-                    <FontAwesome name="compass" size={22} color="#34C759" />
-                  </View>
-                  <ThemedText style={styles.quickActionLabel}>Discover</ThemedText>
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  // @ts-ignore - emergencyQuickAction style exists in homeStyles.js
-                  style={[styles.quickActionCard, styles.emergencyQuickAction]} 
-                  onPress={() => setShowEmergencyModal(true)}
-                >
-                  <View style={[styles.quickActionIcon, { backgroundColor: '#FF3B3025' }]}>
-                    <FontAwesome name="exclamation-triangle" size={22} color="#FF3B30" />
-                  </View>
-                  <ThemedText style={[styles.quickActionLabel, { color: '#FF3B30', fontWeight: '700' }]}>Emergency</ThemedText>
-                </TouchableOpacity>
-              </View>
             </View>
 
             <View style={{ height: 30 }} />

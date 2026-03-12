@@ -75,8 +75,8 @@ export default function HomeScreen() {
       // All 4 requests in one round-trip; the no-status stats call now returns total_earnings
       // via a single SQL Sum aggregate — no need for a separate heavy fetch.
       const [acceptedRes, onGoingRes, pendingRes, statsRes, profileRes] = await Promise.all([
-        fetch(`${API_URL}/bookings/mechanic/bookings/?status=accepted&page_size=10`, opts),
-        fetch(`${API_URL}/bookings/mechanic/bookings/?status=on_going&page_size=10`, opts),
+        fetch(`${API_URL}/bookings/mechanic/bookings/?status=accepted&page_size=5`, opts),
+        fetch(`${API_URL}/bookings/mechanic/bookings/?status=on_going&page_size=5`, opts),
         fetch(`${API_URL}/bookings/mechanic/bookings/?status=pending&page_size=5`, opts),
         fetch(`${API_URL}/bookings/mechanic/bookings/`, opts),
         fetch(`${API_URL}/users/profile/details/`, opts),

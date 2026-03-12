@@ -1007,6 +1007,40 @@ export default function BookingDetailScreen() {
           </View>
         )}
 
+        {/* Quotation card - visible when booking is completed (read-only) */}
+        {booking.status === 'completed' && (
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#007AFF15' }]}>
+                <FontAwesome name="file-text-o" size={16} color="#007AFF" />
+              </View>
+              <ThemedText style={styles.sectionTitle}>Quotation</ThemedText>
+            </View>
+
+            {displayQuotation && (displayQuotation.items || []).length > 0 ? (
+              <View style={{ paddingVertical: 8 }}>
+                {(displayQuotation.items || []).map((it: any, idx: number) => (
+                  <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 }}>
+                    <ThemedText style={{ flex: 1 }}>{it.description || (it.service && `Service #${it.service}`) || 'Item'}</ThemedText>
+                    <ThemedText>₱{((it.unit_price || 0) * (it.quantity || 1)).toFixed(2)}</ThemedText>
+                  </View>
+                ))}
+                <View style={{ height: 1, backgroundColor: '#eee', marginVertical: 8 }} />
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <ThemedText style={{ fontWeight: '600' }}>Estimated Total</ThemedText>
+                  <ThemedText style={{ fontWeight: '600' }}>₱{parseFloat(String(displayQuotation.total_amount || 0)).toFixed(2)}</ThemedText>
+                </View>
+                {/* Read-only in completed status - no edit button */}
+              </View>
+            ) : (
+              <View style={{ paddingVertical: 8 }}>
+                <ThemedText style={{ marginBottom: 8, color: '#666' }}>No quotation available.</ThemedText>
+              </View>
+            )}
+          </View>
+
+        )}
+
         <View style={styles.sectionCard}>
           <View style={styles.sectionHeader}>
             <View style={[styles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
@@ -1143,6 +1177,8 @@ export default function BookingDetailScreen() {
             )}
           </View>
         )}
+
+        
 
         {/* Completion Details */}
         {booking.status === 'completed' && booking.completion_details && (

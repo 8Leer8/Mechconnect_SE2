@@ -51,7 +51,8 @@ def list_client_bookings(request):
         
         # Get pagination params
         page = int(request.query_params.get('page', 1))
-        page_size = int(request.query_params.get('page_size', 10))
+        # Default page size for client listing set to 5
+        page_size = int(request.query_params.get('page_size', 5))
         
         # Get status filter from query params
         status_filter = request.query_params.get('status', None)
