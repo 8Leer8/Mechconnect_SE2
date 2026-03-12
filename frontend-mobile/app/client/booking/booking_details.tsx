@@ -75,7 +75,6 @@ export default function ClientBookingDetailScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [timer, setTimer] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
-  const [showRaw, setShowRaw] = useState(false);
 
   // Derive display quotation: prefer booking.quotation (from API) otherwise build from request.request_details
   const getDisplayQuotation = () => {
@@ -326,9 +325,7 @@ export default function ClientBookingDetailScreen() {
           <FontAwesome name="chevron-left" size={16} color="#FF8C00" />
         </TouchableOpacity>
         <ThemedText style={styles.headerTitle}>Booking #{booking.id}</ThemedText>
-        <TouchableOpacity style={{ marginRight: 12 }} onPress={() => setShowRaw(v => !v)}>
-          <ThemedText style={{ color: '#8E8E93' }}>{showRaw ? 'Hide' : 'Raw'}</ThemedText>
-        </TouchableOpacity>
+        <View style={{ width: 40 }} />
         <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
           <FontAwesome name="refresh" size={16} color="#FF8C00" />
         </TouchableOpacity>
@@ -459,12 +456,7 @@ export default function ClientBookingDetailScreen() {
         )}
 
         {/* Location Section */}
-        {/* Raw booking JSON (debug) */}
-        {showRaw && (
-          <View style={[styles.sectionCard, { backgroundColor: '#111', padding: 12 }]}>
-            <ThemedText style={{ fontSize: 12 }}>{JSON.stringify(booking, null, 2)}</ThemedText>
-          </View>
-        )}
+        {/* removed raw JSON debug block */}
         <View style={styles.sectionCard}>
           <View style={styles.sectionHeader}>
             <View style={[styles.sectionIcon, { backgroundColor: '#FF3B3015' }]}>
