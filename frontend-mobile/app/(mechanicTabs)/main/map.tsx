@@ -26,21 +26,6 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL;
 // Note: Full map integration requires react-native-maps or similar library
 // This is a placeholder UI that can be connected to a mapping library
 
-interface JobLocation {
-  id: number;
-  title: string;
-  address: string;
-  distance?: string;
-  status: 'active' | 'pending' | 'emergency';
-  earnings: number;
-  request_type: string;
-  service_location: {
-    street_name: string;
-    barangay: string;
-    city_municipality: string;
-  };
-}
-
 interface BroadcastRequest {
   id: number;
   description: string;
@@ -67,8 +52,7 @@ interface BroadcastRequest {
 
 export default function MapScreen() {
   const mapRef = useRef<MapView>(null);
-  const [selectedFilter, setSelectedFilter] = useState<'all' | 'active' | 'pending' | 'emergency' | 'broadcast'>('all');
-  const [jobs, setJobs] = useState<JobLocation[]>([]);
+
   const [broadcasts, setBroadcasts] = useState<BroadcastRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -93,12 +77,11 @@ export default function MapScreen() {
 
   useEffect(() => {
     initializeMap();
-    fetchJobs();
     fetchBroadcasts();
     
     // Poll for broadcasts every 8 seconds
     const interval = setInterval(() => {
-      fetchBroadcasts();
+      fetchBroadcasts(true);
     }, 8000);
     
     fetchTokensBalance();
@@ -200,69 +183,15 @@ export default function MapScreen() {
     }
   };
 
-  const fetchJobs = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const response = await fetch(`${API_URL}/bookings/home/`, {
-        method: 'GET',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
-
-      if (!response.ok) throw new Error('Failed to fetch jobs');
-      const data = await response.json() as any;
-      
-      // Combine current bookings and pending requests
-      const allJobs: JobLocation[] = [];
-      
-      // Add current bookings
-      if (data.current_bookings) {
-        data.current_bookings.forEach((booking: any) => {
-          allJobs.push({
-            id: booking.id,
-            title: `${booking.request.request_type} Request`,
-            address: `${booking.request.service_location.barangay}, ${booking.request.service_location.city_municipality}`,
-            status: 'active',
-            earnings: parseFloat(String(booking.amount_fee || '0')),
-            request_type: booking.request.request_type,
-            service_location: booking.request.service_location,
-          });
-        });
-      }
-      
-      // Add pending requests
-      if (data.pending_requests) {
-        data.pending_requests.forEach((request: any) => {
-          allJobs.push({
-            id: request.id,
-            title: `${request.request_type} Request`,
-            address: `${request.service_location.barangay}, ${request.service_location.city_municipality}`,
-            status: request.request_type === 'emergency' ? 'emergency' : 'pending',
-            earnings: request.request_details?.quoted_price || 0,
-            request_type: request.request_type,
-            service_location: request.service_location,
-          });
-        });
-      }
-      
-      setJobs(allJobs);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  };
-
   const onRefresh = () => {
     setRefreshing(true);
-    fetchJobs();
-    fetchBroadcasts();
+    fetchBroadcasts(true);
   };
 
-  const fetchBroadcasts = async () => {
+  const fetchBroadcasts = async (silent = false) => {
     try {
+      if (!silent) setLoading(true);
+      setError(null);
       const response = await fetch(`${API_URL}/bookings/broadcasts/active/`, {
         method: 'GET',
         credentials: 'include',
@@ -273,8 +202,11 @@ export default function MapScreen() {
       const data = await response.json() as any;
       setBroadcasts(data.broadcasts || []);
     } catch (err: any) {
+      if (!silent) setError(err.message);
       console.error('Error fetching broadcasts:', err);
-      // Don't show error for broadcast fetch failures
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -386,23 +318,7 @@ export default function MapScreen() {
     return `${minutes}m ${seconds}s`;
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'active': return '#FF8C00';
-      case 'emergency': return '#FF3B30';
-      case 'pending': return '#007AFF';
-      case 'broadcast': return '#34C759';
-      default: return '#8E8E93';
-    }
-  };
-
-  const filteredJobs = selectedFilter === 'all' 
-    ? jobs 
-    : jobs.filter(job => job.status === selectedFilter);
-
-  const filteredBroadcasts = selectedFilter === 'all' || selectedFilter === 'broadcast'
-    ? broadcasts
-    : [];
+  const filteredBroadcasts = broadcasts;
 
   return (
     <ThemedView style={styles.container}>
@@ -417,31 +333,6 @@ export default function MapScreen() {
         </View>
       </View>
 
-      {/* Filter Chips */}
-      <View style={styles.filterContainer}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          {(['all', 'broadcast', 'active', 'pending', 'emergency'] as const).map((filter) => (
-            <TouchableOpacity
-              key={filter}
-              style={[
-                styles.filterChip,
-                selectedFilter === filter && styles.filterChipActive,
-              ]}
-              onPress={() => setSelectedFilter(filter)}
-            >
-              <ThemedText
-                style={[
-                  styles.filterChipText,
-                  selectedFilter === filter && styles.filterChipTextActive,
-                ]}
-              >
-                {filter.charAt(0).toUpperCase() + filter.slice(1)}
-                {filter === 'broadcast' && broadcasts.length > 0 && ` (${broadcasts.length})`}
-              </ThemedText>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
 
       {/* Map View */}
       <View style={styles.mapContainer}>
@@ -505,7 +396,7 @@ export default function MapScreen() {
           <View style={styles.mapStats}>
             <FontAwesome name="map-marker" size={16} color="#FF8C00" />
             <ThemedText style={styles.mapStatsText}>
-              {filteredJobs.length + filteredBroadcasts.length} jobs nearby
+              {filteredBroadcasts.length} jobs nearby
             </ThemedText>
           </View>
           {broadcasts.length > 0 && (
@@ -552,17 +443,15 @@ export default function MapScreen() {
             <View style={styles.errorContainer}>
               <FontAwesome name="exclamation-circle" size={48} color="#FF3B30" />
               <ThemedText style={styles.errorText}>{error}</ThemedText>
-              <TouchableOpacity style={styles.retryButton} onPress={fetchJobs}>
+              <TouchableOpacity style={styles.retryButton} onPress={() => fetchBroadcasts()}>
                 <ThemedText style={styles.retryText}>Retry</ThemedText>
               </TouchableOpacity>
             </View>
-          ) : filteredJobs.length === 0 && filteredBroadcasts.length === 0 ? (
+          ) : filteredBroadcasts.length === 0 ? (
             <View style={styles.emptyContainer}>
               <FontAwesome name="map-marker" size={64} color="#8E8E93" />
               <ThemedText style={styles.emptyText}>No jobs available</ThemedText>
-              <ThemedText style={styles.emptySubtext}>
-                {selectedFilter === 'all' ? 'Check back later for new jobs' : `No ${selectedFilter} jobs nearby`}
-              </ThemedText>
+              <ThemedText style={styles.emptySubtext}>Check back later for new jobs</ThemedText>
             </View>
           ) : (
             <>
@@ -620,42 +509,6 @@ export default function MapScreen() {
                 </TouchableOpacity>
               ))}
 
-              {/* Render Regular Jobs */}
-              {filteredJobs.map((job) => (
-                <TouchableOpacity key={job.id} style={styles.jobCard}>
-                  <View style={styles.jobCardHeader}>
-                    <View style={[styles.statusDot, { backgroundColor: getStatusColor(job.status) }]} />
-                    <ThemedText style={styles.jobTitle} numberOfLines={1}>
-                      {job.title}
-                    </ThemedText>
-                  </View>
-
-                <View style={styles.jobInfo}>
-                  <View style={styles.jobInfoRow}>
-                    <FontAwesome name="map-marker" size={12} color="#8E8E93" />
-                    <ThemedText style={styles.jobInfoText} numberOfLines={1}>
-                      {job.address}
-                    </ThemedText>
-                  </View>
-                  {job.distance && (
-                    <View style={styles.jobInfoRow}>
-                      <FontAwesome name="location-arrow" size={12} color="#8E8E93" />
-                      <ThemedText style={styles.jobInfoText}>{job.distance} away</ThemedText>
-                    </View>
-                  )}
-                </View>
-
-                <View style={styles.jobCardFooter}>
-                  <ThemedText style={styles.jobEarnings}>
-                    {job.earnings > 0 ? `₱${parseFloat(String(job.earnings || '0')).toFixed(2)}` : 'TBD'}
-                  </ThemedText>
-                  <TouchableOpacity style={styles.navigateButton}>
-                    <FontAwesome name="location-arrow" size={14} color="#fff" />
-                    <ThemedText style={styles.navigateText}>Navigate</ThemedText>
-                  </TouchableOpacity>
-                </View>
-              </TouchableOpacity>
-            ))}
           </>
           )}
         </ScrollView>

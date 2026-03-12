@@ -47,24 +47,39 @@ interface Booking {
 // Tabs: All, Pending, Booked, On Going, Completed, Cancelled, Reworked, Disputed
 type TabType = 'all' | 'pending' | 'booked' | 'on_going' | 'completed' | 'cancelled' | 'reworked' | 'disputed';
 
-type MechanicStatusBookingsResponse = {
+type MechanicPaginatedResponse = {
   status: string;
   bookings: Booking[];
   count: number;
+  total_count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  has_next: boolean;
+  has_previous: boolean;
+  tab_counts?: {
+    pending: number;
+    accepted: number;
+    on_the_way: number;
+    active: number;
+    completed: number;
+    cancelled: number;
+    reworked: number;
+    disputed: number;
+  };
 };
 
-type MechanicGroupedBookingsResponse = {
-  pending?: { bookings: Booking[]; count: number };
-  accepted?: { bookings: Booking[]; count: number };
-  on_the_way?: { bookings: Booking[]; count: number };
-  active?: { bookings: Booking[]; count: number };
-  paused?: { bookings: Booking[]; count: number };
-  finished?: { bookings: Booking[]; count: number };
-  pending_payment?: { bookings: Booking[]; count: number };
-  completed?: { bookings: Booking[]; count: number };
-  cancelled?: { bookings: Booking[]; count: number };
-  reworked?: { bookings: Booking[]; count: number };
-  disputed?: { bookings: Booking[]; count: number };
+type MechanicCountsResponse = {
+  pending?: { count: number };
+  accepted?: { count: number };
+  on_the_way?: { count: number };
+  active?: { count: number };
+  finished?: { count: number };
+  pending_payment?: { count: number };
+  completed?: { count: number };
+  cancelled?: { count: number };
+  reworked?: { count: number };
+  disputed?: { count: number };
   total_count: number;
 };
 
@@ -77,74 +92,33 @@ export default function BookingsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState<number | null>(null);
   const [counts, setCounts] = useState<Record<string, number>>({});
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const pageSize = 10;
 
   useEffect(() => {
     if (tab && tab !== activeTab) {
       setActiveTab(tab as TabType);
+      setCurrentPage(1);
     }
   }, [tab]);
 
   useEffect(() => {
     fetchBookings();
-  }, [activeTab]);
+  }, [activeTab, currentPage]);
 
-  const fetchBookings = async () => {
+  const fetchCounts = async () => {
     try {
-      setLoading(true);
-      setError(null);
-
-      if (activeTab === 'all') {
-        const response = await fetch(`${API_URL}/bookings/mechanic/bookings/`, {
-          method: 'GET',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        });
-        if (!response.ok) throw new Error('Failed to fetch bookings');
-        const data = (await response.json()) as MechanicGroupedBookingsResponse;
-        const rawAll: Booking[] = [
-          ...((data.pending?.bookings as Booking[]) || []),
-          ...((data.accepted?.bookings as Booking[]) || []),
-          ...(data.on_the_way?.bookings || []),
-          ...(data.active?.bookings || []),
-          ...(data.paused?.bookings || []),
-          ...(data.finished?.bookings || []),
-          ...(data.pending_payment?.bookings || []),
-          ...(data.completed?.bookings || []),
-          ...(data.cancelled?.bookings || []),
-          ...(data.reworked?.bookings || []),
-          ...(data.disputed?.bookings || []),
-        ];
-        // Deduplicate by booking id
-        const seenIds = new Set<number>();
-        const all: Booking[] = rawAll.filter((b) => {
-          if (seenIds.has(b.id)) return false;
-          seenIds.add(b.id);
-          return true;
-        });
-        // Ensure any pending_payment items are included (extra safety in case grouped response missed them)
-        try {
-          const pendingPaymentRes = await fetch(`${API_URL}/bookings/mechanic/bookings/?status=pending_payment`, {
-            method: 'GET',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-          });
-          if (pendingPaymentRes.ok) {
-            const pendingPaymentData = (await pendingPaymentRes.json()) as MechanicStatusBookingsResponse;
-            const pendingPaymentBookings = pendingPaymentData.bookings || [];
-            const existingIds = new Set(all.map((b) => b.id));
-            pendingPaymentBookings.forEach((b) => {
-              if (!existingIds.has(b.id)) {
-                all.push(b);
-                existingIds.add(b.id);
-              }
-            });
-          }
-        } catch (e) {
-          // ignore fetch errors here; grouped response should contain them normally
-        }
-        setBookings(all);
+      const response = await fetch(`${API_URL}/bookings/mechanic/bookings/`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (response.ok) {
+        const data = (await response.json()) as MechanicCountsResponse;
         setCounts({
-          all: data.total_count || all.length,
+          all: data.total_count || 0,
           pending: data.pending?.count || 0,
           booked: data.accepted?.count || 0,
           on_going: (data.on_the_way?.count || 0) + (data.active?.count || 0),
@@ -153,67 +127,57 @@ export default function BookingsScreen() {
           reworked: data.reworked?.count || 0,
           disputed: data.disputed?.count || 0,
         });
-        } else {
-        let statusQuery: string = activeTab;
-        if (activeTab === 'booked') statusQuery = 'accepted';
-        if (activeTab === 'pending') {
-          // Include both pending requests and bookings awaiting payment
-          const [pendingRes, pendingPaymentRes] = await Promise.all([
-            fetch(`${API_URL}/bookings/mechanic/bookings/?status=pending`, {
-              method: 'GET',
-              credentials: 'include',
-              headers: { 'Content-Type': 'application/json' },
-            }),
-            fetch(`${API_URL}/bookings/mechanic/bookings/?status=pending_payment`, {
-              method: 'GET',
-              credentials: 'include',
-              headers: { 'Content-Type': 'application/json' },
-            }),
-          ]);
-          if (!pendingRes.ok || !pendingPaymentRes.ok) throw new Error('Failed to fetch pending bookings');
-          const pendingData = await pendingRes.json() as MechanicStatusBookingsResponse;
-          const pendingPaymentData = await pendingPaymentRes.json() as MechanicStatusBookingsResponse;
-          const merged = [...(pendingData.bookings || [])];
-          const seenIds = new Set(merged.map(b => b.id));
-          (pendingPaymentData.bookings || []).forEach(b => {
-            if (!seenIds.has(b.id)) { merged.push(b); seenIds.add(b.id); }
-          });
-          setBookings(merged);
-          return;
+      }
+    } catch (_) {
+      // counts are non-critical; silently fail
+    }
+  };
+
+  const fetchBookings = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      // Fetch tab counts only when not on 'all' tab (all tab includes counts in response)
+      if (activeTab !== 'all') {
+        fetchCounts();
+      }
+
+      // Map tab to backend status query
+      let statusQuery: string;
+      if (activeTab === 'all') statusQuery = 'all';
+      else if (activeTab === 'booked') statusQuery = 'accepted';
+      else if (activeTab === 'on_going') statusQuery = 'on_going';
+      else statusQuery = activeTab;
+
+      // Single paginated call — same pattern as client side
+      const response = await fetch(
+        `${API_URL}/bookings/mechanic/bookings/?status=${statusQuery}&page=${currentPage}&page_size=${pageSize}`,
+        {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
         }
-        if (activeTab === 'on_going') {
-          // Fetch both on_the_way and active
-          const [onTheWayRes, activeRes] = await Promise.all([
-            fetch(`${API_URL}/bookings/mechanic/bookings/?status=on_the_way`, {
-              method: 'GET',
-              credentials: 'include',
-              headers: { 'Content-Type': 'application/json' },
-            }),
-            fetch(`${API_URL}/bookings/mechanic/bookings/?status=active`, {
-              method: 'GET',
-              credentials: 'include',
-              headers: { 'Content-Type': 'application/json' },
-            }),
-          ]);
-          if (!onTheWayRes.ok || !activeRes.ok) throw new Error('Failed to fetch on-going bookings');
-          const onTheWayData = (await onTheWayRes.json()) as MechanicStatusBookingsResponse;
-          const activeData = (await activeRes.json()) as MechanicStatusBookingsResponse;
-          const merged = [...(onTheWayData.bookings || [])];
-          const seenIds = new Set(merged.map(b => b.id));
-          (activeData.bookings || []).forEach(b => {
-            if (!seenIds.has(b.id)) { merged.push(b); seenIds.add(b.id); }
-          });
-          setBookings(merged);
-        } else {
-          const response = await fetch(`${API_URL}/bookings/mechanic/bookings/?status=${statusQuery}`, {
-            method: 'GET',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-          });
-          if (!response.ok) throw new Error(`Failed to fetch ${activeTab} bookings`);
-          const data = (await response.json()) as MechanicStatusBookingsResponse;
-          setBookings(data.bookings || []);
-        }
+      );
+      if (!response.ok) throw new Error(`Failed to fetch ${activeTab} bookings`);
+      const data = (await response.json()) as MechanicPaginatedResponse;
+      setBookings(data.bookings || []);
+      setTotalCount(data.total_count || 0);
+      setTotalPages(data.total_pages || 1);
+
+      // Use tab_counts from the 'all' response directly
+      if (data.tab_counts) {
+        const tc = data.tab_counts;
+        setCounts({
+          all: data.total_count || 0,
+          pending: tc.pending || 0,
+          booked: tc.accepted || 0,
+          on_going: (tc.on_the_way || 0) + (tc.active || 0),
+          completed: tc.completed || 0,
+          cancelled: tc.cancelled || 0,
+          reworked: tc.reworked || 0,
+          disputed: tc.disputed || 0,
+        });
       }
     } catch (err: any) {
       setError(err.message);
@@ -226,6 +190,17 @@ export default function BookingsScreen() {
   const onRefresh = () => {
     setRefreshing(true);
     fetchBookings();
+  };
+
+  const handleTabChange = (tab: TabType) => {
+    setActiveTab(tab);
+    setCurrentPage(1);
+  };
+
+  const handlePageChange = (newPage: number) => {
+    if (newPage >= 1 && newPage <= totalPages) {
+      setCurrentPage(newPage);
+    }
   };
 
   // Map backend status to user-friendly label and color
@@ -369,7 +344,7 @@ export default function BookingsScreen() {
             <TouchableOpacity
               key={tab}
               style={[styles.tab, isActive && styles.activeTab]}
-              onPress={() => setActiveTab(tab)}
+              onPress={() => handleTabChange(tab)}
               activeOpacity={0.7}
             >
               <FontAwesome
@@ -419,7 +394,7 @@ export default function BookingsScreen() {
         <View>
           <ThemedText style={styles.headerTitle}>Bookings</ThemedText>
           <ThemedText style={styles.headerSubtitle}>
-            {bookings.length} {activeTab === 'all' ? 'total' : activeTab} booking{bookings.length !== 1 ? 's' : ''}
+            {totalCount > 0 ? totalCount : bookings.length} {activeTab === 'all' ? 'total' : activeTab} booking{(totalCount > 0 ? totalCount : bookings.length) !== 1 ? 's' : ''}
           </ThemedText>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -572,6 +547,38 @@ export default function BookingsScreen() {
             ))}
           </View>
         )}
+        {/* Pagination Controls */}
+        {!loading && !error && totalPages > 1 && (
+          <View style={styles.paginationContainer}>
+            <TouchableOpacity
+              style={[styles.paginationBtn, currentPage === 1 && styles.paginationBtnDisabled]}
+              onPress={() => handlePageChange(currentPage - 1)}
+              disabled={currentPage === 1}
+              activeOpacity={0.7}
+            >
+              <FontAwesome name="chevron-left" size={14} color={currentPage === 1 ? '#555' : '#FF8C00'} />
+            </TouchableOpacity>
+
+            <View style={styles.paginationInfo}>
+              <ThemedText style={styles.paginationText}>
+                Page {currentPage} of {totalPages}
+              </ThemedText>
+              <ThemedText style={styles.paginationSubtext}>
+                Showing {bookings.length} of {totalCount} bookings
+              </ThemedText>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.paginationBtn, currentPage === totalPages && styles.paginationBtnDisabled]}
+              onPress={() => handlePageChange(currentPage + 1)}
+              disabled={currentPage === totalPages}
+              activeOpacity={0.7}
+            >
+              <FontAwesome name="chevron-right" size={14} color={currentPage === totalPages ? '#555' : '#FF8C00'} />
+            </TouchableOpacity>
+          </View>
+        )}
+
         <View style={{ height: 20 }} />
       </ScrollView>
     </ThemedView>

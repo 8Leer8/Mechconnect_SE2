@@ -413,6 +413,16 @@ def _get_mechanic_account(request):
     return account, None
 
 
+def _count_pending_direct_requests(account):
+    """Return count of pending direct requests without serializing."""
+    return Request.objects.filter(
+        provider=account,
+        request_type="direct",
+        directrequest__request_status=DirectRequest.Status.PENDING,
+        booking__isnull=True,
+    ).count()
+
+
 def _serialize_pending_direct_requests(account):
     """
     Build a list of booking-like dicts for pending DIRECT requests
@@ -513,14 +523,18 @@ def list_mechanic_bookings(request):
     List bookings for the logged-in mechanic (provider side).
 
     Query params:
-    - status: pending, active, completed, cancelled, reworked, disputed
-      If omitted, returns grouped by status (including pending).
+    - status: pending, active, completed, cancelled, reworked, disputed, on_going
+      If omitted, returns counts grouped by status (no booking data).
+    - page: page number (1-indexed, default 1)
+    - page_size: items per page (default 10)
     """
     account, err = _get_mechanic_account(request)
     if err:
         return err
 
     status_filter = request.query_params.get("status", None)
+    page = int(request.query_params.get("page", 1))
+    page_size = int(request.query_params.get("page_size", 10))
 
     # All bookings where this mechanic is the provider
     bookings_queryset = (
@@ -540,14 +554,109 @@ def list_mechanic_bookings(request):
     )
 
     if status_filter:
-        # Special handling for mechanic 'pending' tab
+        # "all" status: paginate across every booking + pending requests
+        if status_filter.lower() == "all":
+            pending_count = _count_pending_direct_requests(account)
+            bookings_count = bookings_queryset.count()
+            total_count = pending_count + bookings_count
+            total_pages = (total_count + page_size - 1) // page_size if page_size > 0 else 0
+            start_index = (page - 1) * page_size
+            end_index = start_index + page_size
+
+            # Pending items come first, then bookings ordered by -booked_at
+            paginated = []
+            if start_index < pending_count:
+                # Need some pending items on this page
+                all_pending = _serialize_pending_direct_requests(account)
+                pending_slice = all_pending[start_index:min(end_index, pending_count)]
+                paginated.extend(pending_slice)
+
+            if end_index > pending_count:
+                # Need some booking items on this page
+                booking_start = max(0, start_index - pending_count)
+                booking_end = end_index - pending_count
+                bookings_slice = bookings_queryset[booking_start:booking_end]
+                paginated.extend(_serialize_bookings(bookings_slice))
+
+            # Include tab counts so frontend doesn't need a separate request
+            accepted_count = bookings_queryset.filter(status="accepted").count()
+            on_the_way_count = bookings_queryset.filter(status="on_the_way").count()
+            active_count = bookings_queryset.filter(status__in=["active", "paused"]).count()
+            completed_count = bookings_queryset.filter(status="completed").count()
+            cancelled_count = bookings_queryset.filter(status="cancelled").count()
+            reworked_count = bookings_queryset.filter(status="reworked").count()
+            disputed_count = bookings_queryset.filter(status="disputed").count()
+
+            return Response(
+                {
+                    "status": "all",
+                    "bookings": paginated,
+                    "count": len(paginated),
+                    "total_count": total_count,
+                    "page": page,
+                    "page_size": page_size,
+                    "total_pages": total_pages,
+                    "has_next": page < total_pages,
+                    "has_previous": page > 1,
+                    "tab_counts": {
+                        "pending": pending_count,
+                        "accepted": accepted_count,
+                        "on_the_way": on_the_way_count,
+                        "active": active_count,
+                        "completed": completed_count,
+                        "cancelled": cancelled_count,
+                        "reworked": reworked_count,
+                        "disputed": disputed_count,
+                    },
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        # Special handling for mechanic 'pending' tab (paginated)
         if status_filter.lower() == "pending":
-            pending_items = _serialize_pending_direct_requests(account)
+            all_pending = _serialize_pending_direct_requests(account)
+            total_count = len(all_pending)
+            total_pages = (total_count + page_size - 1) // page_size if page_size > 0 else 0
+            start_index = (page - 1) * page_size
+            end_index = start_index + page_size
+            paginated_pending = all_pending[start_index:end_index]
             return Response(
                 {
                     "status": "pending",
-                    "bookings": pending_items,
-                    "count": len(pending_items),
+                    "bookings": paginated_pending,
+                    "count": len(paginated_pending),
+                    "total_count": total_count,
+                    "page": page,
+                    "page_size": page_size,
+                    "total_pages": total_pages,
+                    "has_next": page < total_pages,
+                    "has_previous": page > 1,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        # Combined on_going filter: on_the_way + active + paused
+        if status_filter.lower() == "on_going":
+            bookings_queryset = bookings_queryset.filter(
+                status__in=["on_the_way", "active", "paused"]
+            )
+            total_count = bookings_queryset.count()
+            total_pages = (total_count + page_size - 1) // page_size if page_size > 0 else 0
+            start_index = (page - 1) * page_size
+            end_index = start_index + page_size
+            paginated_bookings = bookings_queryset[start_index:end_index]
+            bookings_data = _serialize_bookings(paginated_bookings)
+            return Response(
+                {
+                    "status": "on_going",
+                    "bookings": bookings_data,
+                    "count": len(bookings_data),
+                    "total_count": total_count,
+                    "page": page,
+                    "page_size": page_size,
+                    "total_pages": total_pages,
+                    "has_next": page < total_pages,
+                    "has_previous": page > 1,
                 },
                 status=status.HTTP_200_OK,
             )
@@ -568,7 +677,7 @@ def list_mechanic_bookings(request):
         if status_filter.lower() not in valid_statuses:
             return Response(
                 {
-                    "error": f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
+                    "error": f"Invalid status. Must be one of: pending, on_going, {', '.join(valid_statuses)}"
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
@@ -579,80 +688,54 @@ def list_mechanic_bookings(request):
             bookings_queryset = bookings_queryset.filter(status__in=['active', 'paused'])
         else:
             bookings_queryset = bookings_queryset.filter(status=status_filter.lower())
-        bookings_data = _serialize_bookings(bookings_queryset)
+
+        total_count = bookings_queryset.count()
+        total_pages = (total_count + page_size - 1) // page_size if page_size > 0 else 0
+        start_index = (page - 1) * page_size
+        end_index = start_index + page_size
+        paginated_bookings = bookings_queryset[start_index:end_index]
+        bookings_data = _serialize_bookings(paginated_bookings)
+
         return Response(
             {
                 "status": status_filter.lower(),
                 "bookings": bookings_data,
                 "count": len(bookings_data),
+                "total_count": total_count,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": total_pages,
+                "has_next": page < total_pages,
+                "has_previous": page > 1,
             },
             status=status.HTTP_200_OK,
         )
 
-    # Group by status (same shape as client_list_bookings) plus 'pending'
-    accepted_bookings = bookings_queryset.filter(status="accepted")
-    on_the_way_bookings = bookings_queryset.filter(status="on_the_way")
-    # Include paused bookings in the 'active' group so they appear in the
-    # mechanic's on-going view (frontend fetches both on_the_way and active
-    # to build the on-going tab).
-    active_bookings = bookings_queryset.filter(status__in=["active", "paused"])
-    paused_bookings = bookings_queryset.filter(status="paused")
-    finished_bookings = bookings_queryset.filter(status="finished")
-    pending_payment_bookings = bookings_queryset.filter(status="pending_payment")
-    completed_bookings = bookings_queryset.filter(status="completed")
-    cancelled_bookings = bookings_queryset.filter(status="cancelled")
-    reworked_bookings = bookings_queryset.filter(status="reworked")
-    disputed_bookings = bookings_queryset.filter(status="disputed")
-
-    pending_items = _serialize_pending_direct_requests(account)
+    # No status filter: return counts only (lightweight for tab badges)
+    accepted_count = bookings_queryset.filter(status="accepted").count()
+    on_the_way_count = bookings_queryset.filter(status="on_the_way").count()
+    active_count = bookings_queryset.filter(status__in=["active", "paused"]).count()
+    finished_count = bookings_queryset.filter(status="finished").count()
+    pending_payment_count = bookings_queryset.filter(status="pending_payment").count()
+    completed_count = bookings_queryset.filter(status="completed").count()
+    cancelled_count = bookings_queryset.filter(status="cancelled").count()
+    reworked_count = bookings_queryset.filter(status="reworked").count()
+    disputed_count = bookings_queryset.filter(status="disputed").count()
+    pending_count = _count_pending_direct_requests(account)
 
     return Response(
         {
-            "pending": {
-                "bookings": pending_items,
-                "count": len(pending_items),
-            },
-            "accepted": {
-                "bookings": _serialize_bookings(accepted_bookings),
-                "count": accepted_bookings.count(),
-            },
-            "on_the_way": {
-                "bookings": _serialize_bookings(on_the_way_bookings),
-                "count": on_the_way_bookings.count(),
-            },
-            "active": {
-                "bookings": _serialize_bookings(active_bookings),
-                "count": active_bookings.count(),
-            },
-            "paused": {
-                "bookings": _serialize_bookings(paused_bookings),
-                "count": paused_bookings.count(),
-            },
-            "finished": {
-                "bookings": _serialize_bookings(finished_bookings),
-                "count": finished_bookings.count(),
-            },
-            "pending_payment": {
-                "bookings": _serialize_bookings(pending_payment_bookings),
-                "count": pending_payment_bookings.count(),
-            },
-            "completed": {
-                "bookings": _serialize_bookings(completed_bookings),
-                "count": completed_bookings.count(),
-            },
-            "cancelled": {
-                "bookings": _serialize_bookings(cancelled_bookings),
-                "count": cancelled_bookings.count(),
-            },
-            "reworked": {
-                "bookings": _serialize_bookings(reworked_bookings),
-                "count": reworked_bookings.count(),
-            },
-            "disputed": {
-                "bookings": _serialize_bookings(disputed_bookings),
-                "count": disputed_bookings.count(),
-            },
-            "total_count": bookings_queryset.count() + len(pending_items),
+            "pending": {"count": pending_count},
+            "accepted": {"count": accepted_count},
+            "on_the_way": {"count": on_the_way_count},
+            "active": {"count": active_count},
+            "finished": {"count": finished_count},
+            "pending_payment": {"count": pending_payment_count},
+            "completed": {"count": completed_count},
+            "cancelled": {"count": cancelled_count},
+            "reworked": {"count": reworked_count},
+            "disputed": {"count": disputed_count},
+            "total_count": bookings_queryset.count() + pending_count,
         },
         status=status.HTTP_200_OK,
     )
