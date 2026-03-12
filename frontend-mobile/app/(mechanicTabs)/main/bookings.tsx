@@ -100,6 +100,8 @@ export default function BookingsScreen() {
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const pageSize = 5;
+  const { lastMessage } = useWebSocket();
+  const dividerColor = useThemeColor({}, 'icon');
 
   useEffect(() => {
     if (tab && tab !== activeTab) {

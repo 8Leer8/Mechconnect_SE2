@@ -62,6 +62,7 @@ export default function BookingScreen() {
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const pageSize = 5;
+  const { lastMessage } = useWebSocket();
 
   useEffect(() => {
     if (tab && tab !== activeTab) {
