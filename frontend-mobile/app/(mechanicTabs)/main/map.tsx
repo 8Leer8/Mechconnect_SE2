@@ -20,6 +20,7 @@ import { getDistanceKm, getEstimatedPrice } from '@/app/client/request/main_requ
 import { styles } from '@/style/mechanic/mapStyles';
 import { getImageUrl } from '@/lib/imageUtils';
 import { useNotification } from '@/hooks/useNotification';
+import { SkeletonMapJobList } from '@/components/skeletons/SkeletonLoaders';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -412,7 +413,7 @@ export default function MapScreen() {
           }
         >
           {loading && !refreshing ? (
-            <ActivityIndicator size="large" color="#FF8C00" style={styles.loader} />
+            <SkeletonMapJobList />
           ) : error ? (
             <View style={styles.errorContainer}>
               <FontAwesome name="exclamation-circle" size={48} color="#FF3B30" />

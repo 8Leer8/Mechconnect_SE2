@@ -6,6 +6,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { styles } from '@/style/client/discoverStyles';
 import { getImageUrl } from '@/lib/imageUtils';
+import { SkeletonDiscoverList } from '@/components/skeletons/SkeletonLoaders';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -228,9 +229,7 @@ export default function DiscoverScreen() {
   const renderListHeader = useCallback(() => {
     if (loading && !refreshing) {
       return (
-        <View style={{ paddingVertical: 30 }}>
-          <ActivityIndicator size="large" color="#FF8C00" />
-        </View>
+        <SkeletonDiscoverList variant={activeTab as 'mechanics' | 'shops' | 'services'} />
       );
     }
     if (error) {

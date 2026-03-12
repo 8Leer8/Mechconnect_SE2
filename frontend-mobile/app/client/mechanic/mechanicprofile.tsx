@@ -7,6 +7,7 @@ import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/client/mechanicProfileStyles';
 import { getImageUrl } from '@/lib/imageUtils';
+import { SkeletonDetailPage } from '@/components/skeletons/SkeletonLoaders';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -124,7 +125,9 @@ export default function MechanicProfileScreen() {
   if (loading) {
     return (
       <ThemedView style={styles.container}>
-        <ActivityIndicator size="large" color="#FF8C00" style={{ marginTop: 100 }} />
+        <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 60 }}>
+          <SkeletonDetailPage />
+        </ScrollView>
       </ThemedView>
     );
   }

@@ -16,6 +16,7 @@ import { TopNav } from '@/components/navigation';
 import { useRouter } from 'expo-router';
 import { useNotification } from '@/hooks/useNotification';
 import { useConfirmation } from '@/hooks/useConfirmation';
+import { SkeletonBookingList } from '@/components/skeletons/SkeletonLoaders';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -566,7 +567,7 @@ export default function ShopOwnerJobsScreen() {
           }
         >
         {loading && !refreshing ? (
-          <ActivityIndicator size="large" color="#FF9500" style={{ marginTop: 60 }} />
+          <SkeletonBookingList />
         ) : error ? (
           <View style={styles.center}>
             <FontAwesome name="exclamation-circle" size={48} color="#FF3B30" />

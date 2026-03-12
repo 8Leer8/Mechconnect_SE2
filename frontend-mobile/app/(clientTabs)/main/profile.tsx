@@ -8,6 +8,7 @@ import { styles } from '@/style/client/profileStyles';
 import { getImageUrl } from '@/lib/imageUtils';
 import { useNotification } from '@/hooks/useNotification';
 import { useConfirmation } from '@/hooks/useConfirmation';
+import { SkeletonProfile } from '@/components/skeletons/SkeletonLoaders';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -175,10 +176,9 @@ export default function ProfileScreen() {
         <View style={styles.header}>
           <ThemedText style={styles.headerTitle}>Profile</ThemedText>
         </View>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#FF8C00" />
-          <ThemedText style={styles.loadingText}>Loading profile...</ThemedText>
-        </View>
+        <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+          <SkeletonProfile />
+        </ScrollView>
       </ThemedView>
     );
   }

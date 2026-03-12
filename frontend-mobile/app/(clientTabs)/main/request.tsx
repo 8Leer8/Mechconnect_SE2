@@ -5,6 +5,7 @@ import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { styles } from '@/style/client/requestStyles';
+import { SkeletonRequestList } from '@/components/skeletons/SkeletonLoaders';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -589,9 +590,7 @@ export default function RequestScreen() {
       </View>
 
       {loading && !refreshing ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#FF8C00" />
-        </View>
+        <SkeletonRequestList />
       ) : error ? (
         <View style={styles.errorContainer}>
           <FontAwesome name="exclamation-circle" size={36} color="#FF3B30" />

@@ -5,6 +5,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/client/bookingDetailsStyles';
+import { SkeletonDetailPage } from '@/components/skeletons/SkeletonLoaders';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -289,9 +290,9 @@ export default function ClientBookingDetailScreen() {
           <ThemedText style={styles.headerTitle}>Booking Details</ThemedText>
           <View style={{ width: 40 }} />
         </View>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#FF8C00" />
-        </View>
+        <ScrollView contentContainerStyle={{ padding: 16 }}>
+          <SkeletonDetailPage />
+        </ScrollView>
       </ThemedView>
     );
   }

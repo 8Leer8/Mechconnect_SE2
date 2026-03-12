@@ -15,6 +15,7 @@ import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/mechanic/homeStyles';
 import WalletSection from '@/components/wallet-section';
+import { SkeletonMechanicHome } from '@/components/skeletons/SkeletonLoaders';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const { width } = Dimensions.get('window');
@@ -220,7 +221,7 @@ export default function HomeScreen() {
         </View>
 
         {loading && !refreshing ? (
-          <ActivityIndicator size="large" color="#FF8C00" style={styles.loader} />
+          <SkeletonMechanicHome />
         ) : error ? (
           <View style={styles.errorContainer}>
             <FontAwesome name="exclamation-circle" size={48} color="#FF3B30" />

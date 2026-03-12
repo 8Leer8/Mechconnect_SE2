@@ -9,6 +9,7 @@ import WalletBadge from '@/components/wallet-badge';
 import { useRouter } from 'expo-router';
 import { useNotification } from '@/hooks/useNotification';
 import { useConfirmation } from '@/hooks/useConfirmation';
+import { SkeletonDetailPage } from '@/components/skeletons/SkeletonLoaders';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 interface BookingDetail {
@@ -461,9 +462,9 @@ export default function BookingDetailScreen() {
           <ThemedText style={styles.headerTitle}>Booking Details</ThemedText>
           <View style={{ width: 40 }} />
         </View>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#FF8C00" />
-        </View>
+        <ScrollView contentContainerStyle={{ padding: 16 }}>
+          <SkeletonDetailPage />
+        </ScrollView>
       </ThemedView>
     );
   }

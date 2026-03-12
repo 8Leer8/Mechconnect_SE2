@@ -11,6 +11,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { TopNav } from '@/components/navigation';
+import { SkeletonMechanicShopHome } from '@/components/skeletons/SkeletonLoaders';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -93,7 +94,9 @@ export default function MechanicShopDashboardScreen() {
     return (
       <ThemedView style={styles.container}>
         <TopNav onNotificationPress={handleNotificationPress} />
-        <ActivityIndicator size="large" color="#FF8C00" style={styles.loader} />
+        <ScrollView contentContainerStyle={{ padding: 16 }}>
+          <SkeletonMechanicShopHome />
+        </ScrollView>
       </ThemedView>
     );
   }

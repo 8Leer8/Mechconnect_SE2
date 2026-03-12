@@ -4,6 +4,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { TopNav } from '@/components/navigation';
+import { SkeletonDashboard } from '@/components/skeletons/SkeletonLoaders';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -67,10 +68,9 @@ export default function ShopOwnerHome() {
     return (
       <ThemedView style={styles.container}>
         <TopNav onNotificationPress={handleNotificationPress} />
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#FF9500" />
-          <ThemedText style={styles.loadingText}>Loading dashboard...</ThemedText>
-        </View>
+        <ScrollView contentContainerStyle={{ padding: 16 }}>
+          <SkeletonDashboard />
+        </ScrollView>
       </ThemedView>
     );
   }

@@ -6,6 +6,7 @@ import { ThemedView } from '@/components/themed-view';
 import { TopNav } from '@/components/navigation';
 import { getImageUrl } from '@/lib/imageUtils';
 import { useNotification } from '@/hooks/useNotification';
+import { SkeletonMechanicList } from '@/components/skeletons/SkeletonLoaders';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -151,10 +152,9 @@ export default function ShopOwnerMechanics() {
     return (
       <ThemedView style={styles.container}>
         <TopNav onNotificationPress={handleNotificationPress} />
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#FF9500" />
-          <ThemedText style={styles.loadingText}>Loading mechanics...</ThemedText>
-        </View>
+        <ScrollView contentContainerStyle={{ padding: 16 }}>
+          <SkeletonMechanicList />
+        </ScrollView>
       </ThemedView>
     );
   }

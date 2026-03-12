@@ -7,6 +7,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/client/homeStyles';
 import { LineChart, BarChart } from 'react-native-chart-kit';
 import EmergencyModal from '@/components/EmergencyModal';
+import { SkeletonClientHome } from '@/components/skeletons/SkeletonLoaders';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const screenWidth = Dimensions.get('window').width;
@@ -248,7 +249,7 @@ export default function HomeScreen() {
         }
       >
         {loading && !refreshing ? (
-          <ActivityIndicator size="large" color="#FF8C00" style={styles.loader} />
+          <SkeletonClientHome />
         ) : error ? (
           <View style={styles.errorContainer}>
             <FontAwesome name="exclamation-circle" size={48} color="#FF3B30" />

@@ -15,6 +15,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { useNotification } from '@/hooks/useNotification';
+import { SkeletonProfile } from '@/components/skeletons/SkeletonLoaders';
 import { useConfirmation } from '@/hooks/useConfirmation';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -377,10 +378,9 @@ export default function ShopOwnerProfileScreen() {
           <ThemedText style={styles.headerTitle}>Profile</ThemedText>
           <ThemedText style={styles.headerSubtitle}>Manage your shop owner account</ThemedText>
         </View>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#FF9500" />
-          <ThemedText style={styles.loadingText}>Loading profile...</ThemedText>
-        </View>
+        <ScrollView contentContainerStyle={{ padding: 16 }}>
+          <SkeletonProfile />
+        </ScrollView>
       </ThemedView>
     );
   }

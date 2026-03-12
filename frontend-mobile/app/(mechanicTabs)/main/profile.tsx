@@ -16,6 +16,7 @@ import { styles } from '@/style/mechanic/profileStyles';
 import WalletSection from '@/components/wallet-section';
 import { useNotification } from '@/hooks/useNotification';
 import { useConfirmation } from '@/hooks/useConfirmation';
+import { SkeletonProfile } from '@/components/skeletons/SkeletonLoaders';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -259,7 +260,9 @@ export default function ProfileScreen() {
   if (loading) {
     return (
       <ThemedView style={styles.container}>
-        <ActivityIndicator size="large" color="#FF8C00" style={styles.loader} />
+        <ScrollView contentContainerStyle={{ padding: 16 }}>
+          <SkeletonProfile />
+        </ScrollView>
       </ThemedView>
     );
   }

@@ -7,6 +7,7 @@ import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/mechanic/emergencyStyles';
 import { useNotification } from '@/hooks/useNotification';
+import { SkeletonEmergencyList } from '@/components/skeletons/SkeletonLoaders';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -156,7 +157,7 @@ export default function EmergencyScreen() {
         }
       >
         {loading && !refreshing ? (
-          <ActivityIndicator size="large" color="#FF3B30" style={styles.loader} />
+          <SkeletonEmergencyList />
         ) : error ? (
           <View style={styles.errorContainer}>
             <FontAwesome name="exclamation-circle" size={48} color="#FF3B30" />

@@ -6,6 +6,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { styles } from '@/style/client/serviceDetailStyles';
 import { getImageUrl } from '@/lib/imageUtils';
+import { SkeletonDetailPage } from '@/components/skeletons/SkeletonLoaders';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -116,9 +117,9 @@ export default function ServiceDetailScreen() {
           <ThemedText style={styles.headerTitle}>Service Details</ThemedText>
           <View style={{ width: 40 }} />
         </View>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#FF8C00" />
-        </View>
+        <ScrollView contentContainerStyle={{ padding: 16 }}>
+          <SkeletonDetailPage />
+        </ScrollView>
       </ThemedView>
     );
   }
