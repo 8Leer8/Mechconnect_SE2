@@ -1,11 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, TouchableOpacity, ScrollView, ActivityIndicator, Modal, RefreshControl } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { styles } from '@/style/client/requestStyles';
 import { SkeletonRequestList } from '@/components/skeletons/SkeletonLoaders';
+import useWebSocket from '@/hooks/useWebSocket';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -138,6 +140,7 @@ export default function RequestScreen() {
   const [totalCount, setTotalCount] = useState(0);
   const [filter, setFilter] = useState<'all' | 'custom' | 'direct' | 'broadcast'>('all');
   const pageSize = 5;
+  const { lastMessage } = useWebSocket();
 
   const fetchRequests = async (silent = false, page = currentPage, filterType = filter) => {
     try {
@@ -167,6 +170,18 @@ export default function RequestScreen() {
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  };
+
+  const fetchActiveBroadcasts = async () => {
+    try {
+      await fetch(`${API_URL}/bookings/broadcasts/active/`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } catch (_) {
+      // Non-blocking refresh helper for websocket/focus events
     }
   };
 
@@ -213,6 +228,20 @@ export default function RequestScreen() {
     loadData();
     return () => { cancelled = true; };
   }, [currentPage, filter]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchActiveBroadcasts();
+      fetchRequests(true, currentPage, filter);
+    }, [currentPage, filter])
+  );
+
+  useEffect(() => {
+    if (lastMessage?.action === 'broadcast_created') {
+      fetchActiveBroadcasts();
+      fetchRequests(true, currentPage, filter);
+    }
+  }, [lastMessage, currentPage, filter]);
 
   const onRefresh = () => {
     setRefreshing(true);

@@ -22,6 +22,7 @@ from users.models import Account
 from services.models import MechanicService
 from ..client.client_booking_views import _serialize_bookings, _serialize_single_booking
 from ...serializers import QuotationSerializer
+from ...ws_utils import notify_user
 
 
 
@@ -161,6 +162,20 @@ def mechanic_cancel_booking(request, booking_id):
     booking.status = Booking.Status.CANCELLED
     booking.save(update_fields=["status"])
 
+    from asgiref.sync import async_to_sync
+    from channels.layers import get_channel_layer
+
+    channel_layer = get_channel_layer()
+    async_to_sync(channel_layer.group_send)(
+        f"user_{account.id}",
+        {
+            "type": "booking_update",
+            "booking_id": booking.id,
+            "status": "cancelled",
+            "message": "Booking has been cancelled",
+        },
+    )
+
     # create CancelBooking record
     CancelBooking.objects.create(booking=booking, cancelled_by=account, reason=request.data.get('reason', 'Cancelled by mechanic'))
 
@@ -291,7 +306,7 @@ def mechanic_payment_received(request, booking_id):
 
 @api_view(["GET", "POST"])
 @permission_classes([AllowAny])
-def mechanic_quotation(request, booking_id):
+def mechanic_booking_quotation(request, booking_id):
     """GET returns existing quotation for booking; POST creates/updates quotation and its items.
     Expected POST payload: {"notes": "...", "is_final": true/false, "items": [{"service": <id>|null, "service_add_on": <id>|null, "description": "", "quantity": 1, "unit_price": 100.0}, ...]}"""
     account, err = _get_mechanic_account(request)
@@ -303,14 +318,21 @@ def mechanic_quotation(request, booking_id):
     except Booking.DoesNotExist:
         return Response({"error": "Booking not found or you do not have permission to access it"}, status=status.HTTP_404_NOT_FOUND)
 
-    # GET: return existing quotation or empty
+    # GET: return existing quotation or a clear empty response
     if request.method == 'GET':
         try:
             quotation = booking.quotation
             ser = QuotationSerializer(quotation, context={'request': request})
             return Response(ser.data, status=status.HTTP_200_OK)
         except Quotation.DoesNotExist:
-            return Response({"detail": "No quotation found"}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {
+                    "has_quotation": False,
+                    "booking_id": booking.id,
+                    "detail": "No quotation exists yet for this booking",
+                },
+                status=status.HTTP_200_OK,
+            )
 
     # POST: create or update
     if request.method == 'POST':
@@ -332,6 +354,10 @@ def mechanic_quotation(request, booking_id):
         except Exception as e:
             logging.getLogger(__name__).error("Quotation save failed: %s", traceback.format_exc())
             return Response({"error": "Failed to save quotation", "details": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+# Backward-compatible alias for older imports/usages
+mechanic_quotation = mechanic_booking_quotation
 
 
 @api_view(["POST"])
@@ -871,6 +897,14 @@ def mechanic_accept_direct_request(request, request_id):
     ActiveBooking.objects.create(booking=booking)
 
     data = _serialize_single_booking(booking)
+
+    notify_user(
+        req.client_id,
+        booking.id,
+        booking.status,
+        "Your request has been accepted",
+    )
+
     return Response(
         {
             "message": "Request accepted and booking created",
@@ -917,6 +951,13 @@ def mechanic_decline_direct_request(request, request_id):
     direct.request_status = DirectRequest.Status.REJECTED
     direct.save(update_fields=["request_status"])
 
+    notify_user(
+        req.client_id,
+        req.id,
+        "rejected",
+        "Your request has been declined",
+    )
+
     return Response(
         {"message": "Request declined", "request_id": req.id},
         status=status.HTTP_200_OK,
@@ -955,6 +996,14 @@ def mechanic_accept_emergency_request(request, request_id):
     ActiveBooking.objects.create(booking=booking)
 
     data = _serialize_single_booking(booking)
+
+    notify_user(
+        req.client_id,
+        booking.id,
+        booking.status,
+        "Your emergency request has been accepted",
+    )
+
     return Response({"message": "Emergency request accepted", "booking": data}, status=status.HTTP_201_CREATED)
 
 
@@ -1026,6 +1075,14 @@ def mechanic_complete_booking(request, booking_id):
         booking.activebooking.save(update_fields=["is_job_done"])
 
     data = _serialize_single_booking(booking)
+
+    notify_user(
+        booking.request.client_id,
+        booking.id,
+        booking.status,
+        "Your booking has been completed",
+    )
+
     return Response(
         {"message": "Booking completed", "booking": data},
         status=status.HTTP_200_OK,

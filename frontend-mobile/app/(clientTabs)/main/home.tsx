@@ -8,6 +8,7 @@ import { styles } from '@/style/client/homeStyles';
 import { LineChart, BarChart } from 'react-native-chart-kit';
 import EmergencyModal from '@/components/EmergencyModal';
 import { SkeletonClientHome } from '@/components/skeletons/SkeletonLoaders';
+import useWebSocket from '@/hooks/useWebSocket';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const screenWidth = Dimensions.get('window').width;
@@ -97,6 +98,7 @@ export default function HomeScreen() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [showEmergencyModal, setShowEmergencyModal] = useState(false);
+  const { lastMessage } = useWebSocket();
 
   // Emergency button pulse animation
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -162,6 +164,13 @@ export default function HomeScreen() {
     const interval = setInterval(fetchAllData, 30000);
     return () => clearInterval(interval);
   }, [fetchAllData]);
+
+  // Re-fetch when a WebSocket booking update arrives
+  useEffect(() => {
+    if (lastMessage?.type === 'booking_update') {
+      fetchAllData();
+    }
+  }, [lastMessage]);
 
   const onRefresh = () => {
     setRefreshing(true);

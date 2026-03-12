@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   ScrollView,
@@ -16,6 +16,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/mechanic/homeStyles';
 import WalletSection from '@/components/wallet-section';
 import { SkeletonMechanicHome } from '@/components/skeletons/SkeletonLoaders';
+import useWebSocket from '@/hooks/useWebSocket';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const { width } = Dimensions.get('window');
@@ -63,6 +64,7 @@ export default function HomeScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const { lastMessage } = useWebSocket();
 
   const fetchSections = useCallback(async () => {
     try {
@@ -117,6 +119,13 @@ export default function HomeScreen() {
   useFocusEffect(useCallback(() => {
     fetchSections();
   }, [fetchSections]));
+
+  // Re-fetch when a WebSocket booking update arrives
+  useEffect(() => {
+    if (lastMessage?.type === 'booking_update') {
+      fetchSections();
+    }
+  }, [lastMessage]);
 
   const onRefresh = () => {
     setRefreshing(true);

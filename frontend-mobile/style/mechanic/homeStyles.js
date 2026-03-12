@@ -218,17 +218,17 @@ export const styles = StyleSheet.create({
   quickActionsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
     justifyContent: 'space-between',
   },
   quickActionCard: {
-    width: '48.5%',
+    width: (width - 32 - 10) / 2,
     backgroundColor: '#1A1C1E',
     borderRadius: 14,
     padding: 18,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#2A2C2E',
+    marginBottom: 10,
   },
   quickActionIcon: {
     width: 48,

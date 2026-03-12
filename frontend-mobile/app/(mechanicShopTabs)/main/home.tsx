@@ -12,6 +12,7 @@ import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { TopNav } from '@/components/navigation';
 import { SkeletonMechanicShopHome } from '@/components/skeletons/SkeletonLoaders';
+import useWebSocket from '@/hooks/useWebSocket';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -40,6 +41,7 @@ export default function MechanicShopDashboardScreen() {
   const [mechanicName, setMechanicName] = useState<string>('Mechanic');
   const [mechanicStatus, setMechanicStatus] = useState<string>('available');
   const [rating, setRating] = useState<number>(0);
+  const { lastMessage } = useWebSocket();
 
   const fetchDashboardData = useCallback(async () => {
     try {
@@ -79,6 +81,13 @@ export default function MechanicShopDashboardScreen() {
   useEffect(() => {
     fetchDashboardData();
   }, [fetchDashboardData]);
+
+  // Re-fetch when a WebSocket booking update arrives
+  useEffect(() => {
+    if (lastMessage?.type === 'booking_update') {
+      fetchDashboardData();
+    }
+  }, [lastMessage]);
 
   const onRefresh = () => {
     setRefreshing(true);

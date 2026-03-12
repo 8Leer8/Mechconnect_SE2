@@ -2,6 +2,8 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from django.utils import timezone
 from datetime import timedelta
 import json
@@ -183,6 +185,17 @@ def create_broadcast_request(request):
                     )
                 except ServiceAddOn.DoesNotExist:
                     pass  # Skip invalid add-on IDs
+
+        channel_layer = get_channel_layer()
+        if channel_layer is not None:
+            async_to_sync(channel_layer.group_send)(
+                f"user_{account.id}",
+                {
+                    "type": "booking_update",
+                    "action": "broadcast_created",
+                    "message": "New broadcast request created",
+                },
+            )
         
         return Response({
             'message': 'Broadcast request created successfully',

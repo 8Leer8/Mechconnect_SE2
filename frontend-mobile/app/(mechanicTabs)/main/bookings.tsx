@@ -1,12 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Animated } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/mechanic/bookingsStyles';
 import WalletBadge from '@/components/wallet-badge';
 import { SkeletonBookingList } from '@/components/skeletons/SkeletonLoaders';
+import useWebSocket from '@/hooks/useWebSocket';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -97,6 +99,7 @@ export default function BookingsScreen() {
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const pageSize = 10;
+  const { lastMessage } = useWebSocket();
 
   useEffect(() => {
     if (tab && tab !== activeTab) {
@@ -108,6 +111,21 @@ export default function BookingsScreen() {
   useEffect(() => {
     fetchBookings();
   }, [activeTab, currentPage]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchBookings();
+      fetchCounts();
+    }, [activeTab, currentPage])
+  );
+
+  // Re-fetch when a WebSocket booking update arrives
+  useEffect(() => {
+    if (lastMessage?.type === 'booking_update') {
+      fetchBookings();
+      fetchCounts();
+    }
+  }, [lastMessage]);
 
   const fetchCounts = async () => {
     try {
