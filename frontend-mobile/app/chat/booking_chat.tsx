@@ -65,7 +65,11 @@ export default function BookingChatScreen() {
       } catch (e) {
         // ignore
       }
-      console.warn('Creating conversation with headers', headers);
+      const redactedHeaders = {
+        ...headers,
+        ...(headers.Authorization ? { Authorization: 'REDACTED' } : {}),
+      };
+      console.warn('Creating conversation with headers', redactedHeaders);
       const res = await fetch(`${API_URL}/chat/booking/${bookingId}/`, {
         method: 'POST',
         credentials: 'include',
