@@ -1,6 +1,7 @@
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.permissions import AllowAny
 from django.shortcuts import get_object_or_404
 
 from .models import Conversation, Message
@@ -25,6 +26,7 @@ def get_current_account(request):
 
 
 @api_view(['GET'])
+@permission_classes([AllowAny])
 def list_conversations(request):
     account = get_current_account(request)
     if not account:
@@ -39,6 +41,7 @@ def list_conversations(request):
 
 
 @api_view(['GET', 'POST'])
+@permission_classes([AllowAny])
 def conversation_for_booking(request, booking_id):
     """
     Get or create a conversation linked to a booking id.
@@ -79,6 +82,7 @@ def conversation_for_booking(request, booking_id):
 
 
 @api_view(['POST'])
+@permission_classes([AllowAny])
 def create_conversation(request):
     account = get_current_account(request)
     if not account:
@@ -98,6 +102,7 @@ def create_conversation(request):
 
 
 @api_view(['GET', 'POST'])
+@permission_classes([AllowAny])
 def messages_view(request, pk):
     account = get_current_account(request)
     if not account:
