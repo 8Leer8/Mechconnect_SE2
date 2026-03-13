@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import {View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Linking, Platform, } from 'react-native';
+import {View, ScrollView, TouchableOpacity, RefreshControl, Linking, Platform, } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';

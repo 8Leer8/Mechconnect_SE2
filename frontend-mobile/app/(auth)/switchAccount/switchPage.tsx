@@ -14,11 +14,6 @@ import { useNotification } from '@/hooks/useNotification';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
-interface RoleStatus {
-  isRegistered: boolean;
-  isActive: boolean;
-}
-
 interface UserRoleData {
   activeRole: string;
   isMechanic: boolean;

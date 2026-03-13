@@ -9,6 +9,7 @@ from ...models import (
     Request, BroadcastRequest, BroadcastOffer, Booking
 )
 from ...serializers import BroadcastRequestSerializer
+from ...ws_utils import notify_booking_parties
 from users.models import Account, TokenTransaction
 import math
 
@@ -175,6 +176,14 @@ def accept_broadcast_request(request, broadcast_id):
                 tokens=-required_tokens,
                 reason='booking_tax',
                 related_booking_id=booking.id
+            )
+
+            notify_booking_parties(
+                account.id,
+                base_request.client.account_id,
+                booking.id,
+                booking.status,
+                "A mechanic has accepted your broadcast request",
             )
             
             return Response({

@@ -1,11 +1,13 @@
-import React, { useState, useEffect } from 'react';
-import {View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl} from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import {View, ScrollView, TouchableOpacity, RefreshControl} from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/client/bookingStyles';
 import { SkeletonBookingList } from '@/components/skeletons/SkeletonLoaders';
+import { useWebSocketContext } from '@/context/WebSocketContext';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -61,6 +63,7 @@ export default function BookingScreen() {
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const pageSize = 5;
+  const { lastMessage } = useWebSocketContext();
 
   useEffect(() => {
     if (tab && tab !== activeTab) {
@@ -69,9 +72,17 @@ export default function BookingScreen() {
     }
   }, [tab]);
 
-  useEffect(() => {
-    fetchBookings();
-  }, [activeTab, currentPage]);
+  const fetchHomeData = async () => {
+    try {
+      await fetch(`${API_URL}/bookings/home/`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } catch (_) {
+      // Home refresh is best-effort for realtime consistency
+    }
+  };
 
   const fetchBookings = async () => {
     try {
@@ -79,7 +90,7 @@ export default function BookingScreen() {
       setError(null);
 
       const response = await fetch(
-        `${API_URL}/bookings/bookings?status=${activeTab}&page=${currentPage}&page_size=${pageSize}`,
+        `${API_URL}/bookings/bookings/?status=${activeTab}&page=${currentPage}&page_size=${pageSize}`,
         {
           method: 'GET',
           credentials: 'include',
@@ -99,6 +110,27 @@ export default function BookingScreen() {
       setRefreshing(false);
     }
   };
+
+  const fetchData = useCallback(() => {
+    fetchBookings();
+    fetchHomeData();
+  }, [activeTab, currentPage]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchData();
+    }, [fetchData])
+  );
+
+  // Re-fetch when a WebSocket booking update arrives
+  useEffect(() => {
+    if (
+      lastMessage?.type === 'booking_update' &&
+      ['accepted', 'on_the_way', 'active', 'pending_payment', 'completed', 'cancelled', 'reworked', 'disputed'].includes(String(lastMessage?.status || ''))
+    ) {
+      fetchData();
+    }
+  }, [lastMessage, fetchData]);
 
   const onRefresh = () => {
     setRefreshing(true);
