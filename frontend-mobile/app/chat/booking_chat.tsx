@@ -158,7 +158,11 @@ export default function BookingChatScreen() {
         const token = await AsyncStorage.getItem('auth_token');
         if (token) headers['Authorization'] = `Bearer ${token}`;
       } catch (e) {}
-      console.warn('Sending message with headers', headers);
+      const safeHeaders = { ...headers };
+      if (safeHeaders.Authorization) {
+        safeHeaders.Authorization = 'REDACTED';
+      }
+      console.warn('Sending message with headers', safeHeaders);
       const res = await fetch(`${API_URL}/chat/${conversationId}/messages/`, {
         method: 'POST',
         headers,
