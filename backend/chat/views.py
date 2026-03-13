@@ -45,7 +45,7 @@ def list_conversations(request):
 def conversation_for_booking(request, booking_id):
     """
     Get or create a conversation linked to a booking id.
-    POST: accepts optional title and participants (list of ids).
+    POST: accepts optional title and derives participants server-side.
     GET: returns conversation if exists.
     """
     account = get_current_account(request)
@@ -68,15 +68,9 @@ def conversation_for_booking(request, booking_id):
             conv.participants.add(account)
         return Response(ConversationSerializer(conv).data)
 
-    # create conversation with participants: default to booking client and current user if provided
-    participant_ids = request.data.get('participants', [])
-    if not isinstance(participant_ids, list):
-        participant_ids = []
-    if account.id not in participant_ids:
-        participant_ids.append(account.id)
-
+    # create conversation for this booking, starting with the current user as participant
     conv = Conversation.objects.create(title=request.data.get('title', None), booking_id=booking_id)
-    conv.participants.add(*Account.objects.filter(id__in=participant_ids))
+    conv.participants.add(account)
     conv.save()
     return Response(ConversationSerializer(conv).data, status=status.HTTP_201_CREATED)
 
