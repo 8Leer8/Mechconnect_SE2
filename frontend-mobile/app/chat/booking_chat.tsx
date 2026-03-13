@@ -223,7 +223,15 @@ export default function BookingChatScreen() {
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={80}>
           <FlatList
             data={messages}
-            keyExtractor={(it) => String(it.id)}
+            // Use a combined key of id + created_at to avoid duplicates; fallback to index
+            keyExtractor={(it, index) => {
+              if (it && (it.id || it.created_at)) {
+                const idPart = it.id ? String(it.id) : 'noid';
+                const timePart = it.created_at ? String(new Date(it.created_at).getTime()) : 'notime';
+                return `${idPart}_${timePart}`;
+              }
+              return String(index);
+            }}
             renderItem={renderItem}
             contentContainerStyle={{ padding: 16, paddingBottom: 56 }}
           />
