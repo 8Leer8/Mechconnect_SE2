@@ -63,9 +63,9 @@ def conversation_for_booking(request, booking_id):
 
     # POST - create if not exists
     if conv:
-        # already exists
+        # already exists: do not auto-add non-participants
         if not conv.participants.filter(id=account.id).exists():
-            conv.participants.add(account)
+            return Response({'detail': 'Not a participant'}, status=status.HTTP_403_FORBIDDEN)
         return Response(ConversationSerializer(conv).data)
 
     # create conversation for this booking, starting with the current user as participant
