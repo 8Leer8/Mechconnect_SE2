@@ -166,6 +166,7 @@ export default function BookingChatScreen() {
       const res = await fetch(`${API_URL}/chat/${conversationId}/messages/`, {
         method: 'POST',
         headers,
+        credentials: 'include',
         body: JSON.stringify({ content: text.trim() }),
       });
       if (!res.ok) {
