@@ -3,7 +3,6 @@ from rest_framework.exceptions import AuthenticationFailed
 from .models import Account
 import jwt
 from django.conf import settings
-from datetime import datetime
 
 
 class SessionAuthentication(BaseAuthentication):
