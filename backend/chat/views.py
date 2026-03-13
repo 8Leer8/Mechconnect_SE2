@@ -8,6 +8,9 @@ from .models import Conversation, Message
 from .serializers import ConversationSerializer, MessageSerializer
 from users.models import Account
 from django.db.models import Prefetch
+from bookings.models import Booking
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 
 
 def get_current_account(request):
@@ -63,10 +66,42 @@ def conversation_for_booking(request, booking_id):
 
     # POST - create if not exists
     if conv:
-        # already exists: do not auto-add non-participants
-        if not conv.participants.filter(id=account.id).exists():
+        # already exists: allow auto-joining when the requester is associated with the booking
+        if conv.participants.filter(id=account.id).exists():
+            return Response(ConversationSerializer(conv).data)
+
+        # Determine if requester is permitted to join this booking conversation
+        try:
+            booking = Booking.objects.select_related('request', 'request__client', 'request__provider', 'request__shop', 'request__shop__shop_owner', 'request__client__account').get(id=booking_id)
+        except Booking.DoesNotExist:
             return Response({'detail': 'Not a participant'}, status=status.HTTP_403_FORBIDDEN)
-        return Response(ConversationSerializer(conv).data)
+
+        permitted = False
+        # client account
+        try:
+            client_account = booking.request.client.account
+            if client_account and client_account.id == account.id:
+                permitted = True
+        except Exception:
+            pass
+
+        # direct provider (mechanic) assigned to request
+        if not permitted and booking.request.provider and booking.request.provider.id == account.id:
+            permitted = True
+
+        # shop owner (if booking attached to shop)
+        try:
+            if not permitted and booking.request.shop and booking.request.shop.shop_owner and booking.request.shop.shop_owner.account.id == account.id:
+                permitted = True
+        except Exception:
+            pass
+
+        if permitted:
+            conv.participants.add(account)
+            conv.save()
+            return Response(ConversationSerializer(conv).data)
+
+        return Response({'detail': 'Not a participant'}, status=status.HTTP_403_FORBIDDEN)
 
     # create conversation for this booking, starting with the current user as participant
     conv = Conversation.objects.create(title=request.data.get('title', None), booking_id=booking_id)
@@ -125,4 +160,20 @@ def messages_view(request, pk):
     # update conversation timestamp
     conv.save()
     serializer = MessageSerializer(msg, context={'request': request})
+    # Broadcast the new message to connected websocket clients in the user's groups.
+    try:
+        channel_layer = get_channel_layer()
+        payload = {
+            'type': 'booking_update',
+            'action': 'new_chat_message',
+            'conversation_id': conv.id,
+            'message': serializer.data,
+        }
+        # send to each participant's personal group (user_<id>) except the sender
+        for participant in conv.participants.exclude(id=account.id).all():
+            group_name = f"user_{participant.id}"
+            async_to_sync(channel_layer.group_send)(group_name, payload)
+    except Exception:
+        # Don't prevent message creation on broadcast failure; log in future if needed
+        pass
     return Response(serializer.data, status=status.HTTP_201_CREATED)
