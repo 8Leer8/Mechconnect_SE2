@@ -22,7 +22,7 @@ from users.models import Account
 from services.models import MechanicService
 from ..client.client_booking_views import _serialize_bookings, _serialize_single_booking
 from ...serializers import QuotationSerializer
-from ...ws_utils import notify_user
+from ...ws_utils import notify_booking_parties
 
 
 
@@ -53,6 +53,15 @@ def mechanic_start_travel(request, booking_id):
 
     booking.status = Booking.Status.ON_THE_WAY
     booking.save(update_fields=["status"])
+
+    notify_booking_parties(
+        account.id,
+        booking.request.client.account_id,
+        booking.id,
+        booking.status,
+        "Mechanic is now on the way",
+    )
+
     return Response({"message": "Travel started.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
 
 
@@ -76,6 +85,15 @@ def mechanic_cancel_travel(request, booking_id):
 
     booking.status = Booking.Status.ACCEPTED
     booking.save(update_fields=["status"])
+
+    notify_booking_parties(
+        account.id,
+        booking.request.client.account_id,
+        booking.id,
+        booking.status,
+        "Travel was cancelled and booking moved back to accepted",
+    )
+
     return Response({"message": "Travel cancelled, status reverted to accepted.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
 
 
@@ -115,6 +133,14 @@ def mechanic_start_job(request, booking_id):
         # Return a concise error message but log full traceback to server logs
         return Response({"error": "Failed to start job", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    notify_booking_parties(
+        account.id,
+        booking.request.client.account_id,
+        booking.id,
+        booking.status,
+        "Job has started",
+    )
+
     return Response({"message": "Job started.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
 
 
@@ -138,6 +164,15 @@ def mechanic_cancel_job(request, booking_id):
 
     booking.status = Booking.Status.ON_THE_WAY
     booking.save(update_fields=["status"])
+
+    notify_booking_parties(
+        account.id,
+        booking.request.client.account_id,
+        booking.id,
+        booking.status,
+        "Job was cancelled and booking moved back to on_the_way",
+    )
+
     return Response({"message": "Job cancelled, status reverted to on_the_way.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
 
 
@@ -162,18 +197,12 @@ def mechanic_cancel_booking(request, booking_id):
     booking.status = Booking.Status.CANCELLED
     booking.save(update_fields=["status"])
 
-    from asgiref.sync import async_to_sync
-    from channels.layers import get_channel_layer
-
-    channel_layer = get_channel_layer()
-    async_to_sync(channel_layer.group_send)(
-        f"user_{account.id}",
-        {
-            "type": "booking_update",
-            "booking_id": booking.id,
-            "status": "cancelled",
-            "message": "Booking has been cancelled",
-        },
+    notify_booking_parties(
+        account.id,
+        booking.request.client.account_id,
+        booking.id,
+        booking.status,
+        "Booking has been cancelled",
     )
 
     # create CancelBooking record
@@ -210,6 +239,14 @@ def mechanic_pause_job(request, booking_id):
     active_booking.paused_at = timezone.now()
     booking.save(update_fields=["status"])
     active_booking.save(update_fields=["paused_at"])
+
+    notify_booking_parties(
+        account.id,
+        booking.request.client.account_id,
+        booking.id,
+        booking.status,
+        "Job is paused",
+    )
     
     return Response({"message": "Job paused.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
 
@@ -245,6 +282,14 @@ def mechanic_resume_job(request, booking_id):
 
     booking.status = Booking.Status.ACTIVE
     booking.save(update_fields=["status"])
+
+    notify_booking_parties(
+        account.id,
+        booking.request.client.account_id,
+        booking.id,
+        booking.status,
+        "Job has resumed",
+    )
     
     return Response({"message": "Job resumed.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
 
@@ -274,6 +319,14 @@ def mechanic_finish_job(request, booking_id):
     # Create a receipt if not exists
     Receipt.objects.get_or_create(booking=booking)
 
+    notify_booking_parties(
+        account.id,
+        booking.request.client.account_id,
+        booking.id,
+        booking.status,
+        "Job finished and awaiting payment",
+    )
+
     return Response({"message": "Job finished. Pending payment.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
 
 
@@ -299,6 +352,14 @@ def mechanic_payment_received(request, booking_id):
 
     receipt.payment_received = True
     receipt.save(update_fields=["payment_received"])
+
+    notify_booking_parties(
+        account.id,
+        booking.request.client.account_id,
+        booking.id,
+        booking.status,
+        "Payment marked as received",
+    )
 
     return Response({"message": "Payment received. Ready to mark as complete.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
 
@@ -408,6 +469,14 @@ def mechanic_revert_stage(request, booking_id):
 
     booking.status = new_status
     booking.save(update_fields=["status"])
+
+    notify_booking_parties(
+        account.id,
+        booking.request.client.account_id,
+        booking.id,
+        booking.status,
+        f"Booking reverted to {new_status}",
+    )
 
     return Response({"message": f"Booking reverted to {new_status}.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
 
@@ -899,8 +968,9 @@ def mechanic_accept_direct_request(request, request_id):
 
     data = _serialize_single_booking(booking)
 
-    notify_user(
-        req.client_id,
+    notify_booking_parties(
+        account.id,
+        req.client.account_id,
         booking.id,
         booking.status,
         "Your request has been accepted",
@@ -952,8 +1022,9 @@ def mechanic_decline_direct_request(request, request_id):
     direct.request_status = DirectRequest.Status.REJECTED
     direct.save(update_fields=["request_status"])
 
-    notify_user(
-        req.client_id,
+    notify_booking_parties(
+        account.id,
+        req.client.account_id,
         req.id,
         "rejected",
         "Your request has been declined",
@@ -998,8 +1069,9 @@ def mechanic_accept_emergency_request(request, request_id):
 
     data = _serialize_single_booking(booking)
 
-    notify_user(
-        req.client_id,
+    notify_booking_parties(
+        account.id,
+        req.client.account_id,
         booking.id,
         booking.status,
         "Your emergency request has been accepted",
@@ -1077,8 +1149,9 @@ def mechanic_complete_booking(request, booking_id):
 
     data = _serialize_single_booking(booking)
 
-    notify_user(
-        booking.request.client_id,
+    notify_booking_parties(
+        account.id,
+        booking.request.client.account_id,
         booking.id,
         booking.status,
         "Your booking has been completed",

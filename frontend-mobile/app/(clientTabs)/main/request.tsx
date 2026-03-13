@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, TouchableOpacity, ScrollView, ActivityIndicator, Modal, RefreshControl } from 'react-native';
+import { View, TouchableOpacity, ScrollView, Modal, RefreshControl } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -7,7 +7,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { styles } from '@/style/client/requestStyles';
 import { SkeletonRequestList } from '@/components/skeletons/SkeletonLoaders';
-import useWebSocket from '@/hooks/useWebSocket';
+import { useWebSocketContext } from '@/context/WebSocketContext';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -140,7 +140,7 @@ export default function RequestScreen() {
   const [totalCount, setTotalCount] = useState(0);
   const [filter, setFilter] = useState<'all' | 'custom' | 'direct' | 'broadcast'>('all');
   const pageSize = 5;
-  const { lastMessage } = useWebSocket();
+  const { lastMessage } = useWebSocketContext();
 
   const fetchRequests = async (silent = false, page = currentPage, filterType = filter) => {
     try {
@@ -185,63 +185,25 @@ export default function RequestScreen() {
     }
   };
 
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadData = async () => {
-      try {
-        if (!cancelled) {
-          setLoading(true);
-          setError(null);
-        }
-
-        const response = await fetch(
-          `${API_URL}/bookings/requests/?page=${currentPage}&page_size=${pageSize}&filter=${filter}`,
-          {
-            method: 'GET',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-          }
-        );
-
-        if (cancelled) return;
-        if (!response.ok) throw new Error('Failed to fetch requests');
-        const data = await response.json() as RequestsResponse;
-
-        if (!cancelled) {
-          setCustomRequests(data.custom_requests || []);
-          setDirectRequests(data.direct_requests || []);
-          setBroadcastRequests(data.broadcast_requests || []);
-          setTotalCount(data.total_count || 0);
-          setTotalPages(data.total_pages || 1);
-          setCurrentPage(data.current_page || 1);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'An error occurred');
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    loadData();
-    return () => { cancelled = true; };
+  const fetchData = useCallback(() => {
+    fetchActiveBroadcasts();
+    fetchRequests(true, currentPage, filter);
   }, [currentPage, filter]);
 
   useFocusEffect(
     useCallback(() => {
-      fetchActiveBroadcasts();
-      fetchRequests(true, currentPage, filter);
-    }, [currentPage, filter])
+      fetchData();
+    }, [fetchData])
   );
 
   useEffect(() => {
-    if (lastMessage?.action === 'broadcast_created') {
-      fetchActiveBroadcasts();
-      fetchRequests(true, currentPage, filter);
+    if (
+      lastMessage?.action === 'broadcast_created' ||
+      (lastMessage?.type === 'booking_update' && lastMessage?.status === 'accepted')
+    ) {
+      fetchData();
     }
-  }, [lastMessage, currentPage, filter]);
+  }, [lastMessage, fetchData]);
 
   const onRefresh = () => {
     setRefreshing(true);

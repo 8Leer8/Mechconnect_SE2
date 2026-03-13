@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import {View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Dimensions, Animated} from 'react-native';
+import {View, ScrollView, TouchableOpacity, RefreshControl, Dimensions, Animated} from 'react-native';
 import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -8,7 +8,7 @@ import { styles } from '@/style/client/homeStyles';
 import { LineChart, BarChart } from 'react-native-chart-kit';
 import EmergencyModal from '@/components/EmergencyModal';
 import { SkeletonClientHome } from '@/components/skeletons/SkeletonLoaders';
-import useWebSocket from '@/hooks/useWebSocket';
+import { useWebSocketContext } from '@/context/WebSocketContext';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const screenWidth = Dimensions.get('window').width;
@@ -98,7 +98,7 @@ export default function HomeScreen() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [showEmergencyModal, setShowEmergencyModal] = useState(false);
-  const { lastMessage } = useWebSocket();
+  const { lastMessage } = useWebSocketContext();
 
   // Emergency button pulse animation
   const pulseAnim = useRef(new Animated.Value(1)).current;

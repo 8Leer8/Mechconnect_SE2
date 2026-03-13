@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   ScrollView,
-  ActivityIndicator,
   RefreshControl,
   TouchableOpacity,
   StyleSheet,
@@ -12,7 +11,7 @@ import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { TopNav } from '@/components/navigation';
 import { SkeletonMechanicShopHome } from '@/components/skeletons/SkeletonLoaders';
-import useWebSocket from '@/hooks/useWebSocket';
+import { useWebSocketContext } from '@/context/WebSocketContext';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -41,7 +40,7 @@ export default function MechanicShopDashboardScreen() {
   const [mechanicName, setMechanicName] = useState<string>('Mechanic');
   const [mechanicStatus, setMechanicStatus] = useState<string>('available');
   const [rating, setRating] = useState<number>(0);
-  const { lastMessage } = useWebSocket();
+  const { lastMessage } = useWebSocketContext();
 
   const fetchDashboardData = useCallback(async () => {
     try {

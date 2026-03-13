@@ -6,6 +6,7 @@ interface BookingUpdateMessage {
   booking_id: number;
   status: string;
   message: string;
+  action?: string;
 }
 
 export default function useWebSocket() {

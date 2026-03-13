@@ -1,6 +1,10 @@
 import json
+import logging
 from channels.generic.websocket import AsyncWebsocketConsumer
 from asgiref.sync import sync_to_async
+
+
+logger = logging.getLogger(__name__)
 
 
 class BookingConsumer(AsyncWebsocketConsumer):

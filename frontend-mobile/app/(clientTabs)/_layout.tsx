@@ -6,6 +6,7 @@ export default function ClientTabLayout() {
   return (
     <Tabs
       screenOptions={{
+        unmountOnBlur: true,
         tabBarActiveTintColor: '#FF8C00',
         tabBarInactiveTintColor: '#999',
         headerShown: false,
