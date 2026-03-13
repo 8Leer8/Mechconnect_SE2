@@ -1,10 +1,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
 // Ensure the router header is hidden for this route so only the in-page header shows
 export const screenOptions = { headerShown: false } as const;
-import {View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Linking, Platform, } from 'react-native';
+import {View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Linking, Platform } from 'react-native';
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
-import {View, ScrollView, TouchableOpacity, RefreshControl, Linking, Platform, } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
