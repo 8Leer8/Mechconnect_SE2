@@ -27,6 +27,7 @@ from ...serializers import RequestSerializer
 from users.models import Account
 from services.models import ShopService
 from ..client.client_booking_views import _serialize_single_booking, _serialize_bookings
+from ...ws_utils import notify_user
 
 
 def _get_shopowner_account(request):
@@ -275,6 +276,14 @@ def shopowner_accept_direct_request(request, request_id):
     ActiveBooking.objects.create(booking=booking)
 
     data = _serialize_single_booking(booking)
+
+    notify_user(
+        req.client_id,
+        booking.id,
+        booking.status,
+        "Your request has been accepted by a shop",
+    )
+
     return Response(
         {"message": "Request accepted and booking created", "booking": data},
         status=status.HTTP_201_CREATED,

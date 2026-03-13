@@ -8,7 +8,6 @@ import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/mechanic/bookingDetailsStyles';
 import WalletBadge from '@/components/wallet-badge';
-import { useRouter } from 'expo-router';
 import { useNotification } from '@/hooks/useNotification';
 import { useConfirmation } from '@/hooks/useConfirmation';
 import { SkeletonDetailPage } from '@/components/skeletons/SkeletonLoaders';

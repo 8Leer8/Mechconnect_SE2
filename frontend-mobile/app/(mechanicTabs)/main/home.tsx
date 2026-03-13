@@ -1,12 +1,10 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   ScrollView,
   TouchableOpacity,
-  ActivityIndicator,
   RefreshControl,
   Dimensions,
-  Linking,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -16,9 +14,9 @@ import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/mechanic/homeStyles';
 import WalletSection from '@/components/wallet-section';
 import { SkeletonMechanicHome } from '@/components/skeletons/SkeletonLoaders';
+import { useWebSocketContext } from '@/context/WebSocketContext';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
-const { width } = Dimensions.get('window');
 
 interface Booking {
   id: number;
@@ -63,6 +61,7 @@ export default function HomeScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const { lastMessage } = useWebSocketContext();
 
   const fetchSections = useCallback(async () => {
     try {
@@ -117,6 +116,13 @@ export default function HomeScreen() {
   useFocusEffect(useCallback(() => {
     fetchSections();
   }, [fetchSections]));
+
+  // Re-fetch when a WebSocket booking update arrives
+  useEffect(() => {
+    if (lastMessage?.type === 'booking_update') {
+      fetchSections();
+    }
+  }, [lastMessage]);
 
   const onRefresh = () => {
     setRefreshing(true);

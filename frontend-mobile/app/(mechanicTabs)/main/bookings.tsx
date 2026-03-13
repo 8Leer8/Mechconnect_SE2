@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Animated } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useThemeColor } from '@/hooks/use-theme-color';
@@ -8,6 +9,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/mechanic/bookingsStyles';
 import WalletBadge from '@/components/wallet-badge';
 import { SkeletonBookingList } from '@/components/skeletons/SkeletonLoaders';
+import { useWebSocketContext } from '@/context/WebSocketContext';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -98,7 +100,8 @@ export default function BookingsScreen() {
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const pageSize = 5;
-  const dividerColor = useThemeColor({ light: '#eee', dark: '#2A2C2E' }, 'background');
+  const { lastMessage } = useWebSocketContext();
+  const dividerColor = useThemeColor({}, 'icon');
 
   useEffect(() => {
     if (tab && tab !== activeTab) {
@@ -107,9 +110,24 @@ export default function BookingsScreen() {
     }
   }, [tab]);
 
-  useEffect(() => {
-    fetchBookings();
-  }, [activeTab, currentPage]);
+  const fetchHomeData = async () => {
+    try {
+      await Promise.all([
+        fetch(`${API_URL}/bookings/mechanic/bookings/`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        }),
+        fetch(`${API_URL}/users/profile/details/`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ]);
+    } catch (_) {
+      // Home refresh is best-effort for realtime consistency
+    }
+  };
 
   const fetchCounts = async () => {
     try {
@@ -189,6 +207,28 @@ export default function BookingsScreen() {
       setRefreshing(false);
     }
   };
+
+  const fetchData = useCallback(() => {
+    fetchBookings();
+    fetchCounts();
+    fetchHomeData();
+  }, [activeTab, currentPage]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchData();
+    }, [fetchData])
+  );
+
+  // Re-fetch when a WebSocket booking update arrives
+  useEffect(() => {
+    if (
+      lastMessage?.type === 'booking_update' &&
+      ['accepted', 'on_the_way', 'active', 'paused', 'pending_payment', 'completed', 'cancelled', 'reworked', 'disputed'].includes(String(lastMessage?.status || ''))
+    ) {
+      fetchData();
+    }
+  }, [lastMessage, fetchData]);
 
   const onRefresh = () => {
     setRefreshing(true);
