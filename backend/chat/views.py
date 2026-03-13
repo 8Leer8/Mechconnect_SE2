@@ -6,6 +6,7 @@ from django.shortcuts import get_object_or_404
 from .models import Conversation, Message
 from .serializers import ConversationSerializer, MessageSerializer
 from users.models import Account
+from django.db.models import Prefetch
 
 
 def get_current_account(request):
@@ -29,7 +30,10 @@ def list_conversations(request):
     if not account:
         return Response({'detail': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
 
-    qs = Conversation.objects.filter(participants=account).prefetch_related('participants')
+    qs = Conversation.objects.filter(participants=account).prefetch_related(
+        'participants',
+        Prefetch('messages', queryset=Message.objects.order_by('-created_at')[:1]),
+    )
     serializer = ConversationSerializer(qs, many=True)
     return Response(serializer.data)
 
