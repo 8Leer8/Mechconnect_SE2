@@ -1,12 +1,6 @@
-import { Stack } from 'expo-router';
+import { Slot } from 'expo-router';
 import React from 'react';
 
 export default function MechanicLayout() {
-  return (
-    <Stack
-      screenOptions={{
-        headerShown: false,
-      }}
-    />
-  );
+  return <Slot />;
 }

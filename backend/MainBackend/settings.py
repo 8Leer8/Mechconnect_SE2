@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'services',
     'bookings',
     'notification',
+    'chat',
     'storages',
 ]
 
@@ -164,7 +165,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # REST Framework Configuration
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.SessionAuthentication',
+        'users.authentication.JWTAuthentication',
+        'users.authentication.SessionAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',

@@ -20,6 +20,18 @@ class Account(models.Model):
         blank=True,
         help_text="Last role the user was using before logout"
     )
+    
+    @property
+    def is_authenticated(self):
+        """Compatibility property so Django/DRF permission checks work.
+
+        Returns True for persisted Account instances.
+        """
+        return True
+
+    @property
+    def is_anonymous(self):
+        return False
 
 class AccountAddress(models.Model):
     account = models.OneToOneField(Account, on_delete=models.CASCADE)

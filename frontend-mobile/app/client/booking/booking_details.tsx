@@ -1,4 +1,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
+// Ensure the router header is hidden for this route so only the in-page header shows
+export const screenOptions = { headerShown: false } as const;
+import {View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Linking, Platform, } from 'react-native';
+import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import {View, ScrollView, TouchableOpacity, RefreshControl, Linking, Platform, } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
@@ -69,6 +73,7 @@ interface BookingDetail {
 
 export default function ClientBookingDetailScreen() {
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
+  const navigation = useNavigation();
   const [booking, setBooking] = useState<BookingDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -191,6 +196,9 @@ export default function ClientBookingDetailScreen() {
   }, [booking?.active_details?.started_at, booking?.status, isPaused]);
 
   useEffect(() => {
+    try { navigation.setOptions && navigation.setOptions({ headerShown: false }); } catch (e) {}
+    try { navigation.getParent && navigation.getParent()?.setOptions && navigation.getParent()?.setOptions({ headerShown: false }); } catch (e) {}
+    try { navigation.getParent && navigation.getParent()?.getParent && navigation.getParent()?.getParent()?.setOptions && navigation.getParent()?.getParent()?.setOptions({ headerShown: false }); } catch (e) {}
     fetchBookingDetail();
     // Poll every 10 seconds so client sees mechanic status changes in real time
     const interval = setInterval(() => fetchBookingDetail(true), 10000);
@@ -388,6 +396,26 @@ export default function ClientBookingDetailScreen() {
             </View>
             <View style={styles.tapHintContainer}>
               <ThemedText style={styles.tapHintText}>Tap to view mechanic profile</ThemedText>
+            </View>
+          </TouchableOpacity>
+        )}
+
+        {/* Chat Section */}
+        {booking.provider && (
+          <TouchableOpacity
+            style={styles.sectionCard}
+            onPress={() => router.push({ pathname: '/chat/booking_chat', params: { bookingId: String(booking.id) } })}
+            activeOpacity={0.8}
+          >
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#007AFF15' }]}> 
+                <FontAwesome name="comments" size={16} color="#007AFF" />
+              </View>
+              <ThemedText style={styles.sectionTitle}>Chat with Mechanic</ThemedText>
+              <FontAwesome name="chevron-right" size={16} color="#8E8E93" style={{ marginLeft: 'auto' }} />
+            </View>
+            <View style={{ paddingVertical: 8 }}>
+              <ThemedText style={{ color: '#666' }}>Open the booking chat to message the mechanic.</ThemedText>
             </View>
           </TouchableOpacity>
         )}
