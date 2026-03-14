@@ -6,5 +6,9 @@ from .views.mechanic_services_views import (
     list_my_services,
     add_my_service,
     remove_my_service,
+    update_my_service_price,
+    list_my_specialties,
+    add_my_specialty,
+    remove_my_specialty,
 )
 

@@ -3,7 +3,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 
-from ..models import Service, ServiceCategory, MechanicService, ShopService
+from ..models import Service, ServiceCategory, Specialty, MechanicService, ShopService
 from ..pricing_utils import get_service_price_stats, get_all_services_with_pricing
 from MainBackend.storage_utils import get_media_url
 from users.models import Mechanic
@@ -64,6 +64,33 @@ def list_service_categories(request):
         return Response({
             'categories': categories_data,
             'count': len(categories_data)
+        }, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({
+            'error': str(e)
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def list_specialties(request):
+    """
+    Get list of all specialties.
+    """
+    try:
+        specialties = Specialty.objects.all().order_by('name')
+        specialties_data = []
+
+        for specialty in specialties:
+            specialties_data.append({
+                'id': specialty.id,
+                'name': specialty.name,
+                'description': specialty.description,
+            })
+
+        return Response({
+            'specialties': specialties_data,
+            'count': len(specialties_data)
         }, status=status.HTTP_200_OK)
     except Exception as e:
         return Response({

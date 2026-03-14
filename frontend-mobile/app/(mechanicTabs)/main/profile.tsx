@@ -37,6 +37,19 @@ interface AvailableService {
   category?: string;
 }
 
+interface MySpecialty {
+  id: number;
+  mechanic_specialty_id: number;
+  name: string;
+  description: string;
+}
+
+interface AvailableSpecialty {
+  id: number;
+  name: string;
+  description: string;
+}
+
 export default function ProfileScreen() {
   const { showNotification } = useNotification();
   const { confirm } = useConfirmation();
@@ -44,6 +57,10 @@ export default function ProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [myServices, setMyServices] = useState<MyService[]>([]);
+  const [mySpecialties, setMySpecialties] = useState<MySpecialty[]>([]);
+  const [specialtyModalVisible, setSpecialtyModalVisible] = useState(false);
+  const [availableSpecialties, setAvailableSpecialties] = useState<AvailableSpecialty[]>([]);
+  const [addingSpecialtyId, setAddingSpecialtyId] = useState<number | null>(null);
   const [addModalVisible, setAddModalVisible] = useState(false);
   const [availableServices, setAvailableServices] = useState<AvailableService[]>([]);
   const [addingId, setAddingId] = useState<number | null>(null);
@@ -89,16 +106,32 @@ export default function ProfileScreen() {
     }
   }, []);
 
+  const fetchMySpecialties = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/services/mechanic/my-specialties/`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setMySpecialties(data.specialties || []);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
   const loadAll = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     try {
-      await Promise.all([fetchProfile(), fetchMyServices()]);
+      await Promise.all([fetchProfile(), fetchMyServices(), fetchMySpecialties()]);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [fetchProfile, fetchMyServices]);
+  }, [fetchProfile, fetchMyServices, fetchMySpecialties]);
 
   useEffect(() => {
     loadAll();
@@ -123,6 +156,77 @@ export default function ProfileScreen() {
       console.error(e);
     }
   }, [myServices]);
+
+  const openAddSpecialtyModal = useCallback(async () => {
+    setSpecialtyModalVisible(true);
+    setAvailableSpecialties([]);
+    try {
+      const res = await fetch(`${API_URL}/services/specialties/`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const all: AvailableSpecialty[] = data.specialties || [];
+        const myIds = new Set(mySpecialties.map((s) => s.id));
+        setAvailableSpecialties(all.filter((s) => !myIds.has(s.id)));
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, [mySpecialties]);
+
+  const addSpecialty = async (specialty: AvailableSpecialty) => {
+    setAddingSpecialtyId(specialty.id);
+    try {
+      const res = await fetch(`${API_URL}/services/mechanic/my-specialties/add/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ specialty_id: specialty.id }),
+      });
+      const data = await res.json().catch(() => ({})) as any;
+      if (!res.ok) {
+        showNotification({ type: 'error', message: data.error || 'Failed to add specialty' });
+        return;
+      }
+
+      await fetchMySpecialties();
+      setSpecialtyModalVisible(false);
+    } catch (e) {
+      showNotification({ type: 'error', message: 'Failed to add specialty' });
+    } finally {
+      setAddingSpecialtyId(null);
+    }
+  };
+
+  const removeSpecialty = async (specialty: MySpecialty) => {
+    const ok = await confirm({
+      type: 'danger',
+      title: 'Remove Specialty',
+      message: `Remove "${specialty.name}" from your specialties?`,
+      confirmText: 'Remove',
+      cancelText: 'Keep',
+    });
+    if (!ok) return;
+
+    try {
+      const res = await fetch(`${API_URL}/services/mechanic/my-specialties/remove/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ specialty_id: specialty.id }),
+      });
+      if (res.ok) await fetchMySpecialties();
+      else {
+        const data = await res.json().catch(() => ({})) as any;
+        showNotification({ type: 'error', message: data.error || 'Failed to remove' });
+      }
+    } catch (e) {
+      showNotification({ type: 'error', message: 'Failed to remove' });
+    }
+  };
 
   const selectServiceForPricing = (service: AvailableService) => {
     setSelectedService(service);
@@ -287,6 +391,38 @@ export default function ProfileScreen() {
         {/* Wallet Section */}
         <WalletSection />
 
+        {/* Specialties */}
+        <View style={styles.section}>
+          <View style={styles.sectionRow}>
+            <ThemedText style={styles.sectionTitle}>Specialties</ThemedText>
+            <TouchableOpacity style={styles.addBtn} onPress={openAddSpecialtyModal}>
+              <FontAwesome name="plus" size={14} color="#FF8C00" />
+              <ThemedText style={styles.addBtnText}>Add</ThemedText>
+            </TouchableOpacity>
+          </View>
+          {mySpecialties.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <FontAwesome name="star" size={28} color="#555" />
+              <ThemedText style={styles.emptyText}>No specialties yet</ThemedText>
+              <ThemedText style={styles.emptySubtext}>Tap Add to highlight your expertise</ThemedText>
+            </View>
+          ) : (
+            mySpecialties.map((specialty) => (
+              <View key={specialty.mechanic_specialty_id} style={styles.specialtyCard}>
+                <View style={styles.serviceInfo}>
+                  <ThemedText style={styles.serviceName}>{specialty.name}</ThemedText>
+                  <ThemedText style={styles.specialtyDesc}>
+                    {specialty.description || 'No description'}
+                  </ThemedText>
+                </View>
+                <TouchableOpacity onPress={() => removeSpecialty(specialty)} style={styles.removeBtn}>
+                  <FontAwesome name="times-circle" size={20} color="#FF3B30" />
+                </TouchableOpacity>
+              </View>
+            ))
+          )}
+        </View>
+
         {/* Services I offer - connected to backend */}
         <View style={styles.section}>
           <View style={styles.sectionRow}>
@@ -337,6 +473,51 @@ export default function ProfileScreen() {
 
         <View style={{ height: 32 }} />
       </ScrollView>
+
+      {/* Add specialty modal */}
+      <Modal
+        visible={specialtyModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setSpecialtyModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <View style={styles.modalHeader}>
+              <ThemedText style={styles.modalTitle}>Select a specialty</ThemedText>
+              <TouchableOpacity onPress={() => setSpecialtyModalVisible(false)}>
+                <FontAwesome name="times" size={22} color="#ECEDEE" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.modalScroll}>
+              {availableSpecialties.length === 0 ? (
+                <ThemedText style={styles.modalEmpty}>No more specialties to add</ThemedText>
+              ) : (
+                availableSpecialties.map((specialty) => (
+                  <TouchableOpacity
+                    key={specialty.id}
+                    style={styles.availableRow}
+                    onPress={() => addSpecialty(specialty)}
+                    disabled={addingSpecialtyId === specialty.id}
+                  >
+                    <View style={styles.availableInfo}>
+                      <ThemedText style={styles.availableName}>{specialty.name}</ThemedText>
+                      <ThemedText style={styles.availableDesc} numberOfLines={2}>
+                        {specialty.description || 'No description'}
+                      </ThemedText>
+                    </View>
+                    {addingSpecialtyId === specialty.id ? (
+                      <ActivityIndicator size="small" color="#FF8C00" />
+                    ) : (
+                      <FontAwesome name="plus" size={16} color="#FF8C00" />
+                    )}
+                  </TouchableOpacity>
+                ))
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* Add service modal - Step 1: Select service */}
       <Modal

@@ -1,6 +1,7 @@
 """
-Mechanic services: list services offered by the logged-in mechanic, add, remove.
-Used by mechanic profile "Services I offer".
+Mechanic profile management:
+- Services offered by the logged-in mechanic (list, add, remove, update price)
+- Specialties owned by the logged-in mechanic (list, add, remove)
 """
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -8,7 +9,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 
 from users.models import Account
-from ..models import Service, MechanicService
+from ..models import Service, MechanicService, Specialty, MechanicSpecialty
 from MainBackend.storage_utils import get_media_url
 
 
@@ -261,3 +262,130 @@ def update_my_service_price(request):
             {"error": str(e)},
             status=status.HTTP_400_BAD_REQUEST,
         )
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def list_my_specialties(request):
+    """
+    List specialties added by the logged-in mechanic.
+    """
+    mechanic, err = _get_mechanic(request)
+    if err:
+        return err
+
+    qs = (
+        MechanicSpecialty.objects.filter(mechanic=mechanic)
+        .select_related("specialty")
+        .order_by("specialty__name")
+    )
+    specialties_data = []
+    for ms in qs:
+        specialties_data.append({
+            "id": ms.specialty.id,
+            "mechanic_specialty_id": ms.id,
+            "name": ms.specialty.name,
+            "description": ms.specialty.description,
+        })
+
+    return Response(
+        {"specialties": specialties_data, "count": len(specialties_data)},
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def add_my_specialty(request):
+    """
+    Add a specialty to the logged-in mechanic profile.
+    Body: { "specialty_id": <int> }
+    """
+    mechanic, err = _get_mechanic(request)
+    if err:
+        return err
+
+    specialty_id = request.data.get("specialty_id")
+    if specialty_id is None:
+        return Response(
+            {"error": "specialty_id is required"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        specialty_id = int(specialty_id)
+    except (TypeError, ValueError):
+        return Response(
+            {"error": "specialty_id must be an integer"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        specialty = Specialty.objects.get(id=specialty_id)
+    except Specialty.DoesNotExist:
+        return Response(
+            {"error": "Specialty not found"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if MechanicSpecialty.objects.filter(mechanic=mechanic, specialty=specialty).exists():
+        return Response(
+            {"error": "You already added this specialty"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    ms = MechanicSpecialty.objects.create(mechanic=mechanic, specialty=specialty)
+    return Response(
+        {
+            "message": "Specialty added",
+            "mechanic_specialty_id": ms.id,
+            "specialty": {
+                "id": specialty.id,
+                "name": specialty.name,
+                "description": specialty.description,
+            },
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(["POST", "DELETE"])
+@permission_classes([AllowAny])
+def remove_my_specialty(request):
+    """
+    Remove a specialty from the logged-in mechanic profile.
+    Body: { "specialty_id": <int> } or query param specialty_id.
+    """
+    mechanic, err = _get_mechanic(request)
+    if err:
+        return err
+
+    specialty_id = request.data.get("specialty_id") or request.query_params.get("specialty_id")
+    if specialty_id is None:
+        return Response(
+            {"error": "specialty_id is required"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        specialty_id = int(specialty_id)
+    except (TypeError, ValueError):
+        return Response(
+            {"error": "specialty_id must be an integer"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    deleted, _ = MechanicSpecialty.objects.filter(
+        mechanic=mechanic,
+        specialty_id=specialty_id,
+    ).delete()
+    if not deleted:
+        return Response(
+            {"error": "Specialty not in your list or not found"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    return Response(
+        {"message": "Specialty removed", "specialty_id": specialty_id},
+        status=status.HTTP_200_OK,
+    )
