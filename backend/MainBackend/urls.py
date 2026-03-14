@@ -18,6 +18,11 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
+from users.urls import admin_urlpatterns as users_admin_urlpatterns
+from bookings.urls import admin_urlpatterns as bookings_admin_urlpatterns
+from shops.urls import admin_urlpatterns as shops_admin_urlpatterns
+from services.urls import admin_urlpatterns as services_admin_urlpatterns
+from notification.urls import admin_urlpatterns as notification_admin_urlpatterns
 
 
 urlpatterns = [
@@ -28,12 +33,12 @@ urlpatterns = [
     path('api/bookings/', include('bookings.urls')),
     path('api/notification/', include('notification.urls')),
     path('api/chat/', include('chat.urls')),
-    # admin api
-    path('api/admin/users/', include('users.urls')),
-    path('api/admin/bookings/', include('bookings.urls')),
-    path('api/admin/shops/', include('shops.urls')),
-    path('api/admin/services/', include('services.urls')),
-    path('api/admin/notification/', include('notification.urls')),
+    #Admin Urls
+    path('api/admin/users/', include(users_admin_urlpatterns)),
+    path('api/admin/bookings/', include(bookings_admin_urlpatterns)),
+    path('api/admin/shops/', include(shops_admin_urlpatterns)),
+    path('api/admin/services/', include(services_admin_urlpatterns)),
+    path('api/admin/notification/', include(notification_admin_urlpatterns)),
 ]
 
 # Serve media files during development

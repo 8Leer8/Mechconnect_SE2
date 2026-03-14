@@ -1,5 +1,17 @@
 from django.urls import path
 from . import views
+from .views.admin import (
+    admin_login,
+    admin_logout,
+    admin_check_session,
+    admin_user_overview,
+    admin_list_accounts,
+    admin_verification_queue,
+    admin_verification_decision,
+    admin_list_reports,
+    admin_wallet_overview,
+    admin_list_wallet_transactions,
+)
 
 urlpatterns = [
     # Authentication endpoints
@@ -39,4 +51,18 @@ urlpatterns = [
     # Mechanic wallet endpoints
     path('mechanic/wallet/', views.mechanic_wallet, name='mechanic_wallet'),
     path('mechanic/wallet/topup/', views.mechanic_wallet_topup, name='mechanic_wallet_topup'),
+]
+
+#Admin Urls
+admin_urlpatterns = [
+    path('auth/login/', admin_login, name='admin-login'),
+    path('auth/logout/', admin_logout, name='admin-logout'),
+    path('auth/check-session/', admin_check_session, name='admin-check-session'),
+    path('overview/', admin_user_overview, name='admin-user-overview'),
+    path('accounts/', admin_list_accounts, name='admin-list-accounts'),
+    path('verification-queue/', admin_verification_queue, name='admin-verification-queue'),
+    path('verification/decision/', admin_verification_decision, name='admin-verification-decision'),
+    path('reports/', admin_list_reports, name='admin-list-reports'),
+    path('wallet/overview/', admin_wallet_overview, name='admin-wallet-overview'),
+    path('wallet/transactions/', admin_list_wallet_transactions, name='admin-wallet-transactions'),
 ]

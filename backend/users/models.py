@@ -105,21 +105,30 @@ class Client(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
 class Mechanic(models.Model):
-    class Status(models.TextChoices):
-        AVAILABLE = "available"
-        WORKING = "working"
-
+    class VerificationStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        APPROVED = "approved", "Approved"
+        REJECTED = "rejected", "Rejected"
+    class WorkStatus(models.TextChoices):
+        AVAILABLE = "available", "Available"
+        WORKING = "working", "Working"
     account = models.OneToOneField(Account, on_delete=models.CASCADE)
     profile_photo = models.ImageField(upload_to='mechanics/profiles/', null=True, blank=True)
     bio = models.TextField(null=True, blank=True)
     contact_number = models.CharField(max_length=20, null=True, blank=True)
+    # Admin verification
+    verification_status = models.CharField(max_length=20, choices=VerificationStatus.choices, default=VerificationStatus.PENDING, help_text="Admin approval status of the mechanic account.")
+    rejection_note = models.TextField(null=True, blank=True, help_text="Reason provided by admin if the mechanic request is rejected.")
+    verified_at = models.DateTimeField(null=True, blank=True)
     average_rating = models.DecimalField(max_digits=3, decimal_places=2, default=0)
     is_working_for_shop = models.BooleanField(default=False)
     shop = models.ForeignKey('shops.Shop', on_delete=models.SET_NULL, null=True, blank=True, related_name='mechanics')
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.AVAILABLE)
+    status = models.CharField(max_length=20, choices=WorkStatus.choices, default=WorkStatus.AVAILABLE)
     tokens_balance = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    def __str__(self):
+        return self.account.username
 
 class MechanicReview(models.Model):
     """
@@ -153,12 +162,21 @@ class MechanicReview(models.Model):
         return f"{self.reviewer.username} -> {self.mechanic.account.username} ({self.rating}/5)"
 
 class ShopOwner(models.Model):
+    class VerificationStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        APPROVED = "approved", "Approved"
+        REJECTED = "rejected", "Rejected"
     account = models.OneToOneField(Account, on_delete=models.CASCADE)
     profile_photo = models.ImageField(upload_to='owners/profiles/', null=True, blank=True)
     contact_number = models.CharField(max_length=20, null=True, blank=True)
+    verification_status = models.CharField(max_length=20, choices=VerificationStatus.choices, default=VerificationStatus.PENDING, help_text="Admin approval status of the shop owner.")
+    rejection_note = models.TextField(null=True,blank=True, help_text="Admin explanation when the shop owner application is rejected.")
+    verified_at = models.DateTimeField(null=True, blank=True)
     owns_shop = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    def __str__(self):
+        return self.account.username
 
 class Admin(models.Model):
     account = models.OneToOneField(Account, on_delete=models.CASCADE)

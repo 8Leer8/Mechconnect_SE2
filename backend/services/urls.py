@@ -1,5 +1,12 @@
 from django.urls import path
 from . import views
+from .views.admin import (
+    admin_service_overview,
+    admin_list_services,
+    admin_list_specialties,
+    admin_update_service,
+    admin_update_specialty,
+)
 
 urlpatterns = [
     path('', views.list_services, name='list_services'),
@@ -21,4 +28,13 @@ urlpatterns = [
     path('shop/my-services/add/', views.add_shop_service, name='add_shop_service'),
     path('shop/my-services/remove/', views.remove_shop_service, name='remove_shop_service'),
     path('shop/my-services/update-price/', views.update_shop_service_price, name='update_shop_service_price'),
+]
+
+#Admin Urls
+admin_urlpatterns = [
+    path('overview/', admin_service_overview, name='admin-service-overview'),
+    path('list/', admin_list_services, name='admin-list-services'),
+    path('list/<int:service_id>/update/', admin_update_service, name='admin-update-service'),
+    path('specialties/list/', admin_list_specialties, name='admin-list-specialties'),
+    path('specialties/<int:specialty_id>/update/', admin_update_specialty, name='admin-update-specialty'),
 ]

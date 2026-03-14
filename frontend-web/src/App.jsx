@@ -1,35 +1,30 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import { useEffect } from "react";
+import { AppRouter } from "./app/AppRouter";
+import { AuthProvider } from "./features/auth/AuthContext";
+
+const THEME_STORAGE_KEY = "mechconnect-admin-theme";
 
 function App() {
-  const [count, setCount] = useState(0)
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const root = document.documentElement;
+    const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+    const theme = savedTheme === "light" || savedTheme === "dark" ? savedTheme : "dark";
+
+    root.classList.toggle("dark", theme === "dark");
+    if (!savedTheme) {
+      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    }
+  }, []);
 
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.jsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
+    <AuthProvider>
+      <AppRouter />
+    </AuthProvider>
+  );
 }
 
-export default App
+export default App;
