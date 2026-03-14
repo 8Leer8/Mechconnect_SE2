@@ -8,19 +8,19 @@
       "developmentClient": true,
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://mechconnectse2-production.up.railway.app/api"
+        "EXPO_PUBLIC_API_URL": "https://mechconnectse2-production-8004.up.railway.app/api"
       }
     },
     "preview": {
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://mechconnectse2-production.up.railway.app/api"
+        "EXPO_PUBLIC_API_URL": "https://mechconnectse2-production-8004.up.railway.app/api"
       }
     },
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://mechconnectse2-production.up.railway.app/api"
+        "EXPO_PUBLIC_API_URL": "https://mechconnectse2-production-8004.up.railway.app/api"
       }
     }
   },
