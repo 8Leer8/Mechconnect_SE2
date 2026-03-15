@@ -9,6 +9,8 @@ import {
   TextInput,
 } from 'react-native';
 import { router } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
+import * as DocumentPicker from 'expo-document-picker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -42,6 +44,13 @@ interface MySpecialty {
   mechanic_specialty_id: number;
   name: string;
   description: string;
+  status: string;
+  source_type?: string | null;
+  source_description?: string | null;
+  rejection_reason?: string | null;
+  requested_at?: string | null;
+  approved_at?: string | null;
+  proof_document_url?: string | null;
 }
 
 interface AvailableSpecialty {
@@ -49,6 +58,16 @@ interface AvailableSpecialty {
   name: string;
   description: string;
 }
+
+const SOURCE_TYPE_OPTIONS = [
+  { value: 'certification', label: 'Certification' },
+  { value: 'license', label: 'License' },
+  { value: 'training', label: 'Training' },
+  { value: 'experience', label: 'Work Experience' },
+  { value: 'other', label: 'Other' },
+] as const;
+
+type SourceTypeValue = (typeof SOURCE_TYPE_OPTIONS)[number]['value'];
 
 export default function ProfileScreen() {
   const { showNotification } = useNotification();
@@ -58,9 +77,18 @@ export default function ProfileScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [myServices, setMyServices] = useState<MyService[]>([]);
   const [mySpecialties, setMySpecialties] = useState<MySpecialty[]>([]);
+  const [mySpecialtyIds, setMySpecialtyIds] = useState<number[]>([]);
   const [specialtyModalVisible, setSpecialtyModalVisible] = useState(false);
+  const [loadingAvailableSpecialties, setLoadingAvailableSpecialties] = useState(false);
+  const [proofModalVisible, setProofModalVisible] = useState(false);
   const [availableSpecialties, setAvailableSpecialties] = useState<AvailableSpecialty[]>([]);
-  const [addingSpecialtyId, setAddingSpecialtyId] = useState<number | null>(null);
+  const [selectedSpecialtyForProof, setSelectedSpecialtyForProof] = useState<AvailableSpecialty | null>(null);
+  const [proofMode, setProofMode] = useState<'add' | 'resubmit'>('add');
+  const [rejectedNote, setRejectedNote] = useState('');
+  const [proofSourceType, setProofSourceType] = useState<SourceTypeValue>('other');
+  const [proofDescription, setProofDescription] = useState('');
+  const [proofDocument, setProofDocument] = useState<DocumentPicker.DocumentPickerAsset | null>(null);
+  const [submittingProof, setSubmittingProof] = useState(false);
   const [addModalVisible, setAddModalVisible] = useState(false);
   const [availableServices, setAvailableServices] = useState<AvailableService[]>([]);
   const [addingId, setAddingId] = useState<number | null>(null);
@@ -115,7 +143,9 @@ export default function ProfileScreen() {
       });
       if (res.ok) {
         const data = await res.json();
-        setMySpecialties(data.specialties || []);
+        const allSpecialties: MySpecialty[] = data.specialties || [];
+        setMySpecialtyIds(allSpecialties.map((specialty) => specialty.id));
+        setMySpecialties(allSpecialties);
       }
     } catch (e) {
       console.error(e);
@@ -136,6 +166,12 @@ export default function ProfileScreen() {
   useEffect(() => {
     loadAll();
   }, [loadAll]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchMySpecialties();
+    }, [fetchMySpecialties]),
+  );
 
   const openAddModal = useCallback(async () => {
     setAddModalVisible(true);
@@ -159,6 +195,7 @@ export default function ProfileScreen() {
 
   const openAddSpecialtyModal = useCallback(async () => {
     setSpecialtyModalVisible(true);
+    setLoadingAvailableSpecialties(true);
     setAvailableSpecialties([]);
     try {
       const res = await fetch(`${API_URL}/services/specialties/`, {
@@ -169,35 +206,159 @@ export default function ProfileScreen() {
       if (res.ok) {
         const data = await res.json();
         const all: AvailableSpecialty[] = data.specialties || [];
-        const myIds = new Set(mySpecialties.map((s) => s.id));
+        const myIds = new Set(mySpecialtyIds);
         setAvailableSpecialties(all.filter((s) => !myIds.has(s.id)));
       }
     } catch (e) {
       console.error(e);
+    } finally {
+      setLoadingAvailableSpecialties(false);
     }
-  }, [mySpecialties]);
+  }, [mySpecialtyIds]);
 
-  const addSpecialty = async (specialty: AvailableSpecialty) => {
-    setAddingSpecialtyId(specialty.id);
+  const toSourceTypeValue = (value: string | null | undefined): SourceTypeValue => {
+    const fallback: SourceTypeValue = 'other';
+    if (!value) return fallback;
+    const normalized = String(value).toLowerCase() as SourceTypeValue;
+    return SOURCE_TYPE_OPTIONS.some((option) => option.value === normalized) ? normalized : fallback;
+  };
+
+  const formatLabel = (value: string | null | undefined) => {
+    if (!value) return 'Not specified';
+    return String(value)
+      .split('_')
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+      .join(' ');
+  };
+
+  const formatSpecialtyStatus = (value: string | null | undefined) => {
+    if (!value) return 'Pending';
+    return formatLabel(value);
+  };
+
+  const getSpecialtyStatusStyle = (value: string | null | undefined) => {
+    const normalized = String(value || '').toUpperCase();
+    if (normalized === 'APPROVED') {
+      return {
+        badge: styles.approvedBadge,
+        text: styles.approvedBadgeText,
+      };
+    }
+    if (normalized === 'REJECTED') {
+      return {
+        badge: styles.rejectedBadge,
+        text: styles.rejectedBadgeText,
+      };
+    }
+    return {
+      badge: styles.pendingBadge,
+      text: styles.pendingBadgeText,
+    };
+  };
+
+  const resetSpecialtyProofForm = useCallback(() => {
+    setSelectedSpecialtyForProof(null);
+    setProofMode('add');
+    setRejectedNote('');
+    setProofSourceType('other');
+    setProofDescription('');
+    setProofDocument(null);
+    setSubmittingProof(false);
+  }, []);
+
+  const openSpecialtyProofModal = (specialty: AvailableSpecialty) => {
+    setSelectedSpecialtyForProof(specialty);
+    setProofMode('add');
+    setRejectedNote('');
+    setProofSourceType('other');
+    setProofDescription('');
+    setProofDocument(null);
+    setSpecialtyModalVisible(false);
+    setProofModalVisible(true);
+  };
+
+  const openRejectedSpecialtyForEdit = (specialty: MySpecialty) => {
+    setSelectedSpecialtyForProof({
+      id: specialty.id,
+      name: specialty.name,
+      description: specialty.description,
+    });
+    setProofMode('resubmit');
+    setRejectedNote(specialty.rejection_reason || 'No rejection note provided.');
+    setProofSourceType(toSourceTypeValue(specialty.source_type));
+    setProofDescription(specialty.source_description || '');
+    setProofDocument(null);
+    setProofModalVisible(true);
+  };
+
+  const pickSpecialtyProofDocument = async () => {
     try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['image/*', 'application/pdf'],
+        copyToCacheDirectory: true,
+      });
+
+      if (!result.canceled && result.assets?.[0]) {
+        setProofDocument(result.assets[0]);
+      }
+    } catch {
+      showNotification({ type: 'error', message: 'Unable to select file right now.' });
+    }
+  };
+
+  const submitSpecialtyRequest = async () => {
+    if (!selectedSpecialtyForProof) {
+      return;
+    }
+
+    if (!proofDocument && !proofDescription.trim()) {
+      showNotification({ type: 'error', message: 'Please add a proof document or source description.' });
+      return;
+    }
+
+    setSubmittingProof(true);
+    try {
+      const formData = new FormData();
+      formData.append('specialty_id', String(selectedSpecialtyForProof.id));
+      formData.append('source_type', proofSourceType);
+
+      if (proofDescription.trim()) {
+        formData.append('source_description', proofDescription.trim());
+      }
+
+      if (proofDocument) {
+        const filename = proofDocument.name || proofDocument.uri.split('/').pop() || 'proof-document';
+        const type = proofDocument.mimeType || 'application/octet-stream';
+
+        formData.append('proof_document', {
+          uri: proofDocument.uri,
+          name: filename,
+          type,
+        } as any);
+      }
+
       const res = await fetch(`${API_URL}/services/mechanic/my-specialties/add/`, {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ specialty_id: specialty.id }),
+        body: formData,
       });
       const data = await res.json().catch(() => ({})) as any;
       if (!res.ok) {
-        showNotification({ type: 'error', message: data.error || 'Failed to add specialty' });
+        showNotification({ type: 'error', message: data.error || 'Failed to submit specialty request' });
         return;
       }
 
       await fetchMySpecialties();
-      setSpecialtyModalVisible(false);
+      setProofModalVisible(false);
+      resetSpecialtyProofForm();
+      showNotification({
+        type: 'success',
+        message: data.message || (proofMode === 'resubmit' ? 'Specialty request resubmitted.' : 'Specialty request submitted.'),
+      });
     } catch (e) {
-      showNotification({ type: 'error', message: 'Failed to add specialty' });
+      showNotification({ type: 'error', message: 'Failed to submit specialty request' });
     } finally {
-      setAddingSpecialtyId(null);
+      setSubmittingProof(false);
     }
   };
 
@@ -407,19 +568,37 @@ export default function ProfileScreen() {
               <ThemedText style={styles.emptySubtext}>Tap Add to highlight your expertise</ThemedText>
             </View>
           ) : (
-            mySpecialties.map((specialty) => (
-              <View key={specialty.mechanic_specialty_id} style={styles.specialtyCard}>
-                <View style={styles.serviceInfo}>
-                  <ThemedText style={styles.serviceName}>{specialty.name}</ThemedText>
-                  <ThemedText style={styles.specialtyDesc}>
-                    {specialty.description || 'No description'}
-                  </ThemedText>
+            mySpecialties.map((specialty) => {
+              const statusStyle = getSpecialtyStatusStyle(specialty.status);
+
+              return (
+                <View key={specialty.mechanic_specialty_id} style={styles.specialtyCard}>
+                  <View style={styles.serviceInfo}>
+                    <ThemedText style={styles.serviceName}>{specialty.name}</ThemedText>
+                    <ThemedText style={styles.specialtyDesc}>
+                      {specialty.description || 'No description'}
+                    </ThemedText>
+                    <View style={styles.specialtyMetaRow}>
+                      <View style={statusStyle.badge}>
+                        <ThemedText style={statusStyle.text}>{formatSpecialtyStatus(specialty.status)}</ThemedText>
+                      </View>
+                      <ThemedText style={styles.specialtyMetaText}>Source: {formatLabel(specialty.source_type)}</ThemedText>
+                    </View>
+                  </View>
+                  <View style={styles.serviceActions}>
+                    {String(specialty.status || '').toUpperCase() === 'REJECTED' ? (
+                      <TouchableOpacity onPress={() => openRejectedSpecialtyForEdit(specialty)} style={styles.editBtn}>
+                        <FontAwesome name="edit" size={20} color="#FF8C00" />
+                      </TouchableOpacity>
+                    ) : null}
+                    <TouchableOpacity onPress={() => removeSpecialty(specialty)} style={styles.removeBtn}>
+                      <FontAwesome name="times-circle" size={20} color="#FF3B30" />
+                    </TouchableOpacity>
+                  </View>
                 </View>
-                <TouchableOpacity onPress={() => removeSpecialty(specialty)} style={styles.removeBtn}>
-                  <FontAwesome name="times-circle" size={20} color="#FF3B30" />
-                </TouchableOpacity>
-              </View>
-            ))
+
+              );
+            })
           )}
         </View>
 
@@ -490,15 +669,16 @@ export default function ProfileScreen() {
               </TouchableOpacity>
             </View>
             <ScrollView style={styles.modalScroll}>
-              {availableSpecialties.length === 0 ? (
+              {loadingAvailableSpecialties ? (
+                <ThemedText style={styles.modalEmpty}>Loading specialties...</ThemedText>
+              ) : availableSpecialties.length === 0 ? (
                 <ThemedText style={styles.modalEmpty}>No more specialties to add</ThemedText>
               ) : (
                 availableSpecialties.map((specialty) => (
                   <TouchableOpacity
                     key={specialty.id}
                     style={styles.availableRow}
-                    onPress={() => addSpecialty(specialty)}
-                    disabled={addingSpecialtyId === specialty.id}
+                    onPress={() => openSpecialtyProofModal(specialty)}
                   >
                     <View style={styles.availableInfo}>
                       <ThemedText style={styles.availableName}>{specialty.name}</ThemedText>
@@ -506,14 +686,132 @@ export default function ProfileScreen() {
                         {specialty.description || 'No description'}
                       </ThemedText>
                     </View>
-                    {addingSpecialtyId === specialty.id ? (
-                      <ActivityIndicator size="small" color="#FF8C00" />
-                    ) : (
-                      <FontAwesome name="plus" size={16} color="#FF8C00" />
-                    )}
+                    <FontAwesome name="chevron-right" size={16} color="#FF8C00" />
                   </TouchableOpacity>
                 ))
               )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Specialty proof modal */}
+      <Modal
+        visible={proofModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => {
+          setProofModalVisible(false);
+          resetSpecialtyProofForm();
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <View style={styles.modalHeader}>
+              <TouchableOpacity
+                onPress={() => {
+                  setProofModalVisible(false);
+                  if (proofMode === 'add') {
+                    setSpecialtyModalVisible(true);
+                  }
+                }}
+                style={styles.backBtn}
+              >
+                <FontAwesome name="chevron-left" size={18} color="#FF8C00" />
+              </TouchableOpacity>
+              <ThemedText style={styles.modalTitle}>{proofMode === 'resubmit' ? 'Resubmit Specialty Proof' : 'Specialty Proof'}</ThemedText>
+              <TouchableOpacity
+                onPress={() => {
+                  setProofModalVisible(false);
+                  resetSpecialtyProofForm();
+                }}
+              >
+                <FontAwesome name="times" size={22} color="#ECEDEE" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.modalScroll} contentContainerStyle={styles.proofContent}>
+              {selectedSpecialtyForProof ? (
+                <View style={styles.serviceDetailCard}>
+                  <ThemedText style={styles.serviceDetailName}>{selectedSpecialtyForProof.name}</ThemedText>
+                  <ThemedText style={styles.serviceDetailInfo}>
+                    {selectedSpecialtyForProof.description || 'No description'}
+                  </ThemedText>
+                </View>
+              ) : null}
+
+              {proofMode === 'resubmit' ? (
+                <View style={styles.rejectedNoteCard}>
+                  <ThemedText style={styles.rejectedNoteLabel}>Rejected Note</ThemedText>
+                  <ThemedText style={styles.rejectedNoteText}>{rejectedNote}</ThemedText>
+                </View>
+              ) : null}
+
+              <View style={styles.proofSection}>
+                <ThemedText style={styles.proofLabel}>Proof Source</ThemedText>
+                <View style={styles.sourceChipWrap}>
+                  {SOURCE_TYPE_OPTIONS.map((option) => (
+                    <TouchableOpacity
+                      key={option.value}
+                      style={[
+                        styles.sourceChip,
+                        proofSourceType === option.value && styles.sourceChipActive,
+                      ]}
+                      onPress={() => setProofSourceType(option.value)}
+                    >
+                      <ThemedText
+                        style={[
+                          styles.sourceChipText,
+                          proofSourceType === option.value && styles.sourceChipTextActive,
+                        ]}
+                      >
+                        {option.label}
+                      </ThemedText>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              <View style={styles.proofSection}>
+                <ThemedText style={styles.proofLabel}>Source Description (Optional)</ThemedText>
+                <TextInput
+                  style={styles.proofTextArea}
+                  value={proofDescription}
+                  onChangeText={setProofDescription}
+                  placeholder="Describe your training, experience, or credentials"
+                  placeholderTextColor="#666"
+                  multiline
+                  numberOfLines={4}
+                  textAlignVertical="top"
+                />
+              </View>
+
+              <View style={styles.proofSection}>
+                <ThemedText style={styles.proofLabel}>Proof Document (Optional)</ThemedText>
+                <TouchableOpacity style={styles.proofFileBtn} onPress={pickSpecialtyProofDocument}>
+                  <FontAwesome name="paperclip" size={16} color="#FF8C00" />
+                  <ThemedText style={styles.proofFileBtnText}>
+                    {proofDocument ? 'Change Document' : 'Upload Document'}
+                  </ThemedText>
+                </TouchableOpacity>
+                <ThemedText style={styles.proofFileMeta} numberOfLines={1}>
+                  {proofDocument?.name || 'No file selected (image or PDF)'}
+                </ThemedText>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.addServiceBtn, submittingProof && styles.addServiceBtnDisabled]}
+                onPress={submitSpecialtyRequest}
+                disabled={submittingProof}
+              >
+                {submittingProof ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <ThemedText style={styles.addServiceBtnText}>
+                    {proofMode === 'resubmit' ? 'Resubmit Specialty Request' : 'Submit Specialty Request'}
+                  </ThemedText>
+                )}
+              </TouchableOpacity>
             </ScrollView>
           </View>
         </View>

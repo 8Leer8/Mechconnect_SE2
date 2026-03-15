@@ -7,6 +7,7 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
+from django.utils import timezone
 
 from users.models import Account
 from ..models import Service, MechanicService, Specialty, MechanicSpecialty
@@ -286,6 +287,13 @@ def list_my_specialties(request):
             "mechanic_specialty_id": ms.id,
             "name": ms.specialty.name,
             "description": ms.specialty.description,
+            "status": ms.status,
+            "source_type": ms.source_type,
+            "source_description": ms.source_description,
+            "proof_document_url": get_media_url(ms.proof_document, request),
+            "rejection_reason": ms.rejection_reason,
+            "requested_at": ms.requested_at,
+            "approved_at": ms.approved_at,
         })
 
     return Response(
@@ -299,13 +307,23 @@ def list_my_specialties(request):
 def add_my_specialty(request):
     """
     Add a specialty to the logged-in mechanic profile.
-    Body: { "specialty_id": <int> }
+        Body: {
+            "specialty_id": <int>,
+            "source_type": "certification|license|training|experience|other" (optional),
+            "source_description": <string> (optional),
+            "proof_document": <file> (optional)
+        }
     """
     mechanic, err = _get_mechanic(request)
     if err:
         return err
 
     specialty_id = request.data.get("specialty_id")
+    source_type = request.data.get("source_type") or MechanicSpecialty.SourceType.OTHER
+    source_description = request.data.get("source_description")
+    proof_document = request.FILES.get("proof_document")
+
+    allowed_source_types = {choice[0] for choice in MechanicSpecialty.SourceType.choices}
     if specialty_id is None:
         return Response(
             {"error": "specialty_id is required"},
@@ -320,6 +338,12 @@ def add_my_specialty(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
+    if source_type not in allowed_source_types:
+        return Response(
+            {"error": "Invalid source_type"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
     try:
         specialty = Specialty.objects.get(id=specialty_id)
     except Specialty.DoesNotExist:
@@ -328,17 +352,56 @@ def add_my_specialty(request):
             status=status.HTTP_404_NOT_FOUND,
         )
 
-    if MechanicSpecialty.objects.filter(mechanic=mechanic, specialty=specialty).exists():
+    existing = MechanicSpecialty.objects.filter(mechanic=mechanic, specialty=specialty).first()
+    if existing:
+        if existing.status == MechanicSpecialty.Status.PENDING:
+            return Response(
+                {"error": "This specialty request is already pending review"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if existing.status == MechanicSpecialty.Status.APPROVED:
+            return Response(
+                {"error": "This specialty is already approved"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        existing.source_type = source_type
+        existing.source_description = (source_description or "").strip() or None
+        if proof_document is not None:
+            existing.proof_document = proof_document
+        existing.status = MechanicSpecialty.Status.PENDING
+        existing.rejection_reason = None
+        existing.approved_at = None
+        existing.requested_at = timezone.now()
+        existing.save()
+
         return Response(
-            {"error": "You already added this specialty"},
-            status=status.HTTP_400_BAD_REQUEST,
+            {
+                "message": "Specialty request resubmitted for review",
+                "mechanic_specialty_id": existing.id,
+                "status": existing.status,
+                "specialty": {
+                    "id": specialty.id,
+                    "name": specialty.name,
+                    "description": specialty.description,
+                },
+            },
+            status=status.HTTP_200_OK,
         )
 
-    ms = MechanicSpecialty.objects.create(mechanic=mechanic, specialty=specialty)
+    ms = MechanicSpecialty.objects.create(
+        mechanic=mechanic,
+        specialty=specialty,
+        source_type=source_type,
+        source_description=(source_description or "").strip() or None,
+        proof_document=proof_document,
+    )
     return Response(
         {
-            "message": "Specialty added",
+            "message": "Specialty request submitted for review",
             "mechanic_specialty_id": ms.id,
+            "status": ms.status,
             "specialty": {
                 "id": specialty.id,
                 "name": specialty.name,
