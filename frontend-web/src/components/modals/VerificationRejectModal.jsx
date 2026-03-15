@@ -62,13 +62,13 @@ export function VerificationRejectModal({
 
         <div className="space-y-4 px-6 py-5">
           <div className="grid grid-cols-1 gap-2 rounded-md border border-border/70 bg-card/70 p-3 text-sm text-foreground">
-            <p><span className="text-muted-foreground">Type:</span> {formatSourceType(item.kind)}</p>
-            <p><span className="text-muted-foreground">Name:</span> {item.title}</p>
-            <p><span className="text-muted-foreground">Submitted:</span> {formatDate(item.date)}</p>
+            <p><span className="font-semibold text-orange-300/80">Type:</span> {formatSourceType(item.kind)}</p>
+            <p><span className="font-semibold text-orange-300/80">Name:</span> {item.title}</p>
+            <p><span className="font-semibold text-orange-300/80">Submitted:</span> {formatDate(item.date)}</p>
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-foreground" htmlFor="rejection-note-modal">
+            <label className="text-sm font-semibold text-orange-400" htmlFor="rejection-note-modal">
               Rejection Note {requiresRejectionNote ? "(required)" : "(optional)"}
             </label>
             <textarea

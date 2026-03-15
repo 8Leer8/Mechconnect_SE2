@@ -146,7 +146,7 @@ function buildMapUrls(latitude, longitude) {
 function DetailItem({ label, value }) {
   return (
     <div className="rounded-md border border-border/70 bg-card/60 px-3 py-2.5">
-      <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="text-xs font-semibold uppercase tracking-wide text-orange-300/80">{label}</p>
       <p className="mt-1 text-sm font-medium text-foreground">{value || "—"}</p>
     </div>
   );
@@ -177,7 +177,7 @@ function RequestPhoto({ photoUrl, requestType }) {
 
   return (
     <section className="space-y-2">
-      <h4 className="text-sm font-semibold text-foreground">Request Photo</h4>
+      <h4 className="text-sm font-semibold text-orange-400">Request Photo</h4>
       <div className="overflow-hidden rounded-md border border-border/70 bg-card/60">
         {source ? (
           <img
@@ -241,7 +241,7 @@ export function BookingDetailsModal({ booking, onClose }) {
           {isBroadcast ? (
             <div className="grid grid-cols-1 gap-5 lg:h-[64vh] lg:grid-cols-2">
               <section className="space-y-3 lg:sticky lg:top-0 lg:self-start">
-                <h4 className="text-sm font-semibold text-foreground">Request Map</h4>
+                <h4 className="text-sm font-semibold text-orange-400">Request Map</h4>
                 {hasCoordinates ? (
                   <>
                     <div className="overflow-hidden rounded-lg border border-border bg-card">
@@ -270,7 +270,7 @@ export function BookingDetailsModal({ booking, onClose }) {
               </section>
 
               <section className="space-y-4 lg:h-full lg:overflow-y-auto lg:pr-1">
-                <h4 className="text-sm font-semibold text-foreground">Details</h4>
+                <h4 className="text-sm font-semibold text-orange-400">Details</h4>
                 <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2">
                   <DetailItem label="Booking ID" value={booking.id} />
                   <DetailItem label="Request ID" value={booking.request_id} />
@@ -280,10 +280,18 @@ export function BookingDetailsModal({ booking, onClose }) {
                   <DetailItem label="Completed At" value={formatDateTime(booking.completed_at)} />
                   <DetailItem label="Amount" value={formatCurrency(booking.amount_fee)} />
                   <DetailItem label="Request Type" value={formatLabel(booking.request_type)} />
+                  <DetailItem
+                    label="Service"
+                    value={
+                      booking.request_details?.service_name
+                      || booking.request_details?.service_names?.join(", ")
+                      || "—"
+                    }
+                  />
                 </div>
 
                 <div className="space-y-2">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Booking Status</p>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-orange-300/80">Booking Status</p>
                   <Badge variant={statusVariant(booking.status)} className={`capitalize ${getStatusClass(booking.status)}`}>
                     {formatLabel(booking.status)}
                   </Badge>
@@ -296,7 +304,7 @@ export function BookingDetailsModal({ booking, onClose }) {
                 </div>
 
                 <div className="space-y-2">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Request Description</p>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-orange-300/80">Request Description</p>
                   <p className="rounded-md border border-border/70 bg-card/60 px-3 py-2 text-sm text-foreground">
                     {booking.request_details?.description || "No description provided."}
                   </p>
@@ -308,7 +316,7 @@ export function BookingDetailsModal({ booking, onClose }) {
                 />
 
                 <section className="space-y-3">
-                  <h4 className="text-sm font-semibold text-foreground">Service Location</h4>
+                  <h4 className="text-sm font-semibold text-orange-400">Service Location</h4>
                   <LocationDetails location={booking.service_location} />
                 </section>
               </section>
@@ -316,7 +324,7 @@ export function BookingDetailsModal({ booking, onClose }) {
           ) : (
             <div className="space-y-5">
               <section className="space-y-3">
-                <h4 className="text-sm font-semibold text-foreground">Booking Overview</h4>
+                <h4 className="text-sm font-semibold text-orange-400">Booking Overview</h4>
                 <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3">
                   <DetailItem label="Booking ID" value={booking.id} />
                   <DetailItem label="Request ID" value={booking.request_id} />
@@ -331,14 +339,14 @@ export function BookingDetailsModal({ booking, onClose }) {
               </section>
 
               <section className="space-y-2">
-                <h4 className="text-sm font-semibold text-foreground">Status</h4>
+                <h4 className="text-sm font-semibold text-orange-400">Status</h4>
                 <Badge variant={statusVariant(booking.status)} className={`capitalize ${getStatusClass(booking.status)}`}>
                   {formatLabel(booking.status)}
                 </Badge>
               </section>
 
               <section className="space-y-2">
-                <h4 className="text-sm font-semibold text-foreground">Request Details</h4>
+                <h4 className="text-sm font-semibold text-orange-400">Request Details</h4>
                 <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2">
                   <DetailItem label="Request Status" value={formatLabel(booking.request_details?.request_status)} />
                   <DetailItem label="Service" value={booking.request_details?.service_name || "—"} />
@@ -346,14 +354,14 @@ export function BookingDetailsModal({ booking, onClose }) {
                 </div>
 
                 <div className="space-y-2">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Description</p>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-orange-300/80">Description</p>
                   <p className="rounded-md border border-border/70 bg-card/60 px-3 py-2 text-sm text-foreground">
                     {booking.request_details?.description || "No description provided."}
                   </p>
                 </div>
 
                 <div className="space-y-2">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Provider Note</p>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-orange-300/80">Provider Note</p>
                   <p className="rounded-md border border-border/70 bg-card/60 px-3 py-2 text-sm text-foreground">
                     {booking.request_details?.providers_note || "No provider note available."}
                   </p>
@@ -366,7 +374,7 @@ export function BookingDetailsModal({ booking, onClose }) {
               </section>
 
               <section className="space-y-3">
-                <h4 className="text-sm font-semibold text-foreground">Service Location</h4>
+                <h4 className="text-sm font-semibold text-orange-400">Service Location</h4>
                 <LocationDetails location={booking.service_location} />
               </section>
             </div>

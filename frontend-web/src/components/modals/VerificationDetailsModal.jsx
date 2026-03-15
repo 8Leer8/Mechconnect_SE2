@@ -43,7 +43,7 @@ function toMediaUrl(path) {
 function DetailRow({ label, value }) {
   return (
     <div className="rounded-md border border-border/70 bg-card/70 px-3 py-2.5">
-      <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="text-xs font-semibold uppercase tracking-wide text-orange-300/80">{label}</p>
       <p className="mt-1 text-sm font-medium text-foreground">{value || "—"}</p>
     </div>
   );
@@ -52,7 +52,7 @@ function DetailRow({ label, value }) {
 function DocumentList({ title, documents }) {
   return (
     <section className="space-y-2.5">
-      <h4 className="text-sm font-semibold text-foreground">{title}</h4>
+      <h4 className="text-sm font-semibold text-orange-400">{title}</h4>
       {documents.length === 0 ? (
         <p className="rounded-md border border-border/70 bg-card/60 px-3 py-2 text-sm text-muted-foreground">
           No documents uploaded.
@@ -146,7 +146,7 @@ export function VerificationDetailsModal({
 
           {item.kind === "specialty" ? (
             <section className="space-y-2.5">
-              <h4 className="text-sm font-semibold text-foreground">Specialty Proof</h4>
+              <h4 className="text-sm font-semibold text-orange-400">Specialty Proof</h4>
               {item.proof_document_url ? (
                 <a
                   href={toMediaUrl(item.proof_document_url)}

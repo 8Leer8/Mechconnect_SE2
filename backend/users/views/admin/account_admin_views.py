@@ -95,8 +95,16 @@ def admin_user_overview(request):
 def admin_list_accounts(request):
     queryset = (
         Account.objects.all()
-        .prefetch_related('accountrole_set')
-        .select_related('accountaddress', 'client', 'mechanic', 'shopowner', 'admin')
+        .prefetch_related(
+            'accountrole_set',
+            'mechanic__mechanic_services__service',
+            'mechanic__mechanicspecialty_set__specialty',
+            'shopowner__shop__shopservice_set__service',
+            'shopowner__shop__shopspecialty_set__specialty',
+            'shopowner__shop__shopmechanic_set__mechanic__account',
+            'shopowner__shop__mechanics__account',
+        )
+        .select_related('accountaddress', 'client', 'mechanic', 'mechanic__shop', 'shopowner', 'shopowner__shop', 'admin')
         .order_by('-id')
     )
 
@@ -133,6 +141,89 @@ def admin_list_accounts(request):
         shop_owner_profile = _safe_related(account, 'shopowner')
         admin_profile = _safe_related(account, 'admin')
         address = _safe_related(account, 'accountaddress')
+        shop_profile = _safe_related(shop_owner_profile, 'shop') if shop_owner_profile else None
+
+        mechanic_services = []
+        mechanic_specialties = []
+        if mechanic_profile:
+            mechanic_services = [
+                {
+                    'id': mechanic_service.service_id,
+                    'name': mechanic_service.service.name if mechanic_service.service else None,
+                    'price': mechanic_service.price,
+                }
+                for mechanic_service in mechanic_profile.mechanic_services.all()
+            ]
+
+            mechanic_specialties = [
+                {
+                    'id': mechanic_specialty.specialty_id,
+                    'name': mechanic_specialty.specialty.name if mechanic_specialty.specialty else None,
+                    'status': mechanic_specialty.status,
+                    'requested_at': mechanic_specialty.requested_at,
+                    'approved_at': mechanic_specialty.approved_at,
+                }
+                for mechanic_specialty in mechanic_profile.mechanicspecialty_set.all()
+            ]
+
+        shop_services = []
+        shop_specialties = []
+        shop_mechanics = []
+        if shop_profile:
+            shop_services = [
+                {
+                    'id': shop_service.service_id,
+                    'name': shop_service.service.name if shop_service.service else None,
+                    'price': shop_service.price,
+                }
+                for shop_service in shop_profile.shopservice_set.all()
+            ]
+
+            shop_specialties = [
+                {
+                    'id': shop_specialty.specialty_id,
+                    'name': shop_specialty.specialty.name if shop_specialty.specialty else None,
+                    'status': shop_specialty.status,
+                    'requested_at': shop_specialty.requested_at,
+                    'approved_at': shop_specialty.approved_at,
+                }
+                for shop_specialty in shop_profile.shopspecialty_set.all()
+            ]
+
+            mechanics_map = {}
+            for shop_assignment in shop_profile.shopmechanic_set.all():
+                assigned_mechanic = shop_assignment.mechanic
+                if not assigned_mechanic or not assigned_mechanic.account:
+                    continue
+
+                mechanics_map[assigned_mechanic.account_id] = {
+                    'account_id': assigned_mechanic.account_id,
+                    'username': assigned_mechanic.account.username,
+                    'name': f"{assigned_mechanic.account.firstname} {assigned_mechanic.account.lastname}".strip(),
+                    'status': assigned_mechanic.status,
+                    'average_rating': assigned_mechanic.average_rating,
+                    'working_for_shop': assigned_mechanic.is_working_for_shop,
+                    'joined_at': shop_assignment.date_joined,
+                }
+
+            for assigned_mechanic in shop_profile.mechanics.all():
+                if not assigned_mechanic.account:
+                    continue
+
+                mechanics_map.setdefault(
+                    assigned_mechanic.account_id,
+                    {
+                        'account_id': assigned_mechanic.account_id,
+                        'username': assigned_mechanic.account.username,
+                        'name': f"{assigned_mechanic.account.firstname} {assigned_mechanic.account.lastname}".strip(),
+                        'status': assigned_mechanic.status,
+                        'average_rating': assigned_mechanic.average_rating,
+                        'working_for_shop': assigned_mechanic.is_working_for_shop,
+                        'joined_at': None,
+                    },
+                )
+
+            shop_mechanics = sorted(mechanics_map.values(), key=lambda item: (item.get('username') or '').lower())
 
         role_profiles = {
             'client': {
@@ -146,11 +237,29 @@ def admin_list_accounts(request):
                 'average_rating': mechanic_profile.average_rating if mechanic_profile else None,
                 'is_working_for_shop': mechanic_profile.is_working_for_shop if mechanic_profile else None,
                 'tokens_balance': mechanic_profile.tokens_balance if mechanic_profile else None,
+                'services': mechanic_services,
+                'specialties': mechanic_specialties,
             },
             'shop_owner': {
                 'contact_number': shop_owner_profile.contact_number if shop_owner_profile else None,
                 'profile_photo': _file_url(shop_owner_profile.profile_photo) if shop_owner_profile else None,
                 'owns_shop': shop_owner_profile.owns_shop if shop_owner_profile else None,
+                'shop': {
+                    'id': shop_profile.id,
+                    'shop_name': shop_profile.shop_name,
+                    'status': shop_profile.status,
+                    'is_verified': shop_profile.is_verified,
+                    'contact_number': shop_profile.contact_number,
+                    'email': shop_profile.email,
+                    'website': shop_profile.website,
+                    'description': shop_profile.description,
+                    'created_at': shop_profile.created_at,
+                    'services': shop_services,
+                    'specialties': shop_specialties,
+                    'mechanics': shop_mechanics,
+                }
+                if shop_profile
+                else None,
             },
             'admin': {
                 'contact_number': admin_profile.contact_number if admin_profile else None,
