@@ -176,7 +176,7 @@ export function AdminLayout({ children, title }) {
   }
 
   return (
-    <div className="flex h-screen bg-background overflow-hidden">
+    <div className="flex h-dvh min-h-dvh bg-background overflow-hidden">
       <aside className="hidden md:flex flex-col w-60 bg-card text-card-foreground border-r border-border">
         <div className="flex items-center gap-2 px-6 py-5 border-b border-border">
           <Wrench className="size-5 text-primary" />
@@ -206,7 +206,7 @@ export function AdminLayout({ children, title }) {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between px-6 py-4 bg-background border-b h-16">
+        <header className="flex h-16 items-center justify-between border-b bg-background px-3 py-4 sm:px-4 md:px-6">
           <div className="flex items-center gap-3">
             <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
               <SheetTrigger asChild>
@@ -214,18 +214,19 @@ export function AdminLayout({ children, title }) {
                   <Menu className="size-5" />
                 </Button>
               </SheetTrigger>
-              <SheetContent side="left" className="w-60 bg-card text-card-foreground border-border p-0">
-                <div className="flex items-center gap-2 px-6 py-5 border-b border-border">
+              <SheetContent side="left" className="w-[78vw] max-w-[18.5rem] border-border bg-card p-0 text-card-foreground sm:max-w-xs">
+                <div className="flex items-center gap-2 border-b border-border px-5 py-4 pr-12">
                   <Wrench className="size-5 text-primary" />
                   <span className="text-base font-bold text-foreground">Mechconnect</span>
                 </div>
-                <ScrollArea className="h-[calc(100vh-78px)]">
-                  {navSections.map((section) => (
+                <ScrollArea className="h-[calc(100dvh-69px)]">
+                  <div className="pb-6 pt-2">
+                    {navSections.map((section) => (
                     <section key={section.label}>
-                      <p className="px-4 pt-5 pb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                      <p className="px-5 pb-2 pt-5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                         {section.label}
                       </p>
-                      <nav className="space-y-1">
+                      <nav className="space-y-1 px-2">
                         {section.items.map((item) => {
                           const Icon = item.icon;
                           return (
@@ -233,7 +234,10 @@ export function AdminLayout({ children, title }) {
                               <NavLink
                                 to={item.to}
                                 className={({ isActive }) =>
-                                  cn(navLinkClassName, isActive && navLinkActiveClassName)
+                                  cn(
+                                    "mx-1.5 flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+                                    isActive && "bg-primary text-primary-foreground hover:bg-primary/90",
+                                  )
                                 }
                                 onClick={() => setMobileOpen(false)}
                               >
@@ -246,10 +250,11 @@ export function AdminLayout({ children, title }) {
                       </nav>
                     </section>
                   ))}
+                  </div>
                 </ScrollArea>
               </SheetContent>
             </Sheet>
-            <h1 className="text-lg font-semibold">{pageTitle}</h1>
+            <h1 className="max-w-[62vw] truncate text-base font-semibold sm:max-w-none sm:text-lg">{pageTitle}</h1>
           </div>
 
           <div className="flex items-center gap-2">
@@ -309,7 +314,7 @@ export function AdminLayout({ children, title }) {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-6">{children}</main>
+        <main className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6">{children}</main>
       </div>
     </div>
   );

@@ -155,46 +155,50 @@ export function WalletTokenLedgerPage() {
           </CardHeader>
           <CardContent>
             <div className="rounded-md border">
-              <div className="grid grid-cols-5 gap-4 border-b bg-muted/40 px-4 py-3 text-sm font-medium">
-                <span>User</span>
-                <span>Type</span>
-                <span>Amount</span>
-                <span>Date</span>
-                <span>Status</span>
-              </div>
-              <div className="px-4">
-                {isLoading && (
-                  <>
-                    <TransactionSkeletonRow />
-                    <TransactionSkeletonRow />
-                    <TransactionSkeletonRow />
-                  </>
-                )}
+              <div className="overflow-x-auto">
+                <div className="min-w-[680px]">
+                  <div className="grid grid-cols-5 gap-4 border-b bg-muted/40 px-4 py-3 text-sm font-medium">
+                    <span className="whitespace-nowrap">User</span>
+                    <span className="whitespace-nowrap">Type</span>
+                    <span className="whitespace-nowrap">Amount</span>
+                    <span className="whitespace-nowrap">Date</span>
+                    <span className="whitespace-nowrap">Status</span>
+                  </div>
+                  <div className="px-4">
+                    {isLoading && (
+                      <>
+                        <TransactionSkeletonRow />
+                        <TransactionSkeletonRow />
+                        <TransactionSkeletonRow />
+                      </>
+                    )}
 
-                {!isLoading && transactions.length === 0 && (
-                  <div className="py-6 text-sm text-muted-foreground">No wallet transactions found.</div>
-                )}
+                    {!isLoading && transactions.length === 0 && (
+                      <div className="py-6 text-sm text-muted-foreground">No wallet transactions found.</div>
+                    )}
 
-                {!isLoading &&
-                  paginatedTransactions.map((transaction) => {
-                    const isCredit = Number(transaction.tokens) > 0;
-                    return (
-                      <div key={transaction.id} className="grid grid-cols-5 gap-4 border-b py-4 last:border-b-0 text-sm">
-                        <span>{transaction.account_username}</span>
-                        <span className="capitalize">{transaction.reason || "adjustment"}</span>
-                        <span className={isCredit ? "text-green-700" : "text-red-700"}>
-                          {isCredit ? "+" : ""}
-                          {transaction.tokens}
-                        </span>
-                        <span>{formatDateTime(transaction.created_at)}</span>
-                        <span>
-                          <Badge variant={isCredit ? "secondary" : "outline"}>
-                            {isCredit ? "Credit" : "Debit"}
-                          </Badge>
-                        </span>
-                      </div>
-                    );
-                  })}
+                    {!isLoading &&
+                      paginatedTransactions.map((transaction) => {
+                        const isCredit = Number(transaction.tokens) > 0;
+                        return (
+                          <div key={transaction.id} className="grid grid-cols-5 items-center gap-4 border-b py-4 text-sm last:border-b-0">
+                            <span>{transaction.account_username}</span>
+                            <span className="capitalize">{transaction.reason || "adjustment"}</span>
+                            <span className={`${isCredit ? "text-green-700" : "text-red-700"} whitespace-nowrap`}>
+                              {isCredit ? "+" : ""}
+                              {transaction.tokens}
+                            </span>
+                            <span className="whitespace-nowrap">{formatDateTime(transaction.created_at)}</span>
+                            <span>
+                              <Badge variant={isCredit ? "secondary" : "outline"}>
+                                {isCredit ? "Credit" : "Debit"}
+                              </Badge>
+                            </span>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
               </div>
             </div>
 
