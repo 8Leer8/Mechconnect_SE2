@@ -389,62 +389,66 @@ export function UserManagementPage() {
             </div>
 
             <div className="rounded-md border">
-              <div className="grid grid-cols-6 gap-4 border-b bg-muted/40 px-4 py-3 text-sm font-medium">
-                <span>Name</span>
-                <span>Email</span>
-                <span>Role</span>
-                <span>Status</span>
-                <span>Last Login</span>
-                <span>Actions</span>
-              </div>
-              <div className="px-4">
-                {isLoading && (
-                  <>
-                    <SkeletonRow />
-                    <SkeletonRow />
-                    <SkeletonRow />
-                  </>
-                )}
+              <div className="overflow-x-auto">
+                <div className="min-w-[860px]">
+                  <div className="grid grid-cols-6 gap-4 border-b bg-muted/40 px-4 py-3 text-sm font-medium">
+                    <span className="whitespace-nowrap">Name</span>
+                    <span className="whitespace-nowrap">Email</span>
+                    <span className="whitespace-nowrap">Role</span>
+                    <span className="whitespace-nowrap">Status</span>
+                    <span className="whitespace-nowrap">Last Login</span>
+                    <span className="whitespace-nowrap">Actions</span>
+                  </div>
+                  <div className="px-4">
+                    {isLoading && (
+                      <>
+                        <SkeletonRow />
+                        <SkeletonRow />
+                        <SkeletonRow />
+                      </>
+                    )}
 
-                {!isLoading && filteredAccounts.length === 0 && (
-                  <div className="py-6 text-sm text-muted-foreground">No accounts found.</div>
-                )}
+                    {!isLoading && filteredAccounts.length === 0 && (
+                      <div className="py-6 text-sm text-muted-foreground">No accounts found.</div>
+                    )}
 
-                {!isLoading &&
-                  paginatedAccounts.map((account) => {
-                    const fullName = [account.firstname, account.lastname].filter(Boolean).join(" ");
-                    const roleLabel = Array.isArray(account.roles) && account.roles.length > 0
-                      ? account.roles.map(formatRoleLabel).join(", ")
-                      : "No role";
+                    {!isLoading &&
+                      paginatedAccounts.map((account) => {
+                        const fullName = [account.firstname, account.lastname].filter(Boolean).join(" ");
+                        const roleLabel = Array.isArray(account.roles) && account.roles.length > 0
+                          ? account.roles.map(formatRoleLabel).join(", ")
+                          : "No role";
 
-                    return (
-                      <div key={account.id} className="grid grid-cols-6 gap-4 border-b py-4 last:border-b-0 text-sm">
-                        <span className="font-medium truncate" title={fullName || account.username}>
-                          {fullName || account.username}
-                        </span>
-                        <span className="truncate" title={account.email}>{account.email}</span>
-                        <span className="truncate" title={roleLabel}>{roleLabel}</span>
-                        <span className="flex items-center gap-2">
-                          <Badge variant={account.is_active ? "secondary" : "destructive"}>
-                            {account.is_active ? "Active" : "Inactive"}
-                          </Badge>
-                          {account.is_verified && <Badge>Verified</Badge>}
-                        </span>
-                        <span>{formatDateTime(account.last_login)}</span>
-                        <span>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="rounded-lg border-primary/35 bg-primary/10 text-primary hover:bg-primary/20"
-                            onClick={() => setSelectedAccount(account)}
-                          >
-                            <Eye className="size-4" />
-                            View Details
-                          </Button>
-                        </span>
-                      </div>
-                    );
-                  })}
+                        return (
+                          <div key={account.id} className="grid grid-cols-6 items-center gap-4 border-b py-4 text-sm last:border-b-0">
+                            <span className="font-medium truncate" title={fullName || account.username}>
+                              {fullName || account.username}
+                            </span>
+                            <span className="truncate" title={account.email}>{account.email}</span>
+                            <span className="truncate" title={roleLabel}>{roleLabel}</span>
+                            <span className="flex items-center gap-2">
+                              <Badge variant={account.is_active ? "secondary" : "destructive"}>
+                                {account.is_active ? "Active" : "Inactive"}
+                              </Badge>
+                              {account.is_verified && <Badge>Verified</Badge>}
+                            </span>
+                            <span className="whitespace-nowrap">{formatDateTime(account.last_login)}</span>
+                            <span>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="rounded-lg border-primary/35 bg-primary/10 text-primary hover:bg-primary/20"
+                                onClick={() => setSelectedAccount(account)}
+                              >
+                                <Eye className="size-4" />
+                                View Details
+                              </Button>
+                            </span>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
               </div>
             </div>
 

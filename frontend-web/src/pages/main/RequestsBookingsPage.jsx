@@ -36,6 +36,9 @@ const STATUS_FILTERS = [
   { key: "disputed", label: "Disputed" },
 ];
 
+const BOOKING_TABLE_GRID_CLASS =
+  "grid items-center gap-4 [grid-template-columns:minmax(120px,1fr)_minmax(130px,1fr)_minmax(190px,1.2fr)_minmax(120px,0.9fr)_minmax(120px,0.8fr)_minmax(150px,1fr)]";
+
 function formatCount(value, isLoading) {
   if (isLoading) {
     return "...";
@@ -104,7 +107,7 @@ function getTableStatusClass(status) {
 
 function BookingSkeletonRow() {
   return (
-    <div className="grid grid-cols-6 gap-4 border-b py-4 last:border-b-0">
+    <div className={`${BOOKING_TABLE_GRID_CLASS} border-b py-4 last:border-b-0`}>
       {Array.from({ length: 6 }).map((_, idx) => (
         <div key={idx} className="h-4 animate-pulse rounded bg-[#2A2C2E]" />
       ))}
@@ -272,55 +275,59 @@ export function RequestsBookingsPage() {
             </div>
 
             <div className="rounded-md border">
-              <div className="grid grid-cols-6 gap-4 border-b bg-muted/40 px-4 py-3 text-sm font-medium">
-                <span>Client</span>
-                <span>Mechanic</span>
-                <span>Date</span>
-                <span>Status</span>
-                <span>Amount</span>
-                <span>Action</span>
-              </div>
-              <div className="px-4">
-                {isLoading && (
-                  <>
-                    <BookingSkeletonRow />
-                    <BookingSkeletonRow />
-                    <BookingSkeletonRow />
-                  </>
-                )}
-
-                {!isLoading && filteredBookings.length === 0 && (
-                  <div className="py-6 text-sm text-muted-foreground">
-                    No {formatTypeLabel(activeRequestType).toLowerCase()} booking records found for the selected status.
+              <div className="overflow-x-auto">
+                <div className="min-w-[980px]">
+                  <div className={`${BOOKING_TABLE_GRID_CLASS} border-b bg-muted/40 px-4 py-3 text-sm font-medium`}>
+                    <span className="whitespace-nowrap">Client</span>
+                    <span className="whitespace-nowrap">Mechanic</span>
+                    <span className="whitespace-nowrap">Date</span>
+                    <span className="whitespace-nowrap">Status</span>
+                    <span className="whitespace-nowrap">Amount</span>
+                    <span className="whitespace-nowrap">Action</span>
                   </div>
-                )}
+                  <div className="px-4">
+                    {isLoading && (
+                      <>
+                        <BookingSkeletonRow />
+                        <BookingSkeletonRow />
+                        <BookingSkeletonRow />
+                      </>
+                    )}
 
-                {!isLoading &&
-                  paginatedBookings.map((booking) => (
-                    <div key={booking.id} className="grid grid-cols-6 gap-4 border-b py-4 last:border-b-0 text-sm">
-                      <span>{booking.client_username || "—"}</span>
-                      <span>{booking.provider_username || booking.shop_name || "—"}</span>
-                      <span>{formatDateTime(booking.booked_at)}</span>
-                      <span>
-                        <Badge variant="outline" className={`capitalize ${getTableStatusClass(booking.status)}`}>
-                          {formatTypeLabel(booking.status)}
-                        </Badge>
-                      </span>
-                      <span>{booking.amount_fee ? `PHP ${Number(booking.amount_fee).toLocaleString()}` : "—"}</span>
-                      <span>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="rounded-lg border-primary/35 bg-primary/10 text-primary hover:bg-primary/20"
-                          onClick={() => setSelectedBooking(booking)}
-                        >
-                          <Eye className="size-4" />
-                          View Details
-                        </Button>
-                      </span>
-                    </div>
-                  ))}
+                    {!isLoading && filteredBookings.length === 0 && (
+                      <div className="py-6 text-sm text-muted-foreground">
+                        No {formatTypeLabel(activeRequestType).toLowerCase()} booking records found for the selected status.
+                      </div>
+                    )}
+
+                    {!isLoading &&
+                      paginatedBookings.map((booking) => (
+                        <div key={booking.id} className={`${BOOKING_TABLE_GRID_CLASS} border-b py-4 text-sm last:border-b-0`}>
+                          <span className="truncate" title={booking.client_username || "—"}>{booking.client_username || "—"}</span>
+                          <span className="truncate" title={booking.provider_username || booking.shop_name || "—"}>{booking.provider_username || booking.shop_name || "—"}</span>
+                          <span className="whitespace-nowrap">{formatDateTime(booking.booked_at)}</span>
+                          <span>
+                            <Badge variant="outline" className={`inline-flex whitespace-nowrap capitalize ${getTableStatusClass(booking.status)}`}>
+                              {formatTypeLabel(booking.status)}
+                            </Badge>
+                          </span>
+                          <span className="whitespace-nowrap">{booking.amount_fee ? `PHP ${Number(booking.amount_fee).toLocaleString()}` : "—"}</span>
+                          <span>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="w-fit whitespace-nowrap rounded-lg border-primary/35 bg-primary/10 text-primary hover:bg-primary/20"
+                              onClick={() => setSelectedBooking(booking)}
+                            >
+                              <Eye className="size-4" />
+                              View Details
+                            </Button>
+                          </span>
+                        </div>
+                      ))}
+                  </div>
+                </div>
               </div>
             </div>
 
