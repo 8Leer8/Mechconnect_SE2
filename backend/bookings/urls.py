@@ -1,5 +1,11 @@
 from django.urls import path
 from . import views
+from .views.admin import (
+    admin_booking_overview,
+    admin_list_disputes,
+    admin_list_bookings,
+    admin_list_requests,
+)
 
 urlpatterns = [
     path('home/', views.home_page, name='home-page'),
@@ -72,4 +78,12 @@ urlpatterns = [
     path('requests/<int:request_id>/assignments/add/', views.assign_mechanic, name='assign-mechanic'),
     path('requests/<int:request_id>/assignments/<int:assignment_id>/remove/', views.unassign_mechanic, name='unassign-mechanic'),
     path('requests/<int:request_id>/assignments/<int:assignment_id>/role/', views.update_assignment_role, name='update-assignment-role'),
+]
+
+#Admin Urls
+admin_urlpatterns = [
+    path('overview/', admin_booking_overview, name='admin-booking-overview'),
+    path('disputes/', admin_list_disputes, name='admin-list-disputes'),
+    path('list/', admin_list_bookings, name='admin-list-bookings'),
+    path('requests/', admin_list_requests, name='admin-list-requests'),
 ]

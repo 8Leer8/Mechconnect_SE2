@@ -88,15 +88,63 @@ class Specialty(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
 class MechanicSpecialty(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+    class SourceType(models.TextChoices):
+        CERTIFICATION = "certification", "Certification"
+        LICENSE = "license", "License"
+        TRAINING = "training", "Training"
+        EXPERIENCE = "experience", "Work Experience"
+        OTHER = "other", "Other"    
     mechanic = models.ForeignKey(Mechanic, on_delete=models.CASCADE)
     specialty = models.ForeignKey(Specialty, on_delete=models.CASCADE)
-    created_at = models.DateTimeField(auto_now_add=True)
-
+    # Proof source
+    source_type = models.CharField(max_length=50, choices=SourceType.choices, default=SourceType.OTHER, help_text="Type of proof showing the mechanic's expertise.")
+    proof_document = models.FileField(upload_to="mechanics/specialty_docs/", null=True, blank=True, help_text="Upload certificate, license, or supporting document.")
+    source_description = models.TextField(null=True, blank=True, help_text="Explanation of the mechanic's experience or training.")
+    # Admin review fields
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+    rejection_reason = models.TextField(null=True, blank=True)
+    requested_at = models.DateTimeField(auto_now_add=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    class Meta:
+        unique_together = ('mechanic', 'specialty')
+    def clean(self):
+        if self.status == self.Status.REJECTED and not self.rejection_reason:
+            raise ValidationError("Rejection reason is required when rejecting a specialty.")
+    def __str__(self):
+        return f"{self.mechanic} - {self.specialty} ({self.status})"
 class ShopSpecialty(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+    class SourceType(models.TextChoices):
+        CERTIFICATION = "certification", "Certification"
+        LICENSE = "license", "License"
+        TRAINING = "training", "Training"
+        EXPERIENCE = "experience", "Work Experience"
+        OTHER = "other", "Other"
     shop = models.ForeignKey(Shop, on_delete=models.CASCADE)
     specialty = models.ForeignKey(Specialty, on_delete=models.CASCADE)
-    created_at = models.DateTimeField(auto_now_add=True)
-
+    # Proof source
+    source_type = models.CharField(max_length=50, choices=SourceType.choices, default=SourceType.OTHER)
+    proof_document = models.FileField(upload_to="shops/specialty_docs/", null=True, blank=True)
+    source_description = models.TextField(null=True, blank=True)
+    # Admin review fields
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+    rejection_reason = models.TextField(null=True, blank=True)
+    requested_at = models.DateTimeField(auto_now_add=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    class Meta:
+        unique_together = ('shop', 'specialty')
+    def clean(self):
+        if self.status == self.Status.REJECTED and not self.rejection_reason:
+            raise ValidationError("Rejection reason is required when rejecting a specialty.")
+    def __str__(self):
+        return f"{self.shop} - {self.specialty} ({self.status})"
 class Tag(models.Model):
     name = models.CharField(max_length=50)
     created_at = models.DateTimeField(auto_now_add=True)

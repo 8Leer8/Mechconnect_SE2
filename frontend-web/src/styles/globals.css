@@ -1,0 +1,190 @@
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap");
+
+@import "tw-animate-css";
+
+@import "shadcn/tailwind.css";
+
+@import "@fontsource-variable/geist";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-heading: "Space Grotesk", "Segoe UI", sans-serif;
+  --font-body: "Outfit", "Segoe UI", sans-serif;
+
+  --ink-900: #151718;
+  --ink-700: #3f4550;
+  --ink-500: #5f6773;
+
+  --sand-100: #f6f8fb;
+  --sand-200: #eff2f5;
+  --paper: #ffffff;
+
+  --teal-700: #0a7ea4;
+  --teal-600: #0a7ea4;
+  --teal-100: #0a7ea433;
+
+  --amber-500: #ff8c00;
+  --rose-600: #ff453a;
+
+  --line: #d8dde5;
+  --shadow-soft: 0 16px 40px rgba(15, 23, 42, 0.12);
+  --shadow-card: 0 10px 24px rgba(15, 23, 42, 0.09);
+  --app-background:
+    radial-gradient(circle at 14% 20%, #0a7ea418 0, #0a7ea400 38%),
+    radial-gradient(circle at 82% 10%, #ff8c0015 0, #ff8c0000 44%),
+    linear-gradient(160deg, #f8fafc, #f1f5f9 45%, #eef2f7 100%);
+}
+
+.dark {
+  --ink-900: #ecedee;
+  --ink-700: #c8cdd2;
+  --ink-500: #8e8e93;
+  --sand-100: #111214;
+  --sand-200: #1a1c1e;
+  --paper: #1a1c1e;
+  --line: #2a2c2e;
+  --shadow-soft: 0 16px 40px rgba(0, 0, 0, 0.32);
+  --shadow-card: 0 10px 24px rgba(0, 0, 0, 0.28);
+  --app-background:
+    radial-gradient(circle at 14% 20%, #0a7ea42b 0, #0a7ea400 40%),
+    radial-gradient(circle at 82% 10%, #ff8c0024 0, #ff8c0000 48%),
+    linear-gradient(160deg, #111214, #151718 45%, #111214 100%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  color: var(--ink-900);
+  background: var(--app-background);
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-family: var(--font-heading);
+  letter-spacing: -0.02em;
+}
+
+p {
+  margin: 0;
+}
+
+button,
+input {
+  font-family: inherit;
+}
+
+.route-loading-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.route-loading-card {
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  box-shadow: var(--shadow-card);
+  color: var(--ink-700);
+  font-weight: 500;
+  padding: 20px 24px;
+}
+
+@layer base {
+  :root {
+    --background: 210 33% 98%;
+    --foreground: 224 19% 13%;
+    --card: 0 0% 100%;
+    --card-foreground: 224 19% 13%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 224 19% 13%;
+    --primary: 33 100% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 22% 94%;
+    --secondary-foreground: 224 19% 18%;
+    --muted: 210 18% 95%;
+    --muted-foreground: 220 10% 42%;
+    --accent: 195 88% 34%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 4 100% 61%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214 20% 88%;
+    --input: 214 20% 88%;
+    --ring: 33 100% 50%;
+    --chart-1: oklch(0.809 0.105 251.813);
+    --chart-2: oklch(0.623 0.214 259.815);
+    --chart-3: oklch(0.546 0.245 262.881);
+    --chart-4: oklch(0.488 0.243 264.376);
+    --chart-5: oklch(0.424 0.199 265.638);
+    --radius: 0.625rem;
+    --sidebar: 0 0% 100%;
+    --sidebar-foreground: 224 19% 13%;
+    --sidebar-primary: 33 100% 50%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 210 18% 95%;
+    --sidebar-accent-foreground: 224 19% 13%;
+    --sidebar-border: 214 20% 88%;
+    --sidebar-ring: 33 100% 50%;
+  }
+  .dark {
+    --background: 220 7% 7%;
+    --foreground: 210 9% 93%;
+    --card: 220 7% 11%;
+    --card-foreground: 210 9% 93%;
+    --popover: 220 7% 11%;
+    --popover-foreground: 210 9% 93%;
+    --primary: 33 100% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 6% 15%;
+    --secondary-foreground: 210 9% 93%;
+    --muted: 220 6% 17%;
+    --muted-foreground: 220 4% 57%;
+    --accent: 195 88% 34%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 4 100% 61%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 6% 17%;
+    --input: 220 6% 17%;
+    --ring: 33 100% 50%;
+    --chart-1: oklch(0.809 0.105 251.813);
+    --chart-2: oklch(0.623 0.214 259.815);
+    --chart-3: oklch(0.546 0.245 262.881);
+    --chart-4: oklch(0.488 0.243 264.376);
+    --chart-5: oklch(0.424 0.199 265.638);
+    --sidebar: 220 7% 7%;
+    --sidebar-foreground: 210 9% 93%;
+    --sidebar-primary: 33 100% 50%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 6% 15%;
+    --sidebar-accent-foreground: 210 9% 93%;
+    --sidebar-border: 220 6% 17%;
+    --sidebar-ring: 33 100% 50%;
+  }
+  .theme {
+    --font-sans: 'Geist Variable', sans-serif;
+  }
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}

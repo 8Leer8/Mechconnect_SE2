@@ -1,0 +1,123 @@
+.admin-shell {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 28px;
+  animation: dashboard-reveal 500ms ease-out;
+}
+
+.admin-topbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.admin-kicker {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--teal-700);
+  margin-bottom: 8px;
+  font-weight: 700;
+}
+
+.admin-title {
+  font-size: clamp(1.6rem, 3.6vw, 2.5rem);
+}
+
+.admin-meta {
+  color: var(--ink-700);
+  margin-top: 8px;
+}
+
+.admin-logout {
+  border: none;
+  border-radius: 12px;
+  background: #f6e5d2;
+  color: #7d4b17;
+  font-weight: 700;
+  padding: 11px 14px;
+  cursor: pointer;
+  transition: transform 0.18s ease;
+}
+
+.admin-logout:hover {
+  transform: translateY(-1px);
+}
+
+.admin-intro-card {
+  margin-top: 24px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: linear-gradient(130deg, #fff9f2, #f9f4eb);
+  box-shadow: var(--shadow-card);
+  padding: 22px;
+}
+
+.admin-intro-card h2 {
+  font-size: 1.3rem;
+  margin-bottom: 10px;
+}
+
+.admin-intro-card p {
+  color: var(--ink-700);
+  line-height: 1.55;
+}
+
+.admin-grid {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.admin-grid-card {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fffdf8;
+  box-shadow: var(--shadow-card);
+  padding: 16px;
+}
+
+.admin-grid-card h3 {
+  font-size: 1.02rem;
+  margin-bottom: 8px;
+}
+
+.admin-grid-card p {
+  color: var(--ink-500);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+@keyframes dashboard-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 940px) {
+  .admin-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 700px) {
+  .admin-shell {
+    padding: 16px;
+  }
+
+  .admin-topbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .admin-grid {
+    grid-template-columns: 1fr;
+  }
+}
