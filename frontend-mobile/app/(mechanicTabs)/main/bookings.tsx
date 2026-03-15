@@ -99,6 +99,7 @@ export default function BookingsScreen() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
+  const [allCache, setAllCache] = useState<Booking[] | null>(null);
   const pageSize = 5;
   const { lastMessage } = useWebSocketContext();
   const dividerColor = useThemeColor({}, 'icon');
@@ -164,11 +165,13 @@ export default function BookingsScreen() {
         fetchCounts();
       }
 
-      // Map tab to backend status query
+      // Map tab to backend status query. For the 'reworked' tab ask the backend
+      // for the dedicated 'reworked' filter so backjob entries are returned.
       let statusQuery: string;
       if (activeTab === 'all') statusQuery = 'all';
       else if (activeTab === 'booked') statusQuery = 'accepted';
-      else if (activeTab === 'on_going') statusQuery = 'on_going';
+      else if (activeTab === 'on_going') statusQuery = 'on_the_way';
+      else if (activeTab === 'reworked') statusQuery = 'reworked';
       else statusQuery = activeTab;
 
       // Single paginated call — same pattern as client side
@@ -182,7 +185,15 @@ export default function BookingsScreen() {
       );
       if (!response.ok) throw new Error(`Failed to fetch ${activeTab} bookings`);
       const data = (await response.json()) as MechanicPaginatedResponse;
-      setBookings(data.bookings || []);
+      // When viewing reworked tab, use the backend's reworked response directly.
+      if (activeTab === 'reworked') {
+        const candidates = data.bookings || [];
+        setBookings(candidates);
+        // cache the full list for reference
+        setAllCache(data.bookings || []);
+      } else {
+        setBookings(data.bookings || []);
+      }
       setTotalCount(data.total_count || 0);
       setTotalPages(data.total_pages || 1);
 
@@ -208,6 +219,8 @@ export default function BookingsScreen() {
     }
   };
 
+  // server now provides `has_backjob` in booking responses; no per-booking checks needed
+
   const fetchData = useCallback(() => {
     fetchBookings();
     fetchCounts();
@@ -222,10 +235,8 @@ export default function BookingsScreen() {
 
   // Re-fetch when a WebSocket booking update arrives
   useEffect(() => {
-    if (
-      lastMessage?.type === 'booking_update' &&
-      ['accepted', 'on_the_way', 'active', 'paused', 'pending_payment', 'completed', 'cancelled', 'reworked', 'disputed'].includes(String(lastMessage?.status || ''))
-    ) {
+    if (lastMessage?.type === 'booking_update') {
+      // refresh list on any booking-related websocket event (includes new chat messages/backjob requests)
       fetchData();
     }
   }, [lastMessage, fetchData]);
@@ -511,6 +522,15 @@ export default function BookingsScreen() {
                         <View style={[styles.statusBadge, { backgroundColor: getStatusColor(booking.status) }]}> 
                           <ThemedText style={styles.statusText}>{getStatusLabel(booking.status)}</ThemedText>
                         </View>
+                                        { (booking as any).has_backjob && booking.status === 'completed' ? (
+                                          <View style={styles.backjobBadge}>
+                                            <ThemedText style={styles.backjobText}>Reworked</ThemedText>
+                                          </View>
+                                        ) : (booking as any).has_backjob ? (
+                                          <View style={styles.backjobBadge}>
+                                            <ThemedText style={styles.backjobText}>Backjob</ThemedText>
+                                          </View>
+                                        ) : null}
                         <ThemedText style={styles.bookingId}>#{booking.id}</ThemedText>
                       </View>
                       <ThemedText style={styles.requestType}>
@@ -587,13 +607,23 @@ export default function BookingsScreen() {
                       </TouchableOpacity>
                     </View>
                   ) : (booking.status === 'accepted' || booking.status === 'on_the_way' || booking.status === 'active' || booking.status === 'paused' || booking.status === 'completed' || booking.status === 'reworked' || booking.status === 'pending_payment') ? (
-                    <TouchableOpacity
-                      style={styles.detailsBtn}
-                      onPress={() => handleViewDetails(booking)}
-                    >
-                      <ThemedText style={styles.detailsBtnText}>Details</ThemedText>
-                      <FontAwesome name="chevron-right" size={11} color="#FF8C00" />
-                    </TouchableOpacity>
+                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                      <TouchableOpacity
+                        style={styles.detailsBtn}
+                        onPress={() => handleViewDetails(booking)}
+                      >
+                        <ThemedText style={styles.detailsBtnText}>Details</ThemedText>
+                        <FontAwesome name="chevron-right" size={11} color="#FF8C00" />
+                      </TouchableOpacity>
+                      { (booking as any).has_backjob && !((booking as any).backjob && (booking as any).backjob.status === 'accepted') && (
+                        <TouchableOpacity
+                          style={styles.chatBtn}
+                          onPress={() => router.push({ pathname: '/chat/booking_chat', params: { bookingId: String(booking.id) } })}
+                        >
+                          <ThemedText style={styles.chatBtnText}>Open Chat</ThemedText>
+                        </TouchableOpacity>
+                      )}
+                    </View>
                   ) : null}
                 </View>
 

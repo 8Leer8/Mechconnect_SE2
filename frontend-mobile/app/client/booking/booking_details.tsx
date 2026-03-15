@@ -1,13 +1,16 @@
 import React, { useEffect, useState, useCallback } from 'react';
 // Ensure the router header is hidden for this route so only the in-page header shows
 export const screenOptions = { headerShown: false } as const;
-import {View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Linking, Platform } from 'react-native';
+import {View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Linking, Platform, Modal, TextInput, KeyboardAvoidingView } from 'react-native';
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/client/bookingDetailsStyles';
 import { SkeletonDetailPage } from '@/components/skeletons/SkeletonLoaders';
+import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -67,6 +70,14 @@ interface BookingDetail {
     created_at: string;
     completed_at: string | null;
   };
+  has_backjob?: boolean;
+  backjob?: {
+    id: number;
+    status: string;
+    reason?: string | null;
+    images?: string[];
+    requested_by?: { id: number; name: string } | null;
+  } | null;
 }
 
 export default function ClientBookingDetailScreen() {
@@ -78,6 +89,9 @@ export default function ClientBookingDetailScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [timer, setTimer] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
+  const [backjobModalVisible, setBackjobModalVisible] = useState(false);
+  const [backjobReason, setBackjobReason] = useState('');
+  const [backjobImage, setBackjobImage] = useState<string | null>(null);
 
   // Derive display quotation: prefer booking.quotation (from API) otherwise build from request.request_details
   const getDisplayQuotation = () => {
@@ -285,6 +299,25 @@ export default function ClientBookingDetailScreen() {
     Linking.canOpenURL(url).then((ok) => Linking.openURL(ok ? url : fallback));
   };
 
+  const pickBackjobImage = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') return;
+      const result = await ImagePicker.launchImageLibraryAsync({ allowsEditing: true, quality: 0.8 });
+      if (!result.canceled && result.assets && result.assets[0]) {
+        setBackjobImage(result.assets[0].uri);
+      }
+    } catch (e) {
+      // ignore for UI-only change
+    }
+  };
+
+  const openChatWithMechanic = () => {
+    if (!booking) return;
+    router.push({ pathname: '/chat/booking_chat', params: { bookingId: String(booking.id) } });
+    setBackjobModalVisible(false);
+  };
+
   if (loading) {
     return (
       <ThemedView style={styles.container}>
@@ -345,6 +378,20 @@ export default function ClientBookingDetailScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF8C00" />
         }
       >
+        {/* Backjob Banner */}
+        {booking.has_backjob && booking.backjob && (
+          <View style={styles.backjobBanner}>
+            <FontAwesome name="wrench" size={14} color="#fff" />
+            <ThemedText style={styles.backjobText}>
+              {booking.backjob.status === 'accepted' ? 'Backjob — Accepted' : 'Backjob Request'}
+            </ThemedText>
+            {booking.backjob.reason ? (
+              <ThemedText style={styles.backjobReason} numberOfLines={2} ellipsizeMode="tail">
+                {booking.backjob.reason}
+              </ThemedText>
+            ) : null}
+          </View>
+        )}
         {/* Status Card */}
         <View style={[styles.statusCard, { borderColor: getStatusColor(booking.status) + '40' }]}>
           <View style={[styles.statusIconLarge, { backgroundColor: getStatusColor(booking.status) + '20' }]}>
@@ -631,6 +678,20 @@ export default function ClientBookingDetailScreen() {
           </View>
         )}
 
+        {/* Request Backjob button (placed under Timeline) */}
+        {booking.status === 'completed' && (
+          <View style={{ paddingHorizontal: 16, marginTop: 12 }}>
+            <TouchableOpacity
+              style={[styles.navigateButton, { flexDirection: 'row', justifyContent: 'center' }]}
+              onPress={() => setBackjobModalVisible(true)}
+              activeOpacity={0.85}
+            >
+              <FontAwesome name="wrench" size={16} color="#FF8C00" />
+              <ThemedText style={{ color: '#FF8C00', fontWeight: '700', marginLeft: 10 }}>Request Backjob</ThemedText>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Completion Details */}
         {booking.status === 'completed' && booking.completion_details && (
           <View style={styles.sectionCard}>
@@ -653,6 +714,7 @@ export default function ClientBookingDetailScreen() {
                   <ThemedText style={styles.noteText}>{booking.completion_details.notes}</ThemedText>
                 </View>
               )}
+              
             </View>
           </View>
         )}
@@ -708,6 +770,96 @@ export default function ClientBookingDetailScreen() {
             </View>
           </View>
         )}
+
+        {/* Backjob Request Modal (UI) */}
+        <Modal visible={backjobModalVisible} animationType="slide" transparent={true} onRequestClose={() => setBackjobModalVisible(false)}>
+          <View style={styles.modalOverlay}>
+            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, justifyContent: 'flex-end' }}>
+              <View style={styles.modalBox}>
+                <View style={styles.modalHeader}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <FontAwesome name="wrench" size={18} color="#FF8C00" />
+                    <ThemedText style={styles.modalTitle}>Request Backjob</ThemedText>
+                  </View>
+                  <TouchableOpacity onPress={() => setBackjobModalVisible(false)}>
+                    <FontAwesome name="times" size={20} color="#8E8E93" />
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.modalContent}>
+                  <ThemedText style={{ color: '#8E8E93', marginBottom: 8 }}>Please provide a reason and an optional image to help the mechanic understand the issue.</ThemedText>
+                  <TextInput
+                    style={styles.textArea}
+                    placeholder="Reason for backjob..."
+                    placeholderTextColor="#6C6C70"
+                    multiline
+                    numberOfLines={3}
+                    value={backjobReason}
+                    onChangeText={setBackjobReason}
+                  />
+
+                  <View style={{ height: 12 }} />
+                  {backjobImage ? (
+                    <View style={styles.imagePreviewContainer}>
+                      <Image source={{ uri: backjobImage }} style={styles.previewImage} />
+                      <TouchableOpacity style={styles.removeImageBtn} onPress={() => setBackjobImage(null)}>
+                        <FontAwesome name="times-circle" size={28} color="#FF3B30" />
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <TouchableOpacity style={styles.addPhotoBtn} onPress={pickBackjobImage}>
+                      <FontAwesome name="camera" size={28} color="#8E8E93" />
+                      <ThemedText style={styles.addPhotoText}>Add Photo</ThemedText>
+                    </TouchableOpacity>
+                  )}
+
+                  <View style={{ height: 12 }} />
+                  <View style={{ flexDirection: 'row', gap: 12 }}>
+                    <TouchableOpacity style={[styles.cancelBtn, { flex: 1 }]} onPress={() => setBackjobModalVisible(false)}>
+                      <ThemedText style={styles.cancelBtnText}>Cancel</ThemedText>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.sendBtn, { flex: 1 }]}
+                      onPress={async () => {
+                        // submit backjob then open chat
+                        try {
+                          const form = new FormData();
+                          if (backjobReason && backjobReason.trim()) form.append('reason', backjobReason.trim());
+                          if (backjobImage) {
+                            const response = await fetch(backjobImage);
+                            const blob = await response.blob();
+                            const filename = backjobImage.split('/').pop() || 'photo.jpg';
+                            // @ts-ignore
+                            form.append('images', { uri: backjobImage, name: filename, type: blob.type });
+                          }
+                          const headers: any = {};
+                          try {
+                            const token = await AsyncStorage.getItem('auth_token');
+                            if (token) headers['Authorization'] = `Bearer ${token}`;
+                          } catch (e) {}
+                          await fetch(`${API_URL}/chat/booking/${booking?.id}/backjob/`, {
+                            method: 'POST',
+                            headers,
+                            credentials: 'include',
+                            body: form as any,
+                          });
+                        } catch (e) {
+                          // ignore UI-only errors for now
+                        } finally {
+                          setBackjobModalVisible(false);
+                          openChatWithMechanic();
+                        }
+                      }}
+                    >
+                      <FontAwesome name="comments" size={14} color="#FFFFFF" />
+                      <ThemedText style={styles.sendBtnText}>Chat with Mechanic</ThemedText>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            </KeyboardAvoidingView>
+          </View>
+        </Modal>
 
         <View style={{ height: 40 }} />
       </ScrollView>

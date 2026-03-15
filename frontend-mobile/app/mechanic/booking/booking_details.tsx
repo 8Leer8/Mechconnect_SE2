@@ -72,6 +72,14 @@ interface BookingDetail {
     username?: string;
     email?: string;
   };
+  has_backjob?: boolean;
+  backjob?: {
+    id: number;
+    status: string;
+    reason?: string | null;
+    images?: string[];
+    requested_by?: { id: number; name: string } | null;
+  } | null;
 }
 
 export default function BookingDetailScreen() {
@@ -760,6 +768,20 @@ export default function BookingDetailScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF8C00" />
         }
       >
+        {/* Backjob Banner */}
+        {booking?.has_backjob && booking.backjob && (
+          <View style={styles.backjobBanner}>
+            <FontAwesome name="wrench" size={14} color="#fff" />
+            <ThemedText style={styles.backjobText}>
+              {booking.backjob.status === 'accepted' ? 'Backjob — Accepted' : 'Backjob Request'}
+            </ThemedText>
+            {booking.backjob.reason ? (
+              <ThemedText style={styles.backjobReason} numberOfLines={2} ellipsizeMode="tail">
+                {booking.backjob.reason}
+              </ThemedText>
+            ) : null}
+          </View>
+        )}
         {/* Status Card */}
         <View style={[styles.statusCard, { borderColor: getStatusColor(booking.status) + '40' }]}>
           <View style={[styles.statusIconLarge, { backgroundColor: getStatusColor(booking.status) + '20' }]}>

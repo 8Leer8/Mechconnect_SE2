@@ -144,6 +144,29 @@ class Receipt(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 
+class Backjob(models.Model):
+    """
+    Represents a client's request for a backjob (follow-up work) tied to an existing Booking.
+    Keeps backjob lifecycle separate from the primary Booking while allowing reuse of
+    similar status values and independent metadata (reason, images, requester).
+    """
+    booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name='backjob')
+    # Reuse Booking.Status choices so backjob states mirror booking states (accepted, on_the_way, active, etc.)
+    status = models.CharField(max_length=30, choices=Booking.Status.choices, default=Booking.Status.ACCEPTED)
+    requested_by = models.ForeignKey(Account, on_delete=models.SET_NULL, null=True, blank=True, related_name='requested_backjobs')
+    reason = models.TextField(null=True, blank=True)
+    # Store uploaded image URLs or relative paths as JSON list
+    images = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Backjob({self.id}) for Booking {self.booking_id} - {self.status}"
+
+
 class Quotation(models.Model):
     """An editable quotation attached to a Booking created/updated by the mechanic.
     Acts like a receipt but editable while the mechanic is on-site."""
