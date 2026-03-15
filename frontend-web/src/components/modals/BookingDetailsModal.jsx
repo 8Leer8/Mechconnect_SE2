@@ -132,13 +132,8 @@ function buildMapUrls(latitude, longitude) {
     return { embedUrl: "", openUrl: "" };
   }
 
-  const delta = 0.012;
-  const left = longitude - delta;
-  const right = longitude + delta;
-  const bottom = latitude - delta;
-  const top = latitude + delta;
-  const embedUrl = `https://www.openstreetmap.org/export/embed.html?bbox=${left}%2C${bottom}%2C${right}%2C${top}&layer=mapnik&marker=${latitude}%2C${longitude}`;
-  const openUrl = `https://www.openstreetmap.org/?mlat=${latitude}&mlon=${longitude}#map=16/${latitude}/${longitude}`;
+  const embedUrl = `https://maps.google.com/maps?q=${latitude},${longitude}&z=16&output=embed`;
+  const openUrl = `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;
 
   return { embedUrl, openUrl };
 }
