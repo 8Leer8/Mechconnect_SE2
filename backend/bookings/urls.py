@@ -55,6 +55,7 @@ urlpatterns = [
     path('mechanic/bookings/<int:booking_id>/quotation/', views.mechanic_booking_quotation, name='mechanic-booking-quotation'),
     path('mechanic/bookings/<int:booking_id>/revert-stage/', views.mechanic_revert_stage, name='mechanic-revert-stage'),
     path('mechanic/bookings/<int:booking_id>/cancel-booking/', views.mechanic_cancel_booking, name='mechanic-cancel-booking'),
+    path('mechanic/bookings/<int:booking_id>/accept-backjob/', views.mechanic_accept_backjob, name='mechanic-accept-backjob'),
     path('mechanic/requests/<int:request_id>/accept/', views.mechanic_accept_direct_request, name='mechanic-accept-direct-request'),
     path('mechanic/requests/<int:request_id>/decline/', views.mechanic_decline_direct_request, name='mechanic-decline-direct-request'),
     path('mechanic/emergency/<int:request_id>/accept/', views.mechanic_accept_emergency_request, name='mechanic-accept-emergency-request'),

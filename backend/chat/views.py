@@ -9,8 +9,13 @@ from .serializers import ConversationSerializer, MessageSerializer
 from users.models import Account
 from django.db.models import Prefetch
 from bookings.models import Booking
+from bookings.models import Backjob
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
+import json
+from django.core.files.storage import default_storage
+from django.core.files.base import ContentFile
+from django.conf import settings
 
 
 def get_current_account(request):
@@ -127,6 +132,124 @@ def create_conversation(request):
     conv.participants.add(*Account.objects.filter(id__in=participant_ids))
     conv.save()
     serializer = ConversationSerializer(conv)
+    return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def request_backjob(request, booking_id):
+    """
+    Create a backjob request for a booking: saves optional images and posts a structured
+    system-style message into the booking conversation so both client and mechanic see it.
+    Accepts multipart form with fields: reason (optional), images[] (optional file inputs).
+    """
+    account = get_current_account(request)
+    if not account:
+        return Response({'detail': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    # Ensure booking exists and requester is participant (reuse logic similar to conversation_for_booking)
+    try:
+        booking = Booking.objects.select_related('request', 'request__client', 'request__provider', 'request__shop').get(id=booking_id)
+    except Booking.DoesNotExist:
+        return Response({'detail': 'Booking not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    permitted = False
+    try:
+        client_account = booking.request.client.account
+        if client_account and client_account.id == account.id:
+            permitted = True
+    except Exception:
+        pass
+    if not permitted and booking.request.provider and booking.request.provider.id == account.id:
+        permitted = True
+    try:
+        if not permitted and booking.request.shop and booking.request.shop.shop_owner and booking.request.shop.shop_owner.account.id == account.id:
+            permitted = True
+    except Exception:
+        pass
+    if not permitted:
+        return Response({'detail': 'Not permitted'}, status=status.HTTP_403_FORBIDDEN)
+
+    # Get or create conversation for this booking
+    conv = Conversation.objects.filter(booking_id=booking_id).first()
+    if not conv:
+        conv = Conversation.objects.create(title=f'Booking {booking_id}', booking_id=booking_id)
+        # add participants: client, provider (if exists), shop owner if exists
+        try:
+            if booking.request.client and booking.request.client.account:
+                conv.participants.add(booking.request.client.account)
+        except Exception:
+            pass
+        try:
+            if booking.request.provider:
+                conv.participants.add(booking.request.provider)
+        except Exception:
+            pass
+        try:
+            if booking.request.shop and booking.request.shop.shop_owner and booking.request.shop.shop_owner.account:
+                conv.participants.add(booking.request.shop.shop_owner.account)
+        except Exception:
+            pass
+        conv.participants.add(account)
+        conv.save()
+
+    # Save uploaded images
+    image_urls = []
+    files = request.FILES.getlist('images') if hasattr(request, 'FILES') else []
+    for f in files:
+        # store under media/backjob_images/<booking_id>/
+        path = f'backjob_images/{booking_id}/{f.name}'
+        saved_path = default_storage.save(path, ContentFile(f.read()))
+        try:
+            url = request.build_absolute_uri(default_storage.url(saved_path))
+        except Exception:
+            url = default_storage.url(saved_path)
+        image_urls.append(url)
+
+    reason = request.data.get('reason') or ''
+
+    payload = {
+        'type': 'backjob_request',
+        'requested_by': getattr(account, 'id', None),
+        'requested_by_name': f"{getattr(account, 'firstname', '')} {getattr(account, 'lastname', '')}".strip(),
+        'reason': reason,
+        'images': image_urls,
+    }
+
+    msg = Message.objects.create(conversation=conv, sender=account, content=json.dumps(payload))
+    conv.save()
+    serializer = MessageSerializer(msg, context={'request': request})
+
+    # Create or update Backjob record for this booking
+    try:
+        Backjob.objects.update_or_create(
+            booking=booking,
+            defaults={
+                'requested_by': account,
+                'reason': reason,
+                'images': image_urls,
+                'status': Booking.Status.REWORKED,
+            },
+        )
+    except Exception:
+        # don't block message creation if backjob record fails
+        pass
+
+    # broadcast to participants groups (except sender)
+    try:
+        channel_layer = get_channel_layer()
+        payload_ws = {
+            'type': 'booking_update',
+            'action': 'new_chat_message',
+            'conversation_id': conv.id,
+            'message': serializer.data,
+        }
+        for participant in conv.participants.exclude(id=account.id).all():
+            group_name = f'user_{participant.id}'
+            async_to_sync(channel_layer.group_send)(group_name, payload_ws)
+    except Exception:
+        pass
+
     return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 

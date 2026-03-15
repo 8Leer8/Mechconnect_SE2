@@ -29,6 +29,28 @@ export const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#fff',
   },
+  backjobBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FF8C00',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    marginHorizontal: 16,
+    marginBottom: 12,
+  },
+  backjobText: {
+    color: '#fff',
+    fontWeight: '700',
+    marginLeft: 4,
+  },
+  backjobReason: {
+    color: '#FFF7EA',
+    marginLeft: 8,
+    flex: 1,
+    fontSize: 12,
+  },
   refreshBtn: {
     width: 40,
     height: 40,
