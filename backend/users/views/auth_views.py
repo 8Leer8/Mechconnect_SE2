@@ -3,18 +3,21 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 from django.utils import timezone
-from django.core.mail import send_mail
 from django.conf import settings
 import random
-from datetime import timedelta
+import logging
+from datetime import datetime, timedelta
+from urllib.parse import urlencode
 
 from ..models import Account, AccountRole, EmailVerification
 from ..serializers import (
     RegisterSerializer, LoginSerializer, AccountSerializer
 )
 import jwt
-from django.conf import settings
-from datetime import datetime, timedelta
+from utils.email import build_verification_email_html, send_html_email
+
+
+logger = logging.getLogger(__name__)
 
 
 @api_view(['POST'])
@@ -208,40 +211,51 @@ def send_verification_code(request):
         expires_at=expires_at
     )
     
+    first_name = (
+        request.data.get('firstname')
+        or request.data.get('first_name')
+        or 'there'
+    )
+    verification_base_url = getattr(
+        settings,
+        'FRONTEND_VERIFY_EMAIL_URL',
+        f"{request.scheme}://{request.get_host()}/verify-email",
+    )
+    verification_url = f"{verification_base_url}?{urlencode({'email': email, 'code': verification_code})}"
+
     # Send email
     try:
-        subject = 'MechConnect - Email Verification Code'
-        message = f'''
-Hello,
-
-Your verification code for MechConnect registration is: {verification_code}
-
-This code will expire in 15 minutes.
-
-If you did not request this code, please ignore this email.
-
-Best regards,
-MechConnect Team
-        '''
-        send_mail(
-            subject,
-            message,
-            settings.DEFAULT_FROM_EMAIL,
-            [email],
-            fail_silently=False,
+        subject = 'MechConnect - Verify Your Email'
+        html_content = build_verification_email_html(
+            first_name=first_name,
+            verification_url=verification_url,
+            expires_in_hours=24,
         )
-        
-        return Response({
-            'message': 'Verification code sent successfully',
-            'expires_in_minutes': 15
-        }, status=status.HTTP_200_OK)
-    except Exception as e:
-        # Log the error but still return success to not expose email sending issues
-        print(f"Email sending error: {str(e)}")
+        email_sent = send_html_email(
+            to_email=email,
+            subject=subject,
+            html_content=html_content,
+        )
+
+        if email_sent:
+            return Response({
+                'message': 'Verification code sent successfully',
+                'expires_in_minutes': 15
+            }, status=status.HTTP_200_OK)
+
+        logger.warning('Verification code generated but email sending failed for %s', email)
         return Response({
             'message': 'Verification code generated successfully',
             'expires_in_minutes': 15,
-            'note': 'Email service may be unavailable. In development, check console for code.'
+            'note': 'Email service may be unavailable. Please try again shortly.'
+        }, status=status.HTTP_200_OK)
+    except Exception as e:
+        # Log the error but still return success to not expose email sending issues
+        logger.exception('Unexpected verification email error for %s: %s', email, str(e))
+        return Response({
+            'message': 'Verification code generated successfully',
+            'expires_in_minutes': 15,
+            'note': 'Email service may be unavailable. Please try again shortly.'
         }, status=status.HTTP_200_OK)
 
 

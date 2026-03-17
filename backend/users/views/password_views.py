@@ -5,13 +5,20 @@ from rest_framework import status
 from django.contrib.auth.hashers import make_password
 from django.utils import timezone
 from datetime import timedelta
+import logging
 import secrets
+from urllib.parse import urlencode
+from django.conf import settings
 
 from ..models import Account, PasswordReset
 from ..serializers import (
     ChangePasswordSerializer, PasswordResetRequestSerializer,
     PasswordResetConfirmSerializer
 )
+from utils.email import build_password_reset_email_html, send_html_email
+
+
+logger = logging.getLogger(__name__)
 
 
 @api_view(['POST'])
@@ -59,7 +66,7 @@ def request_password_reset(request):
     Required fields:
     - email
     
-    Sends reset token (in production, this should be sent via email)
+    Sends reset token via email
     """
     serializer = PasswordResetRequestSerializer(data=request.data)
     if serializer.is_valid():
@@ -83,12 +90,31 @@ def request_password_reset(request):
             expires_at=expires_at
         )
         
-        # TODO: Send email with reset token
-        # For now, return it in response (REMOVE IN PRODUCTION)
+        reset_base_url = getattr(
+            settings,
+            'FRONTEND_PASSWORD_RESET_URL',
+            f"{request.scheme}://{request.get_host()}/reset-password",
+        )
+        reset_url = f"{reset_base_url}?{urlencode({'token': reset_token})}"
+        first_name = account.firstname or account.username or 'there'
+
+        email_sent = send_html_email(
+            to_email=email,
+            subject='MechConnect - Reset Your Password',
+            html_content=build_password_reset_email_html(
+                first_name=first_name,
+                reset_url=reset_url,
+                expires_in_hours=1,
+            ),
+        )
+
+        if not email_sent:
+            logger.warning('Password reset token generated but email sending failed for %s', email)
+
         return Response({
-            'message': 'Password reset token generated',
+            'message': 'Password reset token generated and email dispatched' if email_sent else 'Password reset token generated',
             'reset_token': reset_token,  # Remove this in production
-            'note': 'In production, this token should be sent via email'
+            'note': 'In production, this token should only be sent via email'
         }, status=status.HTTP_200_OK)
     
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

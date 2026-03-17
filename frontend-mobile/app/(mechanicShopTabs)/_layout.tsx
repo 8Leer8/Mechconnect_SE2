@@ -6,6 +6,7 @@ export default function MechanicShopTabLayout() {
   return (
     <Tabs
       screenOptions={{
+        unmountOnBlur: true,
         tabBarActiveTintColor: '#FF8C00',
         tabBarInactiveTintColor: '#999',
         headerShown: false,
@@ -32,6 +33,20 @@ export default function MechanicShopTabLayout() {
         options={{
           title: 'Dashboard',
           tabBarIcon: ({ color }) => <FontAwesome size={20} name="tachometer" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="main/jobs"
+        options={{
+          title: 'Jobs',
+          tabBarIcon: ({ color }) => <FontAwesome size={20} name="briefcase" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="main/schedule"
+        options={{
+          title: 'Schedule',
+          tabBarIcon: ({ color }) => <FontAwesome size={20} name="calendar" color={color} />,
         }}
       />
       <Tabs.Screen

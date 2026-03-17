@@ -75,7 +75,7 @@ interface BookingDetail {
 }
 
 export default function BookingDetailScreen() {
-  const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
+  const { bookingId, source } = useLocalSearchParams<{ bookingId: string; source?: string }>();
   const navigation = useNavigation();
   const { showNotification } = useNotification();
   const { confirm } = useConfirmation();
@@ -87,6 +87,7 @@ export default function BookingDetailScreen() {
   const [timer, setTimer] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const routerHook = useRouter();
+  const isMechanicShopSource = source === 'mechanic_shop';
   const [quotation, setQuotation] = useState<any | null>(null);
 
   // Derive a default/display quotation: prefer saved `quotation`, otherwise build from booking.request.request_details
@@ -511,7 +512,7 @@ export default function BookingDetailScreen() {
           <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
             <FontAwesome name="refresh" size={16} color="#FF8C00" />
           </TouchableOpacity>
-          <WalletBadge onPress={() => router.push('/mechanic/wallet')} />
+          {!isMechanicShopSource && <WalletBadge onPress={() => router.push('/mechanic/wallet')} />}
         </View>
       </View>
 

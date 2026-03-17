@@ -3,7 +3,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 from django.utils import timezone
-from django.db.models import Prefetch, Sum
+from django.db.models import Prefetch, Sum, Q
 from django.db import transaction
 import logging
 import traceback
@@ -40,7 +40,7 @@ def mechanic_start_travel(request, booking_id):
         return err
 
     try:
-        booking = Booking.objects.get(id=booking_id, request__provider=account)
+        booking = _get_accessible_booking(account, booking_id)
     except Booking.DoesNotExist:
         return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -76,7 +76,7 @@ def mechanic_cancel_travel(request, booking_id):
         return err
 
     try:
-        booking = Booking.objects.get(id=booking_id, request__provider=account)
+        booking = _get_accessible_booking(account, booking_id)
     except Booking.DoesNotExist:
         return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -108,7 +108,7 @@ def mechanic_start_job(request, booking_id):
         return err
 
     try:
-        booking = Booking.objects.get(id=booking_id, request__provider=account)
+        booking = _get_accessible_booking(account, booking_id)
     except Booking.DoesNotExist:
         return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -155,7 +155,7 @@ def mechanic_cancel_job(request, booking_id):
         return err
 
     try:
-        booking = Booking.objects.get(id=booking_id, request__provider=account)
+        booking = _get_accessible_booking(account, booking_id)
     except Booking.DoesNotExist:
         return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -187,7 +187,7 @@ def mechanic_cancel_booking(request, booking_id):
         return err
 
     try:
-        booking = Booking.objects.get(id=booking_id, request__provider=account)
+        booking = _get_accessible_booking(account, booking_id)
     except Booking.DoesNotExist:
         return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -223,7 +223,7 @@ def mechanic_pause_job(request, booking_id):
 
 
     try:
-        booking = Booking.objects.get(id=booking_id, request__provider=account)
+        booking = _get_accessible_booking(account, booking_id)
     except Booking.DoesNotExist:
         return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -262,7 +262,7 @@ def mechanic_resume_job(request, booking_id):
         return err
 
     try:
-        booking = Booking.objects.get(id=booking_id, request__provider=account)
+        booking = _get_accessible_booking(account, booking_id)
     except Booking.DoesNotExist:
         return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -305,7 +305,7 @@ def mechanic_finish_job(request, booking_id):
         return err
 
     try:
-        booking = Booking.objects.get(id=booking_id, request__provider=account)
+        booking = _get_accessible_booking(account, booking_id)
     except Booking.DoesNotExist:
         return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -341,7 +341,7 @@ def mechanic_payment_received(request, booking_id):
         return err
 
     try:
-        booking = Booking.objects.get(id=booking_id, request__provider=account)
+        booking = _get_accessible_booking(account, booking_id)
         receipt = Receipt.objects.get(booking=booking)
     except (Booking.DoesNotExist, Receipt.DoesNotExist):
         return Response({"error": "Booking or receipt not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -375,7 +375,7 @@ def mechanic_booking_quotation(request, booking_id):
         return err
 
     try:
-        booking = Booking.objects.get(id=booking_id, request__provider=account)
+        booking = _get_accessible_booking(account, booking_id)
     except Booking.DoesNotExist:
         return Response({"error": "Booking not found or you do not have permission to access it"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -437,7 +437,7 @@ def mechanic_revert_stage(request, booking_id):
         return err
 
     try:
-        booking = Booking.objects.get(id=booking_id, request__provider=account)
+        booking = _get_accessible_booking(account, booking_id)
     except Booking.DoesNotExist:
         return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -510,6 +510,9 @@ def _get_mechanic_account(request):
 
 def _count_pending_direct_requests(account):
     """Return count of pending direct requests without serializing."""
+    if getattr(account.mechanic, "is_working_for_shop", False):
+        return 0
+
     return Request.objects.filter(
         provider=account,
         request_type="direct",
@@ -518,12 +521,30 @@ def _count_pending_direct_requests(account):
     ).count()
 
 
+def _mechanic_booking_access_q(account):
+    """Access rule for mechanic bookings.
+
+    - Shop mechanics: only jobs assigned in RequestAssignment.
+    - Independent mechanics: jobs where they are the provider.
+    """
+    if getattr(account.mechanic, "is_working_for_shop", False):
+        return Q(request__assignments__mechanic=account)
+    return Q(request__provider=account)
+
+
+def _get_accessible_booking(account, booking_id):
+    return Booking.objects.filter(_mechanic_booking_access_q(account)).distinct().get(id=booking_id)
+
+
 def _serialize_pending_direct_requests(account):
     """
     Build a list of booking-like dicts for pending DIRECT requests
     assigned to this mechanic (provider). These have no Booking yet
     but should appear in the mechanic 'pending' tab.
     """
+    if getattr(account.mechanic, "is_working_for_shop", False):
+        return []
+
     pending_reqs = (
         Request.objects.filter(
             provider=account,
@@ -634,7 +655,7 @@ def list_mechanic_bookings(request):
 
     # All bookings where this mechanic is the provider
     bookings_queryset = (
-        Booking.objects.filter(request__provider=account)
+        Booking.objects.filter(_mechanic_booking_access_q(account))
         .select_related(
             "request",
             "request__client",
@@ -646,6 +667,7 @@ def list_mechanic_bookings(request):
             Prefetch("activebooking", queryset=ActiveBooking.objects.all()),
             Prefetch("completebooking", queryset=CompleteBooking.objects.all()),
         )
+        .distinct()
         .order_by("-booked_at")
     )
 
@@ -867,7 +889,9 @@ def get_mechanic_booking_detail(request, booking_id):
                 Prefetch("activebooking", queryset=ActiveBooking.objects.all()),
                 Prefetch("completebooking", queryset=CompleteBooking.objects.all()),
             )
-            .get(id=booking_id, request__provider=account)
+            .filter(_mechanic_booking_access_q(account))
+            .distinct()
+            .get(id=booking_id)
         )
     except Booking.DoesNotExist:
         return Response(
@@ -899,6 +923,12 @@ def mechanic_accept_direct_request(request, request_id):
     account, err = _get_mechanic_account(request)
     if err:
         return err
+
+    if getattr(account.mechanic, "is_working_for_shop", False):
+        return Response(
+            {"error": "Shop mechanics cannot accept direct requests directly. Jobs must come from shop assignments."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
     try:
         req = Request.objects.select_related("client", "provider").get(
@@ -995,6 +1025,12 @@ def mechanic_decline_direct_request(request, request_id):
     account, err = _get_mechanic_account(request)
     if err:
         return err
+
+    if getattr(account.mechanic, "is_working_for_shop", False):
+        return Response(
+            {"error": "Shop mechanics cannot decline direct requests directly."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
     try:
         req = Request.objects.get(
@@ -1098,8 +1134,11 @@ def mechanic_complete_booking(request, booking_id):
         return err
 
     try:
-        booking = Booking.objects.select_related("request", "request__provider").get(
-            id=booking_id, request__provider=account
+        booking = (
+            Booking.objects.select_related("request", "request__provider")
+            .filter(_mechanic_booking_access_q(account))
+            .distinct()
+            .get(id=booking_id)
         )
     except Booking.DoesNotExist:
         return Response(
