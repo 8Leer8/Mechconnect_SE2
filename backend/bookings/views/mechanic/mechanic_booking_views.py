@@ -23,6 +23,11 @@ from services.models import MechanicService
 from ..client.client_booking_views import _serialize_bookings, _serialize_single_booking
 from ...serializers import QuotationSerializer
 from ...ws_utils import notify_booking_parties
+from chat.models import Conversation, Message
+from chat.serializers import MessageSerializer
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
+import json
 
 
 
@@ -508,6 +513,140 @@ def _get_mechanic_account(request):
     return account, None
 
 
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def mechanic_accept_backjob(request, booking_id):
+    """
+    Mechanic accepts a Backjob request for a booking. Marks Backjob.status = ACCEPTED and notifies parties.
+    """
+    account, err = _get_mechanic_account(request)
+    if err:
+        return err
+
+    try:
+        booking = Booking.objects.get(id=booking_id, request__provider=account)
+    except Booking.DoesNotExist:
+        return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        backjob = booking.backjob
+    except Exception:
+        return Response({"error": "No backjob found for this booking"}, status=status.HTTP_404_NOT_FOUND)
+
+    # If already accepted or in progress, ensure booking state is updated then return success
+    if backjob.status in [Booking.Status.ACCEPTED, Booking.Status.ON_THE_WAY, Booking.Status.ACTIVE]:
+        try:
+            booking.status = Booking.Status.ACCEPTED
+            booking.amount_fee = 0
+            booking.completed_at = None
+            booking.save(update_fields=["status", "amount_fee", "completed_at", "updated_at"])
+            try:
+                CompleteBooking.objects.filter(booking=booking).delete()
+            except Exception:
+                pass
+            try:
+                Receipt.objects.filter(booking=booking).delete()
+            except Exception:
+                pass
+        except Exception:
+            pass
+        return Response({"message": "Backjob already accepted or in progress (booking ensured booked)", "backjob_id": backjob.id, "status": backjob.status}, status=status.HTTP_200_OK)
+
+    backjob.status = Booking.Status.ACCEPTED
+    backjob.save(update_fields=["status", "updated_at"])
+
+    # Notify participants via websocket util
+    try:
+        notify_booking_parties(
+            account.id,
+            booking.request.client.account_id,
+            booking.id,
+            backjob.status,
+            "Mechanic accepted the backjob",
+        )
+    except Exception:
+        # don't fail the request if notify fails
+        pass
+
+    # Mark the underlying booking as accepted for the backjob flow and set cost to free
+    try:
+        booking.status = Booking.Status.ACCEPTED
+        booking.amount_fee = 0
+        # clear any completion state so booking appears as accepted/booked
+        booking.completed_at = None
+        booking.save(update_fields=["status", "amount_fee", "completed_at", "updated_at"])
+        # remove any CompleteBooking/Receipt records related to this booking
+        try:
+            CompleteBooking.objects.filter(booking=booking).delete()
+        except Exception:
+            pass
+        try:
+            Receipt.objects.filter(booking=booking).delete()
+        except Exception:
+            pass
+    except Exception:
+        # ignore failures to mutate booking; still proceed
+        pass
+
+    # Ensure there's a conversation for this booking and post a system chat message
+    try:
+        conv = Conversation.objects.filter(booking_id=booking.id).first()
+        if not conv:
+            conv = Conversation.objects.create(title=f'Booking {booking.id}', booking_id=booking.id)
+            try:
+                if booking.request.client and booking.request.client.account:
+                    conv.participants.add(booking.request.client.account)
+            except Exception:
+                pass
+            try:
+                if booking.request.provider:
+                    conv.participants.add(booking.request.provider)
+            except Exception:
+                pass
+            try:
+                if booking.request.shop and booking.request.shop.shop_owner and booking.request.shop.shop_owner.account:
+                    conv.participants.add(booking.request.shop.shop_owner.account)
+            except Exception:
+                pass
+            conv.participants.add(account)
+            conv.save()
+
+        payload = {
+            'type': 'backjob_accepted',
+            'mechanic_id': account.id,
+            'mechanic_name': f"{getattr(account, 'firstname', '')} {getattr(account, 'lastname', '')}".strip(),
+            'backjob_id': backjob.id,
+            'booking_id': booking.id,
+            'free': True,
+            'message': 'Mechanic accepted the backjob and set it as booked (no cost).',
+        }
+
+        # Create a system-style message (no sender) so UI renders it as a system event
+        msg = Message.objects.create(conversation=conv, sender=None, content=json.dumps(payload))
+        conv.save()
+        ser = MessageSerializer(msg, context={'request': request})
+
+        # Broadcast the chat message to participants except sender
+        try:
+            channel_layer = get_channel_layer()
+            payload_ws = {
+                'type': 'booking_update',
+                'action': 'new_chat_message',
+                'conversation_id': conv.id,
+                'message': ser.data,
+            }
+            for participant in conv.participants.exclude(id=account.id).all():
+                group_name = f'user_{participant.id}'
+                async_to_sync(channel_layer.group_send)(group_name, payload_ws)
+        except Exception:
+            pass
+    except Exception:
+        # non-fatal; accept completed
+        pass
+
+    return Response({"message": "Backjob accepted", "backjob_id": backjob.id, "status": backjob.status}, status=status.HTTP_200_OK)
+
+
 def _count_pending_direct_requests(account):
     """Return count of pending direct requests without serializing."""
     if getattr(account.mechanic, "is_working_for_shop", False):
@@ -674,26 +813,34 @@ def list_mechanic_bookings(request):
     if status_filter:
         # "all" status: paginate across every booking + pending requests
         if status_filter.lower() == "all":
-            pending_count = _count_pending_direct_requests(account)
+            # pending includes pending direct requests + bookings that have a backjob
+            pending_direct_count = _count_pending_direct_requests(account)
+            # Only count backjobs that are still requested (not yet accepted)
+            backjob_count = Booking.objects.filter(request__provider=account, backjob__status=Booking.Status.REWORKED).count()
+            pending_count = pending_direct_count + backjob_count
             bookings_count = bookings_queryset.count()
             total_count = pending_count + bookings_count
             total_pages = (total_count + page_size - 1) // page_size if page_size > 0 else 0
             start_index = (page - 1) * page_size
             end_index = start_index + page_size
 
-            # Pending items come first, then bookings ordered by -booked_at
+            # Pending items come first (direct requests then backjob bookings), then bookings ordered by -booked_at
             paginated = []
             if start_index < pending_count:
                 # Need some pending items on this page
-                all_pending = _serialize_pending_direct_requests(account)
+                direct_pending = _serialize_pending_direct_requests(account)
+                # Only include backjob bookings that are in 'reworked' state (pending mechanic acceptance)
+                backjob_qs = Booking.objects.filter(request__provider=account, backjob__status=Booking.Status.REWORKED).order_by('-booked_at')
+                backjob_pending = _serialize_bookings(backjob_qs)
+                all_pending = direct_pending + backjob_pending
                 pending_slice = all_pending[start_index:min(end_index, pending_count)]
                 paginated.extend(pending_slice)
 
             if end_index > pending_count:
-                # Need some booking items on this page
+                # Need some booking items on this page; exclude backjob bookings already shown
                 booking_start = max(0, start_index - pending_count)
                 booking_end = end_index - pending_count
-                bookings_slice = bookings_queryset[booking_start:booking_end]
+                bookings_slice = bookings_queryset.exclude(backjob__isnull=False)[booking_start:booking_end]
                 paginated.extend(_serialize_bookings(bookings_slice))
 
             # Include tab counts so frontend doesn't need a separate request
@@ -702,9 +849,13 @@ def list_mechanic_bookings(request):
             active_count = bookings_queryset.filter(status__in=["active", "paused"]).count()
             completed_count = bookings_queryset.filter(status="completed").count()
             cancelled_count = bookings_queryset.filter(status="cancelled").count()
-            reworked_count = bookings_queryset.filter(status="reworked").count()
+            # Include any booking that has a Backjob (requested, accepted, or completed)
+            reworked_count = bookings_queryset.filter(
+                Q(status="reworked") | Q(backjob__isnull=False)
+            ).count()
             disputed_count = bookings_queryset.filter(status="disputed").count()
 
+            # Ensure pending tab count includes backjobs
             return Response(
                 {
                     "status": "all",
@@ -732,7 +883,12 @@ def list_mechanic_bookings(request):
 
         # Special handling for mechanic 'pending' tab (paginated)
         if status_filter.lower() == "pending":
-            all_pending = _serialize_pending_direct_requests(account)
+            # include both direct pending requests and bookings that have backjob requests
+            direct_pending = _serialize_pending_direct_requests(account)
+            # Only include backjob bookings that are pending acceptance (reworked)
+            backjob_qs = Booking.objects.filter(request__provider=account, backjob__status=Booking.Status.REWORKED).order_by('-booked_at')
+            backjob_pending = _serialize_bookings(backjob_qs)
+            all_pending = direct_pending + backjob_pending
             total_count = len(all_pending)
             total_pages = (total_count + page_size - 1) // page_size if page_size > 0 else 0
             start_index = (page - 1) * page_size
@@ -803,7 +959,14 @@ def list_mechanic_bookings(request):
         # Treat 'active' as including paused bookings so paused items show up
         # in the mechanic's on-going/active filter.
         if status_filter.lower() == 'active':
-            bookings_queryset = bookings_queryset.filter(status__in=['active', 'paused'])
+            # include bookings that are active/paused OR that have a backjob requested
+            bookings_queryset = bookings_queryset.filter(Q(status__in=['active', 'paused']) | Q(backjob__isnull=False))
+        elif status_filter.lower() == 'reworked':
+            # Include bookings explicitly marked reworked OR any bookings
+            # that have a Backjob (so accepted/completed backjobs also appear)
+            bookings_queryset = bookings_queryset.filter(
+                Q(status='reworked') | Q(backjob__isnull=False)
+            )
         else:
             bookings_queryset = bookings_queryset.filter(status=status_filter.lower())
 
@@ -837,9 +1000,12 @@ def list_mechanic_bookings(request):
     pending_payment_count = bookings_queryset.filter(status="pending_payment").count()
     completed_count = bookings_queryset.filter(status="completed").count()
     cancelled_count = bookings_queryset.filter(status="cancelled").count()
-    reworked_count = bookings_queryset.filter(status="reworked").count()
+    reworked_count = bookings_queryset.filter(
+        Q(status="reworked") | Q(backjob__isnull=False)
+    ).count()
     disputed_count = bookings_queryset.filter(status="disputed").count()
-    pending_count = _count_pending_direct_requests(account)
+    # Include backjob bookings in the pending count, but only those not yet accepted (reworked)
+    pending_count = _count_pending_direct_requests(account) + Booking.objects.filter(request__provider=account, backjob__status=Booking.Status.REWORKED).count()
 
     # Single DB aggregate — much cheaper than fetching all completed records
     total_earnings = bookings_queryset.filter(status="completed").aggregate(

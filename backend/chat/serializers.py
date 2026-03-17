@@ -11,7 +11,7 @@ class ParticipantSerializer(serializers.Serializer):
 
 
 class MessageSerializer(serializers.ModelSerializer):
-    sender = ParticipantSerializer(read_only=True)
+    sender = ParticipantSerializer(read_only=True, allow_null=True)
     is_mine = serializers.SerializerMethodField()
 
     class Meta:
@@ -46,9 +46,10 @@ class ConversationSerializer(serializers.ModelSerializer):
         last = obj.messages.order_by('-created_at').first()
         if not last:
             return None
+        sender_id = last.sender.id if last.sender else None
         return {
             'id': last.id,
-            'sender_id': last.sender.id,
+            'sender_id': sender_id,
             'content': last.content,
             'created_at': last.created_at,
         }

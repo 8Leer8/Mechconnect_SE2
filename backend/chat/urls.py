@@ -6,4 +6,5 @@ urlpatterns = [
     path('create/', views.create_conversation, name='chat-create-conversation'),
     path('<int:pk>/messages/', views.messages_view, name='chat-messages'),
     path('booking/<int:booking_id>/', views.conversation_for_booking, name='chat-conversation-for-booking'),
+    path('booking/<int:booking_id>/backjob/', views.request_backjob, name='chat-request-backjob'),
 ]
