@@ -1,12 +1,14 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
 import { FontAwesome } from '@expo/vector-icons';
+import { useTabsBackToHome } from '@/hooks/use-tabs-back-to-home';
 
 export default function ClientTabLayout() {
+  useTabsBackToHome('/(clientTabs)/main/home');
+
   return (
     <Tabs
       screenOptions={{
-        unmountOnBlur: true,
         tabBarActiveTintColor: '#FF8C00',
         tabBarInactiveTintColor: '#999',
         headerShown: false,
