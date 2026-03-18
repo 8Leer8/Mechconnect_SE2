@@ -11,6 +11,7 @@ from ...models import (
 )
 from users.models import Account
 from services.models import Service, ServiceAddOn
+from shops.models import Shop                          # added
 
 
 @api_view(['POST'])
@@ -18,8 +19,8 @@ from services.models import Service, ServiceAddOn
 def create_custom_request(request):
     """
     Create a new custom request
-    Required fields: provider_id, description, service_location
-    Optional: concern_picture
+    Required fields: description, service_location
+    Optional: provider_id, shop_id, concern_picture
     """
     account_id = request.session.get('account_id')
     
@@ -40,6 +41,7 @@ def create_custom_request(request):
         
         # Extract data
         provider_id = request.data.get('provider_id')
+        shop_id = request.data.get('shop_id')              # added
         description = request.data.get('description')
         service_location_data = request.data.get('service_location')
         concern_picture = request.FILES.get('concern_picture')
@@ -70,6 +72,19 @@ def create_custom_request(request):
                     'error': 'Provider not found'
                 }, status=status.HTTP_404_NOT_FOUND)
         
+        # Get shop if specified                            # added
+        shop = None
+        if shop_id:
+            try:
+                shop = Shop.objects.get(id=shop_id)
+                # Auto-assign shop owner as provider if no provider_id given
+                if not provider:
+                    provider = shop.shop_owner.account
+            except Shop.DoesNotExist:
+                return Response({
+                    'error': 'Shop not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+        
         # Create service location
         service_location = ServiceLocation.objects.create(
             street_name=service_location_data.get('street_name'),
@@ -83,6 +98,7 @@ def create_custom_request(request):
         new_request = Request.objects.create(
             client=client,
             provider=provider,
+            shop=shop,                                     # 👈 added
             request_type='custom',
             service_location=service_location
         )

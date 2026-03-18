@@ -33,7 +33,8 @@ urlpatterns = [
     path('api/bookings/', include('bookings.urls')),
     path('api/notification/', include('notification.urls')),
     path('api/chat/', include('chat.urls')),
-    #Admin Urls
+    path('api/ai/', include('mechconnect_ai.urls')),  # added
+    # Admin Urls
     path('api/admin/users/', include(users_admin_urlpatterns)),
     path('api/admin/bookings/', include(bookings_admin_urlpatterns)),
     path('api/admin/shops/', include(shops_admin_urlpatterns)),
