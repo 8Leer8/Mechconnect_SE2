@@ -18,7 +18,11 @@ def list_shops(request):
     Returns shop details including owner info and status
     """
     try:
-        shops = Shop.objects.select_related('shop_owner__account').all()
+        shops = Shop.objects.select_related('shop_owner__account').filter(
+            is_verified=True,
+            shop_owner__verification_status=ShopOwner.VerificationStatus.APPROVED,
+            shop_owner__account__is_active=True,
+        )
         shops_data = []
         
         for shop in shops:

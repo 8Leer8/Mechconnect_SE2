@@ -208,6 +208,16 @@ export default function HomeScreen() {
   const activeCount = data?.current_bookings?.length || 0;
   const pendingCount = data?.pending_requests?.length || 0;
 
+  const serviceFrequency = data?.statistics?.service_frequency || [];
+  const serviceFrequencyCounts = serviceFrequency.map((item) => item.count || 0);
+  const maxServiceFrequency = Math.max(...serviceFrequencyCounts, 0);
+  const serviceFrequencySegments = maxServiceFrequency <= 1 ? 1 : Math.min(4, maxServiceFrequency);
+
+  const monthlySpending = data?.statistics?.monthly_spending || [];
+  const monthlySpendingValues = monthlySpending.map((item) => item.amount || 0);
+  const maxMonthlySpending = Math.max(...monthlySpendingValues, 0);
+  const monthlySpendingSegments = maxMonthlySpending <= 0 ? 1 : 4;
+
   return (
     <ThemedView style={styles.container}>
       {/* Header */}
@@ -388,15 +398,18 @@ export default function HomeScreen() {
                     <View style={styles.chartContainer}>
                       <BarChart
                         data={{
-                          labels: data.statistics.service_frequency.map(item => item.month),
+                          labels: serviceFrequency.map(item => item.month),
                           datasets: [{
-                            data: data.statistics.service_frequency.map(item => item.count || 0)
+                            data: serviceFrequencyCounts
                           }]
                         }}
                         width={screenWidth - 48}
                         height={200}
+                        segments={serviceFrequencySegments}
                         yAxisLabel=""
                         yAxisSuffix=""
+                        yLabelsOffset={8}
+                        xLabelsOffset={-2}
                         chartConfig={{
                           backgroundColor: '#1E1E1E',
                           backgroundGradientFrom: '#2C2C2E',
@@ -404,7 +417,11 @@ export default function HomeScreen() {
                           decimalPlaces: 0,
                           color: (opacity = 1) => `rgba(255, 140, 0, ${opacity})`,
                           labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
+                          barPercentage: 0.7,
                           style: { borderRadius: 16 },
+                          propsForLabels: {
+                            fontSize: 10,
+                          },
                           propsForBackgroundLines: {
                             strokeDasharray: '',
                             stroke: '#3A3A3C',
@@ -432,17 +449,20 @@ export default function HomeScreen() {
                     <View style={styles.chartContainer}>
                       <LineChart
                         data={{
-                          labels: data.statistics.monthly_spending.map(item => item.month),
+                          labels: monthlySpending.map(item => item.month),
                           datasets: [{
-                            data: data.statistics.monthly_spending.map(item => item.amount || 0),
+                            data: monthlySpendingValues,
                             color: (opacity = 1) => `rgba(52, 199, 89, ${opacity})`,
                             strokeWidth: 3
                           }]
                         }}
                         width={screenWidth - 48}
                         height={200}
+                        segments={monthlySpendingSegments}
                         yAxisLabel="₱"
                         yAxisSuffix=""
+                        yLabelsOffset={8}
+                        xLabelsOffset={-2}
                         chartConfig={{
                           backgroundColor: '#1E1E1E',
                           backgroundGradientFrom: '#2C2C2E',

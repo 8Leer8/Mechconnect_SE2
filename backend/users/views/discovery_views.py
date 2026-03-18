@@ -15,7 +15,15 @@ def list_mechanics(request):
     Returns mechanic details including profile, ratings, and services
     """
     try:
-        mechanics = Mechanic.objects.select_related('account').all()
+        account_id = request.session.get('account_id')
+
+        mechanics = Mechanic.objects.select_related('account').filter(
+            verification_status=Mechanic.VerificationStatus.APPROVED,
+            account__is_active=True,
+        )
+        if account_id:
+            mechanics = mechanics.exclude(account_id=account_id)
+
         mechanics_data = []
         
         for mechanic in mechanics:

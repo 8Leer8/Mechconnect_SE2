@@ -38,6 +38,41 @@ def switch_role(request):
         
         if serializer.is_valid():
             new_role = serializer.validated_data['role']
+
+            # Enforce admin approval before allowing privileged role switches.
+            if new_role == 'mechanic':
+                if not hasattr(account, 'mechanic'):
+                    return Response({
+                        'error': 'Mechanic profile not found. Please register first.'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+                verification_status = account.mechanic.verification_status
+                if verification_status != Mechanic.VerificationStatus.APPROVED:
+                    if verification_status == Mechanic.VerificationStatus.PENDING:
+                        message = 'Your mechanic application is pending admin approval.'
+                    elif verification_status == Mechanic.VerificationStatus.REJECTED:
+                        message = 'Your mechanic application was rejected. Please contact admin.'
+                    else:
+                        message = 'Mechanic role is not yet approved.'
+
+                    return Response({'error': message}, status=status.HTTP_403_FORBIDDEN)
+
+            if new_role == 'shop_owner':
+                if not hasattr(account, 'shopowner'):
+                    return Response({
+                        'error': 'Shop owner profile not found. Please register first.'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+                verification_status = account.shopowner.verification_status
+                if verification_status != ShopOwner.VerificationStatus.APPROVED:
+                    if verification_status == ShopOwner.VerificationStatus.PENDING:
+                        message = 'Your shop owner application is pending admin approval.'
+                    elif verification_status == ShopOwner.VerificationStatus.REJECTED:
+                        message = 'Your shop owner application was rejected. Please contact admin.'
+                    else:
+                        message = 'Shop owner role is not yet approved.'
+
+                    return Response({'error': message}, status=status.HTTP_403_FORBIDDEN)
             
             # Update session with new active role
             request.session['active_role'] = new_role
@@ -133,6 +168,34 @@ def get_role_status(request):
         is_client = hasattr(account, 'client')
         is_mechanic = hasattr(account, 'mechanic')
         is_shop_owner = hasattr(account, 'shopowner')
+
+        mechanic_verification_status = (
+            account.mechanic.verification_status if is_mechanic else None
+        )
+        mechanic_rejection_note = (
+            account.mechanic.rejection_note if is_mechanic else None
+        )
+        shop_owner_verification_status = (
+            account.shopowner.verification_status if is_shop_owner else None
+        )
+        shop_owner_rejection_note = (
+            account.shopowner.rejection_note if is_shop_owner else None
+        )
+
+        can_switch_mechanic = bool(
+            is_mechanic
+            and mechanic_verification_status == Mechanic.VerificationStatus.APPROVED
+        )
+        can_switch_shop_owner = bool(
+            is_shop_owner
+            and shop_owner_verification_status == ShopOwner.VerificationStatus.APPROVED
+        )
+
+        pending_approvals = []
+        if mechanic_verification_status == Mechanic.VerificationStatus.PENDING:
+            pending_approvals.append('mechanic')
+        if shop_owner_verification_status == ShopOwner.VerificationStatus.PENDING:
+            pending_approvals.append('shop_owner')
         
         # Get active role from session
         active_role = request.session.get('active_role')
@@ -152,7 +215,14 @@ def get_role_status(request):
             'is_mechanic': is_mechanic,
             'is_shop_owner': is_shop_owner,
             'active_role': active_role,
-            'registered_roles': roles
+            'registered_roles': roles,
+            'mechanic_verification_status': mechanic_verification_status,
+            'mechanic_rejection_note': mechanic_rejection_note,
+            'shop_owner_verification_status': shop_owner_verification_status,
+            'shop_owner_rejection_note': shop_owner_rejection_note,
+            'can_switch_mechanic': can_switch_mechanic,
+            'can_switch_shop_owner': can_switch_shop_owner,
+            'pending_approvals': pending_approvals,
         }, status=status.HTTP_200_OK)
         
     except Account.DoesNotExist:
@@ -196,8 +266,10 @@ def register_mechanic(request):
     try:
         account = Account.objects.get(id=account_id)
         
-        # Check if already registered as mechanic
-        if hasattr(account, 'mechanic'):
+        existing_mechanic = account.mechanic if hasattr(account, 'mechanic') else None
+        is_reapplication = bool(existing_mechanic)
+
+        if existing_mechanic and existing_mechanic.verification_status != Mechanic.VerificationStatus.REJECTED:
             return Response({
                 'error': 'Already registered as mechanic'
             }, status=status.HTTP_400_BAD_REQUEST)
@@ -212,17 +284,42 @@ def register_mechanic(request):
         # Get optional bio field
         bio = request.data.get('bio')
         
-        # Create Mechanic profile
-        mechanic = Mechanic.objects.create(
-            account=account,
-            contact_number=contact_number,
-            profile_photo=request.FILES.get('profile_photo'),
-            bio=bio if bio else None,
-        )
+        if existing_mechanic:
+            mechanic = existing_mechanic
+            mechanic.contact_number = contact_number
+            if request.FILES.get('profile_photo'):
+                mechanic.profile_photo = request.FILES.get('profile_photo')
+            mechanic.bio = bio if bio else None
+            mechanic.verification_status = Mechanic.VerificationStatus.PENDING
+            mechanic.rejection_note = ''
+            mechanic.verified_at = None
+            mechanic.save(
+                update_fields=[
+                    'contact_number',
+                    'profile_photo',
+                    'bio',
+                    'verification_status',
+                    'rejection_note',
+                    'verified_at',
+                ]
+            )
+        else:
+            # Create Mechanic profile
+            mechanic = Mechanic.objects.create(
+                account=account,
+                contact_number=contact_number,
+                profile_photo=request.FILES.get('profile_photo'),
+                bio=bio if bio else None,
+            )
         
         # Handle document uploads
         from ..models import MechanicDocument
-        import json
+
+        if is_reapplication:
+            for existing_doc in MechanicDocument.objects.filter(mechanic=mechanic):
+                if existing_doc.document_file:
+                    existing_doc.document_file.delete(save=False)
+            MechanicDocument.objects.filter(mechanic=mechanic).delete()
         
         # Process documents if provided
         document_count = 0
@@ -253,10 +350,10 @@ def register_mechanic(request):
         )
         
         return Response({
-            'message': 'Successfully registered as mechanic',
+            'message': 'Mechanic application resubmitted and pending admin approval' if is_reapplication else 'Successfully registered as mechanic',
             'mechanic': MechanicSerializer(mechanic).data,
             'documents_uploaded': document_count
-        }, status=status.HTTP_201_CREATED)
+        }, status=status.HTTP_200_OK if is_reapplication else status.HTTP_201_CREATED)
         
     except Account.DoesNotExist:
         return Response({
@@ -310,8 +407,10 @@ def register_shop_owner(request):
     try:
         account = Account.objects.get(id=account_id)
         
-        # Check if already registered as shop owner
-        if hasattr(account, 'shopowner'):
+        existing_shop_owner = account.shopowner if hasattr(account, 'shopowner') else None
+        is_reapplication = bool(existing_shop_owner)
+
+        if existing_shop_owner and existing_shop_owner.verification_status != ShopOwner.VerificationStatus.REJECTED:
             return Response({
                 'error': 'Already registered as shop owner'
             }, status=status.HTTP_400_BAD_REQUEST)
@@ -348,31 +447,94 @@ def register_shop_owner(request):
         description = request.data.get('description')
         service_banner = request.FILES.get('service_banner')
         
-        # Create ShopOwner profile
-        shop_owner = ShopOwner.objects.create(
-            account=account,
-            profile_photo=profile_photo,
-            contact_number=owner_contact_number,
-        )
-        
-        # Create Shop
         from shops.models import Shop
-        shop = Shop.objects.create(
-            shop_owner=shop_owner,
-            shop_name=shop_name,
-            contact_number=shop_contact_number,
-            email=shop_email if shop_email else None,
-            website=website if website else None,
-            description=description if description else None,
-            service_banner=service_banner if service_banner else None,
-        )
-        
-        # Update shop owner owns_shop flag
-        shop_owner.owns_shop = True
-        shop_owner.save()
+
+        if existing_shop_owner:
+            shop_owner = existing_shop_owner
+            if profile_photo:
+                shop_owner.profile_photo = profile_photo
+            shop_owner.contact_number = owner_contact_number
+            shop_owner.verification_status = ShopOwner.VerificationStatus.PENDING
+            shop_owner.rejection_note = ''
+            shop_owner.verified_at = None
+            shop_owner.owns_shop = True
+            shop_owner.save(
+                update_fields=[
+                    'profile_photo',
+                    'contact_number',
+                    'verification_status',
+                    'rejection_note',
+                    'verified_at',
+                    'owns_shop',
+                ]
+            )
+
+            shop, _ = Shop.objects.get_or_create(
+                shop_owner=shop_owner,
+                defaults={
+                    'shop_name': shop_name,
+                    'contact_number': shop_contact_number,
+                    'email': shop_email if shop_email else None,
+                    'website': website if website else None,
+                    'description': description if description else None,
+                    'service_banner': service_banner if service_banner else None,
+                },
+            )
+            shop.shop_name = shop_name
+            shop.contact_number = shop_contact_number
+            shop.email = shop_email if shop_email else None
+            shop.website = website if website else None
+            shop.description = description if description else None
+            if service_banner:
+                shop.service_banner = service_banner
+            shop.is_verified = False
+            shop.save(
+                update_fields=[
+                    'shop_name',
+                    'contact_number',
+                    'email',
+                    'website',
+                    'description',
+                    'service_banner',
+                    'is_verified',
+                ]
+            )
+        else:
+            # Create ShopOwner profile
+            shop_owner = ShopOwner.objects.create(
+                account=account,
+                profile_photo=profile_photo,
+                contact_number=owner_contact_number,
+            )
+
+            # Create Shop
+            shop = Shop.objects.create(
+                shop_owner=shop_owner,
+                shop_name=shop_name,
+                contact_number=shop_contact_number,
+                email=shop_email if shop_email else None,
+                website=website if website else None,
+                description=description if description else None,
+                service_banner=service_banner if service_banner else None,
+            )
+
+            # Update shop owner owns_shop flag
+            shop_owner.owns_shop = True
+            shop_owner.save(update_fields=['owns_shop'])
         
         # Handle shop document uploads
         from shops.models import ShopDocument, ShopOwnerDocument
+
+        if is_reapplication:
+            for existing_doc in ShopDocument.objects.filter(shop=shop):
+                if existing_doc.document_file:
+                    existing_doc.document_file.delete(save=False)
+            ShopDocument.objects.filter(shop=shop).delete()
+
+            for existing_doc in ShopOwnerDocument.objects.filter(shop_owner=shop_owner):
+                if existing_doc.document_file:
+                    existing_doc.document_file.delete(save=False)
+            ShopOwnerDocument.objects.filter(shop_owner=shop_owner).delete()
         
         shop_document_count = 0
         owner_document_count = 0
@@ -429,12 +591,12 @@ def register_shop_owner(request):
         from shops.serializers import ShopSerializer
         
         return Response({
-            'message': 'Successfully registered as shop owner',
+            'message': 'Shop owner application resubmitted and pending admin approval' if is_reapplication else 'Successfully registered as shop owner',
             'shop_owner': ShopOwnerSerializer(shop_owner).data,
             'shop': ShopSerializer(shop).data,
             'shop_documents_uploaded': shop_document_count,
             'owner_documents_uploaded': owner_document_count
-        }, status=status.HTTP_201_CREATED)
+        }, status=status.HTTP_200_OK if is_reapplication else status.HTTP_201_CREATED)
         
     except Account.DoesNotExist:
         return Response({

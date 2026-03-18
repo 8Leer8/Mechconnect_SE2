@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   StyleSheet,
   View,
@@ -12,6 +12,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { useNotification } from '@/hooks/useNotification';
+import { useFocusEffect } from '@react-navigation/native';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -20,18 +21,35 @@ interface UserRoleData {
   isMechanic: boolean;
   isShopOwner: boolean;
   isClient: boolean;
+  mechanicVerificationStatus: VerificationStatus;
+  shopOwnerVerificationStatus: VerificationStatus;
+  mechanicRejectionNote: string | null;
+  shopOwnerRejectionNote: string | null;
+  canSwitchMechanic: boolean;
+  canSwitchShopOwner: boolean;
+  pendingApprovals: string[];
   availableRoles: { value: string; label: string }[];
 }
+
+type VerificationStatus = 'pending' | 'approved' | 'rejected' | null;
 
 interface RoleStatusResponse {
   active_role: string;
   is_mechanic: boolean;
   is_shop_owner: boolean;
   is_client: boolean;
+  mechanic_verification_status?: VerificationStatus;
+  shop_owner_verification_status?: VerificationStatus;
+  mechanic_rejection_note?: string | null;
+  shop_owner_rejection_note?: string | null;
+  can_switch_mechanic?: boolean;
+  can_switch_shop_owner?: boolean;
+  pending_approvals?: string[];
   registered_roles: string[];
 }
 
 interface SwitchRoleResponse {
+  error?: string;
   message?: string;
   [key: string]: unknown;
 }
@@ -56,17 +74,17 @@ export default function SwitchRolePage() {
   const [switchingRole, setSwitchingRole] = useState<RoleValue | null>(null);
   const [confirmVisible, setConfirmVisible] = useState(false);
   const [pendingRole, setPendingRole] = useState<RoleValue | null>(null);
+  const [reasonVisible, setReasonVisible] = useState(false);
+  const [reasonRole, setReasonRole] = useState<'mechanic' | 'shop_owner' | null>(null);
   const [roleData, setRoleData] = useState<UserRoleData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchRoleStatus();
-  }, []);
-
-  const fetchRoleStatus = async () => {
+  const fetchRoleStatus = useCallback(async (silent = false) => {
     try {
-      setLoading(true);
-      setError(null);
+      if (!silent) {
+        setLoading(true);
+        setError(null);
+      }
 
       // Fetch role status from the dedicated endpoint
       const response = await fetch(`${API_URL}/users/profile/role-status/`, {
@@ -86,6 +104,13 @@ export default function SwitchRolePage() {
         isMechanic: data.is_mechanic || false,
         isShopOwner: data.is_shop_owner || false,
         isClient: data.is_client || false,
+        mechanicVerificationStatus: data.mechanic_verification_status || null,
+        shopOwnerVerificationStatus: data.shop_owner_verification_status || null,
+        mechanicRejectionNote: data.mechanic_rejection_note || null,
+        shopOwnerRejectionNote: data.shop_owner_rejection_note || null,
+        canSwitchMechanic: Boolean(data.can_switch_mechanic),
+        canSwitchShopOwner: Boolean(data.can_switch_shop_owner),
+        pendingApprovals: data.pending_approvals || [],
         availableRoles: data.registered_roles.map((role: string) => ({
           value: role,
           label: role === 'shop_owner' ? 'Shop Owner' : 
@@ -93,12 +118,30 @@ export default function SwitchRolePage() {
         })) || [],
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load role information');
+      if (!silent) {
+        setError(err instanceof Error ? err.message : 'Failed to load role information');
+      }
       console.error('Error fetching role status:', err);
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
-  };
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchRoleStatus();
+
+      const intervalId = setInterval(() => {
+        fetchRoleStatus(true);
+      }, 5000);
+
+      return () => {
+        clearInterval(intervalId);
+      };
+    }, [fetchRoleStatus])
+  );
 
   const handleMechanicAction = async () => {
     if (!roleData) return;
@@ -106,9 +149,23 @@ export default function SwitchRolePage() {
     if (!roleData.isMechanic) {
       // Navigate to mechanic registration page
       router.push('/(auth)/switchAccount/mechanicRegister');
-    } else {
-      openSwitchConfirm('mechanic');
+      return;
     }
+
+    if (!roleData.canSwitchMechanic) {
+      if (roleData.mechanicVerificationStatus === 'pending') {
+        showNotification({
+          type: 'warning',
+          title: 'Pending Approval',
+          message: 'Your mechanic application is still waiting for admin approval.',
+        });
+      } else if (roleData.mechanicVerificationStatus === 'rejected') {
+        openReasonModal('mechanic');
+      }
+      return;
+    }
+
+    openSwitchConfirm('mechanic');
   };
 
   const handleClientAction = async () => {
@@ -122,9 +179,23 @@ export default function SwitchRolePage() {
     if (!roleData.isShopOwner) {
       // Navigate to shop owner registration page
       router.push('/(auth)/switchAccount/shopOwnerRegister');
-    } else {
-      openSwitchConfirm('shop_owner');
+      return;
     }
+
+    if (!roleData.canSwitchShopOwner) {
+      if (roleData.shopOwnerVerificationStatus === 'pending') {
+        showNotification({
+          type: 'warning',
+          title: 'Pending Approval',
+          message: 'Your shop owner application is still waiting for admin approval.',
+        });
+      } else if (roleData.shopOwnerVerificationStatus === 'rejected') {
+        openReasonModal('shop_owner');
+      }
+      return;
+    }
+
+    openSwitchConfirm('shop_owner');
   };
 
   const openSwitchConfirm = (role: RoleValue) => {
@@ -132,10 +203,40 @@ export default function SwitchRolePage() {
     setConfirmVisible(true);
   };
 
+  const openReasonModal = (role: 'mechanic' | 'shop_owner') => {
+    setReasonRole(role);
+    setReasonVisible(true);
+  };
+
   const closeSwitchConfirm = () => {
     if (switchingRole) return;
     setConfirmVisible(false);
     setPendingRole(null);
+  };
+
+  const closeReasonModal = () => {
+    setReasonVisible(false);
+    setReasonRole(null);
+  };
+
+  const handleRegisterAgain = () => {
+    const role = reasonRole;
+    closeReasonModal();
+    if (role === 'mechanic') {
+      router.push('/(auth)/switchAccount/mechanicRegister');
+      return;
+    }
+    if (role === 'shop_owner') {
+      router.push('/(auth)/switchAccount/shopOwnerRegister');
+    }
+  };
+
+  const getReasonText = () => {
+    if (!roleData || !reasonRole) return 'No rejection reason provided by admin.';
+    if (reasonRole === 'mechanic') {
+      return roleData.mechanicRejectionNote || 'No rejection reason provided by admin.';
+    }
+    return roleData.shopOwnerRejectionNote || 'No rejection reason provided by admin.';
   };
 
   const confirmSwitchRole = async () => {
@@ -154,7 +255,16 @@ export default function SwitchRolePage() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to switch role');
+        let errorMessage = 'Failed to switch role';
+        try {
+          const errorData = await response.json() as SwitchRoleResponse;
+          if (typeof errorData.error === 'string' && errorData.error.trim()) {
+            errorMessage = errorData.error;
+          }
+        } catch {
+          // Fallback to generic message when response body is not JSON.
+        }
+        throw new Error(errorMessage);
       }
 
       const data = await response.json() as SwitchRoleResponse;
@@ -208,15 +318,6 @@ export default function SwitchRolePage() {
     }
   };
 
-  const getRoleButtonText = (role: 'mechanic' | 'shop_owner'): string => {
-    if (!roleData) return 'Loading...';
-    
-    const isRegistered = role === 'mechanic' ? roleData.isMechanic : roleData.isShopOwner;
-    const roleLabel = role === 'mechanic' ? 'Mechanic' : 'Shop Owner';
-    
-    return isRegistered ? `Switch to ${roleLabel}` : `Register as ${roleLabel}`;
-  };
-
   const isRoleActive = (role: string): boolean => {
     return roleData?.activeRole === role;
   };
@@ -232,12 +333,73 @@ export default function SwitchRolePage() {
     return ROLE_VISUALS[activeRole || 'client'];
   };
 
+  const handleBackToProfile = async () => {
+    let activeRole = roleData?.activeRole as RoleValue | undefined;
+
+    try {
+      const roleStatusResponse = await fetch(`${API_URL}/users/profile/role-status/`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (roleStatusResponse.ok) {
+        const roleStatusData = await roleStatusResponse.json() as RoleStatusResponse;
+        if (roleStatusData.active_role) {
+          activeRole = roleStatusData.active_role as RoleValue;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to resolve active role for back navigation:', err);
+    }
+
+    if (activeRole === 'mechanic') {
+      let profileRoute: string = '/(mechanicTabs)/main/profile';
+      try {
+        const response = await fetch(`${API_URL}/users/profile/details/`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const isWorkingForShop = Boolean(data?.profile?.current_role_profile?.mechanic?.is_working_for_shop);
+          if (isWorkingForShop) {
+            profileRoute = '/(mechanicShopTabs)/main/profile';
+          }
+        }
+      } catch (err) {
+        console.error('Failed to resolve mechanic profile route:', err);
+      }
+
+      router.replace(profileRoute as any);
+      return;
+    }
+
+    if (activeRole === 'shop_owner') {
+      router.replace('/(shopownerTabs)/profile');
+      return;
+    }
+
+    router.replace('/(clientTabs)/main/profile');
+  };
+
   const renderRoleCard = (
     role: RoleValue,
-    options: { isRegistered: boolean; onPress: () => void; subtitle: string; actionText: string }
+    options: {
+      isRegistered: boolean;
+      onPress: () => void;
+      subtitle: string;
+      actionText: string;
+      badgeLabel?: string;
+      badgeColor?: string;
+      disableAction?: boolean;
+    }
   ) => {
     const roleVisual = ROLE_VISUALS[role];
     const isBusy = Boolean(switchingRole);
+    const isDisabled = isBusy || Boolean(options.disableAction);
 
     return (
       <TouchableOpacity
@@ -245,7 +407,7 @@ export default function SwitchRolePage() {
         style={styles.roleCard}
         onPress={options.onPress}
         activeOpacity={0.9}
-        disabled={isBusy}
+        disabled={isDisabled}
       >
         <View style={styles.roleCardHeader}>
           <View style={[styles.roleIconContainer, { backgroundColor: `${roleVisual.accent}1F` }]}> 
@@ -256,15 +418,15 @@ export default function SwitchRolePage() {
             <ThemedText style={styles.roleSubtitle}>{options.subtitle}</ThemedText>
           </View>
           <View style={styles.badgeWrap}>
-            <ThemedText style={[styles.badgeText, { color: options.isRegistered ? '#34C759' : '#FF8C00' }]}>
-              {options.isRegistered ? 'Registered' : 'Setup required'}
+            <ThemedText style={[styles.badgeText, { color: options.badgeColor || (options.isRegistered ? '#34C759' : '#FF8C00') }]}>
+              {options.badgeLabel || (options.isRegistered ? 'Registered' : 'Setup required')}
             </ThemedText>
           </View>
         </View>
 
         <View style={styles.roleCardFooter}>
-          <View style={styles.actionButton}>
-            <ThemedText style={styles.actionButtonText}>{options.actionText}</ThemedText>
+          <View style={[styles.actionButton, options.disableAction && styles.actionButtonDisabled]}>
+            <ThemedText style={[styles.actionButtonText, options.disableAction && styles.actionButtonTextDisabled]}>{options.actionText}</ThemedText>
           </View>
         </View>
       </TouchableOpacity>
@@ -275,7 +437,7 @@ export default function SwitchRolePage() {
     return (
       <ThemedView style={styles.container}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
+          <ActivityIndicator size="large" color="#FF8C00" />
           <ThemedText style={styles.loadingText}>Loading role information...</ThemedText>
         </View>
       </ThemedView>
@@ -288,7 +450,7 @@ export default function SwitchRolePage() {
         <View style={styles.errorContainer}>
           <FontAwesome name="exclamation-triangle" size={42} color="#FF3B30" />
           <ThemedText style={styles.errorText}>{error}</ThemedText>
-          <TouchableOpacity style={styles.retryButton} onPress={fetchRoleStatus}>
+          <TouchableOpacity style={styles.retryButton} onPress={() => fetchRoleStatus()}>
             <ThemedText style={styles.retryButtonText}>Retry</ThemedText>
           </TouchableOpacity>
         </View>
@@ -301,7 +463,7 @@ export default function SwitchRolePage() {
       <ScrollView contentContainerStyle={styles.scrollContent}>
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <TouchableOpacity onPress={handleBackToProfile} style={styles.backButton}>
             <FontAwesome name="chevron-left" size={20} color="#ECEDEE" />
           </TouchableOpacity>
           <View style={styles.headerTextWrap}>
@@ -324,6 +486,15 @@ export default function SwitchRolePage() {
           </View>
         </View>
 
+        {!!roleData?.pendingApprovals?.length && (
+          <View style={styles.pendingApprovalCard}>
+            <FontAwesome name="clock-o" size={16} color="#FF8C00" />
+            <ThemedText style={styles.pendingApprovalText}>
+              Waiting for admin approval: {roleData.pendingApprovals.map((role) => role.replace('_', ' ')).join(', ')}
+            </ThemedText>
+          </View>
+        )}
+
         {/* Role Cards */}
         <View style={styles.rolesContainer}>
           <ThemedText style={styles.sectionTitle}>Available Roles</ThemedText>
@@ -335,6 +506,8 @@ export default function SwitchRolePage() {
               onPress: handleClientAction,
               subtitle: 'Default role for booking and tracking services',
               actionText: 'Switch to Client',
+              badgeLabel: 'Available',
+              badgeColor: '#34C759',
             })
           )}
 
@@ -343,10 +516,35 @@ export default function SwitchRolePage() {
             renderRoleCard('mechanic', {
               isRegistered: Boolean(roleData?.isMechanic),
               onPress: handleMechanicAction,
-              subtitle: roleData?.isMechanic
-                ? 'Registered and ready for mechanic tools'
-                : 'Register first to enable mechanic features',
-              actionText: getRoleButtonText('mechanic'),
+              subtitle: !roleData?.isMechanic
+                ? 'Register first to enable mechanic features'
+                : roleData.mechanicVerificationStatus === 'pending'
+                  ? 'Application submitted. Waiting for admin approval'
+                  : roleData.mechanicVerificationStatus === 'rejected'
+                    ? 'Application rejected. Tap to view reason'
+                    : 'Approved and ready for mechanic tools',
+              actionText: !roleData?.isMechanic
+                ? 'Register as Mechanic'
+                : roleData.mechanicVerificationStatus === 'pending'
+                  ? 'Waiting for Admin Approval'
+                  : roleData.mechanicVerificationStatus === 'rejected'
+                    ? 'View Reason'
+                    : 'Switch to Mechanic',
+              badgeLabel: !roleData?.isMechanic
+                ? 'Setup required'
+                : roleData.mechanicVerificationStatus === 'pending'
+                  ? 'Pending Approval'
+                  : roleData.mechanicVerificationStatus === 'rejected'
+                    ? 'Rejected'
+                    : 'Verified',
+              badgeColor: !roleData?.isMechanic
+                ? '#FF8C00'
+                : roleData.mechanicVerificationStatus === 'pending'
+                  ? '#FF8C00'
+                  : roleData.mechanicVerificationStatus === 'rejected'
+                    ? '#FF3B30'
+                    : '#34C759',
+              disableAction: Boolean(roleData?.isMechanic && roleData?.mechanicVerificationStatus === 'pending'),
             })
           )}
 
@@ -355,10 +553,35 @@ export default function SwitchRolePage() {
             renderRoleCard('shop_owner', {
               isRegistered: Boolean(roleData?.isShopOwner),
               onPress: handleShopOwnerAction,
-              subtitle: roleData?.isShopOwner
-                ? 'Registered and ready for business tools'
-                : 'Register your shop owner account first',
-              actionText: getRoleButtonText('shop_owner'),
+              subtitle: !roleData?.isShopOwner
+                ? 'Register your shop owner account first'
+                : roleData.shopOwnerVerificationStatus === 'pending'
+                  ? 'Application submitted. Waiting for admin approval'
+                  : roleData.shopOwnerVerificationStatus === 'rejected'
+                    ? 'Application rejected. Tap to view reason'
+                    : 'Approved and ready for business tools',
+              actionText: !roleData?.isShopOwner
+                ? 'Register as Shop Owner'
+                : roleData.shopOwnerVerificationStatus === 'pending'
+                  ? 'Waiting for Admin Approval'
+                  : roleData.shopOwnerVerificationStatus === 'rejected'
+                    ? 'View Reason'
+                    : 'Switch to Shop Owner',
+              badgeLabel: !roleData?.isShopOwner
+                ? 'Setup required'
+                : roleData.shopOwnerVerificationStatus === 'pending'
+                  ? 'Pending Approval'
+                  : roleData.shopOwnerVerificationStatus === 'rejected'
+                    ? 'Rejected'
+                    : 'Verified',
+              badgeColor: !roleData?.isShopOwner
+                ? '#FF8C00'
+                : roleData.shopOwnerVerificationStatus === 'pending'
+                  ? '#FF8C00'
+                  : roleData.shopOwnerVerificationStatus === 'rejected'
+                    ? '#FF3B30'
+                    : '#34C759',
+              disableAction: Boolean(roleData?.isShopOwner && roleData?.shopOwnerVerificationStatus === 'pending'),
             })
           )}
         </View>
@@ -411,6 +634,42 @@ export default function SwitchRolePage() {
                 ) : (
                   <ThemedText style={styles.confirmButtonText}>Switch Role</ThemedText>
                 )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={reasonVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeReasonModal}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.confirmCard}>
+            <View style={[styles.confirmIconWrap, { backgroundColor: '#FF3B301A' }]}>
+              <FontAwesome name="info-circle" size={18} color="#FF3B30" />
+            </View>
+            <ThemedText style={styles.confirmTitle}>Application Rejected</ThemedText>
+            <ThemedText style={styles.confirmMessage}>Reason from admin:</ThemedText>
+            <View style={styles.reasonBodyCard}>
+              <ThemedText style={styles.reasonBodyText}>{getReasonText()}</ThemedText>
+            </View>
+
+            <View style={styles.confirmButtonsRow}>
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={closeReasonModal}
+              >
+                <ThemedText style={styles.cancelButtonText}>Close</ThemedText>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.confirmButton}
+                onPress={handleRegisterAgain}
+              >
+                <ThemedText style={styles.confirmButtonText}>Register Again</ThemedText>
               </TouchableOpacity>
             </View>
           </View>
@@ -536,6 +795,24 @@ const styles = StyleSheet.create({
   rolesContainer: {
     paddingHorizontal: 20,
   },
+  pendingApprovalCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 20,
+    marginBottom: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    backgroundColor: '#1A1C1E',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#3A2D1F',
+  },
+  pendingApprovalText: {
+    flex: 1,
+    marginLeft: 10,
+    fontSize: 13,
+    color: '#D7B58E',
+  },
   sectionTitle: {
     fontSize: 20,
     fontWeight: '600',
@@ -603,10 +880,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#2F3133',
   },
+  actionButtonDisabled: {
+    opacity: 0.55,
+  },
   actionButtonText: {
     fontSize: 15,
     fontWeight: '600',
     color: '#ECEDEE',
+  },
+  actionButtonTextDisabled: {
+    color: '#A0A4AA',
   },
   infoSection: {
     flexDirection: 'row',
@@ -661,6 +944,22 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
     textAlign: 'center',
     lineHeight: 20,
+  },
+  reasonBodyCard: {
+    width: '100%',
+    marginTop: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+    backgroundColor: '#202224',
+  },
+  reasonBodyText: {
+    fontSize: 13,
+    color: '#C8CDD2',
+    lineHeight: 19,
+    textAlign: 'left',
   },
   confirmButtonsRow: {
     width: '100%',

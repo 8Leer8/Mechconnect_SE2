@@ -492,6 +492,12 @@ def admin_verification_decision(request):
         mechanic.account.is_verified = is_approve
         mechanic.account.save(update_fields=['is_verified'])
 
+        if not is_approve:
+            for existing_doc in MechanicDocument.objects.filter(mechanic=mechanic):
+                if existing_doc.document_file:
+                    existing_doc.document_file.delete(save=False)
+            MechanicDocument.objects.filter(mechanic=mechanic).delete()
+
         return Response({'message': f'Mechanic verification {decision_label} successfully.'}, status=status.HTTP_200_OK)
 
     if target_type == 'shop':
@@ -513,6 +519,17 @@ def admin_verification_decision(request):
 
         owner.account.is_verified = is_approve
         owner.account.save(update_fields=['is_verified'])
+
+        if not is_approve:
+            for existing_doc in ShopDocument.objects.filter(shop=shop):
+                if existing_doc.document_file:
+                    existing_doc.document_file.delete(save=False)
+            ShopDocument.objects.filter(shop=shop).delete()
+
+            for existing_doc in ShopOwnerDocument.objects.filter(shop_owner=owner):
+                if existing_doc.document_file:
+                    existing_doc.document_file.delete(save=False)
+            ShopOwnerDocument.objects.filter(shop_owner=owner).delete()
 
         return Response({'message': f'Shop verification {decision_label} successfully.'}, status=status.HTTP_200_OK)
 
