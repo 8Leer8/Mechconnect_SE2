@@ -5,6 +5,7 @@ import {
   TextInput,
   TouchableOpacity,
   Text,
+  Image,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
@@ -23,9 +24,13 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL;
 interface LoginResponse {
   username?: string[];
   password?: string[];
-  account?: string[];
+  account?: {
+    id?: number | string;
+    [key: string]: any;
+  } | string[];
   message?: string;
   active_role?: string;
+  token?: string;
   [key: string]: any;
 }
 
@@ -156,7 +161,8 @@ export default function LoginScreen() {
         }
         // Persist account id locally for development flow (used by chat fallback)
         try {
-          const acctId = data?.account?.id || (data?.account && data.account.id) || null;
+          const accountPayload = data.account && !Array.isArray(data.account) ? data.account : null;
+          const acctId = accountPayload?.id || null;
           if (acctId) {
             await AsyncStorage.setItem('account_id', String(acctId));
           }
@@ -169,7 +175,8 @@ export default function LoginScreen() {
           console.warn('Failed to persist account_id or token', e);
         }
       } else {
-        const errorMessage = data.username?.[0] || data.password?.[0] || data.account?.[0] || 'Login failed';
+        const accountError = Array.isArray(data.account) ? data.account[0] : undefined;
+        const errorMessage = data.username?.[0] || data.password?.[0] || accountError || 'Login failed';
         showNotification({ type: 'error', message: errorMessage });
       }
     } catch (error: any) {
@@ -198,6 +205,10 @@ export default function LoginScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.logoContainer}>
+          <Image
+            source={require('@/assets/images/logo_main.png')}
+            style={{ width: 100, height: 100, resizeMode: 'contain', marginBottom: 8 }}
+          />
           <Text style={styles.title}>MechConnect</Text>
           <Text style={styles.tagline}>Connect to your mechanical world</Text>
         </View>
@@ -250,11 +261,19 @@ export default function LoginScreen() {
                 <FontAwesome 
                   name={showPassword ? "eye-slash" : "eye"} 
                   size={16} 
-                  color="#6c757d" 
+                  color="#8E8E93" 
                 />
               </TouchableOpacity>
             </View>
           </View>
+
+          <TouchableOpacity
+            style={styles.forgotPasswordContainer}
+            onPress={() => router.push('/(auth)/forgot-password')}
+            disabled={loading}
+          >
+            <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+          </TouchableOpacity>
 
           <TouchableOpacity
             style={[styles.button, loading && styles.buttonDisabled]}

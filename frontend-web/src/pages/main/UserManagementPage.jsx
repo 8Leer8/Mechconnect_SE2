@@ -65,6 +65,49 @@ function formatRoleLabel(role) {
     .join(" ");
 }
 
+function formatStatusLabel(value) {
+  if (!value) {
+    return "Not provided";
+  }
+
+  return String(value)
+    .toLowerCase()
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function formatCurrency(value) {
+  if (value === null || value === undefined || value === "") {
+    return "Not provided";
+  }
+
+  const numberValue = Number(value);
+  if (Number.isNaN(numberValue)) {
+    return "Not provided";
+  }
+
+  return `PHP ${numberValue.toLocaleString()}`;
+}
+
+function getStatusBadgeClass(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+
+  if (["approved", "active", "open", "verified", "yes", "completed"].includes(normalized)) {
+    return "border-emerald-500/40 bg-emerald-500/15 text-emerald-300";
+  }
+
+  if (["pending", "searching", "processing"].includes(normalized)) {
+    return "border-amber-500/40 bg-amber-500/15 text-amber-300";
+  }
+
+  if (["rejected", "inactive", "closed", "cancelled", "disputed", "no"].includes(normalized)) {
+    return "border-red-500/40 bg-red-500/15 text-red-300";
+  }
+
+  return "border-border bg-muted/60 text-foreground";
+}
+
 function toAvatarUrl(path) {
   if (!path || typeof path !== "string") {
     return "";
@@ -122,13 +165,13 @@ function renderBoolean(value) {
 function DetailItem({ label, value }) {
   return (
     <div className="rounded-md border border-border/70 bg-card/70 px-3 py-2.5">
-      <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="text-xs font-semibold uppercase tracking-wide text-orange-300/80">{label}</p>
       <p className="mt-1 text-sm font-medium text-foreground">{value || "Not provided"}</p>
     </div>
   );
 }
 
-function UserDetailsModal({ account, onClose }) {
+function UserDetailsModal({ account, onClose, activeRoleTab }) {
   if (!account) {
     return null;
   }
@@ -136,6 +179,18 @@ function UserDetailsModal({ account, onClose }) {
   const avatarUrl = toAvatarUrl(account.profile_photo);
   const roles = Array.isArray(account.roles) ? account.roles : [];
   const roleProfiles = account.role_profiles || {};
+  const mechanicProfile = roleProfiles.mechanic || {};
+  const mechanicServices = Array.isArray(mechanicProfile.services) ? mechanicProfile.services : [];
+  const mechanicSpecialties = Array.isArray(mechanicProfile.specialties) ? mechanicProfile.specialties : [];
+
+  const shopOwnerProfile = roleProfiles.shop_owner || {};
+  const shopDetails = shopOwnerProfile.shop || null;
+  const shopServices = Array.isArray(shopDetails?.services) ? shopDetails.services : [];
+  const shopSpecialties = Array.isArray(shopDetails?.specialties) ? shopDetails.specialties : [];
+  const shopMechanics = Array.isArray(shopDetails?.mechanics) ? shopDetails.mechanics : [];
+  const currentRoleTab = activeRoleTab || "all";
+  const showMechanicSection = roles.includes("mechanic") && currentRoleTab !== "shop" && currentRoleTab !== "client";
+  const showShopSection = roles.includes("shop_owner") && currentRoleTab !== "mechanic" && currentRoleTab !== "client";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
@@ -172,58 +227,203 @@ function UserDetailsModal({ account, onClose }) {
         <div className="max-h-[75vh] overflow-y-auto px-6 py-5">
           <div className="space-y-5">
             <section className="space-y-3">
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Account Overview</h3>
-              <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3">
-                <DetailItem label="Account ID" value={String(account.id)} />
-                <DetailItem label="Status" value={account.is_active ? "Active" : "Inactive"} />
-                <DetailItem label="Verification" value={account.is_verified ? "Verified" : "Unverified"} />
-                <DetailItem label="Last Login" value={formatDateTime(account.last_login)} />
-                <DetailItem label="Last Active Role" value={formatRoleLabel(account.last_active_role)} />
-                <DetailItem label="Contact Number" value={account.contact_number || "Not provided"} />
-                <DetailItem label="Date of Birth" value={formatDate(account.date_of_birth)} />
-                <DetailItem label="Gender" value={account.gender || "Not provided"} />
-                <DetailItem
-                  label="Roles"
-                  value={roles.length > 0 ? roles.map(formatRoleLabel).join(", ") : "No role assigned"}
-                />
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
+                <div className="rounded-lg border border-border/70 bg-card/70 p-3">
+                  <div className="flex h-56 items-center justify-center overflow-hidden rounded-md border border-border/70 bg-muted/40 px-3">
+                    {avatarUrl ? (
+                      <img src={avatarUrl} alt={getDisplayName(account)} className="h-full w-full object-cover" />
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No profile found</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <h4 className="text-sm font-semibold text-orange-400">Account Overview</h4>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant="outline" className={`capitalize ${getStatusBadgeClass(account.is_active ? "active" : "inactive")}`}>
+                      {account.is_active ? "Active" : "Inactive"}
+                    </Badge>
+                    <Badge variant="outline" className={`capitalize ${getStatusBadgeClass(account.is_verified ? "verified" : "pending")}`}>
+                      {account.is_verified ? "Verified" : "Unverified"}
+                    </Badge>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3">
+                    <DetailItem label="Account ID" value={String(account.id)} />
+                    <DetailItem label="Last Login" value={formatDateTime(account.last_login)} />
+                    <DetailItem label="Last Active Role" value={formatRoleLabel(account.last_active_role)} />
+                    <DetailItem label="Contact Number" value={account.contact_number || "Not provided"} />
+                    <DetailItem label="Date of Birth" value={formatDate(account.date_of_birth)} />
+                    <DetailItem label="Gender" value={account.gender || "Not provided"} />
+                    <DetailItem
+                      label="Roles"
+                      value={roles.length > 0 ? roles.map(formatRoleLabel).join(", ") : "No role assigned"}
+                    />
+                  </div>
+                </div>
               </div>
             </section>
 
-            <section className="space-y-3">
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Role Details</h3>
-              <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-2">
-                {roles.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No role details available.</p>
-                ) : (
-                  roles.map((role) => {
-                    const profile = roleProfiles[role] || {};
-                    return (
-                      <div key={role} className="rounded-lg border border-border/70 bg-card/70 p-3">
-                        <p className="mb-2 text-sm font-semibold text-foreground">{formatRoleLabel(role)}</p>
-                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                          <DetailItem label="Contact" value={profile.contact_number || "Not provided"} />
-                          <DetailItem label="Profile Photo" value={profile.profile_photo ? "Available" : "Not available"} />
-                          {role === "mechanic" ? (
-                            <>
-                              <DetailItem label="Status" value={profile.status || "Not provided"} />
-                              <DetailItem label="Average Rating" value={profile.average_rating ? String(profile.average_rating) : "0"} />
-                              <DetailItem label="Working For Shop" value={renderBoolean(profile.is_working_for_shop)} />
-                              <DetailItem label="Tokens Balance" value={String(profile.tokens_balance ?? 0)} />
-                            </>
-                          ) : null}
-                          {role === "shop_owner" ? (
-                            <DetailItem label="Owns Shop" value={renderBoolean(profile.owns_shop)} />
-                          ) : null}
+            {showMechanicSection && (
+              <section className="space-y-3">
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-orange-400">Mechanic Details</h3>
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="outline" className={`capitalize ${getStatusBadgeClass(mechanicProfile.status)}`}>
+                    {formatStatusLabel(mechanicProfile.status)}
+                  </Badge>
+                  <Badge variant="outline" className={`capitalize ${getStatusBadgeClass(mechanicProfile.is_working_for_shop ? "yes" : "pending")}`}>
+                    {mechanicProfile.is_working_for_shop ? "Working For Shop" : "Independent"}
+                  </Badge>
+                </div>
+                <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-4">
+                  <DetailItem label="Average Rating" value={String(mechanicProfile.average_rating ?? 0)} />
+                  <DetailItem label="Tokens Balance" value={String(mechanicProfile.tokens_balance ?? 0)} />
+                </div>
+
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold text-orange-400">Mechanic Services</h4>
+                  {mechanicServices.length === 0 ? (
+                    <p className="rounded-md border border-border/70 bg-card/70 px-3 py-2 text-sm text-muted-foreground">
+                      No mechanic services available.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {mechanicServices.map((serviceItem) => (
+                        <div key={`mechanic-service-${serviceItem.id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/70 bg-card/70 px-3 py-2">
+                          <p className="text-sm font-medium text-foreground">{serviceItem.name || "Unnamed service"}</p>
+                          <p className="text-sm text-muted-foreground">{formatCurrency(serviceItem.price)}</p>
                         </div>
-                      </div>
-                    );
-                  })
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold text-orange-400">Mechanic Specialties</h4>
+                  {mechanicSpecialties.length === 0 ? (
+                    <p className="rounded-md border border-border/70 bg-card/70 px-3 py-2 text-sm text-muted-foreground">
+                      No mechanic specialties available.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {mechanicSpecialties.map((specialtyItem) => (
+                        <div key={`mechanic-specialty-${specialtyItem.id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/70 bg-card/70 px-3 py-2">
+                          <p className="text-sm font-medium text-foreground">{specialtyItem.name || "Unnamed specialty"}</p>
+                              <Badge variant="outline" className={`capitalize ${getStatusBadgeClass(specialtyItem.status)}`}>
+                            {formatStatusLabel(specialtyItem.status)}
+                          </Badge>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {showShopSection && (
+              <section className="space-y-3">
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-orange-400">Shop Details</h3>
+                {shopDetails ? (
+                  <>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant="outline" className={`capitalize ${getStatusBadgeClass(shopDetails.status)}`}>
+                        {formatStatusLabel(shopDetails.status)}
+                      </Badge>
+                      <Badge variant="outline" className={`${getStatusBadgeClass(shopDetails.is_verified ? "verified" : "pending")}`}>
+                        {shopDetails.is_verified ? "Verified" : "Unverified"}
+                      </Badge>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3">
+                      <DetailItem label="Shop Name" value={shopDetails.shop_name || "Not provided"} />
+                      <DetailItem label="Shop Contact" value={shopDetails.contact_number || "Not provided"} />
+                      <DetailItem label="Shop Email" value={shopDetails.email || "Not provided"} />
+                      <DetailItem label="Website" value={shopDetails.website || "Not provided"} />
+                      <DetailItem label="Created At" value={formatDateTime(shopDetails.created_at)} />
+                      <DetailItem label="Owns Shop" value={renderBoolean(shopOwnerProfile.owns_shop)} />
+                    </div>
+
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-orange-400">Description</p>
+                      <p className="rounded-md border border-border/70 bg-card/70 px-3 py-2 text-sm text-foreground">
+                        {shopDetails.description || "No description provided."}
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <h4 className="text-sm font-semibold text-orange-400">Shop Services</h4>
+                      {shopServices.length === 0 ? (
+                        <p className="rounded-md border border-border/70 bg-card/70 px-3 py-2 text-sm text-muted-foreground">
+                          No shop services available.
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {shopServices.map((serviceItem) => (
+                            <div key={`shop-service-${serviceItem.id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/70 bg-card/70 px-3 py-2">
+                              <p className="text-sm font-medium text-foreground">{serviceItem.name || "Unnamed service"}</p>
+                              <p className="text-sm text-muted-foreground">{formatCurrency(serviceItem.price)}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <h4 className="text-sm font-semibold text-orange-400">Shop Specialties</h4>
+                      {shopSpecialties.length === 0 ? (
+                        <p className="rounded-md border border-border/70 bg-card/70 px-3 py-2 text-sm text-muted-foreground">
+                          No shop specialties available.
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {shopSpecialties.map((specialtyItem) => (
+                            <div key={`shop-specialty-${specialtyItem.id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/70 bg-card/70 px-3 py-2">
+                              <p className="text-sm font-medium text-foreground">{specialtyItem.name || "Unnamed specialty"}</p>
+                              <Badge variant="outline" className={`capitalize ${getStatusBadgeClass(specialtyItem.status)}`}>
+                                {formatStatusLabel(specialtyItem.status)}
+                              </Badge>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <h4 className="text-sm font-semibold text-orange-400">Shop Mechanics</h4>
+                      {shopMechanics.length === 0 ? (
+                        <p className="rounded-md border border-border/70 bg-card/70 px-3 py-2 text-sm text-muted-foreground">
+                          No mechanics assigned to this shop.
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {shopMechanics.map((mechanicItem) => (
+                            <div key={`shop-mechanic-${mechanicItem.account_id}`} className="rounded-md border border-border/70 bg-card/70 px-3 py-2">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-sm font-medium text-foreground">{mechanicItem.name || mechanicItem.username || "Unnamed mechanic"}</p>
+                                <Badge variant="outline" className={`capitalize ${getStatusBadgeClass(mechanicItem.status)}`}>
+                                  {formatStatusLabel(mechanicItem.status)}
+                                </Badge>
+                              </div>
+                              <p className="mt-1 text-xs text-muted-foreground">@{mechanicItem.username || "unknown"}</p>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                Rating: {mechanicItem.average_rating ?? 0} • Working for shop: {renderBoolean(mechanicItem.working_for_shop)}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <p className="rounded-md border border-border/70 bg-card/70 px-3 py-2 text-sm text-muted-foreground">
+                    No shop profile details available.
+                  </p>
                 )}
-              </div>
-            </section>
+              </section>
+            )}
 
             <section className="space-y-3">
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Address</h3>
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-orange-400">Address</h3>
               {account.address ? (
                 <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3">
                   <DetailItem
@@ -463,7 +663,11 @@ export function UserManagementPage() {
           </CardContent>
         </Card>
 
-        <UserDetailsModal account={selectedAccount} onClose={() => setSelectedAccount(null)} />
+        <UserDetailsModal
+          account={selectedAccount}
+          activeRoleTab={activeRoleTab}
+          onClose={() => setSelectedAccount(null)}
+        />
       </div>
     </AdminLayout>
   );

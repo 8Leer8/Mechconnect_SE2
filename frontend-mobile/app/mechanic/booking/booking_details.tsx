@@ -72,10 +72,18 @@ interface BookingDetail {
     username?: string;
     email?: string;
   };
+  has_backjob?: boolean;
+  backjob?: {
+    id: number;
+    status: string;
+    reason?: string | null;
+    images?: string[];
+    requested_by?: { id: number; name: string } | null;
+  } | null;
 }
 
 export default function BookingDetailScreen() {
-  const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
+  const { bookingId, source } = useLocalSearchParams<{ bookingId: string; source?: string }>();
   const navigation = useNavigation();
   const { showNotification } = useNotification();
   const { confirm } = useConfirmation();
@@ -87,6 +95,7 @@ export default function BookingDetailScreen() {
   const [timer, setTimer] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const routerHook = useRouter();
+  const isMechanicShopSource = source === 'mechanic_shop';
   const [quotation, setQuotation] = useState<any | null>(null);
 
   // Derive a default/display quotation: prefer saved `quotation`, otherwise build from booking.request.request_details
@@ -511,7 +520,7 @@ export default function BookingDetailScreen() {
           <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
             <FontAwesome name="refresh" size={16} color="#FF8C00" />
           </TouchableOpacity>
-          <WalletBadge onPress={() => router.push('/mechanic/wallet')} />
+          {!isMechanicShopSource && <WalletBadge onPress={() => router.push('/mechanic/wallet')} />}
         </View>
       </View>
 
@@ -760,6 +769,20 @@ export default function BookingDetailScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF8C00" />
         }
       >
+        {/* Backjob Banner */}
+        {booking?.has_backjob && booking.backjob && (
+          <View style={styles.backjobBanner}>
+            <FontAwesome name="wrench" size={14} color="#fff" />
+            <ThemedText style={styles.backjobText}>
+              {booking.backjob.status === 'accepted' ? 'Backjob — Accepted' : 'Backjob Request'}
+            </ThemedText>
+            {booking.backjob.reason ? (
+              <ThemedText style={styles.backjobReason} numberOfLines={2} ellipsizeMode="tail">
+                {booking.backjob.reason}
+              </ThemedText>
+            ) : null}
+          </View>
+        )}
         {/* Status Card */}
         <View style={[styles.statusCard, { borderColor: getStatusColor(booking.status) + '40' }]}>
           <View style={[styles.statusIconLarge, { backgroundColor: getStatusColor(booking.status) + '20' }]}>

@@ -3,7 +3,7 @@ import { StyleSheet } from 'react-native';
 export const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#111214',
   },
   scrollContent: {
     flexGrow: 1,
@@ -20,7 +20,7 @@ export const styles = StyleSheet.create({
   title: {
     fontSize: 35,
     fontWeight: '700',
-    color: '#FF6B35',
+    color: '#ECEDEE',
     textAlign: 'center',
     letterSpacing: -0.5,
     marginBottom: 4,
@@ -28,62 +28,77 @@ export const styles = StyleSheet.create({
   tagline: {
     fontSize: 14,
     fontWeight: '400',
-    color: '#6c757d',
+    color: '#8E8E93',
     textAlign: 'center',
   },
   formContainer: {
     width: '100%',
+    backgroundColor: '#1A1C1E',
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
   },
   inputContainer: {
-    marginBottom: 20,
+    marginBottom: 16,
   },
   label: {
     fontSize: 14,
-    fontWeight: '500',
-    color: '#212529',
+    fontWeight: '600',
+    color: '#ECEDEE',
     marginBottom: 6,
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: '#e0e0e0',
-    borderRadius: 6,
-    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+    borderRadius: 10,
+    backgroundColor: '#151718',
     paddingHorizontal: 12,
   },
   inputWrapperFocused: {
-    borderColor: '#FF6B35',
+    borderColor: '#FF8C00',
   },
   input: {
     flex: 1,
     paddingVertical: 12,
     fontSize: 15,
-    color: '#212529',
+    color: '#ECEDEE',
   },
   eyeButton: {
     padding: 4,
     marginLeft: 8,
   },
+  forgotPasswordContainer: {
+    alignSelf: 'flex-end',
+    marginTop: -2,
+    marginBottom: 12,
+  },
+  forgotPasswordText: {
+    color: '#FF8C00',
+    fontSize: 13,
+    fontWeight: '600',
+  },
   button: {
-    backgroundColor: '#FF6B35',
-    borderRadius: 6,
+    backgroundColor: '#FF8C00',
+    borderRadius: 10,
     paddingVertical: 12,
     alignItems: 'center',
     marginTop: 4,
   },
   buttonDisabled: {
-    backgroundColor: '#e55a2b',
+    backgroundColor: '#A85D00',
     opacity: 0.6,
   },
   buttonText: {
-    color: '#ffffff',
+    color: '#FFFFFF',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   divider: {
     height: 1,
-    backgroundColor: '#e0e0e0',
+    backgroundColor: '#2A2C2E',
     marginVertical: 20,
   },
   footer: {
@@ -93,11 +108,11 @@ export const styles = StyleSheet.create({
     paddingVertical: 16,
   },
   footerText: {
-    color: '#6c757d',
+    color: '#A7ADB3',
     fontSize: 14,
   },
   linkText: {
-    color: '#FF6B35',
+    color: '#FF8C00',
     fontSize: 14,
     fontWeight: '600',
   },
@@ -107,7 +122,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
   },
   copyrightText: {
-    color: '#6c757d',
+    color: '#6E7378',
     fontSize: 13,
   },
 });

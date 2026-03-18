@@ -147,6 +147,35 @@ export const styles = StyleSheet.create({
     fontSize: 13,
     color: '#8E8E93',
   },
+  summaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 8,
+  },
+  summaryChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#202224',
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    maxWidth: '100%',
+  },
+  summaryText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#C8CDD2',
+  },
+  summaryDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
   // Shop
   shopBanner: {
     width: '100%',

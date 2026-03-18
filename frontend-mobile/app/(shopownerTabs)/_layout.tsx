@@ -3,8 +3,11 @@ import React from 'react';
 import { FontAwesome } from '@expo/vector-icons';
 
 import { HapticTab } from '@/components/haptic-tab';
+import { useTabsBackToHome } from '@/hooks/use-tabs-back-to-home';
 
 export default function ShopOwnerTabLayout() {
+  useTabsBackToHome('/(shopownerTabs)/main/home');
+
   return (
     <Tabs
       screenOptions={{

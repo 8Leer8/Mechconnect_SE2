@@ -445,4 +445,26 @@ def _serialize_single_booking(booking):
         # don't fail serialization if quotation construction fails
         pass
 
+    # Attach backjob info when present
+    try:
+        if hasattr(booking, 'backjob') and booking.backjob is not None:
+            bj = booking.backjob
+            booking_data['has_backjob'] = True
+            booking_data['backjob'] = {
+                'id': bj.id,
+                'status': bj.status,
+                'reason': bj.reason,
+                'images': bj.images or [],
+                'requested_by': {
+                    'id': bj.requested_by.id,
+                    'name': f"{bj.requested_by.firstname} {bj.requested_by.lastname}",
+                } if bj.requested_by else None,
+                'created_at': bj.created_at.isoformat() if bj.created_at else None,
+            }
+        else:
+            booking_data['has_backjob'] = False
+    except Exception:
+        booking_data['has_backjob'] = False
+
     return booking_data
+

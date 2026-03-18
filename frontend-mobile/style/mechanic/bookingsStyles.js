@@ -274,6 +274,32 @@ export const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#FF8C00',
   },
+  backjobBadge: {
+    marginLeft: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: '#FFD60A',
+    alignSelf: 'center',
+  },
+  backjobText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#1A1C1E',
+  },
+  chatBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#007AFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  chatBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#fff',
+  },
   jobDoneBanner: {
     flexDirection: 'row',
     alignItems: 'center',

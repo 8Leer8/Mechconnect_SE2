@@ -37,6 +37,13 @@ interface Booking {
   cancellation_details?: any;
   rework_details?: any;
   completion_details?: any;
+  has_backjob?: boolean;
+  backjob?: {
+    id: number;
+    status: string;
+    reason?: string | null;
+    images?: string[];
+  } | null;
 }
 
 interface BookingsResponse {
@@ -296,6 +303,11 @@ export default function BookingScreen() {
                         <View style={[styles.statusBadge, { backgroundColor: getStatusColor(booking.status) }]}>
                           <ThemedText style={styles.statusText}>{getStatusLabel(booking.status)}</ThemedText>
                         </View>
+                        {booking.has_backjob ? (
+                          <View style={styles.backjobBadge}>
+                            <ThemedText style={styles.backjobBadgeText}>Backjob</ThemedText>
+                          </View>
+                        ) : null}
                         <ThemedText style={styles.bookingId}>#{booking.id}</ThemedText>
                       </View>
                       <ThemedText style={styles.requestType}>

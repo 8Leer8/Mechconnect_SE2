@@ -5,13 +5,18 @@ from rest_framework import status
 from django.contrib.auth.hashers import make_password
 from django.utils import timezone
 from datetime import timedelta
-import secrets
+import logging
+import random
 
 from ..models import Account, PasswordReset
 from ..serializers import (
     ChangePasswordSerializer, PasswordResetRequestSerializer,
     PasswordResetConfirmSerializer
 )
+from utils.email import build_password_reset_email_html, send_html_email
+
+
+logger = logging.getLogger(__name__)
 
 
 @api_view(['POST'])
@@ -54,21 +59,32 @@ def change_password(request):
 @permission_classes([AllowAny])
 def request_password_reset(request):
     """
-    Request password reset via email
+    Request password reset via email code
     
     Required fields:
     - email
-    
-    Sends reset token (in production, this should be sent via email)
+
+    Sends 6-digit reset code via email
     """
     serializer = PasswordResetRequestSerializer(data=request.data)
     if serializer.is_valid():
         email = serializer.validated_data['email']
         account = Account.objects.get(email=email)
-        
-        # Generate reset token
-        reset_token = secrets.token_urlsafe(32)
-        expires_at = timezone.now() + timedelta(hours=1)
+
+        # Generate unique 6-digit reset code
+        reset_token = None
+        for _ in range(30):
+            candidate = ''.join(str(random.randint(0, 9)) for _ in range(6))
+            if not PasswordReset.objects.filter(reset_token=candidate).exists():
+                reset_token = candidate
+                break
+
+        if not reset_token:
+            return Response({
+                'error': 'Unable to generate reset code. Please try again.'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        expires_at = timezone.now() + timedelta(minutes=15)
         
         # Expire any existing pending resets
         PasswordReset.objects.filter(
@@ -83,12 +99,25 @@ def request_password_reset(request):
             expires_at=expires_at
         )
         
-        # TODO: Send email with reset token
-        # For now, return it in response (REMOVE IN PRODUCTION)
+        first_name = account.firstname or account.username or 'there'
+
+        email_sent = send_html_email(
+            to_email=email,
+            subject='MechConnect - Your Password Reset Code',
+            html_content=build_password_reset_email_html(
+                first_name=first_name,
+                reset_code=reset_token,
+                expires_in_minutes=15,
+            ),
+        )
+
+        if not email_sent:
+            logger.warning('Password reset code generated but email sending failed for %s', email)
+
         return Response({
-            'message': 'Password reset token generated',
-            'reset_token': reset_token,  # Remove this in production
-            'note': 'In production, this token should be sent via email'
+            'message': 'Password reset code sent to your email' if email_sent else 'Password reset code generated',
+            'expires_in_minutes': 15,
+            'note': None if email_sent else 'Email service may be unavailable. Please try again shortly.'
         }, status=status.HTTP_200_OK)
     
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

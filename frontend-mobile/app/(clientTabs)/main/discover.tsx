@@ -17,6 +17,7 @@ interface Mechanic {
   contact_number: string;
   average_rating: number;
   status: string;
+  is_working_for_shop?: boolean;
 }
 
 interface Shop {
@@ -120,6 +121,22 @@ export default function DiscoverScreen() {
     { key: 'services', label: 'Services', icon: 'cogs' },
   ];
 
+  const formatRating = (rating: number) => {
+    const value = Number(rating || 0);
+    return value > 0 ? value.toFixed(1) : 'No rating';
+  };
+
+  const isAvailableStatus = (statusValue: string, type: 'mechanic' | 'shop') => {
+    const normalized = (statusValue || '').toLowerCase();
+    return type === 'mechanic' ? normalized === 'available' : normalized === 'open';
+  };
+
+  const getAvailabilityColor = (statusValue: string, type: 'mechanic' | 'shop') =>
+    isAvailableStatus(statusValue, type) ? '#34C759' : '#FF3B30';
+
+  const getAvailabilityLabel = (statusValue: string, type: 'mechanic' | 'shop') =>
+    isAvailableStatus(statusValue, type) ? 'Available' : 'Not Available';
+
   // Memoized render functions for FlatList
   const renderMechanicItem: ListRenderItem<Mechanic> = useCallback(({ item: mechanic }) => (
     <TouchableOpacity
@@ -141,17 +158,37 @@ export default function DiscoverScreen() {
           <ThemedText style={styles.cardTitle}>{mechanic.name}</ThemedText>
           <View style={styles.ratingRow}>
             <FontAwesome name="star" size={12} color="#FFD60A" />
-            <ThemedText style={styles.ratingText}>{mechanic.average_rating.toFixed(1)}</ThemedText>
+              <ThemedText style={styles.ratingText}>{formatRating(mechanic.average_rating)}</ThemedText>
           </View>
+            <View style={styles.summaryRow}>
+              <View style={styles.summaryChip}>
+                <FontAwesome name="briefcase" size={11} color="#8E8E93" />
+                <ThemedText style={styles.summaryText}>
+                  {mechanic.is_working_for_shop ? 'Shop Mechanic' : 'Independent'}
+                </ThemedText>
+              </View>
+            </View>
         </View>
         <View style={styles.cardRight}>
-          <View style={[styles.statusDot, { backgroundColor: mechanic.status === 'active' ? '#34C759' : '#8E8E93' }]} />
-          <ThemedText style={styles.statusLabel}>{mechanic.status}</ThemedText>
+          <View
+            style={[
+              styles.statusDot,
+              { backgroundColor: getAvailabilityColor(mechanic.status, 'mechanic') },
+            ]}
+          />
+          <ThemedText
+            style={[
+              styles.statusLabel,
+              { color: getAvailabilityColor(mechanic.status, 'mechanic') },
+            ]}
+          >
+            {getAvailabilityLabel(mechanic.status, 'mechanic')}
+          </ThemedText>
         </View>
       </View>
       <View style={styles.cardFooter}>
         <FontAwesome name="phone" size={12} color="#8E8E93" />
-        <ThemedText style={styles.footerText}>{mechanic.contact_number}</ThemedText>
+        <ThemedText style={styles.footerText}>{mechanic.contact_number || 'No contact number'}</ThemedText>
       </View>
     </TouchableOpacity>
   ), [router]);
@@ -180,9 +217,38 @@ export default function DiscoverScreen() {
       {shop.description ? (
         <ThemedText style={styles.descText} numberOfLines={2}>{shop.description}</ThemedText>
       ) : null}
+      <View style={styles.summaryRow}>
+        <View
+          style={[
+            styles.summaryChip,
+            { borderColor: getAvailabilityColor(shop.status, 'shop') + '40' },
+          ]}
+        >
+          <View
+            style={[
+              styles.summaryDot,
+              { backgroundColor: getAvailabilityColor(shop.status, 'shop') },
+            ]}
+          />
+          <ThemedText
+            style={[
+              styles.summaryText,
+              { color: getAvailabilityColor(shop.status, 'shop') },
+            ]}
+          >
+            {getAvailabilityLabel(shop.status, 'shop')}
+          </ThemedText>
+        </View>
+        <View style={styles.summaryChip}>
+          <FontAwesome name="envelope" size={11} color="#8E8E93" />
+          <ThemedText style={styles.summaryText} numberOfLines={1}>
+            {shop.email || 'No email'}
+          </ThemedText>
+        </View>
+      </View>
       <View style={styles.cardFooter}>
         <FontAwesome name="phone" size={12} color="#8E8E93" />
-        <ThemedText style={styles.footerText}>{shop.contact_number}</ThemedText>
+        <ThemedText style={styles.footerText}>{shop.contact_number || 'No contact number'}</ThemedText>
       </View>
     </TouchableOpacity>
   ), [router]);

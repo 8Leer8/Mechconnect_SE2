@@ -90,6 +90,8 @@ def admin_list_bookings(request):
         'request__directrequest__service',
         'request__emergencyrequest',
         'request__broadcast_request',
+    ).prefetch_related(
+        'request__broadcast_request__services',
     ).order_by('-booked_at')
 
     q = request.GET.get('q')
@@ -148,9 +150,12 @@ def admin_list_bookings(request):
             }
         elif request_obj.request_type == Request.Type.BROADCAST and hasattr(request_obj, 'broadcast_request'):
             broadcast_request = request_obj.broadcast_request
+            selected_service_names = [service.name for service in broadcast_request.services.all()]
             request_details = {
                 'description': broadcast_request.description,
                 'status': broadcast_request.status,
+                'service_names': selected_service_names,
+                'service_name': ', '.join(selected_service_names) if selected_service_names else None,
                 'latitude': float(broadcast_request.latitude) if broadcast_request.latitude is not None else None,
                 'longitude': float(broadcast_request.longitude) if broadcast_request.longitude is not None else None,
                 'expires_at': broadcast_request.expires_at,

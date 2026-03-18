@@ -1,8 +1,11 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
 import { FontAwesome } from '@expo/vector-icons';
+import { useTabsBackToHome } from '@/hooks/use-tabs-back-to-home';
 
 export default function MechanicTabLayout() {
+  useTabsBackToHome('/(mechanicTabs)/main/home');
+
   return (
     <Tabs
       screenOptions={{

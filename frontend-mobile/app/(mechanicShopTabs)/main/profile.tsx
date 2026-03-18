@@ -10,7 +10,6 @@ import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
-import { TopNav } from '@/components/navigation';
 import { SkeletonProfile } from '@/components/skeletons/SkeletonLoaders';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -94,15 +93,18 @@ export default function MechanicShopProfileScreen() {
     }
   };
 
-  const handleNotificationPress = () => {
-    console.log('Notification pressed');
-    // Add notification navigation here later
-  };
-
   if (loading) {
     return (
       <ThemedView style={styles.container}>
-        <TopNav onNotificationPress={handleNotificationPress} />
+        <View style={styles.pageHeader}>
+          <View>
+            <ThemedText style={styles.pageTitle}>Profile</ThemedText>
+            <ThemedText style={styles.pageSubtitle}>Mechanic shop account</ThemedText>
+          </View>
+          <TouchableOpacity style={styles.headerRefreshButton} onPress={onRefresh}>
+            <FontAwesome name="refresh" size={18} color="#FF8C00" />
+          </TouchableOpacity>
+        </View>
         <ScrollView contentContainerStyle={{ padding: 16 }}>
           <SkeletonProfile />
         </ScrollView>
@@ -112,7 +114,15 @@ export default function MechanicShopProfileScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <TopNav onNotificationPress={handleNotificationPress} />
+      <View style={styles.pageHeader}>
+        <View>
+          <ThemedText style={styles.pageTitle}>Profile</ThemedText>
+          <ThemedText style={styles.pageSubtitle}>Manage your account details</ThemedText>
+        </View>
+        <TouchableOpacity style={styles.headerRefreshButton} onPress={onRefresh}>
+          <FontAwesome name="refresh" size={18} color="#FF8C00" />
+        </TouchableOpacity>
+      </View>
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
@@ -173,20 +183,6 @@ export default function MechanicShopProfileScreen() {
                 </ThemedText>
               </View>
             </View>
-
-            <View style={styles.divider} />
-
-            <View style={styles.infoRow}>
-              <FontAwesome name="circle" size={12} color="#4CAF50" />
-              <View style={styles.infoContent}>
-                <ThemedText style={styles.infoLabel}>Status</ThemedText>
-                <ThemedText style={styles.infoValue}>
-                  {profileData?.current_role_profile?.mechanic?.status === 'available' 
-                    ? 'Available' 
-                    : 'Working'}
-                </ThemedText>
-              </View>
-            </View>
           </View>
         </View>
 
@@ -234,13 +230,40 @@ export default function MechanicShopProfileScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: '#111214',
+  },
+  pageHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 60,
+    paddingBottom: 16,
+    backgroundColor: '#1A1C1E',
+  },
+  pageTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  pageSubtitle: {
+    fontSize: 13,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+  headerRefreshButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FF8C0015',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   scroll: {
     flex: 1,
   },
   scrollContent: {
-    paddingTop: 16,
+    paddingTop: 12,
   },
   loader: {
     flex: 1,
@@ -256,7 +279,7 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: '#2C2C2E',
+    backgroundColor: '#242628',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 12,
@@ -277,12 +300,12 @@ const styles = StyleSheet.create({
   shopBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1C1C1E',
+    backgroundColor: '#1A1C1E',
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#FF8C00',
+    borderColor: '#2A2C2E',
     marginTop: 8,
   },
   shopBadgeText: {
@@ -302,9 +325,11 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   infoCard: {
-    backgroundColor: '#1C1C1E',
+    backgroundColor: '#1A1C1E',
     borderRadius: 12,
     padding: 16,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
   },
   infoRow: {
     flexDirection: 'row',
@@ -327,17 +352,17 @@ const styles = StyleSheet.create({
   },
   divider: {
     height: 1,
-    backgroundColor: '#2C2C2E',
+    backgroundColor: '#2A2C2E',
     marginVertical: 8,
   },
   shopCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1C1C1E',
+    backgroundColor: '#1A1C1E',
     padding: 16,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#FF8C00',
+    borderColor: '#2A2C2E',
   },
   shopCardInfo: {
     marginLeft: 16,
@@ -356,10 +381,12 @@ const styles = StyleSheet.create({
   menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1C1C1E',
+    backgroundColor: '#1A1C1E',
     padding: 16,
     borderRadius: 12,
     marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
   },
   menuText: {
     flex: 1,
@@ -369,7 +396,7 @@ const styles = StyleSheet.create({
     marginLeft: 12,
   },
   logoutItem: {
-    backgroundColor: '#1C1C1E',
+    backgroundColor: '#1A1C1E',
     borderWidth: 1,
     borderColor: '#FF3B30',
   },
