@@ -76,26 +76,27 @@ def build_verification_email_html(first_name, verification_code, expires_in_minu
     )
 
 
-def build_password_reset_email_html(first_name, reset_url, expires_in_hours=1):
+def build_password_reset_email_html(first_name, reset_code, expires_in_minutes=15):
     safe_name = escape(first_name or "there")
-    safe_url = escape(reset_url or "#", quote=True)
+    safe_code = escape(str(reset_code or "------"))
     return (
-        "<div style=\"margin:0;padding:24px;background-color:#FFFFFF;font-family:Arial,sans-serif;color:#1F2937;\">"
-        "<div style=\"max-width:620px;margin:0 auto;border:1px solid #E5E7EB;border-radius:14px;overflow:hidden;background-color:#FFFFFF;\">"
-        "<div style=\"background-color:#1A73E8;padding:22px 28px;\">"
-        "<h1 style=\"margin:0;font-size:22px;line-height:1.3;color:#FFFFFF;font-weight:700;\">Password Reset Request</h1>"
+        "<div style=\"margin:0;padding:24px;background-color:#ecedee;font-family:Arial,sans-serif;color:#ECEDEE;\">"
+        "<div style=\"max-width:620px;margin:0 auto;border:1px solid #2A2C2E;border-radius:14px;overflow:hidden;background-color:#151718;\">"
+        "<div style=\"background-color:#1A1C1E;padding:22px 28px;border-bottom:1px solid #2A2C2E;\">"
+        "<h1 style=\"margin:0;font-size:22px;line-height:1.3;color:#ECEDEE;font-weight:700;\">MechConnect Password Reset</h1>"
         "</div>"
         "<div style=\"padding:28px;\">"
-        f"<p style=\"margin:0 0 14px;font-size:16px;line-height:1.6;\">Hi {safe_name},</p>"
-        "<p style=\"margin:0 0 18px;font-size:15px;line-height:1.7;color:#374151;\">We received a request to reset your MechConnect password. For your account security, confirm this request only if you initiated it.</p>"
-        "<div style=\"margin:0 0 20px;\">"
-        f"<a href=\"{safe_url}\" style=\"display:inline-block;background-color:#1A73E8;color:#FFFFFF;text-decoration:none;padding:12px 22px;border-radius:10px;font-size:15px;font-weight:700;\">Reset My Password</a>"
+        f"<p style=\"margin:0 0 14px;font-size:16px;line-height:1.6;color:#ECEDEE;\">Hi {safe_name},</p>"
+        "<p style=\"margin:0 0 16px;font-size:15px;line-height:1.7;color:#C8CDD2;\">Use the password reset code below in the MechConnect app to reset your password.</p>"
+        "<div style=\"margin:0 0 18px;padding:14px;border:1px solid #2A2C2E;border-radius:12px;background-color:#1A1C1E;\">"
+        "<p style=\"margin:0 0 8px;font-size:12px;font-weight:700;letter-spacing:0.4px;color:#8E8E93;text-transform:uppercase;\">Reset Code</p>"
+        f"<p style=\"margin:0;font-size:34px;line-height:1.2;letter-spacing:6px;font-weight:800;color:#FF8C00;\">{safe_code}</p>"
         "</div>"
-        "<p style=\"margin:0 0 10px;font-size:14px;line-height:1.6;color:#B91C1C;\"><strong>Didn't request this?</strong> Please ignore this email and consider updating your security settings.</p>"
-        f"<p style=\"margin:0;font-size:14px;line-height:1.6;color:#4B5563;\">For your protection, this reset link expires in {int(expires_in_hours)} hour(s).</p>"
+        f"<p style=\"margin:0 0 8px;font-size:14px;line-height:1.6;color:#C8CDD2;\">This code expires in {int(expires_in_minutes)} minutes.</p>"
+        "<p style=\"margin:0;font-size:13px;line-height:1.6;color:#8E8E93;\">If you did not request a password reset, you can safely ignore this email.</p>"
         "</div>"
-        "<div style=\"padding:16px 28px;border-top:1px solid #E5E7EB;background-color:#F9FAFB;\">"
-        "<p style=\"margin:0;font-size:12px;line-height:1.6;color:#6B7280;\">MechConnect • This is an automated message, please do not reply.</p>"
+        "<div style=\"padding:16px 28px;border-top:1px solid #2A2C2E;background-color:#1A1C1E;\">"
+        "<p style=\"margin:0;font-size:12px;line-height:1.6;color:#8E8E93;\">MechConnect • This is an automated message, please do not reply.</p>"
         "</div>"
         "</div>"
         "</div>"
