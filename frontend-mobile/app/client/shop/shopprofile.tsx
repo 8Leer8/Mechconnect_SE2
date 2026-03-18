@@ -131,6 +131,10 @@ export default function ShopProfileScreen() {
     }
   };
 
+  const handleBack = () => {
+    router.replace('/(clientTabs)/main/discover');
+  };
+
   if (loading) {
     return (
       <ThemedView style={styles.container}>
@@ -147,7 +151,7 @@ export default function ShopProfileScreen() {
         <View style={styles.errorContainer}>
           <FontAwesome name="exclamation-circle" size={48} color="#FF3B30" />
           <ThemedText style={styles.errorText}>{error || 'Profile not found'}</ThemedText>
-          <TouchableOpacity style={styles.retryBtn} onPress={() => router.back()}>
+          <TouchableOpacity style={styles.retryBtn} onPress={handleBack}>
             <ThemedText style={styles.retryBtnText}>Go Back</ThemedText>
           </TouchableOpacity>
         </View>
@@ -161,7 +165,7 @@ export default function ShopProfileScreen() {
     <ThemedView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+        <TouchableOpacity onPress={handleBack} style={styles.backBtn}>
           <FontAwesome name="chevron-left" size={18} color="#FF8C00" />
         </TouchableOpacity>
         <ThemedText style={styles.headerTitle}>Shop Profile</ThemedText>
