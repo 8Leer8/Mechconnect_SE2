@@ -176,7 +176,7 @@ export default function LoginScreen() {
         }
       } else {
         const accountError = Array.isArray(data.account) ? data.account[0] : undefined;
-        const errorMessage = data.username?.[0] || data.password?.[0] || accountError || 'Login failed';
+        const errorMessage = data.username?.[0] || data.password?.[0] || data.non_field_errors?.[0] || accountError || data.message || 'Login failed';
         showNotification({ type: 'error', message: errorMessage });
       }
     } catch (error: any) {

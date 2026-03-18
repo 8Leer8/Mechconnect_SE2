@@ -5,7 +5,7 @@ from rest_framework.permissions import AllowAny
 from django.utils import timezone
 from datetime import timedelta
 
-from ...models import Request, DirectRequestAddOn, BroadcastRequest
+from ...models import Request, DirectRequestAddOn, BroadcastRequest, Booking, CancelBooking
 from users.models import Account
 from services.models import MechanicService, ShopService
 
@@ -378,9 +378,37 @@ def cancel_request(request, request_id):
         req = Request.objects.get(id=request_id, client=client)
         
         if hasattr(req, 'booking'):
+            # If there's an associated booking, allow the client to cancel the booking.
+            booking = req.booking
+            # Prevent double cancellation
+            if booking.status == Booking.Status.CANCELLED:
+                return Response({
+                    'error': 'Booking already cancelled'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Update booking status and record cancellation
+            booking.status = Booking.Status.CANCELLED
+            booking.save(update_fields=['status'])
+
+            CancelBooking.objects.create(
+                booking=booking,
+                cancelled_by=account,
+                reason=request.data.get('reason', 'Cancelled by client')
+            )
+
+            # If this was a broadcast request, mark broadcast as cancelled as well
+            if req.request_type == 'broadcast' and hasattr(req, 'broadcast_request'):
+                try:
+                    br = req.broadcast_request
+                    br.status = BroadcastRequest.Status.CANCELLED
+                    br.save(update_fields=['status'])
+                except Exception:
+                    # Non-fatal: proceed even if broadcast update fails
+                    pass
+
             return Response({
-                'error': 'Cannot cancel a request that already has a booking'
-            }, status=status.HTTP_400_BAD_REQUEST)
+                'message': 'Booking cancelled successfully'
+            }, status=status.HTTP_200_OK)
         
         if req.request_type == 'custom' and hasattr(req, 'customrequest'):
             if req.customrequest.request_status == 'cancelled':

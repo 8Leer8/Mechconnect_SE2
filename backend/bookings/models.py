@@ -139,7 +139,15 @@ class CompleteBooking(models.Model):
 
 class Receipt(models.Model):
     booking = models.OneToOneField(Booking, on_delete=models.CASCADE)
+    # Record payment method and any external transaction id for online payments
+    PAYMENT_METHOD_CHOICES = (
+        ('cash', 'cash'),
+        ('online', 'online'),
+    )
+
     payment_received = models.BooleanField(default=False)
+    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default='cash')
+    transaction_id = models.CharField(max_length=255, null=True, blank=True)
     receipt_image = models.ImageField(upload_to='bookings/receipts/', null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

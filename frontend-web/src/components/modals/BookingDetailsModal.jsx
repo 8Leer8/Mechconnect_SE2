@@ -199,6 +199,7 @@ export function BookingDetailsModal({ booking, onClose }) {
   const { latitude, longitude } = getBroadcastCoordinates(booking);
   const hasCoordinates = latitude !== null && longitude !== null;
   const { embedUrl, openUrl } = buildMapUrls(latitude, longitude);
+  const [selectedPayment, setSelectedPayment] = React.useState(null);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4" onClick={onClose}>
@@ -309,6 +310,54 @@ export function BookingDetailsModal({ booking, onClose }) {
                   photoUrl={booking.request_details?.photo_url}
                   requestType={booking.request_type}
                 />
+
+                {/* Payment selection for pending_payment bookings */}
+                {booking.status === 'pending_payment' && (
+                  <section className="space-y-3">
+                    <h4 className="text-sm font-semibold text-orange-400">Payment</h4>
+                    <div className="flex flex-col gap-2">
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPayment('cash')}
+                          className={`flex-1 rounded-md border px-3 py-2 text-sm text-left ${selectedPayment === 'cash' ? 'border-amber-400' : 'border-border/70'}`}
+                        >
+                          <div className="font-semibold">Cash</div>
+                          <div className="text-xs text-muted-foreground">Pay the mechanic in person</div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPayment('online')}
+                          className={`flex-1 rounded-md border px-3 py-2 text-sm text-left ${selectedPayment === 'online' ? 'border-amber-400' : 'border-border/70'}`}
+                        >
+                          <div className="font-semibold">Online Payment</div>
+                          <div className="text-xs text-muted-foreground">Pay now with card or e-wallet</div>
+                        </button>
+                      </div>
+                      <div className="flex items-center justify-end">
+                        <Button
+                          type="button"
+                          onClick={async () => {
+                            if (!selectedPayment) return;
+                            try {
+                              await fetch(`${API_BASE_URL}/bookings/bookings/${booking.id}/pay/`, {
+                                method: 'PATCH',
+                                credentials: 'include',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ payment_method: selectedPayment }),
+                              });
+                              onClose();
+                            } catch (e) {
+                              // no-op for UI
+                            }
+                          }}
+                        >
+                          Confirm Payment Method
+                        </Button>
+                      </div>
+                    </div>
+                  </section>
+                )}
 
                 <section className="space-y-3">
                   <h4 className="text-sm font-semibold text-orange-400">Service Location</h4>

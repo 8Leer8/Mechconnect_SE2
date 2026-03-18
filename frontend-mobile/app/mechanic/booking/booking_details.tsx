@@ -962,6 +962,8 @@ export default function BookingDetailScreen() {
           </View>
         </TouchableOpacity>
 
+        {/* Payment method is shown below the Receipt card (moved there) */}
+
         {/* Location Section */}
         <View style={styles.sectionCard}>
           <View style={styles.sectionHeader}>
@@ -1091,6 +1093,21 @@ export default function BookingDetailScreen() {
                 </>
               )}
             </View>
+            {/* Show payment method immediately under the receipt for mechanics */}
+            {((booking as any).payment && (booking as any).payment.payment_method) && (
+              <View style={styles.sectionCard}>
+                <View style={styles.sectionHeader}>
+                  <View style={[styles.sectionIcon, { backgroundColor: '#FFD60A15' }]}> 
+                    <FontAwesome name="money" size={16} color="#FFD60A" />
+                  </View>
+                  <ThemedText style={styles.sectionTitle}>Payment Method</ThemedText>
+                </View>
+                <View style={{ paddingVertical: 8 }}>
+                  <ThemedText style={{ color: '#666', marginBottom: 4 }}>Chosen by client:</ThemedText>
+                  <ThemedText style={{ fontWeight: '700' }}>{((booking as any).payment.payment_method || '').toString().toUpperCase()}</ThemedText>
+                </View>
+              </View>
+            )}
           </View>
         )}
 
