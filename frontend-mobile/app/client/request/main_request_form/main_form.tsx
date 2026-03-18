@@ -32,23 +32,23 @@ interface CreateRequestResponse {
 export default function MainRequestFormScreen() {
   const { showNotification } = useNotification();
   const { selectedLocation, setSelectedLocation } = useLocation();
-  
+
   // Mode state
   const [isCustomMode, setIsCustomMode] = useState(false);
   const [customDropdownExpanded, setCustomDropdownExpanded] = useState(false);
   const [dropdownHeight] = useState(new Animated.Value(0));
-  
+
   // Services (Broadcast mode)
   const [services, setServices] = useState<Service[]>([]);
   const [selectedServiceIds, setSelectedServiceIds] = useState<number[]>([]);
   const [fetchingServices, setFetchingServices] = useState(false);
-  
+
   // Common fields
   const [description, setDescription] = useState('');
   const [concernPicture, setConcernPicture] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Location fields (Broadcast mode only)
+  // Location fields (shared by both modes)
   const [selectedAddress, setSelectedAddress] = useState<string>('');
   const [streetName, setStreetName] = useState('');
   const [cityMunicipality, setCityMunicipality] = useState('');
@@ -60,7 +60,6 @@ export default function MainRequestFormScreen() {
   // ─── Fetch Services (only for Broadcast mode) ─────────────
   useEffect(() => {
     if (isCustomMode) return;
-    
     let cancelled = false;
     const fetchServices = async () => {
       try {
@@ -84,11 +83,11 @@ export default function MainRequestFormScreen() {
     return () => { cancelled = true; };
   }, [isCustomMode]);
 
-  // ─── Handle location data from map screen (Broadcast mode) ────
+  // ─── Handle location data from map screen ────────────────
   useFocusEffect(
     React.useCallback(() => {
       let isMounted = true;
-      if (selectedLocation && isMounted && !isCustomMode) {
+      if (selectedLocation && isMounted) {
         setLatitude(selectedLocation.latitude);
         setLongitude(selectedLocation.longitude);
         setSelectedAddress(selectedLocation.address);
@@ -98,7 +97,7 @@ export default function MainRequestFormScreen() {
         setSelectedLocation(null);
       }
       return () => { isMounted = false; };
-    }, [selectedLocation, setSelectedLocation, isCustomMode])
+    }, [selectedLocation, setSelectedLocation])
   );
 
   // ─── Toggle Custom Mode ────────────────────────────────────
@@ -106,16 +105,12 @@ export default function MainRequestFormScreen() {
     const newCustomMode = !isCustomMode;
     setIsCustomMode(newCustomMode);
     setCustomDropdownExpanded(newCustomMode);
-    
     Animated.timing(dropdownHeight, {
       toValue: newCustomMode ? 1 : 0,
       duration: 300,
       useNativeDriver: false,
     }).start();
-    
-    if (newCustomMode) {
-      setSelectedServiceIds([]);
-    }
+    if (newCustomMode) setSelectedServiceIds([]);
   };
 
   const toggleService = (serviceId: number) => {
@@ -159,6 +154,59 @@ export default function MainRequestFormScreen() {
     }
   };
 
+  // ─── Location Section (shared UI) ─────────────────────────
+  const renderLocationSection = () => (
+    <View style={styles.section}>
+      <View style={styles.sectionHeader}>
+        <FontAwesome name="map-marker" size={14} color="#FF8C00" />
+        <ThemedText style={styles.sectionTitle}>Service Location *</ThemedText>
+      </View>
+      <TouchableOpacity style={styles.selectLocationBtn} onPress={handleSelectLocation} activeOpacity={0.7}>
+        <FontAwesome name="map" size={14} color="#FF8C00" />
+        <ThemedText style={[styles.selectLocationText, selectedAddress && { color: '#fff' }]}>
+          {selectedAddress || 'Select Location on Map'}
+        </ThemedText>
+        <FontAwesome name="chevron-right" size={12} color="#8E8E93" />
+      </TouchableOpacity>
+
+      {selectedAddress && (
+        <View style={{ backgroundColor: '#1A1C1E', borderRadius: 12, padding: 14, marginTop: 12, borderWidth: 1, borderColor: '#2A2C2E' }}>
+          <View style={{ flexDirection: 'row', marginBottom: 6 }}>
+            <ThemedText style={{ fontSize: 12, color: '#8E8E93', width: 100 }}>Street:</ThemedText>
+            <ThemedText style={{ fontSize: 12, color: '#fff', flex: 1 }}>{streetName}</ThemedText>
+          </View>
+          <View style={{ flexDirection: 'row', marginBottom: 6 }}>
+            <ThemedText style={{ fontSize: 12, color: '#8E8E93', width: 100 }}>Barangay:</ThemedText>
+            <ThemedText style={{ fontSize: 12, color: '#fff', flex: 1 }}>{barangay}</ThemedText>
+          </View>
+          <View style={{ flexDirection: 'row', marginBottom: 6 }}>
+            <ThemedText style={{ fontSize: 12, color: '#8E8E93', width: 100 }}>City:</ThemedText>
+            <ThemedText style={{ fontSize: 12, color: '#fff', flex: 1 }}>{cityMunicipality}</ThemedText>
+          </View>
+          <View style={{ flexDirection: 'row' }}>
+            <ThemedText style={{ fontSize: 12, color: '#8E8E93', width: 100 }}>Coordinates:</ThemedText>
+            <ThemedText style={{ fontSize: 12, color: '#fff', flex: 1 }}>
+              {latitude?.toFixed(6)}, {longitude?.toFixed(6)}
+            </ThemedText>
+          </View>
+        </View>
+      )}
+
+      {selectedAddress && (
+        <View style={{ marginTop: 12 }}>
+          <ThemedText style={{ fontSize: 13, color: '#8E8E93', marginBottom: 8 }}>Landmark (Optional)</ThemedText>
+          <TextInput
+            style={styles.input}
+            value={landmark}
+            onChangeText={setLandmark}
+            placeholder="e.g., Near SM Mall..."
+            placeholderTextColor="#8E8E93"
+          />
+        </View>
+      )}
+    </View>
+  );
+
   // ─── Submit Broadcast Request ──────────────────────────────
   const sendBroadcastRequest = async () => {
     if (selectedServiceIds.length === 0) {
@@ -185,15 +233,12 @@ export default function MainRequestFormScreen() {
       formData.append('description', description);
       formData.append('latitude', latitude.toString());
       formData.append('longitude', longitude.toString());
-
-      const serviceLocationData = {
+      formData.append('service_location', JSON.stringify({
         street_name: streetName,
-        barangay: barangay,
+        barangay,
         city_municipality: cityMunicipality,
         landmark: landmark || undefined,
-      };
-      formData.append('service_location', JSON.stringify(serviceLocationData));
-
+      }));
       if (concernPicture) {
         const filename = concernPicture.split('/').pop() || 'image.jpg';
         const match = /\.(\w+)$/.exec(filename);
@@ -222,10 +267,18 @@ export default function MainRequestFormScreen() {
     }
   };
 
-  // ─── Submit Custom Request (AI Flow) ──────────────────────  👈 updated
+  // ─── Submit Custom Request (AI Flow) ──────────────────────
   const sendCustomRequest = async () => {
     if (!description.trim()) {
       showNotification({ type: 'error', message: 'Please provide a description of your concern' });
+      return;
+    }
+    if (!selectedAddress) {
+      showNotification({ type: 'error', message: 'Please select a location from the map' });
+      return;
+    }
+    if (!latitude || !longitude) {
+      showNotification({ type: 'error', message: 'Please select a location from the map' });
       return;
     }
 
@@ -246,6 +299,10 @@ export default function MainRequestFormScreen() {
           params: {
             description,
             concern_picture: concernPicture || '',
+            street_name: streetName,
+            barangay,
+            city_municipality: cityMunicipality,
+            landmark: landmark || '',
             ai_recommendations: JSON.stringify(data.ai_recommendations),
             matched_shops: JSON.stringify(data.matched_shops),
             matched_mechanics: JSON.stringify(data.matched_mechanics),
@@ -283,11 +340,7 @@ export default function MainRequestFormScreen() {
         <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <ThemedText style={styles.subtitle}>
           {isCustomMode
             ? 'Describe your problem and AI will find the right mechanics and shops for you'
@@ -301,21 +354,13 @@ export default function MainRequestFormScreen() {
               <FontAwesome name="cogs" size={14} color="#FF8C00" />
               <ThemedText style={styles.sectionTitle}>Select Services *</ThemedText>
             </View>
-
             <TouchableOpacity
               onPress={handleToggleCustomMode}
               style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginVertical: 16,
-                paddingVertical: 12,
-                paddingHorizontal: 16,
-                backgroundColor: '#FF8C0010',
-                borderRadius: 8,
-                borderWidth: 1,
-                borderColor: '#FF8C00',
-                borderStyle: 'dashed',
+                flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                marginVertical: 16, paddingVertical: 12, paddingHorizontal: 16,
+                backgroundColor: '#FF8C0010', borderRadius: 8,
+                borderWidth: 1, borderColor: '#FF8C00', borderStyle: 'dashed',
               }}
               activeOpacity={0.7}
             >
@@ -370,20 +415,15 @@ export default function MainRequestFormScreen() {
           </View>
         )}
 
-        {/* Custom Mode Toggle (when in AI mode) */}
+        {/* AI Mode Toggle back button */}
         {isCustomMode && (
           <View style={styles.section}>
             <TouchableOpacity
               onPress={handleToggleCustomMode}
               style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginBottom: 16,
-                paddingVertical: 12,
-                paddingHorizontal: 16,
-                backgroundColor: '#FF8C00',
-                borderRadius: 8,
+                flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                marginBottom: 16, paddingVertical: 12, paddingHorizontal: 16,
+                backgroundColor: '#FF8C00', borderRadius: 8,
               }}
               activeOpacity={0.7}
             >
@@ -417,62 +457,8 @@ export default function MainRequestFormScreen() {
           />
         </View>
 
-        {/* Location (Broadcast mode only) */}
-        {!isCustomMode && (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <FontAwesome name="map-marker" size={14} color="#FF8C00" />
-              <ThemedText style={styles.sectionTitle}>Service Location *</ThemedText>
-            </View>
-            <TouchableOpacity
-              style={styles.selectLocationBtn}
-              onPress={handleSelectLocation}
-              activeOpacity={0.7}
-            >
-              <FontAwesome name="map" size={14} color="#FF8C00" />
-              <ThemedText style={[styles.selectLocationText, selectedAddress && { color: '#fff' }]}>
-                {selectedAddress || 'Select Location on Map'}
-              </ThemedText>
-              <FontAwesome name="chevron-right" size={12} color="#8E8E93" />
-            </TouchableOpacity>
-
-            {selectedAddress && (
-              <View style={{ backgroundColor: '#1A1C1E', borderRadius: 12, padding: 14, marginTop: 12, borderWidth: 1, borderColor: '#2A2C2E' }}>
-                <View style={{ flexDirection: 'row', marginBottom: 6 }}>
-                  <ThemedText style={{ fontSize: 12, color: '#8E8E93', width: 100 }}>Street:</ThemedText>
-                  <ThemedText style={{ fontSize: 12, color: '#fff', flex: 1 }}>{streetName}</ThemedText>
-                </View>
-                <View style={{ flexDirection: 'row', marginBottom: 6 }}>
-                  <ThemedText style={{ fontSize: 12, color: '#8E8E93', width: 100 }}>Barangay:</ThemedText>
-                  <ThemedText style={{ fontSize: 12, color: '#fff', flex: 1 }}>{barangay}</ThemedText>
-                </View>
-                <View style={{ flexDirection: 'row', marginBottom: 6 }}>
-                  <ThemedText style={{ fontSize: 12, color: '#8E8E93', width: 100 }}>City:</ThemedText>
-                  <ThemedText style={{ fontSize: 12, color: '#fff', flex: 1 }}>{cityMunicipality}</ThemedText>
-                </View>
-                <View style={{ flexDirection: 'row' }}>
-                  <ThemedText style={{ fontSize: 12, color: '#8E8E93', width: 100 }}>Coordinates:</ThemedText>
-                  <ThemedText style={{ fontSize: 12, color: '#fff', flex: 1 }}>
-                    {latitude?.toFixed(6)}, {longitude?.toFixed(6)}
-                  </ThemedText>
-                </View>
-              </View>
-            )}
-
-            {selectedAddress && (
-              <View style={{ marginTop: 12 }}>
-                <ThemedText style={{ fontSize: 13, color: '#8E8E93', marginBottom: 8 }}>Landmark (Optional)</ThemedText>
-                <TextInput
-                  style={styles.input}
-                  value={landmark}
-                  onChangeText={setLandmark}
-                  placeholder="e.g., Near SM Mall..."
-                  placeholderTextColor="#8E8E93"
-                />
-              </View>
-            )}
-          </View>
-        )}
+        {/* Location — shown in BOTH modes */}
+        {renderLocationSection()}
 
         {/* Image Upload */}
         <View style={styles.section}>
