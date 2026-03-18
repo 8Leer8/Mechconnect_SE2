@@ -59,7 +59,7 @@ export default function MainRequestFormScreen() {
 
   // ─── Fetch Services (only for Broadcast mode) ─────────────
   useEffect(() => {
-    if (isCustomMode) return; // Don't fetch services in custom mode
+    if (isCustomMode) return;
     
     let cancelled = false;
     const fetchServices = async () => {
@@ -107,14 +107,12 @@ export default function MainRequestFormScreen() {
     setIsCustomMode(newCustomMode);
     setCustomDropdownExpanded(newCustomMode);
     
-    // Animate dropdown
     Animated.timing(dropdownHeight, {
       toValue: newCustomMode ? 1 : 0,
       duration: 300,
       useNativeDriver: false,
     }).start();
     
-    // Clear service selection when switching modes
     if (newCustomMode) {
       setSelectedServiceIds([]);
     }
@@ -224,7 +222,7 @@ export default function MainRequestFormScreen() {
     }
   };
 
-  // ─── Submit Custom Request ─────────────────────────────────
+  // ─── Submit Custom Request (AI Flow) ──────────────────────  👈 updated
   const sendCustomRequest = async () => {
     if (!description.trim()) {
       showNotification({ type: 'error', message: 'Please provide a description of your concern' });
@@ -233,36 +231,31 @@ export default function MainRequestFormScreen() {
 
     setLoading(true);
     try {
-      const formData = new FormData();
-      formData.append('description', description);
-
-      if (concernPicture) {
-        const filename = concernPicture.split('/').pop() || 'image.jpg';
-        const match = /\.(\w+)$/.exec(filename);
-        const type = match ? `image/${match[1]}` : 'image/jpeg';
-        formData.append('concern_picture', {
-          uri: concernPicture,
-          name: filename,
-          type: type,
-        } as any);
-      }
-
-      const response = await fetch(`${API_URL}/bookings/requests/custom/create/`, {
+      const response = await fetch(`${API_URL}/ai/predict/`, {
         method: 'POST',
         credentials: 'include',
-        body: formData as any,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description }),
       });
 
       const data = await response.json();
 
       if (response.ok) {
-        showNotification({ type: 'success', message: 'Custom request created successfully!' });
-        router.back();
+        router.push({
+          pathname: '/client/request/aiRecommend/recommendprovider',
+          params: {
+            description,
+            concern_picture: concernPicture || '',
+            ai_recommendations: JSON.stringify(data.ai_recommendations),
+            matched_shops: JSON.stringify(data.matched_shops),
+            matched_mechanics: JSON.stringify(data.matched_mechanics),
+          },
+        });
       } else {
-        showNotification({ type: 'error', message: (data as any).error || 'Failed to create custom request' });
+        showNotification({ type: 'error', message: data.error || 'Failed to get AI recommendations' });
       }
     } catch (error) {
-      showNotification({ type: 'error', message: 'An error occurred while creating the request' });
+      showNotification({ type: 'error', message: 'An error occurred while fetching recommendations' });
     } finally {
       setLoading(false);
     }
@@ -285,7 +278,7 @@ export default function MainRequestFormScreen() {
           <FontAwesome name="chevron-left" size={16} color="#FF8C00" />
         </TouchableOpacity>
         <ThemedText style={styles.headerTitle}>
-          {isCustomMode ? 'Custom Request' : 'Broadcast Request'}
+          {isCustomMode ? 'AI Recommend' : 'Broadcast Request'}
         </ThemedText>
         <View style={{ width: 40 }} />
       </View>
@@ -297,7 +290,7 @@ export default function MainRequestFormScreen() {
       >
         <ThemedText style={styles.subtitle}>
           {isCustomMode
-            ? 'Describe your concern and we\'ll match you with a mechanic'
+            ? 'Describe your problem and AI will find the right mechanics and shops for you'
             : 'Send your request to nearby mechanics'}
         </ThemedText>
 
@@ -309,7 +302,6 @@ export default function MainRequestFormScreen() {
               <ThemedText style={styles.sectionTitle}>Select Services *</ThemedText>
             </View>
 
-            {/* "OR" Divider with Custom Mode Toggle */}
             <TouchableOpacity
               onPress={handleToggleCustomMode}
               style={{
@@ -327,13 +319,12 @@ export default function MainRequestFormScreen() {
               }}
               activeOpacity={0.7}
             >
-              <FontAwesome name="chevron-down" size={14} color="#FF8C00" style={{ marginRight: 8 }} />
+              <FontAwesome name="magic" size={14} color="#FF8C00" style={{ marginRight: 8 }} />
               <ThemedText style={{ fontSize: 14, fontWeight: '600', color: '#FF8C00' }}>
-                Describe Problem Instead
+                Let AI Find Mechanics For You
               </ThemedText>
             </TouchableOpacity>
 
-            {/* Services Selection */}
             {fetchingServices ? (
               <ActivityIndicator size="small" color="#FF8C00" style={{ paddingVertical: 20 }} />
             ) : (
@@ -352,14 +343,10 @@ export default function MainRequestFormScreen() {
                           <FontAwesome name="check" size={10} color="#fff" />
                         </View>
                       )}
-                      <ThemedText
-                        style={[styles.serviceText, selected && styles.serviceTextSelected]}
-                      >
+                      <ThemedText style={[styles.serviceText, selected && styles.serviceTextSelected]}>
                         {service.name}
                       </ThemedText>
-                      <ThemedText
-                        style={[styles.servicePrice, selected && styles.servicePriceSelected]}
-                      >
+                      <ThemedText style={[styles.servicePrice, selected && styles.servicePriceSelected]}>
                         ₱{service.minimum_price.toFixed(2)}
                       </ThemedText>
                     </TouchableOpacity>
@@ -383,7 +370,7 @@ export default function MainRequestFormScreen() {
           </View>
         )}
 
-        {/* Custom Mode Toggle (when in custom mode) */}
+        {/* Custom Mode Toggle (when in AI mode) */}
         {isCustomMode && (
           <View style={styles.section}>
             <TouchableOpacity
@@ -417,13 +404,7 @@ export default function MainRequestFormScreen() {
             </ThemedText>
           </View>
           <TextInput
-            style={[
-              styles.input,
-              {
-                height: isCustomMode ? 150 : 100,
-                textAlignVertical: 'top',
-              },
-            ]}
+            style={[styles.input, { height: isCustomMode ? 150 : 100, textAlignVertical: 'top' }]}
             value={description}
             onChangeText={setDescription}
             placeholder={
@@ -438,71 +419,66 @@ export default function MainRequestFormScreen() {
 
         {/* Location (Broadcast mode only) */}
         {!isCustomMode && (
-          <>
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <FontAwesome name="map-marker" size={14} color="#FF8C00" />
-                <ThemedText style={styles.sectionTitle}>Service Location *</ThemedText>
-              </View>
-              <TouchableOpacity
-                style={styles.selectLocationBtn}
-                onPress={handleSelectLocation}
-                activeOpacity={0.7}
-              >
-                <FontAwesome name="map" size={14} color="#FF8C00" />
-                <ThemedText style={[styles.selectLocationText, selectedAddress && { color: '#fff' }]}>
-                  {selectedAddress || 'Select Location on Map'}
-                </ThemedText>
-                <FontAwesome name="chevron-right" size={12} color="#8E8E93" />
-              </TouchableOpacity>
-
-              {selectedAddress && (
-                <View style={{ backgroundColor: '#1A1C1E', borderRadius: 12, padding: 14, marginTop: 12, borderWidth: 1, borderColor: '#2A2C2E' }}>
-                  <View style={{ flexDirection: 'row', marginBottom: 6 }}>
-                    <ThemedText style={{ fontSize: 12, color: '#8E8E93', width: 100 }}>Street:</ThemedText>
-                    <ThemedText style={{ fontSize: 12, color: '#fff', flex: 1 }}>{streetName}</ThemedText>
-                  </View>
-                  <View style={{ flexDirection: 'row', marginBottom: 6 }}>
-                    <ThemedText style={{ fontSize: 12, color: '#8E8E93', width: 100 }}>Barangay:</ThemedText>
-                    <ThemedText style={{ fontSize: 12, color: '#fff', flex: 1 }}>{barangay}</ThemedText>
-                  </View>
-                  <View style={{ flexDirection: 'row', marginBottom: 6 }}>
-                    <ThemedText style={{ fontSize: 12, color: '#8E8E93', width: 100 }}>City:</ThemedText>
-                    <ThemedText style={{ fontSize: 12, color: '#fff', flex: 1 }}>{cityMunicipality}</ThemedText>
-                  </View>
-                  <View style={{ flexDirection: 'row' }}>
-                    <ThemedText style={{ fontSize: 12, color: '#8E8E93', width: 100 }}>Coordinates:</ThemedText>
-                    <ThemedText style={{ fontSize: 12, color: '#fff', flex: 1 }}>
-                      {latitude?.toFixed(6)}, {longitude?.toFixed(6)}
-                    </ThemedText>
-                  </View>
-                </View>
-              )}
-
-              {/* Optional Landmark */}
-              {selectedAddress && (
-                <View style={{ marginTop: 12 }}>
-                  <ThemedText style={{ fontSize: 13, color: '#8E8E93', marginBottom: 8 }}>Landmark (Optional)</ThemedText>
-                  <TextInput
-                    style={styles.input}
-                    value={landmark}
-                    onChangeText={setLandmark}
-                    placeholder="e.g., Near SM Mall..."
-                    placeholderTextColor="#8E8E93"
-                  />
-                </View>
-              )}
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <FontAwesome name="map-marker" size={14} color="#FF8C00" />
+              <ThemedText style={styles.sectionTitle}>Service Location *</ThemedText>
             </View>
-          </>
+            <TouchableOpacity
+              style={styles.selectLocationBtn}
+              onPress={handleSelectLocation}
+              activeOpacity={0.7}
+            >
+              <FontAwesome name="map" size={14} color="#FF8C00" />
+              <ThemedText style={[styles.selectLocationText, selectedAddress && { color: '#fff' }]}>
+                {selectedAddress || 'Select Location on Map'}
+              </ThemedText>
+              <FontAwesome name="chevron-right" size={12} color="#8E8E93" />
+            </TouchableOpacity>
+
+            {selectedAddress && (
+              <View style={{ backgroundColor: '#1A1C1E', borderRadius: 12, padding: 14, marginTop: 12, borderWidth: 1, borderColor: '#2A2C2E' }}>
+                <View style={{ flexDirection: 'row', marginBottom: 6 }}>
+                  <ThemedText style={{ fontSize: 12, color: '#8E8E93', width: 100 }}>Street:</ThemedText>
+                  <ThemedText style={{ fontSize: 12, color: '#fff', flex: 1 }}>{streetName}</ThemedText>
+                </View>
+                <View style={{ flexDirection: 'row', marginBottom: 6 }}>
+                  <ThemedText style={{ fontSize: 12, color: '#8E8E93', width: 100 }}>Barangay:</ThemedText>
+                  <ThemedText style={{ fontSize: 12, color: '#fff', flex: 1 }}>{barangay}</ThemedText>
+                </View>
+                <View style={{ flexDirection: 'row', marginBottom: 6 }}>
+                  <ThemedText style={{ fontSize: 12, color: '#8E8E93', width: 100 }}>City:</ThemedText>
+                  <ThemedText style={{ fontSize: 12, color: '#fff', flex: 1 }}>{cityMunicipality}</ThemedText>
+                </View>
+                <View style={{ flexDirection: 'row' }}>
+                  <ThemedText style={{ fontSize: 12, color: '#8E8E93', width: 100 }}>Coordinates:</ThemedText>
+                  <ThemedText style={{ fontSize: 12, color: '#fff', flex: 1 }}>
+                    {latitude?.toFixed(6)}, {longitude?.toFixed(6)}
+                  </ThemedText>
+                </View>
+              </View>
+            )}
+
+            {selectedAddress && (
+              <View style={{ marginTop: 12 }}>
+                <ThemedText style={{ fontSize: 13, color: '#8E8E93', marginBottom: 8 }}>Landmark (Optional)</ThemedText>
+                <TextInput
+                  style={styles.input}
+                  value={landmark}
+                  onChangeText={setLandmark}
+                  placeholder="e.g., Near SM Mall..."
+                  placeholderTextColor="#8E8E93"
+                />
+              </View>
+            )}
+          </View>
         )}
 
         {/* Image Upload */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <FontAwesome name="camera" size={14} color="#FF8C00" />
-            <ThemedText style={styles.sectionTitle}>
-              Add Photo {isCustomMode ? '(Optional)' : '(Optional)'}
-            </ThemedText>
+            <ThemedText style={styles.sectionTitle}>Add Photo (Optional)</ThemedText>
           </View>
           <View style={styles.imageRow}>
             <TouchableOpacity style={styles.imageBtn} onPress={takePhoto} activeOpacity={0.7}>
@@ -527,10 +503,7 @@ export default function MainRequestFormScreen() {
         {/* Submit Button */}
         <View style={{ paddingHorizontal: 16, marginTop: 24, marginBottom: 40 }}>
           <TouchableOpacity
-            style={[
-              styles.sendBtn,
-              loading && { opacity: 0.6 },
-            ]}
+            style={[styles.sendBtn, loading && { opacity: 0.6 }]}
             onPress={handleSubmit}
             disabled={loading}
             activeOpacity={0.7}
@@ -539,9 +512,9 @@ export default function MainRequestFormScreen() {
               <ActivityIndicator size="small" color="#fff" />
             ) : (
               <>
-                <FontAwesome name="paper-plane" size={14} color="#fff" />
+                <FontAwesome name={isCustomMode ? 'magic' : 'paper-plane'} size={14} color="#fff" />
                 <ThemedText style={styles.sendBtnText}>
-                  {isCustomMode ? 'Submit Custom Request' : 'Send Broadcast Request'}
+                  {isCustomMode ? 'Find Mechanics & Shops' : 'Send Broadcast Request'}
                 </ThemedText>
               </>
             )}
