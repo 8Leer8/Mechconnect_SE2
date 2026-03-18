@@ -217,7 +217,45 @@ export default function BookingDetailScreen() {
         setTimer(0);
       }
     } catch (err: any) {
-      setError(err.message || 'Failed to load booking');
+      // If fetching a booking failed, attempt to fetch a request with the same id.
+      // This covers pending direct requests which may exist as requests but not as bookings yet.
+      try {
+        const reqRes = await fetch(`${API_URL}/bookings/requests/${bookingId}/`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (reqRes.ok) {
+          const reqData = await reqRes.json();
+          const requestObj = reqData.request || reqData;
+          // Map request shape to BookingDetail-like object for the UI
+          const mappedBooking = {
+            id: Number(requestObj.id),
+            status: 'pending',
+            amount_fee: requestObj.quoted_price ?? requestObj.amount_fee ?? 0,
+            booked_at: requestObj.created_at || new Date().toISOString(),
+            updated_at: requestObj.updated_at || requestObj.created_at || new Date().toISOString(),
+            request: {
+              id: requestObj.id,
+              type: requestObj.type,
+              created_at: requestObj.created_at,
+              request_details: requestObj.request_details || null,
+            },
+            provider: null,
+            service_location: requestObj.service_location || null,
+            active_details: null,
+            client: requestObj.client || requestObj.user || null,
+            has_backjob: false,
+          } as unknown as BookingDetail;
+
+          setBooking(mappedBooking);
+          setError(null);
+        } else {
+          setError(err.message || 'Failed to load booking');
+        }
+      } catch (fallbackErr: any) {
+        setError(fallbackErr.message || err.message || 'Failed to load booking');
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -392,6 +430,8 @@ export default function BookingDetailScreen() {
   // --- New handlers for status transitions ---
   const [transitioning, setTransitioning] = useState(false);
   const [paymentConfirmedOnUI, setPaymentConfirmedOnUI] = useState(false);
+  const [actionLoadingId, setActionLoadingId] = useState<number | null>(null);
+  const [requestActionLoading, setRequestActionLoading] = useState(false);
 
   const handleStatusUpdate = async (endpoint: string, successMessage: string, errorMessage: string) => {
     if (!booking) return;
@@ -465,6 +505,57 @@ export default function BookingDetailScreen() {
     if (ok) handleStatusUpdate('cancel-booking', 'Booking cancelled.', 'Failed to cancel booking');
   };
 
+  // Accept / Decline for pending requests
+  const handleAcceptRequest = async () => {
+    if (!booking || !booking.request) return;
+    const requestId = booking.request.id;
+    setRequestActionLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/bookings/mechanic/requests/${requestId}/accept/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => null);
+        throw new Error(err?.error || 'Failed to accept request');
+      }
+      showNotification({ type: 'success', message: 'Request accepted' });
+      // Go back to bookings list — it will refresh on focus
+      router.back();
+    } catch (err: any) {
+      showNotification({ type: 'error', message: err.message || 'Failed to accept request' });
+    } finally {
+      setRequestActionLoading(false);
+    }
+  };
+
+  const handleDeclineRequest = async () => {
+    if (!booking || !booking.request) return;
+    const ok = await confirm({ type: 'danger', title: 'Decline Request', message: 'Are you sure you want to decline this request?', confirmText: 'Decline', cancelText: 'Keep' });
+    if (!ok) return;
+    const requestId = booking.request.id;
+    setRequestActionLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/bookings/mechanic/requests/${requestId}/decline/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => null);
+        throw new Error(err?.error || 'Failed to decline request');
+      }
+      showNotification({ type: 'success', message: 'Request declined' });
+      // After decline, go back to list
+      router.back();
+    } catch (err: any) {
+      showNotification({ type: 'error', message: err.message || 'Failed to decline request' });
+    } finally {
+      setRequestActionLoading(false);
+    }
+  };
+
 
   if (loading) {
     return (
@@ -526,6 +617,30 @@ export default function BookingDetailScreen() {
 
       {/* Action Buttons */}
       <View style={styles.actionButtonsContainer}>
+        {/* Pending: Decline (left) + Accept (right) */}
+        {booking.status === 'pending' && (
+          <View style={{ width: '100%', flexDirection: 'row', gap: 8 }}>
+            <View style={styles.actionButtonWrapper}>
+              <TouchableOpacity style={[styles.actionButton, styles.cancelButton, { width: '100%' }]} onPress={handleDeclineRequest} disabled={requestActionLoading}>
+                <FontAwesome name="times" size={16} color="#fff" />
+                <ThemedText style={styles.actionButtonText}>Decline</ThemedText>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.actionButtonWrapper}>
+              <TouchableOpacity style={[styles.actionButton, styles.completeButton, { width: '100%' }]} onPress={handleAcceptRequest} disabled={requestActionLoading}>
+                {requestActionLoading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <FontAwesome name="check" size={16} color="#fff" />
+                    <ThemedText style={styles.actionButtonText}>Accept</ThemedText>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
         {/* Accepted: Start Travel (primary) then Cancel Booking (secondary) — full width stacked */}
         {booking.status === 'accepted' && (
           <>

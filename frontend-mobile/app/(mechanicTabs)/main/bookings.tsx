@@ -499,17 +499,22 @@ export default function BookingsScreen() {
                 style={styles.bookingCard}
                 activeOpacity={0.7}
                 onPress={() => {
-                  if (
-                        booking.status === 'active' ||
-                        booking.status === 'on_the_way' ||
-                        booking.status === 'paused' ||
-                        booking.status === 'completed' ||
-                        booking.status === 'reworked' ||
-                        booking.status === 'pending_payment'
-                      ) {
-                    handleViewDetails(booking);
-                  }
-                }}
+                    // Allow viewing details for active flows as well as
+                    // pending direct requests so mechanics can inspect
+                    // the incoming direct booking before accepting/declining.
+                    if (
+                          booking.status === 'active' ||
+                          booking.status === 'on_the_way' ||
+                          booking.status === 'paused' ||
+                          booking.status === 'completed' ||
+                          booking.status === 'reworked' ||
+                          booking.status === 'pending_payment' ||
+                          // allow pending direct-type requests to be opened
+                          (booking.status === 'pending' && booking.request && booking.request.type === 'direct')
+                        ) {
+                      handleViewDetails(booking);
+                    }
+                  }}
               >
                 {/* Card Top Row */}
                 <View style={styles.cardTopRow}>
