@@ -29,6 +29,11 @@ def get_active_broadcasts(request):
             status=BroadcastRequest.Status.SEARCHING,
             expires_at__gt=now
         ).select_related('request').prefetch_related('services', 'add_ons__service_add_on')
+
+        # If the caller is authenticated, exclude broadcasts created by the same account
+        account_id = request.session.get('account_id')
+        if account_id:
+            active_broadcasts = active_broadcasts.exclude(request__client__account_id=account_id)
         
         serializer = BroadcastRequestSerializer(active_broadcasts, many=True, context={'request': request})
         
@@ -91,6 +96,12 @@ def accept_broadcast_request(request, broadcast_id):
                     'error': 'This broadcast is no longer available',
                     'reason': 'expired' if broadcast_request.is_expired() else 'already_accepted'
                 }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Prevent a user from accepting their own broadcast (if they switched roles)
+            if hasattr(broadcast_request.request, 'client') and broadcast_request.request.client and broadcast_request.request.client.account_id == account.id:
+                return Response({
+                    'error': 'Cannot accept your own broadcast request'
+                }, status=status.HTTP_403_FORBIDDEN)
             
             # Create or update the offer for this mechanic
             # Re-lock mechanic row to avoid token race conditions
