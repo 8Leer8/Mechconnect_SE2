@@ -215,14 +215,10 @@ CORS_ALLOW_HEADERS = [
     'x-requested-with',
 ]
 
-# Email Configuration (Resend)
-RESEND_API_KEY = os.getenv('RESEND_API_KEY', '')
-DEFAULT_FROM_EMAIL = (
-    f"{os.getenv('RESEND_FROM_LOCAL_PART', 'noreply').strip()}"
-    f"@{os.getenv('RESEND_FROM_DOMAIN', '').strip()}"
-    if os.getenv('RESEND_FROM_DOMAIN', '').strip()
-    else os.getenv('DEFAULT_FROM_EMAIL', '').strip()
-)
+# Brevo Gmail API config
+BREVO_API_KEY = os.getenv('BREVO_API_KEY', '')
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', '')
+EMAIL_TIMEOUT = 10
 EMAIL_TIMEOUT = 10
 
 # Supabase Storage Configuration

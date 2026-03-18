@@ -7,7 +7,6 @@ from django.conf import settings
 import random
 import logging
 from datetime import datetime, timedelta
-from urllib.parse import urlencode
 
 from ..models import Account, AccountRole, EmailVerification
 from ..serializers import (
@@ -216,20 +215,14 @@ def send_verification_code(request):
         or request.data.get('first_name')
         or 'there'
     )
-    verification_base_url = getattr(
-        settings,
-        'FRONTEND_VERIFY_EMAIL_URL',
-        f"{request.scheme}://{request.get_host()}/verify-email",
-    )
-    verification_url = f"{verification_base_url}?{urlencode({'email': email, 'code': verification_code})}"
 
     # Send email
     try:
-        subject = 'MechConnect - Verify Your Email'
+        subject = 'MechConnect - Your Verification Code'
         html_content = build_verification_email_html(
             first_name=first_name,
-            verification_url=verification_url,
-            expires_in_hours=24,
+            verification_code=verification_code,
+            expires_in_minutes=15,
         )
         email_sent = send_html_email(
             to_email=email,
