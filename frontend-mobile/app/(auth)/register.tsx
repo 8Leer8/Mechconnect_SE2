@@ -9,10 +9,10 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
-import { Picker } from '@react-native-picker/picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { FontAwesome } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import ThemedSelectModal from '@/components/ThemedSelectModal';
 import { styles } from '../../style/auth/registerStyles';
 import { useNotification } from '@/hooks/useNotification';
 
@@ -31,6 +31,8 @@ interface PSGCLocation {
 interface RegisterResponse {
   [key: string]: string | string[];
 }
+
+const RESEND_COOLDOWN_SECONDS = 60;
 
 export default function RegisterScreen() {
   const router = useRouter();
@@ -56,6 +58,7 @@ export default function RegisterScreen() {
   const [loading, setLoading] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [selectedDate, setSelectedDate] = useState(new Date());
+  const [progressTrackWidth, setProgressTrackWidth] = useState(0);
   const [currentStage, setCurrentStage] = useState(1);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -67,6 +70,13 @@ export default function RegisterScreen() {
   const [verificationCode, setVerificationCode] = useState('');
   const [sendingCode, setSendingCode] = useState(false);
   const [verifyingCode, setVerifyingCode] = useState(false);
+  const [resendCountdown, setResendCountdown] = useState(0);
+
+  const [showGenderModal, setShowGenderModal] = useState(false);
+  const [showRegionModal, setShowRegionModal] = useState(false);
+  const [showProvinceModal, setShowProvinceModal] = useState(false);
+  const [showCityModal, setShowCityModal] = useState(false);
+  const [showBarangayModal, setShowBarangayModal] = useState(false);
   
   // Location data from PSGC API
   const [regions, setRegions] = useState<any[]>([]);
@@ -89,6 +99,14 @@ export default function RegisterScreen() {
   useEffect(() => {
     fetchRegions();
   }, []);
+
+  useEffect(() => {
+    if (resendCountdown <= 0) return;
+    const timer = setInterval(() => {
+      setResendCountdown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [resendCountdown]);
 
   // Fetch provinces when region is selected
   useEffect(() => {
@@ -290,6 +308,7 @@ export default function RegisterScreen() {
 
       if (response.ok) {
         showNotification({ type: 'success', message: 'Verification code sent to your email!' });
+        setResendCountdown(RESEND_COOLDOWN_SECONDS);
         setCurrentStage(2);
       } else {
         const errorMsg = data.error || 'Failed to send verification code';
@@ -342,8 +361,17 @@ export default function RegisterScreen() {
   };
 
   const handleResendCode = async () => {
+    if (resendCountdown > 0) {
+      return;
+    }
     setVerificationCode('');
     await handleSendVerificationCode();
+  };
+
+  const formatCountdown = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   const handleNext = () => {
@@ -391,9 +419,9 @@ export default function RegisterScreen() {
     setCurrentStage(prev => Math.max(prev - 1, 1));
   };
 
-  const getProgressWidth = () => {
+  const getProgressRatio = () => {
     if (currentStage === 1) return 0;
-    return ((currentStage - 1) / (totalStages - 1)) * 100;
+    return (currentStage - 1) / (totalStages - 1);
   };
 
   const renderStepIndicator = (stepNum: number, label: string) => {
@@ -419,10 +447,15 @@ export default function RegisterScreen() {
             {stepNum}
           </Text>
         </View>
-        <Text style={[
+        <Text
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.75}
+          style={[
           styles.stepLabel,
           isActive && styles.stepLabelActive
-        ]}>
+          ]}
+        >
           {label}
         </Text>
       </View>
@@ -548,12 +581,14 @@ export default function RegisterScreen() {
             <TouchableOpacity
               style={[styles.button, styles.buttonSecondary, { marginTop: 12 }]}
               onPress={handleResendCode}
-              disabled={sendingCode}
+              disabled={sendingCode || resendCountdown > 0}
             >
               {sendingCode ? (
-                <ActivityIndicator color="#FF6B35" />
+                <ActivityIndicator color="#FF8C00" />
               ) : (
-                <Text style={[styles.buttonText, styles.buttonTextSecondary]}>Resend Code</Text>
+                <Text style={[styles.buttonText, styles.buttonTextSecondary]}>
+                  {resendCountdown > 0 ? `Resend in ${formatCountdown(resendCountdown)}` : 'Resend Code'}
+                </Text>
               )}
             </TouchableOpacity>
           </>
@@ -583,7 +618,7 @@ export default function RegisterScreen() {
                   <FontAwesome 
                     name={showPassword ? "eye-slash" : "eye"} 
                     size={16} 
-                    color="#6c757d" 
+                    color="#8E8E93" 
                   />
                 </TouchableOpacity>
               </View>
@@ -609,7 +644,7 @@ export default function RegisterScreen() {
                   <FontAwesome 
                     name={showConfirmPassword ? "eye-slash" : "eye"} 
                     size={16} 
-                    color="#6c757d" 
+                    color="#8E8E93" 
                   />
                 </TouchableOpacity>
               </View>
@@ -660,20 +695,16 @@ export default function RegisterScreen() {
 
             <View style={styles.inputContainer}>
               <Text style={styles.label}>Gender <Text style={styles.optional}>(Optional)</Text></Text>
-              <View style={styles.pickerContainer}>
-                <Picker
-                  selectedValue={formData.gender}
-                  onValueChange={(itemValue) => updateField('gender', itemValue)}
-                  enabled={!loading}
-                  style={[styles.picker, { color: '#212529' }]}
-                  dropdownIconColor="#6c757d"
-                >
-                  <Picker.Item label="Select Gender" value="" color="#999" />
-                  <Picker.Item label="Male" value="Male" color="#212529" />
-                  <Picker.Item label="Female" value="Female" color="#212529" />
-                  <Picker.Item label="Others" value="Others" color="#212529" />
-                </Picker>
-              </View>
+              <TouchableOpacity
+                style={styles.selectButton}
+                onPress={() => setShowGenderModal(true)}
+                disabled={loading}
+              >
+                <Text style={formData.gender ? styles.selectButtonText : styles.selectButtonPlaceholder}>
+                  {formData.gender || 'Select Gender'}
+                </Text>
+                <FontAwesome name="chevron-down" size={14} color="#8E8E93" />
+              </TouchableOpacity>
             </View>
           </>
         );
@@ -684,28 +715,19 @@ export default function RegisterScreen() {
             <Text style={styles.sectionTitle}>5. GEOGRAPHICAL LOCATION</Text>
             <View style={styles.inputContainer}>
               <Text style={styles.label}>Region <Text style={styles.required}>*</Text></Text>
-              <View style={styles.pickerContainer}>
-                <Picker
-                  selectedValue={selectedRegionCode}
-                  onValueChange={(itemValue) => {
-                    const selectedRegion = regions.find(r => r.code === itemValue);
-                    if (selectedRegion) {
-                      handleRegionChange(selectedRegion.name, itemValue);
-                    }
-                  }}
-                  enabled={!loading && !loadingRegions}
-                  style={[styles.picker, { color: '#212529' }]}
-                  dropdownIconColor="#6c757d"
-                >
-                  <Picker.Item label={loadingRegions ? 'Loading regions...' : 'Select Region'} value="" color="#999" />
-                  {!loadingRegions && regions.map((region) => (
-                    <Picker.Item key={region.code} label={region.name} value={region.code} color="#212529" />
-                  ))}
-                </Picker>
-              </View>
+              <TouchableOpacity
+                style={styles.selectButton}
+                onPress={() => setShowRegionModal(true)}
+                disabled={loading || loadingRegions}
+              >
+                <Text style={selectedRegionCode ? styles.selectButtonText : styles.selectButtonPlaceholder}>
+                  {formData.region || (loadingRegions ? 'Loading regions...' : 'Select Region')}
+                </Text>
+                <FontAwesome name="chevron-down" size={14} color="#8E8E93" />
+              </TouchableOpacity>
               {loadingRegions && (
                 <View style={styles.pickerLoadingRow}>
-                  <ActivityIndicator size="small" color="#FF6B35" />
+                  <ActivityIndicator size="small" color="#FF8C00" />
                   <Text style={styles.pickerLoadingText}>Fetching regions...</Text>
                 </View>
               )}
@@ -713,31 +735,19 @@ export default function RegisterScreen() {
 
             <View style={styles.inputContainer}>
               <Text style={styles.label}>Province <Text style={styles.required}>*</Text></Text>
-              <View style={styles.pickerContainer}>
-                <Picker
-                  selectedValue={selectedProvinceCode}
-                  onValueChange={(itemValue) => {
-                    const selectedProvince = provinces.find(p => p.code === itemValue);
-                    if (selectedProvince) {
-                      handleProvinceChange(selectedProvince.name, itemValue);
-                    }
-                  }}
-                  enabled={!loading && selectedRegionCode !== '' && !loadingProvinces}
-                  style={[styles.picker, { color: selectedRegionCode ? '#212529' : '#999' }]}
-                  dropdownIconColor="#6c757d"
-                >
-                  <Picker.Item
-                    label={loadingProvinces ? 'Loading provinces...' : (!selectedRegionCode ? 'Select a region first' : 'Select Province')}
-                    value="" color="#999"
-                  />
-                  {!loadingProvinces && provinces.map((province) => (
-                    <Picker.Item key={province.code} label={province.name} value={province.code} color="#212529" />
-                  ))}
-                </Picker>
-              </View>
+              <TouchableOpacity
+                style={[styles.selectButton, !selectedRegionCode && styles.selectButtonDisabled]}
+                onPress={() => setShowProvinceModal(true)}
+                disabled={loading || !selectedRegionCode || loadingProvinces}
+              >
+                <Text style={selectedProvinceCode ? styles.selectButtonText : styles.selectButtonPlaceholder}>
+                  {formData.province || (loadingProvinces ? 'Loading provinces...' : (!selectedRegionCode ? 'Select a region first' : 'Select Province'))}
+                </Text>
+                <FontAwesome name="chevron-down" size={14} color="#8E8E93" />
+              </TouchableOpacity>
               {loadingProvinces && (
                 <View style={styles.pickerLoadingRow}>
-                  <ActivityIndicator size="small" color="#FF6B35" />
+                  <ActivityIndicator size="small" color="#FF8C00" />
                   <Text style={styles.pickerLoadingText}>Fetching provinces...</Text>
                 </View>
               )}
@@ -745,31 +755,19 @@ export default function RegisterScreen() {
 
             <View style={styles.inputContainer}>
               <Text style={styles.label}>City/Municipality <Text style={styles.required}>*</Text></Text>
-              <View style={styles.pickerContainer}>
-                <Picker
-                  selectedValue={selectedCityCode}
-                  onValueChange={(itemValue) => {
-                    const selectedCity = cities.find(c => c.code === itemValue);
-                    if (selectedCity) {
-                      handleCityChange(selectedCity.name, itemValue);
-                    }
-                  }}
-                  enabled={!loading && selectedProvinceCode !== '' && !loadingCities}
-                  style={[styles.picker, { color: selectedProvinceCode ? '#212529' : '#999' }]}
-                  dropdownIconColor="#6c757d"
-                >
-                  <Picker.Item
-                    label={loadingCities ? 'Loading cities...' : (!selectedProvinceCode ? 'Select a province first' : 'Select City/Municipality')}
-                    value="" color="#999"
-                  />
-                  {!loadingCities && cities.map((city) => (
-                    <Picker.Item key={city.code} label={city.name} value={city.code} color="#212529" />
-                  ))}
-                </Picker>
-              </View>
+              <TouchableOpacity
+                style={[styles.selectButton, !selectedProvinceCode && styles.selectButtonDisabled]}
+                onPress={() => setShowCityModal(true)}
+                disabled={loading || !selectedProvinceCode || loadingCities}
+              >
+                <Text style={selectedCityCode ? styles.selectButtonText : styles.selectButtonPlaceholder}>
+                  {formData.city_municipality || (loadingCities ? 'Loading cities...' : (!selectedProvinceCode ? 'Select a province first' : 'Select City/Municipality'))}
+                </Text>
+                <FontAwesome name="chevron-down" size={14} color="#8E8E93" />
+              </TouchableOpacity>
               {loadingCities && (
                 <View style={styles.pickerLoadingRow}>
-                  <ActivityIndicator size="small" color="#FF6B35" />
+                  <ActivityIndicator size="small" color="#FF8C00" />
                   <Text style={styles.pickerLoadingText}>Fetching cities...</Text>
                 </View>
               )}
@@ -777,26 +775,19 @@ export default function RegisterScreen() {
 
             <View style={styles.inputContainer}>
               <Text style={styles.label}>Barangay <Text style={styles.required}>*</Text></Text>
-              <View style={styles.pickerContainer}>
-                <Picker
-                  selectedValue={formData.barangay}
-                  onValueChange={(itemValue) => handleBarangayChange(itemValue)}
-                  enabled={!loading && selectedCityCode !== '' && !loadingBarangays}
-                  style={[styles.picker, { color: selectedCityCode ? '#212529' : '#999' }]}
-                  dropdownIconColor="#6c757d"
-                >
-                  <Picker.Item
-                    label={loadingBarangays ? 'Loading barangays...' : (!selectedCityCode ? 'Select a city first' : 'Select Barangay')}
-                    value="" color="#999"
-                  />
-                  {!loadingBarangays && barangays.map((barangay) => (
-                    <Picker.Item key={barangay.code} label={barangay.name} value={barangay.name} color="#212529" />
-                  ))}
-                </Picker>
-              </View>
+              <TouchableOpacity
+                style={[styles.selectButton, !selectedCityCode && styles.selectButtonDisabled]}
+                onPress={() => setShowBarangayModal(true)}
+                disabled={loading || !selectedCityCode || loadingBarangays}
+              >
+                <Text style={formData.barangay ? styles.selectButtonText : styles.selectButtonPlaceholder}>
+                  {formData.barangay || (loadingBarangays ? 'Loading barangays...' : (!selectedCityCode ? 'Select a city first' : 'Select Barangay'))}
+                </Text>
+                <FontAwesome name="chevron-down" size={14} color="#8E8E93" />
+              </TouchableOpacity>
               {loadingBarangays && (
                 <View style={styles.pickerLoadingRow}>
-                  <ActivityIndicator size="small" color="#FF6B35" />
+                  <ActivityIndicator size="small" color="#FF8C00" />
                   <Text style={styles.pickerLoadingText}>Fetching barangays...</Text>
                 </View>
               )}
@@ -839,12 +830,20 @@ export default function RegisterScreen() {
 
         <View style={styles.progressContainer}>
           <View style={styles.progressSteps}>
-            <View style={styles.progressLine} />
-            <View style={[styles.progressBar, { width: `${getProgressWidth()}%` }]} />
+            <View
+              style={styles.progressLine}
+              onLayout={(event) => {
+                const width = event.nativeEvent.layout.width;
+                if (width > 0 && width !== progressTrackWidth) {
+                  setProgressTrackWidth(width);
+                }
+              }}
+            />
+            <View style={[styles.progressBar, { width: progressTrackWidth * getProgressRatio() }]} />
             {renderStepIndicator(1, 'Personal')}
             {renderStepIndicator(2, 'Verify')}
             {renderStepIndicator(3, 'Security')}
-            {renderStepIndicator(4, 'Demographics')}
+            {renderStepIndicator(4, 'Demographic')}
             {renderStepIndicator(5, 'Location')}
           </View>
         </View>
@@ -903,6 +902,78 @@ export default function RegisterScreen() {
           <Text style={styles.copyrightText}>© 2025 MechConnect. All rights reserved.</Text>
         </View>
       </ScrollView>
+
+      <ThemedSelectModal
+        visible={showGenderModal}
+        title="Select Gender"
+        options={[
+          { label: 'Male', value: 'Male' },
+          { label: 'Female', value: 'Female' },
+          { label: 'Others', value: 'Others' },
+        ]}
+        selectedValue={formData.gender}
+        onClose={() => setShowGenderModal(false)}
+        onSelect={(option) => {
+          updateField('gender', option.value);
+          setShowGenderModal(false);
+        }}
+      />
+
+      <ThemedSelectModal
+        visible={showRegionModal}
+        title="Select Region"
+        options={regions.map((region) => ({ label: region.name, value: region.code }))}
+        selectedValue={selectedRegionCode}
+        loading={loadingRegions}
+        emptyMessage="No regions found"
+        onClose={() => setShowRegionModal(false)}
+        onSelect={(option) => {
+          handleRegionChange(option.label, option.value);
+          setShowRegionModal(false);
+        }}
+      />
+
+      <ThemedSelectModal
+        visible={showProvinceModal}
+        title="Select Province"
+        options={provinces.map((province) => ({ label: province.name, value: province.code }))}
+        selectedValue={selectedProvinceCode}
+        loading={loadingProvinces}
+        emptyMessage={selectedRegionCode ? 'No provinces found' : 'Select a region first'}
+        onClose={() => setShowProvinceModal(false)}
+        onSelect={(option) => {
+          handleProvinceChange(option.label, option.value);
+          setShowProvinceModal(false);
+        }}
+      />
+
+      <ThemedSelectModal
+        visible={showCityModal}
+        title="Select City/Municipality"
+        options={cities.map((city) => ({ label: city.name, value: city.code }))}
+        selectedValue={selectedCityCode}
+        loading={loadingCities}
+        emptyMessage={selectedProvinceCode ? 'No cities found' : 'Select a province first'}
+        onClose={() => setShowCityModal(false)}
+        onSelect={(option) => {
+          handleCityChange(option.label, option.value);
+          setShowCityModal(false);
+        }}
+      />
+
+      <ThemedSelectModal
+        visible={showBarangayModal}
+        title="Select Barangay"
+        options={barangays.map((barangay) => ({ label: barangay.name, value: barangay.name }))}
+        selectedValue={formData.barangay}
+        loading={loadingBarangays}
+        emptyMessage={selectedCityCode ? 'No barangays found' : 'Select a city first'}
+        onClose={() => setShowBarangayModal(false)}
+        onSelect={(option) => {
+          handleBarangayChange(option.value);
+          setShowBarangayModal(false);
+        }}
+      />
     </KeyboardAvoidingView>
   );
 }
