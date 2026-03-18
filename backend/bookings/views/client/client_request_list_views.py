@@ -244,6 +244,117 @@ def list_requests(request):
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def get_request_detail(request, request_id):
+    """
+    Return detailed information for a single request (custom, direct, broadcast, or emergency).
+    This endpoint is intentionally permissive so provider apps (mechanic/shopowner) can fetch
+    request details before a booking is created.
+    """
+    try:
+        req = Request.objects.select_related('provider', 'shop', 'service_location').prefetch_related('directrequest', 'customrequest', 'broadcast_request').get(id=request_id)
+
+        base = {
+            'id': req.id,
+            'request_type': req.request_type,
+            'created_at': req.created_at.isoformat() if req.created_at else None,
+            'service_location': {
+                'street_name': req.service_location.street_name,
+                'barangay': req.service_location.barangay,
+                'city_municipality': req.service_location.city_municipality,
+            } if req.service_location else None,
+            'provider': {
+                'id': req.provider.id,
+                'name': f"{req.provider.firstname} {req.provider.lastname}"
+            } if req.provider else None,
+            'shop': {
+                'id': req.shop.id,
+                'shop_name': req.shop.shop_name,
+            } if req.shop else None,
+            'has_booking': hasattr(req, 'booking')
+        }
+
+        # custom
+        if req.request_type == 'custom' and hasattr(req, 'customrequest'):
+            base.update({
+                'type': 'custom',
+                'description': req.customrequest.description,
+                'quoted_price': float(req.customrequest.quoted_price) if req.customrequest.quoted_price else None,
+                'providers_note': req.customrequest.providers_note,
+                'concern_picture': req.customrequest.concern_picture.url if req.customrequest.concern_picture else None,
+                'status': req.customrequest.request_status,
+            })
+
+        # direct
+        elif req.request_type == 'direct' and hasattr(req, 'directrequest'):
+            # determine service price
+            service_price = req.directrequest.service.minimum_price
+            from services.models import MechanicService, ShopService
+            if req.shop:
+                try:
+                    shop_service = ShopService.objects.get(shop=req.shop, service=req.directrequest.service)
+                    service_price = shop_service.price
+                except ShopService.DoesNotExist:
+                    pass
+            elif req.provider and hasattr(req.provider, 'mechanic'):
+                try:
+                    mechanic_service = MechanicService.objects.get(mechanic=req.provider.mechanic, service=req.directrequest.service)
+                    service_price = mechanic_service.price
+                except MechanicService.DoesNotExist:
+                    pass
+
+            add_ons = DirectRequestAddOn.objects.filter(request=req).select_related('service_add_on')
+            base.update({
+                'type': 'direct',
+                'service': {
+                    'id': req.directrequest.service.id,
+                    'name': req.directrequest.service.name,
+                    'price': float(service_price)
+                },
+                'add_ons': [{
+                    'id': addon.service_add_on.id,
+                    'name': addon.service_add_on.name,
+                    'price': float(addon.service_add_on.price)
+                } for addon in add_ons],
+                'status': req.directrequest.request_status,
+            })
+
+        # broadcast
+        elif req.request_type == 'broadcast' and hasattr(req, 'broadcast_request'):
+            base.update({
+                'type': 'broadcast',
+                'description': req.broadcast_request.description,
+                'services': [{'id': s.id, 'name': s.name} for s in req.broadcast_request.services.all()],
+                'status': req.broadcast_request.status,
+                'concern_picture': req.broadcast_request.concern_picture.url if req.broadcast_request.concern_picture else None,
+                'expires_at': req.broadcast_request.expires_at.isoformat() if req.broadcast_request.expires_at else None,
+            })
+
+        # emergency
+        elif req.request_type == 'emergency' and hasattr(req, 'emergencyrequest'):
+            base.update({
+                'type': 'emergency',
+                'description': req.emergencyrequest.description,
+                'urgency_level': req.emergencyrequest.urgency_level,
+                'concern_picture': req.emergencyrequest.concern_picture.url if req.emergencyrequest.concern_picture else None,
+            })
+
+        # include minimal client info if available
+        if hasattr(req, 'client') and req.client:
+            base['client'] = {
+                'id': req.client.id,
+                'name': f"{req.client.firstname} {req.client.lastname}" if getattr(req.client, 'firstname', None) else getattr(req.client, 'name', None)
+            }
+
+        return Response({'request': base}, status=status.HTTP_200_OK)
+
+    except Request.DoesNotExist:
+        return Response({'error': 'Request not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def cancel_request(request, request_id):
