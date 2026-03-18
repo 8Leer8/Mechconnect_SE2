@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   ScrollView,
@@ -66,10 +66,40 @@ interface CreateRequestResponse {
   [key: string]: any;
 }
 
+class DebugErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.log('[DirectRequest] ErrorBoundary caught error:', error?.message, info?.componentStack);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <ThemedView style={styles.container}>
+          <View style={styles.section}>
+            <ThemedText style={styles.sectionTitle}>Something went wrong.</ThemedText>
+          </View>
+        </ThemedView>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 export default function MechanicDirectRequestScreen() {
   const { showNotification } = useNotification();
   const params = useLocalSearchParams<{ mechanicId?: string | string[] }>();
   const mechanicId = typeof params.mechanicId === 'string' ? params.mechanicId : Array.isArray(params.mechanicId) ? params.mechanicId[0] : undefined;
+  console.log('[DirectRequest] MOUNTED with mechanicId:', mechanicId);
   const [mechanics, setMechanics] = useState<Mechanic[]>([]);
   const [selectedProviderId, setSelectedProviderId] = useState<number | null>(null);
   const [selectedServiceId, setSelectedServiceId] = useState<number | null>(null);
@@ -118,6 +148,20 @@ export default function MechanicDirectRequestScreen() {
   const [loadingProvinces, setLoadingProvinces] = useState(false);
   const [loadingCities, setLoadingCities] = useState(false);
   const [loadingBarangays, setLoadingBarangays] = useState(false);
+  const isMountedRef = useRef(true);
+  const locationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMountedOnceRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      console.log('[DirectRequest] UNMOUNTING - setting isMountedRef to false');
+      isMountedRef.current = false;
+      if (locationTimeoutRef.current) {
+        console.log('[DirectRequest] UNMOUNTING - clearing location timeout');
+        clearTimeout(locationTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // ─── Fetch PSGC Regions on mount ───────────────────────────
   useEffect(() => {
@@ -197,6 +241,17 @@ export default function MechanicDirectRequestScreen() {
     setAvailableAddOns([]);
   }, [mechanicId]);
 
+  useEffect(() => {
+    setCurrentLatitude(null);
+    setCurrentLongitude(null);
+    setCurrentAddress('');
+    setCurrentStreetName('');
+    setCurrentSubdivision('');
+    setCurrentBarangay('');
+    setCurrentCity('');
+    setUseCurrentLocation(true);
+  }, [mechanicId]);
+
   // ─── Fetch Services ────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
@@ -243,78 +298,100 @@ export default function MechanicDirectRequestScreen() {
 
   // ─── PSGC Location API Functions ───────────────────────────
   const fetchRegions = async () => {
+    if (!isMountedRef.current) return;
     setLoadingRegions(true);
     try {
       const response = await fetch(`${PSGC_API_BASE}/regions`);
       const data = await response.json() as PSGCLocation[];
       const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
+      if (!isMountedRef.current) return;
       setRegions(sorted);
     } catch (error) {
       console.error('Error fetching regions:', error);
       showNotification({ type: 'error', message: 'Failed to load regions' });
     } finally {
+      console.log('[DirectRequest] fetchRegions finally, isMounted:', isMountedRef.current);
+      if (!isMountedRef.current) return;
       setLoadingRegions(false);
     }
   };
 
   const fetchProvinces = async (regionCode: string) => {
+    if (!isMountedRef.current) return;
     setLoadingProvinces(true);
+    if (!isMountedRef.current) return;
     setCities([]);
+    if (!isMountedRef.current) return;
     setBarangays([]);
     try {
       const response = await fetch(`${PSGC_API_BASE}/regions/${regionCode}/provinces`);
       const data = await response.json() as PSGCLocation[];
       const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
+      if (!isMountedRef.current) return;
       setProvinces(sorted);
     } catch (error) {
       console.error('Error fetching provinces:', error);
       showNotification({ type: 'error', message: 'Failed to load provinces' });
     } finally {
+      if (!isMountedRef.current) return;
       setLoadingProvinces(false);
     }
   };
 
   const fetchCities = async (provinceCode: string) => {
+    if (!isMountedRef.current) return;
     setLoadingCities(true);
+    if (!isMountedRef.current) return;
     setBarangays([]);
     try {
       const response = await fetch(`${PSGC_API_BASE}/provinces/${provinceCode}/cities-municipalities`);
       const data = await response.json() as PSGCLocation[];
       const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
+      if (!isMountedRef.current) return;
       setCities(sorted);
     } catch (error) {
       console.error('Error fetching cities:', error);
       showNotification({ type: 'error', message: 'Failed to load cities/municipalities' });
     } finally {
+      if (!isMountedRef.current) return;
       setLoadingCities(false);
     }
   };
 
   const fetchBarangays = async (cityCode: string) => {
+    if (!isMountedRef.current) return;
     setLoadingBarangays(true);
     try {
       const response = await fetch(`${PSGC_API_BASE}/cities-municipalities/${cityCode}/barangays`);
       const data = await response.json() as PSGCLocation[];
       const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
+      if (!isMountedRef.current) return;
       setBarangays(sorted);
     } catch (error) {
       console.error('Error fetching barangays:', error);
       showNotification({ type: 'error', message: 'Failed to load barangays' });
     } finally {
+      if (!isMountedRef.current) return;
       setLoadingBarangays(false);
     }
   };
 
   // ─── Get Current Location ──────────────────────────────────
   const getCurrentLocation = async () => {
+    console.log('[DirectRequest] getCurrentLocation START');
     if (!selectedProviderId) return;
+    if (!isMountedRef.current) return;
     
+    console.log('[DirectRequest] setting fetchingLocation: true');
     setFetchingLocation(true);
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
+      if (!isMountedRef.current) return;
 
       if (status !== 'granted') {
         showNotification({ type: 'warning', title: 'Permission Denied', message: 'Location permission is needed to use current location.' });
+        if (!isMountedRef.current) return;
+        console.log('[DirectRequest] setting fetchingLocation: false (permission denied)');
         setFetchingLocation(false);
         return;
       }
@@ -324,13 +401,19 @@ export default function MechanicDirectRequestScreen() {
       });
 
       const timeoutPromise = new Promise<null>((resolve) => {
-        setTimeout(() => resolve(null), 10000); // 10 second timeout
+        locationTimeoutRef.current = setTimeout(() => resolve(null), 10000);
       });
 
       const location = await Promise.race([locationPromise, timeoutPromise]);
+      console.log('[DirectRequest] location fetched, isMounted:', isMountedRef.current);
+      if (!isMountedRef.current) return;
 
       if (location) {
+        if (!isMountedRef.current) return;
+        console.log('[DirectRequest] setting latitude:', location.coords.latitude);
         setCurrentLatitude(location.coords.latitude);
+        if (!isMountedRef.current) return;
+        console.log('[DirectRequest] setting longitude:', location.coords.longitude);
         setCurrentLongitude(location.coords.longitude);
 
         // Reverse geocode to get address
@@ -343,9 +426,17 @@ export default function MechanicDirectRequestScreen() {
           const loc = results[0];
           
           // Store individual components for database mapping
+          if (!isMountedRef.current) return;
+          console.log('[DirectRequest] setting currentStreetName:', loc.street || loc.name || '');
           setCurrentStreetName(loc.street || loc.name || '');
+          if (!isMountedRef.current) return;
+          console.log('[DirectRequest] setting currentSubdivision:', loc.district || '');
           setCurrentSubdivision(loc.district || '');
+          if (!isMountedRef.current) return;
+          console.log('[DirectRequest] setting currentBarangay:', loc.subregion || loc.district || '');
           setCurrentBarangay(loc.subregion || loc.district || '');
+          if (!isMountedRef.current) return;
+          console.log('[DirectRequest] setting currentCity:', loc.city || '');
           setCurrentCity(loc.city || '');
           
           // Build display address
@@ -356,13 +447,25 @@ export default function MechanicDirectRequestScreen() {
           if (loc.region) addressParts.push(loc.region);
           
           const fullAddress = addressParts.join(', ');
+          if (!isMountedRef.current) return;
+          console.log('[DirectRequest] setting currentAddress:', fullAddress || 'GPS Location');
           setCurrentAddress(fullAddress || 'GPS Location');
         } else {
           // Fallback when reverse geocoding fails
+          if (!isMountedRef.current) return;
+          console.log('[DirectRequest] setting currentAddress fallback: GPS Location');
           setCurrentAddress('GPS Location');
+          if (!isMountedRef.current) return;
+          console.log('[DirectRequest] setting currentStreetName fallback:');
           setCurrentStreetName('');
+          if (!isMountedRef.current) return;
+          console.log('[DirectRequest] setting currentSubdivision fallback:');
           setCurrentSubdivision('');
+          if (!isMountedRef.current) return;
+          console.log('[DirectRequest] setting currentBarangay fallback:');
           setCurrentBarangay('');
+          if (!isMountedRef.current) return;
+          console.log('[DirectRequest] setting currentCity fallback:');
           setCurrentCity('');
         }
       } else {
@@ -372,12 +475,25 @@ export default function MechanicDirectRequestScreen() {
       console.error('Error getting location:', error);
       showNotification({ type: 'error', message: 'Failed to get current location' });
     } finally {
+      if (locationTimeoutRef.current) {
+        clearTimeout(locationTimeoutRef.current);
+        locationTimeoutRef.current = null;
+      }
+      if (!isMountedRef.current) return;
+      console.log('[DirectRequest] setting fetchingLocation: false (finally)');
       setFetchingLocation(false);
     }
   };
 
   // ─── Get current location when switching to Current Location ───
   useEffect(() => {
+    if (!isMountedOnceRef.current) {
+      isMountedOnceRef.current = true;
+      if (useCurrentLocation && selectedProviderId) {
+        getCurrentLocation();
+      }
+      return;
+    }
     if (useCurrentLocation && selectedProviderId) {
       getCurrentLocation();
     }
@@ -490,7 +606,8 @@ export default function MechanicDirectRequestScreen() {
   const disabled = !selectedProviderId;
 
   return (
-    <ThemedView style={styles.container}>
+    <DebugErrorBoundary>
+      <ThemedView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
@@ -851,6 +968,7 @@ export default function MechanicDirectRequestScreen() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
-    </ThemedView>
+      </ThemedView>
+    </DebugErrorBoundary>
   );
 }

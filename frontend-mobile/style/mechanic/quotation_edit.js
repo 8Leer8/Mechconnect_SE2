@@ -44,14 +44,6 @@ export const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 32,
   },
-  sectionCard: {
-    backgroundColor: '#242424',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#333333',
-    padding: 14,
-    marginBottom: 14,
-  },
   sectionHeaderRow: {
     marginTop: 2,
     marginBottom: 8,
@@ -61,18 +53,6 @@ export const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     marginBottom: 8,
-  },
-  notesInput: {
-    minHeight: 88,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#3A3A3A',
-    backgroundColor: '#1F1F1F',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    color: '#FFFFFF',
-    fontSize: 14,
-    textAlignVertical: 'top',
   },
   itemCard: {
     backgroundColor: '#242424',
