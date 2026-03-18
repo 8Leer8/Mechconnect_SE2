@@ -272,10 +272,12 @@ export default function RegisterScreen() {
         showNotification({ type: 'success', message: 'Registration successful! Please login.' });
         setTimeout(() => router.replace('../(auth)/login' as any), 1500);
       } else {
-        const errorMessages = Object.entries(data)
-          .map(([key, value]) => `${key}: ${Array.isArray(value) ? value[0] : value}`)
-          .join('\n');
-        showNotification({ type: 'error', message: errorMessages });
+        let message = 'Registration failed';
+        if (data && Object.keys(data).length > 0) {
+          const first = Object.values(data)[0];
+          message = Array.isArray(first) ? first[0] : String(first);
+        }
+        showNotification({ type: 'error', message });
       }
     } catch (error) {
       console.error('Registration error:', error);
