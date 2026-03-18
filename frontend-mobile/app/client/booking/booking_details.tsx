@@ -92,6 +92,8 @@ export default function ClientBookingDetailScreen() {
   const [backjobModalVisible, setBackjobModalVisible] = useState(false);
   const [backjobReason, setBackjobReason] = useState('');
   const [backjobImage, setBackjobImage] = useState<string | null>(null);
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string | null>(null);
+  const [isPaying, setIsPaying] = useState(false);
 
   // Derive display quotation: prefer booking.quotation (from API) otherwise build from request.request_details
   const getDisplayQuotation = () => {
@@ -524,6 +526,85 @@ export default function ClientBookingDetailScreen() {
                 <ThemedText style={{ fontWeight: '600' }}>Estimated Total</ThemedText>
                 <ThemedText style={{ fontWeight: '600' }}>₱{parseFloat(String(displayQuotation.total_amount || 0)).toFixed(2)}</ThemedText>
               </View>
+            </View>
+          </View>
+        )}
+
+        {/* Payment: show options only when booking is pending_payment and no payment recorded.
+            If the booking already includes a payment (from the server), show a confirmation message.
+            This derives visibility from server data (`booking.payment`) so it persists after refresh. */}
+        {booking.status === 'pending_payment' && !(booking as any).payment?.payment_method && (
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#FFD60A15' }]}> 
+                <FontAwesome name="money" size={16} color="#FFD60A" />
+              </View>
+              <ThemedText style={styles.sectionTitle}>Payment</ThemedText>
+            </View>
+            <View style={{ paddingVertical: 8 }}>
+              <ThemedText style={{ color: '#666', marginBottom: 8 }}>Choose how you'd like to pay for this booking.</ThemedText>
+              <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
+                <TouchableOpacity
+                  onPress={() => setSelectedPaymentMethod('cash')}
+                  style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#111214', borderWidth: 1, borderColor: selectedPaymentMethod === 'cash' ? '#FF8C00' : '#2A2C2E', alignItems: 'flex-start' }}
+                >
+                  <ThemedText style={{ fontWeight: '700' }}>Cash</ThemedText>
+                  <ThemedText style={{ color: '#666' }}>Pay the mechanic in person</ThemedText>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => setSelectedPaymentMethod('online')}
+                  style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#111214', borderWidth: 1, borderColor: selectedPaymentMethod === 'online' ? '#FF8C00' : '#2A2C2E', alignItems: 'flex-start' }}
+                >
+                  <ThemedText style={{ fontWeight: '700' }}>Online Payment</ThemedText>
+                  <ThemedText style={{ color: '#666' }}>Pay now with card or e-wallet</ThemedText>
+                </TouchableOpacity>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.sendBtn, { opacity: selectedPaymentMethod ? 1 : 0.5 }]}
+                disabled={!selectedPaymentMethod || isPaying}
+                onPress={async () => {
+                  if (!selectedPaymentMethod) return;
+                  try {
+                    setIsPaying(true);
+                    await fetch(`${API_URL}/bookings/bookings/${booking.id}/pay/`, {
+                      method: 'PATCH',
+                      credentials: 'include',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ payment_method: selectedPaymentMethod }),
+                    });
+                    // Refresh booking detail to reflect status change (server returns payment state)
+                    await fetchBookingDetail();
+                  } catch (e) {
+                    // ignore UI-only errors for now
+                  } finally {
+                    setIsPaying(false);
+                  }
+                }}
+              >
+                {isPaying ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <ThemedText style={styles.sendBtnText}>Confirm Payment Method</ThemedText>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {/* If a payment method has already been recorded on the booking, show a read-only confirmation message. */}
+        {((booking as any).payment && (booking as any).payment.payment_method) && (
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#FFD60A15' }]}> 
+                <FontAwesome name="money" size={16} color="#FFD60A" />
+              </View>
+              <ThemedText style={styles.sectionTitle}>Payment</ThemedText>
+            </View>
+            <View style={{ paddingVertical: 8 }}>
+              <ThemedText style={{ color: '#666', marginBottom: 8 }}>Payment method confirmed:</ThemedText>
+              <ThemedText style={{ fontWeight: '700' }}>{((booking as any).payment.payment_method || '').toString().toUpperCase()}</ThemedText>
             </View>
           </View>
         )}

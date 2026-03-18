@@ -2,7 +2,7 @@ from rest_framework import serializers
 from .models import (
     Booking, Request, CustomRequest, DirectRequest, EmergencyRequest,
     ActiveBooking, ServiceLocation, DirectRequestAddOn, BroadcastRequest, BroadcastOffer,
-    RequestAssignment
+    RequestAssignment, Receipt
 )
 from services.models import Service, ServiceAddOn
 from users.models import Account, Client
@@ -202,6 +202,20 @@ class BookingSerializer(serializers.ModelSerializer):
             instance.status = status
             instance.save()
         return instance
+
+
+class BookingPaymentSerializer(serializers.Serializer):
+    """Serializer for client payment selection (cash | online).
+    This endpoint only records the chosen method and performs the simple
+    status transition logic implemented in the view.
+    """
+    payment_method = serializers.ChoiceField(choices=['cash', 'online'])
+    receipt_image = serializers.ImageField(required=False, allow_null=True)
+
+    def validate_payment_method(self, value):
+        if value not in ('cash', 'online'):
+            raise serializers.ValidationError('Invalid payment method')
+        return value
 
 
 class HomePageSerializer(serializers.Serializer):

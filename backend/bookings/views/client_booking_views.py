@@ -10,7 +10,14 @@ from ..models import (
 )
 from ..models import Quotation, QuotationItem
 from ..serializers import BookingSerializer
+from ..serializers import BookingPaymentSerializer
+from ..models import Receipt
+from notification.models import Notification
+from django.utils import timezone
 from users.models import Account
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @api_view(['GET'])
@@ -349,4 +356,118 @@ def _serialize_single_booking(booking):
     except Exception:
         pass
 
+    # Attach payment/receipt information if present so clients and mechanics can see chosen method
+    try:
+        if hasattr(booking, 'receipt') and booking.receipt is not None:
+            receipt = booking.receipt
+            booking_data['payment'] = {
+                'payment_method': receipt.payment_method,
+                'payment_received': bool(receipt.payment_received),
+                'transaction_id': receipt.transaction_id,
+            }
+        else:
+            booking_data['payment'] = None
+    except Exception:
+        booking_data['payment'] = None
+
     return booking_data
+
+
+@api_view(['PATCH'])
+@permission_classes([AllowAny])
+def client_pay_booking(request, booking_id):
+    """Client selects payment method for a booking that is in PENDING_PAYMENT.
+
+    Payload: { payment_method: 'cash' | 'online' }
+
+    - cash: records receipt as paid and marks booking as completed
+    - online: records chosen method and leaves booking in pending_payment; actual
+      payment confirmation should be handled by a payment gateway webhook that
+      updates the Receipt.transaction_id / payment_received later.
+    """
+    account_id = request.session.get('account_id')
+    if not account_id:
+        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        account = Account.objects.get(id=account_id)
+        if not hasattr(account, 'client'):
+            return Response({'error': 'Only clients may perform this action'}, status=status.HTTP_403_FORBIDDEN)
+        client = account.client
+
+        booking = Booking.objects.select_related('request', 'request__provider').get(id=booking_id, request__client=client)
+
+        if booking.status != Booking.Status.PENDING_PAYMENT:
+            return Response({'error': 'Booking not in pending_payment state'}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = BookingPaymentSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        pm = serializer.validated_data['payment_method']
+
+        # Create or update receipt record
+        receipt, created = Receipt.objects.get_or_create(booking=booking, defaults={
+            'payment_received': True if pm == 'cash' else False,
+            'payment_method': pm
+        })
+        if not created:
+            receipt.payment_method = pm
+            receipt.payment_received = True if pm == 'cash' else False
+            receipt.save()
+
+        # Cash is confirmed immediately in this simple flow
+        if pm == 'cash':
+            booking.status = Booking.Status.COMPLETED
+            booking.completed_at = timezone.now()
+            booking.save()
+            # Create CompleteBooking record if missing
+            try:
+                CompleteBooking.objects.get_or_create(booking=booking, defaults={'total_amount': booking.amount_fee})
+            except Exception:
+                logger.exception('Failed to create CompleteBooking for booking %s', booking.id)
+
+            # Notify provider (if any)
+            try:
+                provider_account = booking.request.provider
+                if provider_account:
+                    Notification.objects.create(
+                        receiver=provider_account,
+                        title='Payment received (cash)',
+                        message=f'Client confirmed cash payment for Booking #{booking.id}'
+                    )
+            except Exception:
+                logger.exception('Failed to create notification for provider on booking %s', booking.id)
+
+            # Return booking in same shape as get_booking_detail for client to refresh
+            try:
+                booking_data = _serialize_single_booking(booking)
+            except Exception:
+                booking_data = BookingSerializer(booking).data
+
+            return Response({'message': 'cash_confirmed', 'booking': booking_data}, status=status.HTTP_200_OK)
+
+        # Online selected — leave booking in pending_payment and record receipt placeholder
+        try:
+            provider_account = booking.request.provider
+            if provider_account:
+                Notification.objects.create(
+                    receiver=provider_account,
+                    title='Payment method selected',
+                    message=f'Client selected online payment for Booking #{booking.id}'
+                )
+        except Exception:
+            logger.exception('Failed to create notification for provider on booking %s', booking.id)
+
+        try:
+            booking_data = _serialize_single_booking(booking)
+        except Exception:
+            booking_data = BookingSerializer(booking).data
+
+        return Response({'message': 'online_initiated', 'booking': booking_data}, status=status.HTTP_200_OK)
+
+    except Account.DoesNotExist:
+        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Booking.DoesNotExist:
+        return Response({'error': 'Booking not found or not owned by client'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        logger.exception('Unhandled error in client_pay_booking')
+        return Response({'error': 'Internal server error'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
