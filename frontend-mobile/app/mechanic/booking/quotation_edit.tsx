@@ -1,14 +1,24 @@
-import React, { useState, useEffect } from 'react';
-import { View, TextInput, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { useThemeColor } from '@/hooks/use-theme-color';
 import { FontAwesome } from '@expo/vector-icons';
-import { styles } from '@/style/mechanic/bookingDetailsStyles';
+import { styles } from '../../../style/mechanic/quotation_edit';
 import { useNotification } from '@/hooks/useNotification';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
+
+type QuotationItem = {
+  description: string;
+  quantity: number;
+  unit_price: number;
+  service?: number | null;
+  service_add_on?: number | null;
+};
+
+const formatMoney = (amount: number) => {
+  if (!Number.isFinite(amount)) return '0.00';
+  return amount.toFixed(2);
+};
 
 export default function QuotationEdit() {
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
@@ -18,14 +28,8 @@ export default function QuotationEdit() {
   const [saving, setSaving] = useState(false);
   const [notes, setNotes] = useState('');
   const [isFinal, setIsFinal] = useState(false);
-  const [items, setItems] = useState<Array<any>>([]);
-  
-  const borderColor = useThemeColor({ light: '#eee', dark: '#2a2a2a' }, 'icon');
-  const cardBackground = useThemeColor({ light: '#fff', dark: '#1a1a1a' }, 'background');
-  const actionTint = useThemeColor({}, 'tint');
-  const textColor = useThemeColor({}, 'text');
-  const placeholderColor = useThemeColor({ light: '#9B9B9B', dark: '#6B6B6B' }, 'icon');
-  const removeColor = useThemeColor({ light: '#FF3B30', dark: '#FF6B6B' }, 'tint');
+  const [items, setItems] = useState<QuotationItem[]>([]);
+
   useEffect(() => {
     const fetchQuotation = async () => {
       if (!bookingId) return;
@@ -44,7 +48,15 @@ export default function QuotationEdit() {
         const data = await res.json();
         setNotes(data.notes || '');
         setIsFinal(!!data.is_final);
-        setItems((data.items || []).map((it: any) => ({ description: it.description || '', quantity: it.quantity || 1, unit_price: Number(it.unit_price || 0), service: it.service || null, service_add_on: it.service_add_on || null })));
+        setItems(
+          (data.items || []).map((it: any) => ({
+            description: it.description || '',
+            quantity: Number(it.quantity || 1),
+            unit_price: Number(it.unit_price || 0),
+            service: it.service || null,
+            service_add_on: it.service_add_on || null,
+          }))
+        );
       } catch (e) {
         // ignore
       } finally {
@@ -100,6 +112,12 @@ export default function QuotationEdit() {
   const addItem = () => setItems(prev => [...prev, { description: '', quantity: 1, unit_price: 0 }]);
   const removeItem = (index: number) => setItems(prev => prev.filter((_, i) => i !== index));
 
+  const subtotal = useMemo(
+    () => items.reduce((sum, it) => sum + Number(it.quantity || 0) * Number(it.unit_price || 0), 0),
+    [items]
+  );
+  const totalAmount = useMemo(() => subtotal, [subtotal]);
+
   const handleSave = async () => {
     if (!bookingId) return;
     setSaving(true);
@@ -124,66 +142,129 @@ export default function QuotationEdit() {
     }
   };
 
-  if (loading) return (
-    <ThemedView style={styles.container}>
+  if (loading) {
+    return (
+      <View style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
           <FontAwesome name="chevron-left" size={16} color="#FF8C00" />
         </TouchableOpacity>
-        <ThemedText style={styles.headerTitle}>Edit Quotation</ThemedText>
+          <Text style={styles.headerTitle}>Edit Quotation</Text>
         <View style={{ width: 40 }} />
       </View>
-      <View style={{ padding: 24 }}>
+        <View style={styles.loaderWrap}>
         <ActivityIndicator size="large" color="#FF8C00" />
       </View>
-    </ThemedView>
-  );
+      </View>
+    );
+  }
 
   return (
-    <ThemedView style={styles.container}>
+    <View style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
           <FontAwesome name="chevron-left" size={16} color="#FF8C00" />
         </TouchableOpacity>
-        <ThemedText style={styles.headerTitle}>Edit Quotation</ThemedText>
+        <Text style={styles.headerTitle}>Edit Quotation</Text>
         <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView style={styles.scrollView} contentContainerStyle={{ padding: 16 }}>
-        <ThemedText style={{ marginBottom: 8 }}>Notes</ThemedText>
-        <TextInput value={notes} onChangeText={setNotes} placeholder="Notes for client" style={{ borderWidth: 1, borderColor: borderColor, padding: 8, borderRadius: 6, marginBottom: 12, backgroundColor: cardBackground }} multiline />
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Notes</Text>
+          <TextInput
+            value={notes}
+            onChangeText={setNotes}
+            placeholder="Notes for client"
+            placeholderTextColor="#8E8E93"
+            style={styles.notesInput}
+            multiline
+          />
+        </View>
 
-        <ThemedText style={{ marginBottom: 8 }}>Items</ThemedText>
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionTitle}>Line Items</Text>
+        </View>
+
         {items.map((it, idx) => (
-          <View key={idx} style={{ borderWidth: 1, borderColor: borderColor, padding: 8, borderRadius: 6, marginBottom: 8, backgroundColor: cardBackground }}>
-            <TextInput placeholder="Description" placeholderTextColor={placeholderColor} value={it.description} onChangeText={(t) => updateItem(idx, { description: t })} style={{ borderBottomWidth: 1, borderColor: borderColor, marginBottom: 8, color: textColor }} />
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              <TextInput placeholder="Qty" placeholderTextColor={placeholderColor} value={String(it.quantity)} keyboardType="numeric" onChangeText={(t) => updateItem(idx, { quantity: Number(t || 0) })} style={{ flex: 1, borderWidth: 1, borderColor: borderColor, padding: 8, borderRadius: 6, color: textColor }} />
-              <TextInput placeholder="Unit price" placeholderTextColor={placeholderColor} value={String(it.unit_price)} keyboardType="numeric" onChangeText={(t) => updateItem(idx, { unit_price: Number(t || 0) })} style={{ flex: 1, borderWidth: 1, borderColor: borderColor, padding: 8, borderRadius: 6, color: textColor }} />
-            </View>
-            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 8 }}>
-              <TouchableOpacity onPress={() => removeItem(idx)} style={{ padding: 8 }}>
-                <ThemedText style={{ color: removeColor }}>Remove</ThemedText>
+          <View key={idx} style={styles.itemCard}>
+            <View style={styles.itemCardTopRow}>
+              <Text style={styles.itemLabel}>Item Name</Text>
+              <TouchableOpacity onPress={() => removeItem(idx)} style={styles.removeButton}>
+                <FontAwesome name="trash" size={14} color="#FF6B6B" />
+                <Text style={styles.removeButtonText}>Remove</Text>
               </TouchableOpacity>
+            </View>
+
+            <TextInput
+              placeholder="Enter item description"
+              placeholderTextColor="#8E8E93"
+              value={it.description}
+              onChangeText={(t) => updateItem(idx, { description: t })}
+              style={styles.itemNameInput}
+            />
+
+            <View style={styles.itemFieldsRow}>
+              <View style={styles.fieldCol}>
+                <Text style={styles.itemLabel}>Qty</Text>
+                <TextInput
+                  placeholder="1"
+                  placeholderTextColor="#8E8E93"
+                  value={String(it.quantity)}
+                  keyboardType="numeric"
+                  onChangeText={(t) => updateItem(idx, { quantity: Math.max(1, Number(t || 1)) })}
+                  style={styles.numericInput}
+                />
+              </View>
+              <View style={styles.fieldCol}>
+                <Text style={styles.itemLabel}>Unit Price</Text>
+                <TextInput
+                  placeholder="0"
+                  placeholderTextColor="#8E8E93"
+                  value={String(it.unit_price)}
+                  keyboardType="numeric"
+                  onChangeText={(t) => updateItem(idx, { unit_price: Number(t || 0) })}
+                  style={styles.numericInput}
+                />
+              </View>
+            </View>
+
+            <View style={styles.itemTotalRow}>
+              <Text style={styles.itemTotalLabel}>Line Total</Text>
+              <Text style={styles.itemTotalValue}>PHP {formatMoney(Number(it.quantity || 0) * Number(it.unit_price || 0))}</Text>
             </View>
           </View>
         ))}
 
-        <TouchableOpacity onPress={addItem} style={{ padding: 12, backgroundColor: cardBackground, borderRadius: 6, marginBottom: 16, borderWidth: 1, borderColor: borderColor }}>
-          <ThemedText style={{ color: actionTint }}>+ Add item</ThemedText>
+        <TouchableOpacity onPress={addItem} style={styles.addItemButton}>
+          <FontAwesome name="plus" size={14} color="#FFFFFF" />
+          <Text style={styles.addItemButtonText}>Add Item</Text>
         </TouchableOpacity>
 
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-          <ThemedText>Mark as final</ThemedText>
-          <TouchableOpacity onPress={() => setIsFinal(v => !v)} style={{ padding: 8 }}>
-            <FontAwesome name={isFinal ? 'check-square' : 'square-o'} size={20} color={isFinal ? '#34C759' : '#8E8E93'} />
+        <View style={styles.finalToggleRow}>
+          <Text style={styles.finalToggleText}>Mark as final quotation</Text>
+          <TouchableOpacity onPress={() => setIsFinal(v => !v)} style={styles.finalToggleIconWrap}>
+            <FontAwesome name={isFinal ? 'check-square' : 'square-o'} size={20} color={isFinal ? '#22C55E' : '#8E8E93'} />
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity onPress={handleSave} style={[styles.finishLargeButton, { alignItems: 'center' }]} disabled={saving}>
-          {saving ? <ActivityIndicator color="#fff" /> : <ThemedText style={[styles.actionButtonText, { color: '#fff' }]}>Save Quotation</ThemedText>}
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryTitle}>Summary</Text>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Subtotal</Text>
+            <Text style={styles.summaryValue}>PHP {formatMoney(subtotal)}</Text>
+          </View>
+          <View style={styles.summaryDivider} />
+          <View style={styles.summaryRow}>
+            <Text style={styles.totalLabel}>Total Amount</Text>
+            <Text style={styles.totalValue}>PHP {formatMoney(totalAmount)}</Text>
+          </View>
+        </View>
+
+        <TouchableOpacity onPress={handleSave} style={styles.saveButton} disabled={saving}>
+          {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.saveButtonText}>Save Quotation</Text>}
         </TouchableOpacity>
       </ScrollView>
-    </ThemedView>
+    </View>
   );
 }
