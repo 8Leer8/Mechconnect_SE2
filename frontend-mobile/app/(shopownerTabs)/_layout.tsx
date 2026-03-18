@@ -1,11 +1,13 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
 import { FontAwesome } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { useTabsBackToHome } from '@/hooks/use-tabs-back-to-home';
 
 export default function ShopOwnerTabLayout() {
+  const insets = useSafeAreaInsets();
   useTabsBackToHome('/(shopownerTabs)/main/home');
 
   return (
@@ -19,8 +21,8 @@ export default function ShopOwnerTabLayout() {
           backgroundColor: '#1E1E1E',
           borderTopColor: '#333',
           borderTopWidth: 1,
-          height: 60,
-          paddingBottom: 5,
+          height: 60 + insets.bottom,
+          paddingBottom: insets.bottom + 5,
           elevation: 8,
           shadowColor: '#000',
           shadowOffset: { width: 0, height: -2 },
