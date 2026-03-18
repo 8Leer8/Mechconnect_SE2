@@ -5,6 +5,7 @@ import {
   TextInput,
   TouchableOpacity,
   Text,
+  Image,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
@@ -204,6 +205,10 @@ export default function LoginScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.logoContainer}>
+          <Image
+            source={require('@/assets/images/logo_main.png')}
+            style={{ width: 100, height: 100, resizeMode: 'contain', marginBottom: 8 }}
+          />
           <Text style={styles.title}>MechConnect</Text>
           <Text style={styles.tagline}>Connect to your mechanical world</Text>
         </View>
