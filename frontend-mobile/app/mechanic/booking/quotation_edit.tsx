@@ -26,7 +26,6 @@ export default function QuotationEdit() {
   const { showNotification } = useNotification();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [notes, setNotes] = useState('');
   const [isFinal, setIsFinal] = useState(false);
   const [items, setItems] = useState<QuotationItem[]>([]);
 
@@ -41,12 +40,10 @@ export default function QuotationEdit() {
         });
         if (!res.ok) {
           setItems([]);
-          setNotes('');
           setIsFinal(false);
           return;
         }
         const data = await res.json();
-        setNotes(data.notes || '');
         setIsFinal(!!data.is_final);
         setItems(
           (data.items || []).map((it: any) => ({
@@ -122,7 +119,7 @@ export default function QuotationEdit() {
     if (!bookingId) return;
     setSaving(true);
     try {
-      const payload = { notes, is_final: isFinal, items };
+      const payload = { is_final: isFinal, items };
       const res = await fetch(`${API_URL}/bookings/mechanic/bookings/${bookingId}/quotation/`, {
         method: 'POST',
         credentials: 'include',
@@ -170,18 +167,6 @@ export default function QuotationEdit() {
       </View>
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Notes</Text>
-          <TextInput
-            value={notes}
-            onChangeText={setNotes}
-            placeholder="Notes for client"
-            placeholderTextColor="#8E8E93"
-            style={styles.notesInput}
-            multiline
-          />
-        </View>
-
         <View style={styles.sectionHeaderRow}>
           <Text style={styles.sectionTitle}>Line Items</Text>
         </View>

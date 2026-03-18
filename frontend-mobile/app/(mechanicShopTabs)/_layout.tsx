@@ -9,7 +9,6 @@ export default function MechanicShopTabLayout() {
   return (
     <Tabs
       screenOptions={{
-        unmountOnBlur: true,
         tabBarActiveTintColor: '#FF8C00',
         tabBarInactiveTintColor: '#999',
         headerShown: false,

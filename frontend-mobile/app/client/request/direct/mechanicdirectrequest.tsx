@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   ScrollView,
@@ -59,11 +59,41 @@ interface CreateRequestResponse {
   [key: string]: any;
 }
 
+class DebugErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.log('[DirectRequest] ErrorBoundary caught error:', error?.message, info?.componentStack);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <ThemedView style={styles.container}>
+          <View style={styles.section}>
+            <ThemedText style={styles.sectionTitle}>Something went wrong.</ThemedText>
+          </View>
+        </ThemedView>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 export default function MechanicDirectRequestScreen() {
   const { showNotification } = useNotification();
   const { selectedLocation, setSelectedLocation } = useLocation();
   const params = useLocalSearchParams<{ mechanicId?: string | string[] }>();
   const mechanicId = typeof params.mechanicId === 'string' ? params.mechanicId : Array.isArray(params.mechanicId) ? params.mechanicId[0] : undefined;
+  console.log('[DirectRequest] MOUNTED with mechanicId:', mechanicId);
   const [mechanics, setMechanics] = useState<Mechanic[]>([]);
   const [selectedProviderId, setSelectedProviderId] = useState<number | null>(null);
   const [selectedServiceId, setSelectedServiceId] = useState<number | null>(null);
@@ -133,6 +163,15 @@ export default function MechanicDirectRequestScreen() {
     setSelectedAddOnIds([]);
     setAvailableServices([]);
     setAvailableAddOns([]);
+  }, [mechanicId]);
+
+  useEffect(() => {
+    setCurrentLatitude(null);
+    setCurrentLongitude(null);
+    setCurrentAddress('');
+    setCurrentStreetName('');
+    setCurrentBarangay('');
+    setCurrentCity('');
   }, [mechanicId]);
 
   // ─── Fetch Services ────────────────────────────────────────
@@ -320,7 +359,8 @@ export default function MechanicDirectRequestScreen() {
   };
 
   return (
-    <ThemedView style={styles.container}>
+    <DebugErrorBoundary>
+      <ThemedView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.backBtn} onPress={handleBack}>
@@ -568,6 +608,7 @@ export default function MechanicDirectRequestScreen() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
-    </ThemedView>
+      </ThemedView>
+    </DebugErrorBoundary>
   );
 }
