@@ -10,17 +10,20 @@ from users.models import Account
 from services.models import MechanicService, ShopService
 
 
+EMERGENCY_REQUEST_TTL_MINUTES = 5
+
+
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def list_requests(request):
     """
     Get all requests made by the authenticated client.
-    Returns requests grouped by type: custom, direct, broadcast (no emergency).
+    Returns requests grouped by type: custom, direct, emergency, broadcast.
     Supports pagination and filtering.
     Query params:
     - page: page number (default: 1)
     - page_size: items per page (default: 5)
-    - filter: 'all', 'custom', 'direct', 'broadcast' (default: 'all')
+    - filter: 'all', 'custom', 'direct', 'emergency', 'broadcast' (default: 'all')
     """
     # Get account_id from session
     account_id = request.session.get('account_id')
@@ -59,17 +62,26 @@ def list_requests(request):
             }, status=status.HTTP_403_FORBIDDEN)
         
         client = account.client
+
+        # Auto-delete stale emergency requests that were never accepted within the TTL window.
+        emergency_expiry_cutoff = timezone.now() - timedelta(minutes=EMERGENCY_REQUEST_TTL_MINUTES)
+        Request.objects.filter(
+            client=client,
+            request_type='emergency',
+            provider__isnull=True,
+            booking__isnull=True,
+            created_at__lt=emergency_expiry_cutoff,
+        ).delete()
         
-        # Get all requests made by this client (custom, direct, broadcast only; no emergency)
-        all_requests_query = Request.objects.filter(client=client).exclude(
-            request_type='emergency'
-        ).select_related(
+        # Get all requests made by this client
+        all_requests_query = Request.objects.filter(client=client).select_related(
             'provider',
             'shop',
             'service_location'
         ).prefetch_related(
             'customrequest',
             'directrequest',
+            'emergencyrequest',
             'broadcast_request'
         )
         
@@ -78,6 +90,8 @@ def list_requests(request):
             all_requests_query = all_requests_query.filter(request_type='custom')
         elif filter_type == 'direct':
             all_requests_query = all_requests_query.filter(request_type='direct')
+        elif filter_type == 'emergency':
+            all_requests_query = all_requests_query.filter(request_type='emergency')
         elif filter_type == 'broadcast':
             all_requests_query = all_requests_query.filter(request_type='broadcast')
         # 'all' means no additional filter
@@ -184,6 +198,30 @@ def list_requests(request):
                     'created_at': req.created_at.isoformat(),
                     'has_booking': hasattr(req, 'booking')
                 })
+            elif req.request_type == 'emergency' and hasattr(req, 'emergencyrequest'):
+                emergency_expires_at = req.created_at + timedelta(minutes=EMERGENCY_REQUEST_TTL_MINUTES)
+                remaining_seconds = int(max(0, (emergency_expires_at - timezone.now()).total_seconds()))
+                emergency_status = 'accepted' if (hasattr(req, 'booking') or req.provider_id) else 'pending'
+                emergency_requests.append({
+                    'id': req.id,
+                    'provider': {
+                        'id': req.provider.id,
+                        'name': f"{req.provider.firstname} {req.provider.lastname}"
+                    } if req.provider else None,
+                    'description': req.emergencyrequest.description,
+                    'status': emergency_status,
+                    'providers_note': req.emergencyrequest.providers_note,
+                    'concern_picture': req.emergencyrequest.concern_picture.url if req.emergencyrequest.concern_picture else None,
+                    'service_location': {
+                        'street_name': req.service_location.street_name,
+                        'barangay': req.service_location.barangay,
+                        'city_municipality': req.service_location.city_municipality,
+                    } if req.service_location else None,
+                    'created_at': req.created_at.isoformat(),
+                    'expires_at': emergency_expires_at.isoformat(),
+                    'remaining_seconds': remaining_seconds,
+                    'has_booking': hasattr(req, 'booking')
+                })
             elif req.request_type == 'broadcast' and hasattr(req, 'broadcast_request'):
                 # Update status to expired if time has passed and still searching
                 if req.broadcast_request.is_expired():
@@ -254,6 +292,15 @@ def get_request_detail(request, request_id):
     """
     try:
         req = Request.objects.select_related('provider', 'shop', 'service_location').prefetch_related('directrequest', 'customrequest', 'broadcast_request').get(id=request_id)
+
+        if (
+            req.request_type == 'emergency'
+            and req.provider_id is None
+            and not hasattr(req, 'booking')
+            and req.created_at < timezone.now() - timedelta(minutes=EMERGENCY_REQUEST_TTL_MINUTES)
+        ):
+            req.delete()
+            return Response({'error': 'Emergency request expired'}, status=status.HTTP_404_NOT_FOUND)
 
         base = {
             'id': req.id,
@@ -333,11 +380,17 @@ def get_request_detail(request, request_id):
 
         # emergency
         elif req.request_type == 'emergency' and hasattr(req, 'emergencyrequest'):
+            emergency_expires_at = req.created_at + timedelta(minutes=EMERGENCY_REQUEST_TTL_MINUTES)
+            remaining_seconds = int(max(0, (emergency_expires_at - timezone.now()).total_seconds()))
+            emergency_status = 'accepted' if (hasattr(req, 'booking') or req.provider_id) else 'pending'
             base.update({
                 'type': 'emergency',
                 'description': req.emergencyrequest.description,
-                'urgency_level': req.emergencyrequest.urgency_level,
+                'status': emergency_status,
+                'providers_note': req.emergencyrequest.providers_note,
                 'concern_picture': req.emergencyrequest.concern_picture.url if req.emergencyrequest.concern_picture else None,
+                'expires_at': emergency_expires_at.isoformat(),
+                'remaining_seconds': remaining_seconds,
             })
 
         # include minimal client info if available
@@ -376,6 +429,12 @@ def cancel_request(request, request_id):
         client = account.client
         
         req = Request.objects.get(id=request_id, client=client)
+
+        if req.request_type == 'emergency':
+            req.delete()
+            return Response({
+                'message': 'Emergency request deleted successfully'
+            }, status=status.HTTP_200_OK)
         
         if hasattr(req, 'booking'):
             # If there's an associated booking, allow the client to cancel the booking.

@@ -3,6 +3,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 from django.utils import timezone
+from datetime import timedelta
 from django.db.models import Prefetch, Sum, Q
 from django.db import transaction
 import logging
@@ -28,6 +29,9 @@ from chat.serializers import MessageSerializer
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 import json
+
+
+EMERGENCY_REQUEST_TTL_MINUTES = 5
 
 
 
@@ -1253,6 +1257,14 @@ def mechanic_accept_emergency_request(request, request_id):
         req = Request.objects.get(id=request_id, request_type="emergency")
     except Request.DoesNotExist:
         return Response({"error": "Emergency request not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    if (
+        req.provider_id is None
+        and not hasattr(req, "booking")
+        and req.created_at < timezone.now() - timedelta(minutes=EMERGENCY_REQUEST_TTL_MINUTES)
+    ):
+        req.delete()
+        return Response({"error": "Emergency request expired"}, status=status.HTTP_400_BAD_REQUEST)
 
     # If already assigned to another provider, reject
     if req.provider and req.provider != account:

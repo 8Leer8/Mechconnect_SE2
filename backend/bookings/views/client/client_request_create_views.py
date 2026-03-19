@@ -2,6 +2,8 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
+from django.utils import timezone
+from datetime import timedelta
 
 import json
 
@@ -12,6 +14,54 @@ from ...models import (
 from users.models import Account
 from services.models import Service, ServiceAddOn
 from shops.models import Shop                          # added
+
+
+EMERGENCY_COOLDOWN_MINUTES = 5
+
+
+def _get_emergency_cooldown_seconds(client):
+    latest_emergency = Request.objects.filter(
+        client=client,
+        request_type='emergency'
+    ).order_by('-created_at').first()
+
+    if not latest_emergency:
+        return 0
+
+    cooldown_window = timedelta(minutes=EMERGENCY_COOLDOWN_MINUTES)
+    elapsed = timezone.now() - latest_emergency.created_at
+    remaining = cooldown_window - elapsed
+
+    if remaining.total_seconds() <= 0:
+        return 0
+
+    return int(remaining.total_seconds())
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def get_emergency_cooldown(request):
+    account_id = request.session.get('account_id')
+
+    if not account_id:
+        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        account = Account.objects.get(id=account_id)
+
+        if not hasattr(account, 'client'):
+            return Response({'error': 'Only clients can check emergency cooldown'}, status=status.HTTP_403_FORBIDDEN)
+
+        remaining_seconds = _get_emergency_cooldown_seconds(account.client)
+        return Response({
+            'can_request': remaining_seconds <= 0,
+            'remaining_seconds': remaining_seconds,
+            'cooldown_minutes': EMERGENCY_COOLDOWN_MINUTES,
+        }, status=status.HTTP_200_OK)
+    except Account.DoesNotExist:
+        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['POST'])
@@ -251,6 +301,14 @@ def create_emergency_request(request):
             }, status=status.HTTP_403_FORBIDDEN)
         
         client = account.client
+
+        remaining_seconds = _get_emergency_cooldown_seconds(client)
+        if remaining_seconds > 0:
+            return Response({
+                'error': f'Please wait {remaining_seconds} seconds before sending another emergency request.',
+                'remaining_seconds': remaining_seconds,
+                'cooldown_minutes': EMERGENCY_COOLDOWN_MINUTES,
+            }, status=status.HTTP_429_TOO_MANY_REQUESTS)
         
         # Extract data
         provider_id = request.data.get('provider_id')
@@ -306,7 +364,7 @@ def create_emergency_request(request):
         emergency_request = EmergencyRequest.objects.create(
             request=new_request,
             description=description if description else None,
-            concern_picture=concern_picture
+            concern_picture=concern_picture,
         )
         
         return Response({

@@ -3,10 +3,15 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django.db.models import Prefetch
+from django.utils import timezone
+from datetime import timedelta
 
 from ...models import Request, EmergencyRequest
 from ...serializers import RequestSerializer
 from users.models import Account
+
+
+EMERGENCY_REQUEST_TTL_MINUTES = 5
 
 
 @api_view(['GET'])
@@ -33,11 +38,22 @@ def get_emergency_requests(request):
                 'emergency_requests': [],
                 'error': 'Only mechanics can view emergency requests'
             }, status=status.HTTP_403_FORBIDDEN)
+
+        emergency_expiry_cutoff = timezone.now() - timedelta(minutes=EMERGENCY_REQUEST_TTL_MINUTES)
+
+        # Auto-delete stale emergency requests that were never accepted.
+        Request.objects.filter(
+            request_type='emergency',
+            provider__isnull=True,
+            booking__isnull=True,
+            created_at__lt=emergency_expiry_cutoff,
+        ).delete()
         
         # Fetch all emergency requests without a provider and without a booking
         emergency_requests = Request.objects.filter(
             request_type='emergency',
-            provider__isnull=True
+            provider__isnull=True,
+            created_at__gte=emergency_expiry_cutoff,
         ).exclude(
             booking__isnull=False
         ).select_related(

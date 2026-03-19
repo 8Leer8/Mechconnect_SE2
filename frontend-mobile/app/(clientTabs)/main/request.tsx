@@ -76,9 +76,28 @@ interface BroadcastRequest {
   has_booking: boolean;
 }
 
+interface EmergencyRequest {
+  id: number;
+  provider: { id: number; name: string } | null;
+  description: string | null;
+  status: string;
+  providers_note: string | null;
+  concern_picture: string | null;
+  service_location: {
+    street_name: string;
+    barangay: string;
+    city_municipality: string;
+  } | null;
+  expires_at?: string | null;
+  remaining_seconds?: number;
+  created_at: string;
+  has_booking: boolean;
+}
+
 interface RequestsResponse {
   custom_requests: CustomRequest[];
   direct_requests: DirectRequest[];
+  emergency_requests: EmergencyRequest[];
   broadcast_requests: BroadcastRequest[];
   total_count: number;
   total_pages: number;
@@ -92,8 +111,9 @@ interface ErrorResponse {
 }
 
 // Isolated countdown component — has its own 1s interval so only this re-renders, not the whole screen
-function CountdownBanner({ expiresAt }: { expiresAt: string }) {
+function CountdownBanner({ expiresAt, onExpired }: { expiresAt: string; onExpired?: () => void }) {
   const [now, setNow] = useState(Date.now());
+  const [expiredNotified, setExpiredNotified] = useState(false);
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
@@ -103,6 +123,14 @@ function CountdownBanner({ expiresAt }: { expiresAt: string }) {
   const minutes = Math.floor(diff / 60000);
   const seconds = Math.floor((diff % 60000) / 1000);
   const text = expired ? 'Expired' : `Time remaining: ${minutes}m ${seconds}s`;
+
+  useEffect(() => {
+    if (!expiredNotified && expired && onExpired) {
+      setExpiredNotified(true);
+      onExpired();
+    }
+  }, [expired, expiredNotified, onExpired]);
+
   return (
     <View
       style={{
@@ -127,6 +155,7 @@ function CountdownBanner({ expiresAt }: { expiresAt: string }) {
 export default function RequestScreen() {
   const [customRequests, setCustomRequests] = useState<CustomRequest[]>([]);
   const [directRequests, setDirectRequests] = useState<DirectRequest[]>([]);
+  const [emergencyRequests, setEmergencyRequests] = useState<EmergencyRequest[]>([]);
   const [broadcastRequests, setBroadcastRequests] = useState<BroadcastRequest[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -138,7 +167,7 @@ export default function RequestScreen() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
-  const [filter, setFilter] = useState<'all' | 'custom' | 'direct' | 'broadcast'>('all');
+  const [filter, setFilter] = useState<'all' | 'custom' | 'direct' | 'emergency' | 'broadcast'>('all');
   const pageSize = 5;
   const { lastMessage } = useWebSocketContext();
 
@@ -161,6 +190,7 @@ export default function RequestScreen() {
 
       setCustomRequests(data.custom_requests || []);
       setDirectRequests(data.direct_requests || []);
+      setEmergencyRequests(data.emergency_requests || []);
       setBroadcastRequests(data.broadcast_requests || []);
       setTotalCount(data.total_count || 0);
       setTotalPages(data.total_pages || 1);
@@ -210,14 +240,16 @@ export default function RequestScreen() {
     fetchRequests();
   };
 
-  const handleFilterChange = (newFilter: 'all' | 'custom' | 'direct' | 'broadcast') => {
+  const handleFilterChange = (newFilter: 'all' | 'custom' | 'direct' | 'emergency' | 'broadcast') => {
     setFilter(newFilter);
     setCurrentPage(1); // Reset to first page when filter changes
+    fetchRequests(true, 1, newFilter);
   };
 
   const handlePageChange = (newPage: number) => {
     if (newPage >= 1 && newPage <= totalPages) {
       setCurrentPage(newPage);
+      fetchRequests(true, newPage, filter);
     }
   };
 
@@ -508,7 +540,57 @@ export default function RequestScreen() {
     });
   };
 
-  const totalRequests = totalCount;
+  const renderEmergencyRequests = () => {
+    if (emergencyRequests.length === 0) {
+      return (
+        <View style={styles.emptyCard}>
+          <FontAwesome name="inbox" size={36} color="#555" />
+          <ThemedText style={styles.emptyText}>No emergency requests yet</ThemedText>
+        </View>
+      );
+    }
+
+    return emergencyRequests.map((r) => {
+      const details: { icon: string; text: string }[] = [];
+      if (r.provider) details.push({ icon: 'wrench', text: r.provider.name });
+      if (r.service_location) {
+        details.push({
+          icon: 'map-marker',
+          text: `${r.service_location.street_name}, ${r.service_location.barangay}, ${r.service_location.city_municipality}`,
+        });
+      }
+      details.push({ icon: 'calendar', text: new Date(r.created_at).toLocaleDateString() });
+
+      const showTimer = !r.has_booking && r.status === 'pending' && !!r.expires_at;
+      const extra = showTimer ? (
+        <CountdownBanner
+          expiresAt={r.expires_at as string}
+          onExpired={() => fetchRequests(true, currentPage, filter)}
+        />
+      ) : undefined;
+
+      return renderRequestCard(
+        r.id,
+        r.status,
+        `Emergency #${r.id}`,
+        r.description || 'Emergency assistance requested',
+        details,
+        r.has_booking,
+        !r.has_booking && r.status !== 'cancelled' ? () => handleCancelRequest(r.id) : undefined,
+        extra,
+      );
+    });
+  };
+
+  const displayedTotalRequests = filter === 'all'
+    ? (broadcastRequests.length + customRequests.length + directRequests.length + emergencyRequests.length)
+    : filter === 'broadcast'
+      ? broadcastRequests.length
+      : filter === 'custom'
+        ? customRequests.length
+        : filter === 'direct'
+          ? directRequests.length
+          : emergencyRequests.length;
 
   return (
     <ThemedView style={styles.container}>
@@ -517,7 +599,7 @@ export default function RequestScreen() {
         <View>
           <ThemedText style={styles.headerTitle}>Requests</ThemedText>
           <ThemedText style={styles.headerSubtitle}>
-            {totalRequests} total request{totalRequests !== 1 ? 's' : ''}
+            {displayedTotalRequests} total request{displayedTotalRequests !== 1 ? 's' : ''}
           </ThemedText>
         </View>
         <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
@@ -547,6 +629,17 @@ export default function RequestScreen() {
             <FontAwesome name="bullhorn" size={14} color={filter === 'broadcast' ? '#fff' : '#FF8C00'} />
             <ThemedText style={[styles.filterBtnText, filter === 'broadcast' && styles.filterBtnTextActive]}>
               Broadcast
+            </ThemedText>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.filterBtn, filter === 'emergency' && styles.filterBtnActive]}
+            onPress={() => handleFilterChange('emergency')}
+            activeOpacity={0.7}
+          >
+            <FontAwesome name="exclamation-triangle" size={14} color={filter === 'emergency' ? '#fff' : '#FF3B30'} />
+            <ThemedText style={[styles.filterBtnText, filter === 'emergency' && styles.filterBtnTextActive]}>
+              Emergency
             </ThemedText>
           </TouchableOpacity>
 
@@ -601,7 +694,7 @@ export default function RequestScreen() {
           }
         >
           {/* Display all request types */}
-          {totalRequests === 0 ? (
+          {displayedTotalRequests === 0 ? (
             <View style={styles.emptyCard}>
               <FontAwesome name="inbox" size={36} color="#555" />
               <ThemedText style={styles.emptyText}>No requests yet</ThemedText>
@@ -612,7 +705,7 @@ export default function RequestScreen() {
           ) : (
             <>
               {/* Broadcast Requests Section */}
-              {broadcastRequests.length > 0 && (
+              {(filter === 'all' || filter === 'broadcast') && broadcastRequests.length > 0 && (
                 <View style={{ marginBottom: 16 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, marginBottom: 12 }}>
                     <FontAwesome name="bullhorn" size={14} color="#FF8C00" style={{ marginRight: 8 }} />
@@ -625,7 +718,7 @@ export default function RequestScreen() {
               )}
 
               {/* Custom Requests Section */}
-              {customRequests.length > 0 && (
+              {(filter === 'all' || filter === 'custom') && customRequests.length > 0 && (
                 <View style={{ marginBottom: 16 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, marginBottom: 12 }}>
                     <FontAwesome name="pencil-square-o" size={14} color="#34C759" style={{ marginRight: 8 }} />
@@ -638,7 +731,7 @@ export default function RequestScreen() {
               )}
 
               {/* Direct Requests Section */}
-              {directRequests.length > 0 && (
+              {(filter === 'all' || filter === 'direct') && directRequests.length > 0 && (
                 <View style={{ marginBottom: 16 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, marginBottom: 12 }}>
                     <FontAwesome name="bolt" size={14} color="#007AFF" style={{ marginRight: 8 }} />
@@ -649,11 +742,24 @@ export default function RequestScreen() {
                   {renderDirectRequests()}
                 </View>
               )}
+
+              {/* Emergency Requests Section */}
+              {(filter === 'all' || filter === 'emergency') && emergencyRequests.length > 0 && (
+                <View style={{ marginBottom: 16 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, marginBottom: 12 }}>
+                    <FontAwesome name="exclamation-triangle" size={14} color="#FF3B30" style={{ marginRight: 8 }} />
+                    <ThemedText style={{ fontSize: 15, fontWeight: '700', color: '#FF3B30' }}>
+                      Emergency Requests ({emergencyRequests.length})
+                    </ThemedText>
+                  </View>
+                  {renderEmergencyRequests()}
+                </View>
+              )}
             </>
           )}
 
           {/* Pagination Controls */}
-          {totalPages > 1 && (
+          {displayedTotalRequests > 0 && totalPages > 1 && (
             <View style={styles.paginationContainer}>
               <TouchableOpacity
                 style={[styles.paginationBtn, currentPage === 1 && styles.paginationBtnDisabled]}
