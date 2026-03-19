@@ -16,6 +16,12 @@ from .shop_services_views import (
     update_shop_service_price,
 )
 
+from .shop_service_addons_views import (
+    list_shop_service_addons,
+    add_shop_service_addon,
+    remove_shop_service_addon,
+)
+
 __all__ = [
     'list_services',
     'list_services_with_market_pricing',
@@ -34,4 +40,7 @@ __all__ = [
     'add_shop_service',
     'remove_shop_service',
     'update_shop_service_price',
+    'list_shop_service_addons',
+    'add_shop_service_addon',
+    'remove_shop_service_addon',
 ]

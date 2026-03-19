@@ -12,8 +12,8 @@ import { FontAwesome } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { TopNav } from '@/components/navigation';
 import { useRouter } from 'expo-router';
+import { useWebSocketContext } from '@/context/WebSocketContext';
 import { useNotification } from '@/hooks/useNotification';
 import { useConfirmation } from '@/hooks/useConfirmation';
 import { SkeletonBookingList } from '@/components/skeletons/SkeletonLoaders';
@@ -115,6 +115,7 @@ export default function ShopOwnerJobsScreen() {
   const router = useRouter();
   const { showNotification } = useNotification();
   const { confirm } = useConfirmation();
+  const { lastMessage } = useWebSocketContext();
   const [activeTab, setActiveTab] = useState<TabType>('all');
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>([]);
@@ -132,7 +133,8 @@ export default function ShopOwnerJobsScreen() {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [mechanicsLoading, setMechanicsLoading] = useState(false);
   const [assigningId, setAssigningId] = useState<number | null>(null);
-  const [actionLoading, setActionLoading] = useState<number | null>(null);
+  const [acceptLoadingId, setAcceptLoadingId] = useState<number | null>(null);
+  const [declineLoadingId, setDeclineLoadingId] = useState<number | null>(null);
 
   useEffect(() => {
     if (activeTab === 'requests') {
@@ -141,6 +143,17 @@ export default function ShopOwnerJobsScreen() {
       fetchBookings();
     }
   }, [activeTab]);
+
+  // Re-fetch when a WebSocket booking update arrives (e.g., lead mechanic starts/finishes job)
+  useEffect(() => {
+    if (lastMessage?.type === 'booking_update') {
+      if (activeTab === 'requests') {
+        fetchRequests();
+      } else {
+        fetchBookings();
+      }
+    }
+  }, [lastMessage, activeTab]);
 
   const fetchBookings = async () => {
     try {
@@ -205,35 +218,69 @@ export default function ShopOwnerJobsScreen() {
         });
         setBookings(merged);
       } else {
-        const statusQuery = activeTab;
-        const res = await fetch(
-          `${API_URL}/bookings/shopowner/bookings/?status=${statusQuery}`,
-          {
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-          }
-        );
-        if (!res.ok) throw new Error(`Failed to fetch ${activeTab} bookings`);
-        const data = (await res.json()) as FilteredResponse;
-        setBookings(data.bookings || []);
-
-        if (statusQuery === 'cancelled') {
-          try {
-            const declRes = await fetch(`${API_URL}/bookings/shopowner/requests/declined/`, {
+        if (activeTab === 'completed') {
+          // Mechanic "Finish Job" moves booking to `pending_payment`.
+          // For the shop owner UX, we show both pending_payment + completed
+          // inside the "Completed" tab.
+          const [r1, r2, r3] = await Promise.all([
+            fetch(`${API_URL}/bookings/shopowner/bookings/?status=completed`, {
               credentials: 'include',
               headers: { 'Content-Type': 'application/json' },
-            });
-            if (declRes.ok) {
-              const declData = (await declRes.json()) as { declined_requests: PendingRequest[] };
-              setDeclinedRequests(declData.declined_requests || []);
-            } else {
+            }),
+            fetch(`${API_URL}/bookings/shopowner/bookings/?status=pending_payment`, {
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+            }),
+            fetch(`${API_URL}/bookings/shopowner/bookings/?status=finished`, {
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+            }),
+          ]);
+          if (!r1.ok || !r2.ok || !r3.ok) throw new Error('Failed to fetch completed bookings');
+
+          const d1 = (await r1.json()) as FilteredResponse;
+          const d2 = (await r2.json()) as FilteredResponse;
+          const d3 = (await r3.json()) as FilteredResponse;
+
+          const merged = [...(d1.bookings || []), ...(d2.bookings || []), ...(d3.bookings || [])];
+          const seen = new Set<number>();
+          const deduped = merged.filter((b) => {
+            if (seen.has(b.id)) return false;
+            seen.add(b.id);
+            return true;
+          });
+          setBookings(deduped);
+        } else {
+          const statusQuery = activeTab;
+          const res = await fetch(
+            `${API_URL}/bookings/shopowner/bookings/?status=${statusQuery}`,
+            {
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+          if (!res.ok) throw new Error(`Failed to fetch ${activeTab} bookings`);
+          const data = (await res.json()) as FilteredResponse;
+          setBookings(data.bookings || []);
+
+          if (statusQuery === 'cancelled') {
+            try {
+              const declRes = await fetch(`${API_URL}/bookings/shopowner/requests/declined/`, {
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+              });
+              if (declRes.ok) {
+                const declData = (await declRes.json()) as { declined_requests: PendingRequest[] };
+                setDeclinedRequests(declData.declined_requests || []);
+              } else {
+                setDeclinedRequests([]);
+              }
+            } catch {
               setDeclinedRequests([]);
             }
-          } catch {
+          } else {
             setDeclinedRequests([]);
           }
-        } else {
-          setDeclinedRequests([]);
         }
       }
     } catch (e: any) {
@@ -439,7 +486,7 @@ export default function ShopOwnerJobsScreen() {
         ? `${API_URL}/bookings/shopowner/requests/${r.id}/accept/`
         : `${API_URL}/bookings/shopowner/requests/${r.id}/accept-custom/`;
 
-    setActionLoading(r.id);
+    setAcceptLoadingId(r.id);
     try {
       const res = await fetch(endpoint, {
         method: 'POST',
@@ -448,15 +495,26 @@ export default function ShopOwnerJobsScreen() {
       });
       const data = await res.json();
       if (!res.ok) {
-        showNotification({ type: 'error', message: data.error || 'Failed to accept request' });
+        if (data?.error === 'Request is not pending') {
+          // Backend says this request was already processed; remove it from the list
+          setPendingRequests((prev) => prev.filter((p) => p.id !== r.id));
+          showNotification({
+            type: 'info',
+            message: 'This request was already processed and is no longer pending.',
+          });
+        } else {
+          showNotification({ type: 'error', message: data.error || 'Failed to accept request' });
+        }
         return;
       }
       setPendingRequests((prev) => prev.filter((p) => p.id !== r.id));
+      // After accepting, move job to Accepted tab and refresh bookings there
       showNotification({ type: 'success', message: data.message || 'Request accepted' });
+      setActiveTab('accepted');
     } catch {
       showNotification({ type: 'error', message: 'Network error' });
     } finally {
-      setActionLoading(null);
+      setAcceptLoadingId(null);
     }
   };
 
@@ -474,7 +532,7 @@ export default function ShopOwnerJobsScreen() {
         ? `${API_URL}/bookings/shopowner/requests/${r.id}/decline/`
         : `${API_URL}/bookings/shopowner/requests/${r.id}/decline-custom/`;
 
-    setActionLoading(r.id);
+    setDeclineLoadingId(r.id);
     try {
       const res = await fetch(endpoint, {
         method: 'POST',
@@ -483,7 +541,16 @@ export default function ShopOwnerJobsScreen() {
       });
       const data = await res.json();
       if (!res.ok) {
-        showNotification({ type: 'error', message: data.error || 'Failed to decline request' });
+        if (data?.error === 'Request is not pending') {
+          // Backend says this request was already processed; remove it from the list
+          setPendingRequests((prev) => prev.filter((p) => p.id !== r.id));
+          showNotification({
+            type: 'info',
+            message: 'This request was already processed and is no longer pending.',
+          });
+        } else {
+          showNotification({ type: 'error', message: data.error || 'Failed to decline request' });
+        }
         return;
       }
       showNotification({ type: 'info', message: data.message || 'Request declined' });
@@ -491,14 +558,14 @@ export default function ShopOwnerJobsScreen() {
     } catch {
       showNotification({ type: 'error', message: 'Network error' });
     } finally {
-      setActionLoading(null);
+      setDeclineLoadingId(null);
     }
   };
 
   // ── Tab bar ──
   const tabConfig: { key: TabType; label: string; icon: string }[] = [
     { key: 'all', label: 'All', icon: 'th-list' },
-    { key: 'requests', label: 'Requests', icon: 'envelope' },
+    { key: 'requests', label: 'Pending', icon: 'envelope' },
     { key: 'accepted', label: 'Accepted', icon: 'calendar-check-o' },
     { key: 'on_going', label: 'On Going', icon: 'play-circle' },
     { key: 'completed', label: 'Completed', icon: 'check-circle' },
@@ -507,18 +574,21 @@ export default function ShopOwnerJobsScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <TopNav onNotificationPress={() => {}} />
-
       {/* Header */}
       <View style={styles.header}>
-        <ThemedText style={styles.headerTitle}>Jobs</ThemedText>
-        <ThemedText style={styles.headerSub}>
-          {activeTab === 'requests'
-            ? `${listToShow.length} pending request${listToShow.length !== 1 ? 's' : ''}`
-            : `${bookings.length} ${activeTab === 'all' ? 'total' : activeTab} job${
-                bookings.length !== 1 ? 's' : ''
-              }`}
-        </ThemedText>
+        <View>
+          <ThemedText style={styles.headerTitle}>Jobs</ThemedText>
+          <ThemedText style={styles.headerSub}>
+            {activeTab === 'requests'
+              ? `${listToShow.length} pending request${listToShow.length !== 1 ? 's' : ''}`
+              : `${bookings.length} ${activeTab === 'all' ? 'total' : activeTab} job${
+                  bookings.length !== 1 ? 's' : ''
+                }`}
+          </ThemedText>
+        </View>
+        <TouchableOpacity style={styles.refreshButton} onPress={onRefresh} activeOpacity={0.7}>
+          <FontAwesome name="refresh" size={18} color="#FF8C00" />
+        </TouchableOpacity>
       </View>
 
       {/* Tabs container */}
@@ -686,23 +756,27 @@ export default function ShopOwnerJobsScreen() {
                         <TouchableOpacity
                           style={[styles.assignBtn, { backgroundColor: '#2A2A2A' }]}
                           onPress={() => handleDecline(r)}
-                          disabled={actionLoading === r.id}
+                          disabled={declineLoadingId === r.id || acceptLoadingId === r.id}
                         >
-                          <ThemedText
-                            style={[
-                              styles.assignBtnText,
-                              { color: '#FF3B30' },
-                            ]}
-                          >
-                            Decline
-                          </ThemedText>
+                          {declineLoadingId === r.id ? (
+                            <ActivityIndicator size="small" color="#FF3B30" />
+                          ) : (
+                            <ThemedText
+                              style={[
+                                styles.assignBtnText,
+                                { color: '#FF3B30' },
+                              ]}
+                            >
+                              Decline
+                            </ThemedText>
+                          )}
                         </TouchableOpacity>
                         <TouchableOpacity
                           style={styles.assignBtn}
                           onPress={() => handleAccept(r)}
-                          disabled={actionLoading === r.id}
+                          disabled={acceptLoadingId === r.id || declineLoadingId === r.id}
                         >
-                          {actionLoading === r.id ? (
+                          {acceptLoadingId === r.id ? (
                             <ActivityIndicator size="small" color="#FF9500" />
                           ) : (
                             <ThemedText style={styles.assignBtnText}>
@@ -888,40 +962,20 @@ export default function ShopOwnerJobsScreen() {
 
                   <View style={styles.footerActions}>
                     {activeTab === 'on_going' ? (
-                      <>
-                        <TouchableOpacity
-                          style={[styles.assignBtn, { backgroundColor: '#2A2A2A' }]}
-                          onPress={() =>
-                            router.push({
-                              pathname: '/shopowner/booking/booking_details',
-                              params: { bookingId: b.id.toString() },
-                            })
-                          }
-                        >
-                          <ThemedText
-                            style={[
-                              styles.assignBtnText,
-                              { color: '#FFFFFF' },
-                            ]}
-                          >
-                            View details
-                          </ThemedText>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[styles.assignBtn, { backgroundColor: '#34C759' }]}
-                          // TODO: call complete endpoint then refresh
-                          onPress={() => {}}
-                        >
-                          <ThemedText
-                            style={[
-                              styles.assignBtnText,
-                              { color: '#000000' },
-                            ]}
-                          >
-                            Completed
-                          </ThemedText>
-                        </TouchableOpacity>
-                      </>
+                      <TouchableOpacity
+                        style={[styles.assignBtn, { backgroundColor: '#FF8C0015' }]}
+                        onPress={() =>
+                          router.push({
+                            pathname: '/shopowner/booking/booking_details',
+                            params: { bookingId: b.id.toString() },
+                          })
+                        }
+                      >
+                        <ThemedText style={[styles.assignBtnText, { color: '#FF8C00' }]}>
+                          Details
+                        </ThemedText>
+                        <FontAwesome name="chevron-right" size={11} color="#FF8C00" />
+                      </TouchableOpacity>
                     ) : (
                       // Assign Mechanics button — available for non-terminal statuses outside On Going tab
                       ['accepted', 'on_the_way', 'active', 'paused'].includes(b.status) && (
@@ -949,7 +1003,16 @@ export default function ShopOwnerJobsScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContainer}>
             <View style={styles.modalHeader}>
-              <ThemedText style={styles.modalTitle}>Assign Mechanics</ThemedText>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <TouchableOpacity
+                  onPress={closeAssignModal}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  activeOpacity={0.7}
+                >
+                  <FontAwesome name="chevron-left" size={18} color="#FF8C00" />
+                </TouchableOpacity>
+                <ThemedText style={styles.modalTitle}>Assign Mechanics</ThemedText>
+              </View>
               <TouchableOpacity onPress={closeAssignModal}>
                 <IconSymbol name="xmark.circle.fill" size={28} color="#888" />
               </TouchableOpacity>
@@ -1040,9 +1103,26 @@ export default function ShopOwnerJobsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#151718' },
-  header: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 10 },
+  header: {
+    paddingHorizontal: 20,
+    paddingTop: 56,
+    paddingBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   headerTitle: { fontSize: 24, fontWeight: '700', color: '#fff' },
   headerSub: { fontSize: 13, color: '#888', marginTop: 2 },
+  refreshButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FF8C0018',
+    borderWidth: 1,
+    borderColor: '#FF8C0028',
+  },
 
   // Tabs (All / Requests / Accepted / ...)
   tabsContainer: {

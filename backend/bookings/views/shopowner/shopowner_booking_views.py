@@ -107,7 +107,7 @@ def list_shopowner_requests(request):
     for req in all_requests:
         try:
             if req.request_type == "custom" and hasattr(req, "customrequest"):
-                if req.customrequest.request_status in ["pending", "quoted"]:
+                if req.customrequest.request_status == CustomRequest.Status.PENDING:
                     filtered_pending_requests.append(req)
             elif req.request_type == "direct" and hasattr(req, "directrequest"):
                 if req.directrequest.request_status == "pending":
@@ -374,11 +374,30 @@ def shopowner_accept_custom_request(request, request_id):
     if providers_note is not None:
         custom.providers_note = providers_note
 
+    # Mark custom request as quoted and create an accepted booking for this request
     custom.request_status = CustomRequest.Status.QUOTED
     custom.save()
 
+    # Use quoted price if available, otherwise 0
+    amount = float(custom.quoted_price or 0)
+
+    if hasattr(req, "booking"):
+        booking = req.booking
+        booking.status = Booking.Status.ACCEPTED
+        booking.amount_fee = amount
+        booking.save(update_fields=["status", "amount_fee", "updated_at"])
+    else:
+        booking = Booking.objects.create(
+            request=req,
+            status=Booking.Status.ACCEPTED,
+            amount_fee=amount,
+        )
+        ActiveBooking.objects.get_or_create(booking=booking)
+
+    data = _serialize_single_booking(booking)
+
     return Response(
-        {"message": "Custom request quoted", "request_id": req.id},
+        {"message": "Custom request accepted and booking created", "booking": data},
         status=status.HTTP_200_OK,
     )
 

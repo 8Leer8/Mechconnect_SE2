@@ -77,7 +77,7 @@ def home_page(request):
             for req in all_requests:
                 try:
                     if req.request_type == 'custom' and hasattr(req, 'customrequest'):
-                        if req.customrequest.request_status in ['pending', 'quoted']:
+                        if req.customrequest.request_status == 'pending':
                             filtered_pending_requests.append(req)
                     elif req.request_type == 'direct' and hasattr(req, 'directrequest'):
                         if req.directrequest.request_status == 'pending':
@@ -312,7 +312,7 @@ def home_page(request):
             for req in all_requests:
                 try:
                     if req.request_type == 'custom' and hasattr(req, 'customrequest'):
-                        if req.customrequest.request_status in ['pending', 'quoted']:
+                        if req.customrequest.request_status == 'pending':
                             filtered_pending_requests.append(req)
                     elif req.request_type == 'direct' and hasattr(req, 'directrequest'):
                         if req.directrequest.request_status == 'pending':

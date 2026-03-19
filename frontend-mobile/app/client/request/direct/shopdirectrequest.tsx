@@ -46,6 +46,8 @@ interface Service {
 
 interface AddOn {
   id: number;
+  service_id?: number;
+  category?: string | null;
   name: string;
   description: string;
   price: number;
@@ -628,6 +630,11 @@ export default function ShopDirectRequestScreen() {
                 </View>
                 <View style={styles.addOnInfo}>
                   <ThemedText style={[styles.addOnName, disabled && styles.disabledText]}>{addOn.name}</ThemedText>
+                  {!!addOn.category && (
+                    <ThemedText style={[styles.addOnDescription, disabled && styles.disabledText]}>
+                      {addOn.category}
+                    </ThemedText>
+                  )}
                   <ThemedText style={[styles.addOnDescription, disabled && styles.disabledText]}>{addOn.description}</ThemedText>
                 </View>
                 <ThemedText style={[styles.addOnPrice, disabled && styles.disabledText]}>₱{addOn.price.toFixed(2)}</ThemedText>

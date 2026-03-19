@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   StyleSheet,
   View,
@@ -11,7 +11,9 @@ import {
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
-import { TopNav } from '@/components/navigation';
+import { Picker } from '@react-native-picker/picker';
+
+const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
 interface Product {
   id: number;
@@ -24,44 +26,136 @@ export default function ShopOwnerShop() {
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
   const [description, setDescription] = useState('');
+  const [selectedServiceId, setSelectedServiceId] = useState<number | null>(null);
+  const [availableServices, setAvailableServices] = useState<Array<{ service_id: number; name: string }>>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const handleNotificationPress = () => {
-    console.log('Notification pressed');
-    // Add notification navigation here later
-  };
+  const fetchMyServices = useCallback(async () => {
+    try {
+      setError(null);
+      const res = await fetch(`${API_URL}/services/shop/my-services/`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!res.ok) throw new Error('Failed to fetch your services');
+      const data = await res.json();
+      const servicesRaw = data?.services || [];
+      const services = servicesRaw.map((s: any) => ({
+        service_id: Number(s.id),
+        name: String(s.name || ''),
+      }));
+      setAvailableServices(services);
+      if (services.length > 0 && selectedServiceId === null) {
+        setSelectedServiceId(services[0].service_id);
+      }
+    } catch (e: any) {
+      setError(e?.message || 'Failed to load services');
+    }
+  }, [selectedServiceId]);
 
-  const handleAddProduct = () => {
+  const fetchProducts = useCallback(async (serviceId: number) => {
+    try {
+      setError(null);
+      const res = await fetch(`${API_URL}/services/shop/addons/?service_id=${serviceId}`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!res.ok) throw new Error('Failed to fetch products');
+      const data = await res.json();
+      const addOns = (data?.add_ons || []).map((a: any) => ({
+        id: a.id,
+        name: a.name,
+        price: String(a.price),
+        description: a.description || '',
+      }));
+      setProducts(addOns);
+    } catch (e: any) {
+      setError(e?.message || 'Failed to load products');
+      setProducts([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchMyServices();
+  }, [fetchMyServices]);
+
+  useEffect(() => {
+    if (selectedServiceId !== null) {
+      fetchProducts(selectedServiceId);
+    } else {
+      setProducts([]);
+    }
+  }, [selectedServiceId, fetchProducts]);
+
+  const handleAddProduct = async () => {
     const trimmedName = name.trim();
     const trimmedPrice = price.trim();
+
+    if (!selectedServiceId) {
+      setError('Please select a service first.');
+      return;
+    }
 
     if (!trimmedName || !trimmedPrice) {
       setError('Please enter a product name and price.');
       return;
     }
 
-    const newProduct: Product = {
-      id: Date.now(),
-      name: trimmedName,
-      price: trimmedPrice,
-      description: description.trim(),
-    };
-
-    setProducts((prev) => [newProduct, ...prev]);
-    setName('');
-    setPrice('');
-    setDescription('');
     setError(null);
+    try {
+      const parsedPrice = Number(trimmedPrice);
+      if (Number.isNaN(parsedPrice)) {
+        setError('Price must be a valid number.');
+        return;
+      }
+
+      const res = await fetch(`${API_URL}/services/shop/addons/add/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          service_id: selectedServiceId,
+          name: trimmedName,
+          description: description.trim(),
+          price: parsedPrice,
+        }),
+      });
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || 'Failed to add product');
+
+      setName('');
+      setPrice('');
+      setDescription('');
+      fetchProducts(selectedServiceId);
+    } catch (e: any) {
+      setError(e?.message || 'Failed to add product');
+    }
   };
 
-  const handleRemoveProduct = (id: number) => {
-    setProducts((prev) => prev.filter((p) => p.id !== id));
+  const handleRemoveProduct = async (id: number) => {
+    if (!selectedServiceId) return;
+    setError(null);
+    try {
+      const res = await fetch(`${API_URL}/services/shop/addons/remove/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ service_add_on_id: id }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || 'Failed to remove product');
+      fetchProducts(selectedServiceId);
+    } catch (e: any) {
+      setError(e?.message || 'Failed to remove product');
+    }
   };
 
   return (
     <ThemedView style={styles.container}>
-      <TopNav onNotificationPress={handleNotificationPress} />
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -73,8 +167,13 @@ export default function ShopOwnerShop() {
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.header}>
-            <ThemedText style={styles.title}>Shop</ThemedText>
-            <ThemedText style={styles.subtitle}>Add and manage your products</ThemedText>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View>
+                <ThemedText style={styles.title}>Shop</ThemedText>
+                <ThemedText style={styles.subtitle}>Add and manage your products</ThemedText>
+              </View>
+              <View style={{ width: 44, height: 44 }} />
+            </View>
           </View>
 
           {/* Add Product Form */}
@@ -84,6 +183,28 @@ export default function ShopOwnerShop() {
                 <FontAwesome name="shopping-bag" size={18} color="#FF9500" />
               </View>
               <ThemedText style={styles.cardTitle}>Add Product</ThemedText>
+            </View>
+
+            {/* Service selector */}
+            <View style={styles.fieldGroup}>
+              <ThemedText style={styles.label}>Service *</ThemedText>
+              <View style={styles.pickerContainer}>
+                <Picker
+                  enabled={availableServices.length > 0}
+                  selectedValue={selectedServiceId ?? null}
+                  onValueChange={(value) => {
+                    if (value === null) setSelectedServiceId(null);
+                    else setSelectedServiceId(Number(value));
+                  }}
+                  dropdownIconColor={selectedServiceId ? '#FF8C00' : '#555'}
+                  style={styles.picker}
+                >
+                  <Picker.Item label="Choose a service..." value={null} />
+                  {availableServices.map((s) => (
+                    <Picker.Item key={s.service_id} label={s.name} value={s.service_id} />
+                  ))}
+                </Picker>
+              </View>
             </View>
 
             <View style={styles.fieldGroup}>
@@ -147,7 +268,7 @@ export default function ShopOwnerShop() {
                 </View>
                 <ThemedText style={styles.emptyTitle}>No products yet</ThemedText>
                 <ThemedText style={styles.emptySubtitle}>
-                  Start by adding a product above. This is a temporary list for now.
+                  Add products for the selected service above.
                 </ThemedText>
               </View>
             ) : (
@@ -189,7 +310,7 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: 20,
-    paddingTop: 56,
+    paddingTop: 96,
     paddingBottom: 32,
   },
   title: {
@@ -249,6 +370,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 14,
+    color: '#fff',
+  },
+  pickerContainer: {
+    borderRadius: 12,
+    backgroundColor: '#1C1C1E',
+    borderWidth: 1,
+    borderColor: '#2C2C2E',
+  },
+  picker: {
     color: '#fff',
   },
   textArea: {
