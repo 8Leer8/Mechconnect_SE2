@@ -3,7 +3,6 @@ import { StyleSheet, View, ScrollView, RefreshControl, ActivityIndicator, Toucha
 import { FontAwesome } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { TopNav } from '@/components/navigation';
 import { getImageUrl } from '@/lib/imageUtils';
 import { useNotification } from '@/hooks/useNotification';
 import { SkeletonMechanicList } from '@/components/skeletons/SkeletonLoaders';
@@ -151,8 +150,13 @@ export default function ShopOwnerMechanics() {
   if (loading) {
     return (
       <ThemedView style={styles.container}>
-        <TopNav onNotificationPress={handleNotificationPress} />
-        <ScrollView contentContainerStyle={{ padding: 16 }}>
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          <View style={styles.header}>
+            <View>
+              <ThemedText style={styles.title}>Mechanics</ThemedText>
+              <ThemedText style={styles.subtitle}>Loading...</ThemedText>
+            </View>
+          </View>
           <SkeletonMechanicList />
         </ScrollView>
       </ThemedView>
@@ -162,8 +166,15 @@ export default function ShopOwnerMechanics() {
   if (error || !mechanicsData) {
     return (
       <ThemedView style={styles.container}>
-        <TopNav onNotificationPress={handleNotificationPress} />
-        <View style={styles.errorContainer}>
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          <View style={styles.header}>
+            <View>
+              <ThemedText style={styles.title}>Mechanics</ThemedText>
+              <ThemedText style={styles.subtitle}>Unable to load</ThemedText>
+            </View>
+          </View>
+
+          <View style={styles.errorContainer}>
           <View style={styles.errorIconWrap}>
             <FontAwesome name="exclamation-triangle" size={36} color="#FF3B30" />
           </View>
@@ -172,14 +183,14 @@ export default function ShopOwnerMechanics() {
             <FontAwesome name="refresh" size={16} color="#fff" />
             <ThemedText style={styles.retryButtonText}>Retry</ThemedText>
           </TouchableOpacity>
-        </View>
+          </View>
+        </ScrollView>
       </ThemedView>
     );
   }
 
   return (
     <ThemedView style={styles.container}>
-      <TopNav onNotificationPress={handleNotificationPress} />
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         refreshControl={
@@ -192,9 +203,11 @@ export default function ShopOwnerMechanics() {
             <ThemedText style={styles.title}>Mechanics</ThemedText>
             <ThemedText style={styles.subtitle}>{mechanicsData.count} total</ThemedText>
           </View>
-          <TouchableOpacity style={styles.addButton} onPress={() => setShowAddModal(true)} activeOpacity={0.8}>
-            <FontAwesome name="plus-circle" size={24} color="#fff" />
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <TouchableOpacity style={styles.refreshButton} onPress={onRefresh} activeOpacity={0.7}>
+              <FontAwesome name="refresh" size={18} color="#FF8C00" />
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Mechanics List */}
@@ -256,6 +269,15 @@ export default function ShopOwnerMechanics() {
           ))
         )}
       </ScrollView>
+
+      {/* Floating Add button (sticky) */}
+      <TouchableOpacity
+        style={styles.fab}
+        onPress={() => setShowAddModal(true)}
+        activeOpacity={0.85}
+      >
+        <FontAwesome name="plus" size={18} color="#fff" />
+      </TouchableOpacity>
 
       {/* Add Mechanic Modal */}
       <Modal
@@ -335,6 +357,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 20,
+    paddingTop: 56,
     paddingBottom: 40,
   },
   loadingContainer: {
@@ -407,6 +430,32 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 12,
+  },
+  refreshButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FF8C0018',
+    borderWidth: 1,
+    borderColor: '#FF8C0028',
+  },
+  fab: {
+    position: 'absolute',
+    right: 18,
+    bottom: 22,
+    width: 56,
+    height: 56,
+    borderRadius: 18,
+    backgroundColor: '#FF9500',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 8,
   },
   emptyContainer: {
     alignItems: 'center',

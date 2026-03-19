@@ -114,12 +114,15 @@ def get_service_addons(request, service_id):
         service = Service.objects.get(id=service_id)
         add_ons = ServiceAddOn.objects.filter(service=service)
         
+        category_name = service.category.name if service.category else None
         add_ons_data = [
             {
                 'id': addon.id,
+                'service_id': service.id,
+                'category': category_name,
                 'name': addon.name,
                 'description': addon.description,
-                'price': float(addon.price)
+                'price': float(addon.price),
             }
             for addon in add_ons
         ]

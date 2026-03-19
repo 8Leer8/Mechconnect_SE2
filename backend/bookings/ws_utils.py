@@ -35,7 +35,25 @@ def notify_booking_parties(mechanic_account_id, client_account_id, booking_id, b
         "message": message,
     }
 
-    targets = {mechanic_account_id, client_account_id}
+    # Also notify the shop owner associated with this booking (so the shop owner Jobs UI updates).
+    shop_owner_account_id = None
+    try:
+        # Local import to avoid circulars at module import time.
+        from .models import Booking
+
+        booking = (
+            Booking.objects.select_related("request__shop__shop_owner")
+            .filter(id=booking_id)
+            .first()
+        )
+        if booking and booking.request and getattr(booking.request, "shop", None):
+            shop = booking.request.shop
+            if shop and getattr(shop, "shop_owner", None):
+                shop_owner_account_id = shop.shop_owner.account_id
+    except Exception:
+        shop_owner_account_id = None
+
+    targets = {mechanic_account_id, client_account_id, shop_owner_account_id}
     for account_id in targets:
         if not account_id:
             continue
