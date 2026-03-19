@@ -75,6 +75,55 @@ interface MonthlyData {
   amount?: number;
 }
 
+const MONTH_ORDER: Record<string, number> = {
+  jan: 0,
+  january: 0,
+  feb: 1,
+  february: 1,
+  mar: 2,
+  march: 2,
+  apr: 3,
+  april: 3,
+  may: 4,
+  jun: 5,
+  june: 5,
+  jul: 6,
+  july: 6,
+  aug: 7,
+  august: 7,
+  sep: 8,
+  sept: 8,
+  september: 8,
+  oct: 9,
+  october: 9,
+  nov: 10,
+  november: 10,
+  dec: 11,
+  december: 11,
+};
+
+const normalizeMonthLabel = (month: string): string => month.trim().toLowerCase();
+
+const normalizeMonthlySeries = (
+  source: MonthlyData[],
+  valueSelector: (item: MonthlyData) => number
+) => {
+  // Quick frontend fix: preserve backend entries in order and do not
+  // collapse same month names across years. This ensures the chart shows
+  // the full sequence (typically 6 items) as returned by the server.
+  const labels: string[] = [];
+  const values: number[] = [];
+
+  source.forEach((item) => {
+    const label = (item.month || '').trim();
+    if (!label) return;
+    labels.push(label);
+    values.push(valueSelector(item));
+  });
+
+  return { labels, values };
+};
+
 interface Statistics {
   total_bookings: number;
   average_cost: number;
@@ -209,12 +258,20 @@ export default function HomeScreen() {
   const pendingCount = data?.pending_requests?.length || 0;
 
   const serviceFrequency = data?.statistics?.service_frequency || [];
-  const serviceFrequencyCounts = serviceFrequency.map((item) => item.count || 0);
+  const normalizedServiceFrequency = normalizeMonthlySeries(
+    serviceFrequency,
+    (item) => item.count || 0
+  );
+  const serviceFrequencyCounts = normalizedServiceFrequency.values;
   const maxServiceFrequency = Math.max(...serviceFrequencyCounts, 0);
   const serviceFrequencySegments = maxServiceFrequency <= 1 ? 1 : Math.min(4, maxServiceFrequency);
 
   const monthlySpending = data?.statistics?.monthly_spending || [];
-  const monthlySpendingValues = monthlySpending.map((item) => item.amount || 0);
+  const normalizedMonthlySpending = normalizeMonthlySeries(
+    monthlySpending,
+    (item) => item.amount || 0
+  );
+  const monthlySpendingValues = normalizedMonthlySpending.values;
   const maxMonthlySpending = Math.max(...monthlySpendingValues, 0);
   const monthlySpendingSegments = maxMonthlySpending <= 0 ? 1 : 4;
 
@@ -282,45 +339,6 @@ export default function HomeScreen() {
           </View>
         ) : (
           <>
-            {/* Quick Actions */}
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <View style={styles.sectionTitleRow}>
-                  <View style={[styles.sectionDot, { backgroundColor: '#34C759' }]} />
-                  <ThemedText style={styles.sectionTitle}>Quick Actions</ThemedText>
-                </View>
-              </View>
-              <View style={styles.quickActionsGrid}>
-                <TouchableOpacity style={styles.quickActionCard} onPress={() => router.push('/(clientTabs)/main/booking')}>
-                  <View style={[styles.quickActionIcon, { backgroundColor: '#FF8C0015' }]}>
-                    <FontAwesome name="calendar-check-o" size={22} color="#FF8C00" />
-                  </View>
-                  <ThemedText style={styles.quickActionLabel}>My Bookings</ThemedText>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.quickActionCard} onPress={() => router.push('/(clientTabs)/main/request')}>
-                  <View style={[styles.quickActionIcon, { backgroundColor: '#007AFF15' }]}>
-                    <FontAwesome name="file-text-o" size={22} color="#007AFF" />
-                  </View>
-                  <ThemedText style={styles.quickActionLabel}>My Requests</ThemedText>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.quickActionCard} onPress={() => router.push('/(clientTabs)/main/discover')}>
-                  <View style={[styles.quickActionIcon, { backgroundColor: '#34C75915' }]}>
-                    <FontAwesome name="compass" size={22} color="#34C759" />
-                  </View>
-                  <ThemedText style={styles.quickActionLabel}>Discover</ThemedText>
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  // @ts-ignore - emergencyQuickAction style exists in homeStyles.js
-                  style={[styles.quickActionCard, styles.emergencyQuickAction]} 
-                  onPress={() => setShowEmergencyModal(true)}
-                >
-                  <View style={[styles.quickActionIcon, { backgroundColor: '#FF3B3025' }]}>
-                    <FontAwesome name="exclamation-triangle" size={22} color="#FF3B30" />
-                  </View>
-                  <ThemedText style={[styles.quickActionLabel, { color: '#FF3B30', fontWeight: '700' }]}>Emergency</ThemedText>
-                </TouchableOpacity>
-              </View>
-            </View>
             {/* Statistics Dashboard */}
             {data?.statistics && (
               <>
@@ -398,7 +416,7 @@ export default function HomeScreen() {
                     <View style={styles.chartContainer}>
                       <BarChart
                         data={{
-                          labels: serviceFrequency.map(item => item.month),
+                          labels: normalizedServiceFrequency.labels,
                           datasets: [{
                             data: serviceFrequencyCounts
                           }]
@@ -449,7 +467,7 @@ export default function HomeScreen() {
                     <View style={styles.chartContainer}>
                       <LineChart
                         data={{
-                          labels: monthlySpending.map(item => item.month),
+                          labels: normalizedMonthlySpending.labels,
                           datasets: [{
                             data: monthlySpendingValues,
                             color: (opacity = 1) => `rgba(52, 199, 89, ${opacity})`,
