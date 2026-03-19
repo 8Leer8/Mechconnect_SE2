@@ -3,7 +3,6 @@ import { StyleSheet, View, ScrollView, RefreshControl } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
-import { TopNav } from '@/components/navigation';
 import { SkeletonDashboard } from '@/components/skeletons/SkeletonLoaders';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
