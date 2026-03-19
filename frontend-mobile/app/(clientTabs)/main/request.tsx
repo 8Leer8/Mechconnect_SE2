@@ -483,7 +483,8 @@ export default function RequestScreen() {
 
       return renderRequestCard(
         r.id, isExpired ? 'expired' : r.status, `Broadcast #${r.id}`, r.description, details, r.has_booking,
-        undefined, extra,
+        !r.has_booking && r.status !== 'cancelled' && r.status !== 'expired' ? () => handleCancelRequest(r.id) : undefined,
+        extra,
         () => {
           router.push({
             pathname: '/client/request/broadcast/broadcastdetail',

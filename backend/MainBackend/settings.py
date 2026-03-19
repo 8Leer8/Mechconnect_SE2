@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     'notification',
     'chat',
     'storages',
+    'mechconnect_ai',
 ]
 
 MIDDLEWARE = [

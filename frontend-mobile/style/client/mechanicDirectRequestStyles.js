@@ -231,6 +231,30 @@ export const styles = StyleSheet.create({
     marginTop: 4,
     fontWeight: '600',
   },
+  // Map location selector
+  selectLocationBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#1A1C1E',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+    padding: 14,
+  },
+  selectLocationText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#8E8E93',
+  },
+  currentLocationDisplayCard: {
+    backgroundColor: '#1A1C1E',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+    marginTop: 10,
+  },
   // Inputs
   inputGroup: {
     gap: 10,

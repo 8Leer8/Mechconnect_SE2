@@ -4,8 +4,8 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django.db.models import Prefetch, Sum, Avg, Count, Q
 from django.utils import timezone
-from datetime import timedelta
 from collections import Counter
+from dateutil.relativedelta import relativedelta
 
 from ...models import (
     Booking, Request, CustomRequest, DirectRequest, EmergencyRequest, 
@@ -114,12 +114,14 @@ def home_page(request):
             for booking in completed_bookings:
                 service_type_counts[booking.request.request_type] += 1
             most_used_service = service_type_counts.most_common(1)[0][0] if service_type_counts else None
+
+            base_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
             
             # Service frequency data (last 6 months)
             service_frequency = []
             for i in range(5, -1, -1):
-                month_start = (now.replace(day=1, hour=0, minute=0, second=0, microsecond=0) - timedelta(days=i*30)).replace(day=1)
-                month_end = (month_start + timedelta(days=32)).replace(day=1)
+                month_start = base_month_start - relativedelta(months=i)
+                month_end = month_start + relativedelta(months=1)
                 count = completed_bookings.filter(
                     completed_at__gte=month_start,
                     completed_at__lt=month_end
@@ -132,8 +134,8 @@ def home_page(request):
             # Monthly spending trend (last 6 months)
             monthly_spending = []
             for i in range(5, -1, -1):
-                month_start = (now.replace(day=1, hour=0, minute=0, second=0, microsecond=0) - timedelta(days=i*30)).replace(day=1)
-                month_end = (month_start + timedelta(days=32)).replace(day=1)
+                month_start = base_month_start - relativedelta(months=i)
+                month_end = month_start + relativedelta(months=1)
                 total = completed_bookings.filter(
                     completed_at__gte=month_start,
                     completed_at__lt=month_end

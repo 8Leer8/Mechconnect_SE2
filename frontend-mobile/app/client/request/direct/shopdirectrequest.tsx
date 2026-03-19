@@ -10,10 +10,11 @@ import {
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Picker } from '@react-native-picker/picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Location from 'expo-location';
+import { useLocation } from '../main_request_form/LocationContext';
 import { styles } from '@/style/client/shopDirectRequestStyles';
 import { useNotification } from '@/hooks/useNotification';
 
@@ -73,6 +74,7 @@ interface CreateRequestResponse {
 
 export default function ShopDirectRequestScreen() {
   const { showNotification } = useNotification();
+  const { selectedLocation, setSelectedLocation } = useLocation();
   const params = useLocalSearchParams<{ shopId?: string | string[] }>();
   const shopId = typeof params.shopId === 'string' ? params.shopId : Array.isArray(params.shopId) ? params.shopId[0] : undefined;
   const [shops, setShops] = useState<Shop[]>([]);
@@ -83,7 +85,7 @@ export default function ShopDirectRequestScreen() {
   const [availableAddOns, setAvailableAddOns] = useState<AddOn[]>([]);
   const [loading, setLoading] = useState(false);
   const [useCurrentTime, setUseCurrentTime] = useState(true);
-  const [useCurrentLocation, setUseCurrentLocation] = useState(true);
+  const [useCurrentLocation, setUseCurrentLocation] = useState(false);
 
   // Date and time pickers
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -308,10 +310,7 @@ export default function ShopDirectRequestScreen() {
     };
   }, []);
 
-  // ─── Fetch PSGC Regions on mount ───────────────────────────
-  useEffect(() => {
-    fetchRegions();
-  }, [fetchRegions]);
+  // Legacy PSGC fetch disabled: location entry now uses map selection only.
 
   // Fetch provinces when region is selected
   useEffect(() => {
@@ -431,6 +430,35 @@ export default function ShopDirectRequestScreen() {
     return () => { cancelled = true; };
   }, [selectedServiceId]);
 
+  useFocusEffect(
+    React.useCallback(() => {
+      if (selectedLocation) {
+        setCurrentLatitude(selectedLocation.latitude);
+        setCurrentLongitude(selectedLocation.longitude);
+        setCurrentAddress(selectedLocation.address);
+        setCurrentStreetName(selectedLocation.streetName);
+        setCurrentSubdivision('');
+        setCurrentBarangay(selectedLocation.barangay);
+        setCurrentCity(selectedLocation.city);
+        setSelectedLocation(null);
+      }
+    }, [selectedLocation, setSelectedLocation])
+  );
+
+  const handleSelectLocation = () => {
+    if (currentLatitude !== null && currentLongitude !== null) {
+      router.push({
+        pathname: '/client/request/main_request_form/map',
+        params: {
+          latitude: currentLatitude.toString(),
+          longitude: currentLongitude.toString(),
+        },
+      });
+      return;
+    }
+    router.push('/client/request/main_request_form/map');
+  };
+
   // ─── Get current location when switching to Current Location ───
   useEffect(() => {
     // Only fetch when user actively switches to current location
@@ -473,17 +501,10 @@ export default function ShopDirectRequestScreen() {
   const handleSend = async () => {
     if (!selectedProviderId) { showNotification({ type: 'error', message: 'Please select a shop first' }); return; }
     if (!selectedServiceId) { showNotification({ type: 'error', message: 'Please select a service' }); return; }
-    
-    if (useCurrentLocation) {
-      if (!currentLatitude || !currentLongitude) {
-        showNotification({ type: 'error', message: 'Please wait while we fetch your current location' });
-        return;
-      }
-    } else {
-      if (!streetName || !barangay || !cityMunicipality) {
-        showNotification({ type: 'error', message: 'Please fill in all required location fields' });
-        return;
-      }
+
+    if (!currentAddress || currentLatitude === null || currentLongitude === null) {
+      showNotification({ type: 'error', message: 'Please select a location from the map' });
+      return;
     }
 
     setLoading(true);
@@ -496,21 +517,13 @@ export default function ShopDirectRequestScreen() {
         provider_id: selectedProviderId,
         service_id: selectedServiceId,
         add_on_ids: selectedAddOnIds,
-        service_location: useCurrentLocation
-          ? { 
-              street_name: currentStreetName || 'GPS Location', 
-              subdivision_village: currentSubdivision || undefined,
-              barangay: currentBarangay || 'GPS Location', 
-              city_municipality: currentCity || 'GPS Location', 
-              landmark: `Lat: ${currentLatitude}, Lng: ${currentLongitude}` 
-            }
-          : { 
-              street_name: streetName, 
-              subdivision_village: undefined,
-              barangay, 
-              city_municipality: cityMunicipality, 
-              landmark: landmark || undefined 
-            },
+        service_location: {
+          street_name: currentStreetName || 'Selected map location',
+          subdivision_village: currentSubdivision || undefined,
+          barangay: currentBarangay || 'N/A',
+          city_municipality: currentCity || 'N/A',
+          landmark: landmark || undefined,
+        },
         scheduled_time: useCurrentTime ? new Date().toISOString() : scheduledDateTime.toISOString(),
       };
 
@@ -525,7 +538,19 @@ export default function ShopDirectRequestScreen() {
 
       if (response.ok) {
         showNotification({ type: 'success', message: data.message || 'Request created successfully!' });
-        router.back();
+        const idFromParams = shopId ? parseInt(shopId, 10) : NaN;
+        const fallbackShopId = Number.isNaN(idFromParams) ? null : idFromParams;
+        const matchedShop = shops.find(s => s.id === selectedProviderId);
+        const targetShopId = matchedShop?.shop_id ?? fallbackShopId;
+
+        if (targetShopId) {
+          router.replace({
+            pathname: '/client/shop/shopprofile',
+            params: { shopId: String(targetShopId) },
+          });
+        } else {
+          router.replace('/(clientTabs)/main/discover');
+        }
       } else {
         showNotification({ type: 'error', message: data.error || 'Failed to create request' });
       }
@@ -554,12 +579,28 @@ export default function ShopDirectRequestScreen() {
 
   const selectedService = availableServices.find((s) => s.id === selectedServiceId);
   const disabled = !selectedProviderId;
+  const handleBack = () => {
+    const idFromParams = shopId ? parseInt(shopId, 10) : NaN;
+    const fallbackShopId = Number.isNaN(idFromParams) ? null : idFromParams;
+    const matchedShop = shops.find(s => s.id === selectedProviderId);
+    const targetShopId = matchedShop?.shop_id ?? fallbackShopId;
+
+    if (targetShopId) {
+      router.replace({
+        pathname: '/client/shop/shopprofile',
+        params: { shopId: String(targetShopId) },
+      });
+      return;
+    }
+
+    router.replace('/(clientTabs)/main/discover');
+  };
 
   return (
     <ThemedView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+        <TouchableOpacity style={styles.backBtn} onPress={handleBack}>
           <FontAwesome name="chevron-left" size={16} color="#FF8C00" />
         </TouchableOpacity>
         <ThemedText style={styles.headerTitle}>Shop Direct Request</ThemedText>
@@ -739,187 +780,55 @@ export default function ShopDirectRequestScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <FontAwesome name="map-marker" size={14} color="#FF8C00" />
-            <ThemedText style={styles.sectionTitle}>Location</ThemedText>
+            <ThemedText style={styles.sectionTitle}>Service Location *</ThemedText>
           </View>
-          <View style={styles.pillRow}>
-            <TouchableOpacity
-              style={[styles.pill, useCurrentLocation && styles.pillSelected, disabled && styles.disabledContainer]}
-              onPress={() => selectedProviderId && setUseCurrentLocation(true)}
-              disabled={disabled}
-              activeOpacity={0.7}
-            >
-              <FontAwesome name="crosshairs" size={12} color={useCurrentLocation ? '#fff' : '#8E8E93'} />
-              <ThemedText style={[styles.pillText, useCurrentLocation && styles.pillTextSelected]}>Current</ThemedText>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.pill, !useCurrentLocation && styles.pillSelected, disabled && styles.disabledContainer]}
-              onPress={() => selectedProviderId && setUseCurrentLocation(false)}
-              disabled={disabled}
-              activeOpacity={0.7}
-            >
-              <FontAwesome name="pencil" size={12} color={!useCurrentLocation ? '#fff' : '#8E8E93'} />
-              <ThemedText style={[styles.pillText, !useCurrentLocation && styles.pillTextSelected]}>Manual</ThemedText>
-            </TouchableOpacity>
-          </View>
-          
-          {/* Current Location Display */}
-          {useCurrentLocation && (
-            <View style={styles.currentLocationContainer}>
-              {fetchingLocation ? (
-                <View style={styles.locationLoadingContainer}>
-                  <ActivityIndicator color="#FF8C00" size="small" />
-                  <ThemedText style={styles.locationLoadingText}>Fetching your location...</ThemedText>
-                </View>
-              ) : currentAddress ? (
-                <>
-                  <View style={styles.currentLocationDisplay}>
-                    <FontAwesome name="map-marker" size={16} color="#FF8C00" />
-                    <ThemedText style={styles.currentLocationText}>{currentAddress}</ThemedText>
-                  </View>
-                  <TouchableOpacity
-                    style={[styles.refreshBtn, disabled && styles.disabledContainer]}
-                    onPress={getCurrentLocation}
-                    disabled={disabled || fetchingLocation}
-                    activeOpacity={0.7}
-                  >
-                    <FontAwesome name="refresh" size={14} color="#FF8C00" />
-                    <ThemedText style={styles.refreshBtnText}>Refresh Location</ThemedText>
-                  </TouchableOpacity>
-                </>
-              ) : (
-                <TouchableOpacity
-                  style={[styles.fetchLocationBtn, disabled && styles.disabledContainer]}
-                  onPress={getCurrentLocation}
-                  disabled={disabled || fetchingLocation}
-                  activeOpacity={0.7}
-                >
-                  <FontAwesome name="crosshairs" size={14} color="#FF8C00" />
-                  <ThemedText style={styles.fetchLocationBtnText}>Get Current Location</ThemedText>
-                </TouchableOpacity>
-              )}
+
+          <TouchableOpacity
+            style={[styles.selectLocationBtn, disabled && styles.disabledContainer]}
+            onPress={handleSelectLocation}
+            disabled={disabled}
+            activeOpacity={0.7}
+          >
+            <FontAwesome name="map" size={14} color="#FF8C00" />
+            <ThemedText style={[styles.selectLocationText, currentAddress && { color: '#fff' }]}>
+              {currentAddress || 'Select Location on Map'}
+            </ThemedText>
+            <FontAwesome name="chevron-right" size={12} color="#8E8E93" />
+          </TouchableOpacity>
+
+          {currentAddress ? (
+            <View style={styles.currentLocationDisplayCard}>
+              <View style={styles.summaryRow}>
+                <ThemedText style={styles.summaryLabel}>Street</ThemedText>
+                <ThemedText style={styles.summaryValue}>{currentStreetName || 'N/A'}</ThemedText>
+              </View>
+              <View style={styles.summaryRow}>
+                <ThemedText style={styles.summaryLabel}>Barangay</ThemedText>
+                <ThemedText style={styles.summaryValue}>{currentBarangay || 'N/A'}</ThemedText>
+              </View>
+              <View style={styles.summaryRow}>
+                <ThemedText style={styles.summaryLabel}>City</ThemedText>
+                <ThemedText style={styles.summaryValue}>{currentCity || 'N/A'}</ThemedText>
+              </View>
+              <View style={styles.summaryRow}>
+                <ThemedText style={styles.summaryLabel}>Coordinates</ThemedText>
+                <ThemedText style={styles.summaryValue}>
+                  {currentLatitude?.toFixed(6)}, {currentLongitude?.toFixed(6)}
+                </ThemedText>
+              </View>
             </View>
-          )}
+          ) : null}
 
-          {/* Manual Location Input */}
-          {!useCurrentLocation && (
-            <View style={styles.inputGroup}>
-              {/* Region Picker */}
-              <View style={[styles.pickerContainer, disabled && styles.disabledContainer]}>
-                {loadingRegions ? (
-                  <ActivityIndicator color="#FF8C00" />
-                ) : (
-                  <Picker
-                    enabled={!disabled}
-                    selectedValue={selectedRegionCode}
-                    onValueChange={(value) => {
-                      setSelectedRegionCode(value);
-                      const region = regions.find(r => r.code === value);
-                      if (region) {
-                        // Region name is stored automatically via selection
-                      }
-                    }}
-                    style={styles.picker}
-                    dropdownIconColor="#FF8C00"
-                  >
-                    <Picker.Item label="Select Region *" value="" />
-                    {regions.map((region) => (
-                      <Picker.Item key={region.code} label={region.name} value={region.code} />
-                    ))}
-                  </Picker>
-                )}
-              </View>
-
-              {/* Province Picker */}
-              <View style={[styles.pickerContainer, disabled && styles.disabledContainer]}>
-                {loadingProvinces ? (
-                  <ActivityIndicator color="#FF8C00" />
-                ) : (
-                  <Picker
-                    enabled={!disabled && !!selectedRegionCode}
-                    selectedValue={selectedProvinceCode}
-                    onValueChange={(value) => {
-                      setSelectedProvinceCode(value);
-                    }}
-                    style={styles.picker}
-                    dropdownIconColor="#FF8C00"
-                  >
-                    <Picker.Item label="Select Province *" value="" />
-                    {provinces.map((province) => (
-                      <Picker.Item key={province.code} label={province.name} value={province.code} />
-                    ))}
-                  </Picker>
-                )}
-              </View>
-
-              {/* City/Municipality Picker */}
-              <View style={[styles.pickerContainer, disabled && styles.disabledContainer]}>
-                {loadingCities ? (
-                  <ActivityIndicator color="#FF8C00" />
-                ) : (
-                  <Picker
-                    enabled={!disabled && !!selectedProvinceCode}
-                    selectedValue={selectedCityCode}
-                    onValueChange={(value) => {
-                      setSelectedCityCode(value);
-                      const city = cities.find(c => c.code === value);
-                      if (city) {
-                        setCityMunicipality(city.name);
-                      }
-                    }}
-                    style={styles.picker}
-                    dropdownIconColor="#FF8C00"
-                  >
-                    <Picker.Item label="Select City/Municipality *" value="" />
-                    {cities.map((city) => (
-                      <Picker.Item key={city.code} label={city.name} value={city.code} />
-                    ))}
-                  </Picker>
-                )}
-              </View>
-
-              {/* Barangay Picker */}
-              <View style={[styles.pickerContainer, disabled && styles.disabledContainer]}>
-                {loadingBarangays ? (
-                  <ActivityIndicator color="#FF8C00" />
-                ) : (
-                  <Picker
-                    enabled={!disabled && !!selectedCityCode}
-                    selectedValue={barangay}
-                    onValueChange={(value) => {
-                      setBarangay(value);
-                    }}
-                    style={styles.picker}
-                    dropdownIconColor="#FF8C00"
-                  >
-                    <Picker.Item label="Select Barangay *" value="" />
-                    {barangays.map((brgy) => (
-                      <Picker.Item key={brgy.code} label={brgy.name} value={brgy.name} />
-                    ))}
-                  </Picker>
-                )}
-              </View>
-
-              {/* Street Name */}
-              <TextInput
-                style={[styles.input, disabled && styles.disabledInput]}
-                placeholder="Street Name *"
-                placeholderTextColor="#555"
-                value={streetName}
-                onChangeText={setStreetName}
-                editable={!disabled}
-              />
-
-              {/* Landmark */}
-              <TextInput
-                style={[styles.input, disabled && styles.disabledInput]}
-                placeholder="Landmark (Optional)"
-                placeholderTextColor="#555"
-                value={landmark}
-                onChangeText={setLandmark}
-                editable={!disabled}
-              />
-            </View>
-          )}
+          {currentAddress ? (
+            <TextInput
+              style={[styles.input, disabled && styles.disabledInput]}
+              placeholder="Landmark (Optional)"
+              placeholderTextColor="#555"
+              value={landmark}
+              onChangeText={setLandmark}
+              editable={!disabled}
+            />
+          ) : null}
         </View>
 
         {/* Send Button */}

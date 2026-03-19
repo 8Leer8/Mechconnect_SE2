@@ -466,5 +466,19 @@ def _serialize_single_booking(booking):
     except Exception:
         booking_data['has_backjob'] = False
 
+    # Attach payment/receipt information so clients and mechanics can see chosen method
+    try:
+        if hasattr(booking, 'receipt') and booking.receipt is not None:
+            receipt = booking.receipt
+            booking_data['payment'] = {
+                'payment_method': receipt.payment_method,
+                'payment_received': bool(receipt.payment_received),
+                'transaction_id': receipt.transaction_id,
+            }
+        else:
+            booking_data['payment'] = None
+    except Exception:
+        booking_data['payment'] = None
+
     return booking_data
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   ScrollView,
@@ -10,21 +10,14 @@ import {
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Picker } from '@react-native-picker/picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import * as Location from 'expo-location';
+import { useLocation } from '../main_request_form/LocationContext';
 import { styles } from '@/style/client/mechanicDirectRequestStyles';
 import { useNotification } from '@/hooks/useNotification';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
-const PSGC_API_BASE = 'https://psgc.gitlab.io/api';
-
-interface PSGCLocation {
-  code: string;
-  name: string;
-  [key: string]: any;
-}
 
 interface Mechanic {
   id: number;
@@ -66,10 +59,41 @@ interface CreateRequestResponse {
   [key: string]: any;
 }
 
+class DebugErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.log('[DirectRequest] ErrorBoundary caught error:', error?.message, info?.componentStack);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <ThemedView style={styles.container}>
+          <View style={styles.section}>
+            <ThemedText style={styles.sectionTitle}>Something went wrong.</ThemedText>
+          </View>
+        </ThemedView>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 export default function MechanicDirectRequestScreen() {
   const { showNotification } = useNotification();
+  const { selectedLocation, setSelectedLocation } = useLocation();
   const params = useLocalSearchParams<{ mechanicId?: string | string[] }>();
   const mechanicId = typeof params.mechanicId === 'string' ? params.mechanicId : Array.isArray(params.mechanicId) ? params.mechanicId[0] : undefined;
+  console.log('[DirectRequest] MOUNTED with mechanicId:', mechanicId);
   const [mechanics, setMechanics] = useState<Mechanic[]>([]);
   const [selectedProviderId, setSelectedProviderId] = useState<number | null>(null);
   const [selectedServiceId, setSelectedServiceId] = useState<number | null>(null);
@@ -78,7 +102,6 @@ export default function MechanicDirectRequestScreen() {
   const [availableAddOns, setAvailableAddOns] = useState<AddOn[]>([]);
   const [loading, setLoading] = useState(false);
   const [useCurrentTime, setUseCurrentTime] = useState(true);
-  const [useCurrentLocation, setUseCurrentLocation] = useState(true);
 
   // Date and time pickers
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -86,72 +109,17 @@ export default function MechanicDirectRequestScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
 
-  // Manual location input fields
-  const [streetName, setStreetName] = useState('');
-  const [cityMunicipality, setCityMunicipality] = useState('');
-  const [barangay, setBarangay] = useState('');
   const [landmark, setLandmark] = useState('');
 
-  // Current location data
+  // Selected map location data
   const [currentLatitude, setCurrentLatitude] = useState<number | null>(null);
   const [currentLongitude, setCurrentLongitude] = useState<number | null>(null);
   const [currentAddress, setCurrentAddress] = useState<string>('');
-  const [fetchingLocation, setFetchingLocation] = useState(false);
 
-  // Individual location components from reverse geocoding
+  // Address components from map confirmation
   const [currentStreetName, setCurrentStreetName] = useState<string>('');
-  const [currentSubdivision, setCurrentSubdivision] = useState<string>('');
   const [currentBarangay, setCurrentBarangay] = useState<string>('');
   const [currentCity, setCurrentCity] = useState<string>('');
-
-  // PSGC Location data
-  const [regions, setRegions] = useState<PSGCLocation[]>([]);
-  const [provinces, setProvinces] = useState<PSGCLocation[]>([]);
-  const [cities, setCities] = useState<PSGCLocation[]>([]);
-  const [barangays, setBarangays] = useState<PSGCLocation[]>([]);
-
-  const [selectedRegionCode, setSelectedRegionCode] = useState('');
-  const [selectedProvinceCode, setSelectedProvinceCode] = useState('');
-  const [selectedCityCode, setSelectedCityCode] = useState('');
-
-  const [loadingRegions, setLoadingRegions] = useState(false);
-  const [loadingProvinces, setLoadingProvinces] = useState(false);
-  const [loadingCities, setLoadingCities] = useState(false);
-  const [loadingBarangays, setLoadingBarangays] = useState(false);
-
-  // ─── Fetch PSGC Regions on mount ───────────────────────────
-  useEffect(() => {
-    fetchRegions();
-  }, []);
-
-  // Fetch provinces when region is selected
-  useEffect(() => {
-    if (selectedRegionCode) {
-      setSelectedProvinceCode('');
-      setSelectedCityCode('');
-      setCityMunicipality('');
-      setBarangay('');
-      fetchProvinces(selectedRegionCode);
-    }
-  }, [selectedRegionCode]);
-
-  // Fetch cities when province is selected
-  useEffect(() => {
-    if (selectedProvinceCode) {
-      setSelectedCityCode('');
-      setCityMunicipality('');
-      setBarangay('');
-      fetchCities(selectedProvinceCode);
-    }
-  }, [selectedProvinceCode]);
-
-  // Fetch barangays when city is selected
-  useEffect(() => {
-    if (selectedCityCode) {
-      setBarangay('');
-      fetchBarangays(selectedCityCode);
-    }
-  }, [selectedCityCode]);
 
   // ─── Fetch Mechanics ───────────────────────────────────────
   useEffect(() => {
@@ -195,6 +163,15 @@ export default function MechanicDirectRequestScreen() {
     setSelectedAddOnIds([]);
     setAvailableServices([]);
     setAvailableAddOns([]);
+  }, [mechanicId]);
+
+  useEffect(() => {
+    setCurrentLatitude(null);
+    setCurrentLongitude(null);
+    setCurrentAddress('');
+    setCurrentStreetName('');
+    setCurrentBarangay('');
+    setCurrentCity('');
   }, [mechanicId]);
 
   // ─── Fetch Services ────────────────────────────────────────
@@ -241,148 +218,6 @@ export default function MechanicDirectRequestScreen() {
     return () => { cancelled = true; };
   }, [selectedServiceId]);
 
-  // ─── PSGC Location API Functions ───────────────────────────
-  const fetchRegions = async () => {
-    setLoadingRegions(true);
-    try {
-      const response = await fetch(`${PSGC_API_BASE}/regions`);
-      const data = await response.json() as PSGCLocation[];
-      const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
-      setRegions(sorted);
-    } catch (error) {
-      console.error('Error fetching regions:', error);
-      showNotification({ type: 'error', message: 'Failed to load regions' });
-    } finally {
-      setLoadingRegions(false);
-    }
-  };
-
-  const fetchProvinces = async (regionCode: string) => {
-    setLoadingProvinces(true);
-    setCities([]);
-    setBarangays([]);
-    try {
-      const response = await fetch(`${PSGC_API_BASE}/regions/${regionCode}/provinces`);
-      const data = await response.json() as PSGCLocation[];
-      const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
-      setProvinces(sorted);
-    } catch (error) {
-      console.error('Error fetching provinces:', error);
-      showNotification({ type: 'error', message: 'Failed to load provinces' });
-    } finally {
-      setLoadingProvinces(false);
-    }
-  };
-
-  const fetchCities = async (provinceCode: string) => {
-    setLoadingCities(true);
-    setBarangays([]);
-    try {
-      const response = await fetch(`${PSGC_API_BASE}/provinces/${provinceCode}/cities-municipalities`);
-      const data = await response.json() as PSGCLocation[];
-      const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
-      setCities(sorted);
-    } catch (error) {
-      console.error('Error fetching cities:', error);
-      showNotification({ type: 'error', message: 'Failed to load cities/municipalities' });
-    } finally {
-      setLoadingCities(false);
-    }
-  };
-
-  const fetchBarangays = async (cityCode: string) => {
-    setLoadingBarangays(true);
-    try {
-      const response = await fetch(`${PSGC_API_BASE}/cities-municipalities/${cityCode}/barangays`);
-      const data = await response.json() as PSGCLocation[];
-      const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
-      setBarangays(sorted);
-    } catch (error) {
-      console.error('Error fetching barangays:', error);
-      showNotification({ type: 'error', message: 'Failed to load barangays' });
-    } finally {
-      setLoadingBarangays(false);
-    }
-  };
-
-  // ─── Get Current Location ──────────────────────────────────
-  const getCurrentLocation = async () => {
-    if (!selectedProviderId) return;
-    
-    setFetchingLocation(true);
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-
-      if (status !== 'granted') {
-        showNotification({ type: 'warning', title: 'Permission Denied', message: 'Location permission is needed to use current location.' });
-        setFetchingLocation(false);
-        return;
-      }
-
-      const locationPromise = Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
-
-      const timeoutPromise = new Promise<null>((resolve) => {
-        setTimeout(() => resolve(null), 10000); // 10 second timeout
-      });
-
-      const location = await Promise.race([locationPromise, timeoutPromise]);
-
-      if (location) {
-        setCurrentLatitude(location.coords.latitude);
-        setCurrentLongitude(location.coords.longitude);
-
-        // Reverse geocode to get address
-        const results = await Location.reverseGeocodeAsync({
-          latitude: location.coords.latitude,
-          longitude: location.coords.longitude,
-        });
-
-        if (results && results.length > 0) {
-          const loc = results[0];
-          
-          // Store individual components for database mapping
-          setCurrentStreetName(loc.street || loc.name || '');
-          setCurrentSubdivision(loc.district || '');
-          setCurrentBarangay(loc.subregion || loc.district || '');
-          setCurrentCity(loc.city || '');
-          
-          // Build display address
-          const addressParts = [];
-          if (loc.street) addressParts.push(loc.street);
-          if (loc.subregion) addressParts.push(loc.subregion);
-          if (loc.city) addressParts.push(loc.city);
-          if (loc.region) addressParts.push(loc.region);
-          
-          const fullAddress = addressParts.join(', ');
-          setCurrentAddress(fullAddress || 'GPS Location');
-        } else {
-          // Fallback when reverse geocoding fails
-          setCurrentAddress('GPS Location');
-          setCurrentStreetName('');
-          setCurrentSubdivision('');
-          setCurrentBarangay('');
-          setCurrentCity('');
-        }
-      } else {
-        showNotification({ type: 'warning', title: 'Timeout', message: 'Could not fetch location. Please try again.' });
-      }
-    } catch (error) {
-      console.error('Error getting location:', error);
-      showNotification({ type: 'error', message: 'Failed to get current location' });
-    } finally {
-      setFetchingLocation(false);
-    }
-  };
-
-  // ─── Get current location when switching to Current Location ───
-  useEffect(() => {
-    if (useCurrentLocation && selectedProviderId) {
-      getCurrentLocation();
-    }
-  }, [useCurrentLocation, selectedProviderId]);
-
   const toggleAddOn = (addOnId: number) => {
     if (!selectedProviderId) return;
     setSelectedAddOnIds((prev) =>
@@ -407,17 +242,10 @@ export default function MechanicDirectRequestScreen() {
   const handleSend = async () => {
     if (!selectedProviderId) { showNotification({ type: 'error', message: 'Please select a provider first' }); return; }
     if (!selectedServiceId) { showNotification({ type: 'error', message: 'Please select a service' }); return; }
-    
-    if (useCurrentLocation) {
-      if (!currentLatitude || !currentLongitude) {
-        showNotification({ type: 'error', message: 'Please wait while we fetch your current location' });
-        return;
-      }
-    } else {
-      if (!streetName || !barangay || !cityMunicipality) {
-        showNotification({ type: 'error', message: 'Please fill in all required location fields' });
-        return;
-      }
+
+    if (!currentAddress || currentLatitude === null || currentLongitude === null) {
+      showNotification({ type: 'error', message: 'Please select a location from the map' });
+      return;
     }
 
     setLoading(true);
@@ -430,21 +258,13 @@ export default function MechanicDirectRequestScreen() {
         provider_id: selectedProviderId,
         service_id: selectedServiceId,
         add_on_ids: selectedAddOnIds,
-        service_location: useCurrentLocation
-          ? { 
-              street_name: currentStreetName || 'GPS Location', 
-              subdivision_village: currentSubdivision || undefined,
-              barangay: currentBarangay || 'GPS Location', 
-              city_municipality: currentCity || 'GPS Location', 
-              landmark: `Lat: ${currentLatitude}, Lng: ${currentLongitude}` 
-            }
-          : { 
-              street_name: streetName, 
-              subdivision_village: undefined,
-              barangay, 
-              city_municipality: cityMunicipality, 
-              landmark: landmark || undefined 
-            },
+        service_location: {
+          street_name: currentStreetName || 'Selected map location',
+          subdivision_village: undefined,
+          barangay: currentBarangay || 'N/A',
+          city_municipality: currentCity || 'N/A',
+          landmark: landmark || undefined,
+        },
         scheduled_time: useCurrentTime ? new Date().toISOString() : scheduledDateTime.toISOString(),
       };
 
@@ -459,7 +279,14 @@ export default function MechanicDirectRequestScreen() {
 
       if (response.ok) {
         showNotification({ type: 'success', message: data.message || 'Request created successfully!' });
-        router.back();
+        if (selectedProviderId) {
+          router.replace({
+            pathname: '/client/mechanic/mechanicprofile',
+            params: { mechanicId: String(selectedProviderId) },
+          });
+        } else {
+          router.replace('/(clientTabs)/main/discover');
+        }
       } else {
         showNotification({ type: 'error', message: data.error || 'Failed to create request' });
       }
@@ -480,6 +307,34 @@ export default function MechanicDirectRequestScreen() {
     if (time) setSelectedTime(time);
   };
 
+  useFocusEffect(
+    React.useCallback(() => {
+      if (selectedLocation) {
+        setCurrentLatitude(selectedLocation.latitude);
+        setCurrentLongitude(selectedLocation.longitude);
+        setCurrentAddress(selectedLocation.address);
+        setCurrentStreetName(selectedLocation.streetName);
+        setCurrentBarangay(selectedLocation.barangay);
+        setCurrentCity(selectedLocation.city);
+        setSelectedLocation(null);
+      }
+    }, [selectedLocation, setSelectedLocation])
+  );
+
+  const handleSelectLocation = () => {
+    if (currentLatitude !== null && currentLongitude !== null) {
+      router.push({
+        pathname: '/client/request/main_request_form/map',
+        params: {
+          latitude: currentLatitude.toString(),
+          longitude: currentLongitude.toString(),
+        },
+      });
+      return;
+    }
+    router.push('/client/request/main_request_form/map');
+  };
+
   const formatDateTime = () => {
     const dateStr = selectedDate.toLocaleDateString();
     const timeStr = selectedTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -488,12 +343,27 @@ export default function MechanicDirectRequestScreen() {
 
   const selectedService = availableServices.find((s) => s.id === selectedServiceId);
   const disabled = !selectedProviderId;
+  const handleBack = () => {
+    const idFromParams = mechanicId ? parseInt(mechanicId, 10) : NaN;
+    const targetMechanicId = selectedProviderId ?? (Number.isNaN(idFromParams) ? null : idFromParams);
+
+    if (targetMechanicId) {
+      router.replace({
+        pathname: '/client/mechanic/mechanicprofile',
+        params: { mechanicId: String(targetMechanicId) },
+      });
+      return;
+    }
+
+    router.replace('/(clientTabs)/main/discover');
+  };
 
   return (
-    <ThemedView style={styles.container}>
+    <DebugErrorBoundary>
+      <ThemedView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+        <TouchableOpacity style={styles.backBtn} onPress={handleBack}>
           <FontAwesome name="chevron-left" size={16} color="#FF8C00" />
         </TouchableOpacity>
         <ThemedText style={styles.headerTitle}>Direct Request</ThemedText>
@@ -668,168 +538,55 @@ export default function MechanicDirectRequestScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <FontAwesome name="map-marker" size={14} color="#FF8C00" />
-            <ThemedText style={styles.sectionTitle}>Location</ThemedText>
+            <ThemedText style={styles.sectionTitle}>Service Location *</ThemedText>
           </View>
-          <View style={styles.pillRow}>
-            <TouchableOpacity
-              style={[styles.pill, useCurrentLocation && styles.pillSelected, disabled && styles.disabledContainer]}
-              onPress={() => selectedProviderId && setUseCurrentLocation(true)}
-              disabled={disabled}
-              activeOpacity={0.7}
-            >
-              <FontAwesome name="crosshairs" size={12} color={useCurrentLocation ? '#fff' : '#8E8E93'} />
-              <ThemedText style={[styles.pillText, useCurrentLocation && styles.pillTextSelected]}>Current</ThemedText>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.pill, !useCurrentLocation && styles.pillSelected, disabled && styles.disabledContainer]}
-              onPress={() => selectedProviderId && setUseCurrentLocation(false)}
-              disabled={disabled}
-              activeOpacity={0.7}
-            >
-              <FontAwesome name="pencil" size={12} color={!useCurrentLocation ? '#fff' : '#8E8E93'} />
-              <ThemedText style={[styles.pillText, !useCurrentLocation && styles.pillTextSelected]}>Manual</ThemedText>
-            </TouchableOpacity>
-          </View>
-          
-          {/* Current Location Display */}
-          {useCurrentLocation && (
-            <View style={styles.currentLocationContainer}>
-              {fetchingLocation ? (
-                <View style={styles.locationLoadingContainer}>
-                  <ActivityIndicator color="#FF8C00" size="small" />
-                  <ThemedText style={styles.locationLoadingText}>Fetching your location...</ThemedText>
-                </View>
-              ) : currentAddress ? (
-                <View style={styles.currentLocationDisplay}>
-                  <FontAwesome name="map-marker" size={16} color="#FF8C00" />
-                  <ThemedText style={styles.currentLocationText}>{currentAddress}</ThemedText>
-                </View>
-              ) : (
-                <ThemedText style={styles.locationPlaceholder}>Location will be fetched automatically</ThemedText>
-              )}
+
+          <TouchableOpacity
+            style={[styles.selectLocationBtn, disabled && styles.disabledContainer]}
+            onPress={handleSelectLocation}
+            disabled={disabled}
+            activeOpacity={0.7}
+          >
+            <FontAwesome name="map" size={14} color="#FF8C00" />
+            <ThemedText style={[styles.selectLocationText, currentAddress && { color: '#fff' }]}>
+              {currentAddress || 'Select Location on Map'}
+            </ThemedText>
+            <FontAwesome name="chevron-right" size={12} color="#8E8E93" />
+          </TouchableOpacity>
+
+          {currentAddress ? (
+            <View style={styles.currentLocationDisplayCard}>
+              <View style={styles.summaryRow}>
+                <ThemedText style={styles.summaryLabel}>Street</ThemedText>
+                <ThemedText style={styles.summaryValue}>{currentStreetName || 'N/A'}</ThemedText>
+              </View>
+              <View style={styles.summaryRow}>
+                <ThemedText style={styles.summaryLabel}>Barangay</ThemedText>
+                <ThemedText style={styles.summaryValue}>{currentBarangay || 'N/A'}</ThemedText>
+              </View>
+              <View style={styles.summaryRow}>
+                <ThemedText style={styles.summaryLabel}>City</ThemedText>
+                <ThemedText style={styles.summaryValue}>{currentCity || 'N/A'}</ThemedText>
+              </View>
+              <View style={styles.summaryRow}>
+                <ThemedText style={styles.summaryLabel}>Coordinates</ThemedText>
+                <ThemedText style={styles.summaryValue}>
+                  {currentLatitude?.toFixed(6)}, {currentLongitude?.toFixed(6)}
+                </ThemedText>
+              </View>
             </View>
-          )}
+          ) : null}
 
-          {/* Manual Location Input */}
-          {!useCurrentLocation && (
-            <View style={styles.inputGroup}>
-              {/* Region Picker */}
-              <View style={[styles.pickerContainer, disabled && styles.disabledContainer]}>
-                {loadingRegions ? (
-                  <ActivityIndicator color="#FF8C00" />
-                ) : (
-                  <Picker
-                    enabled={!disabled}
-                    selectedValue={selectedRegionCode}
-                    onValueChange={(value) => {
-                      setSelectedRegionCode(value);
-                      const region = regions.find(r => r.code === value);
-                      if (region) {
-                        // Region name is stored automatically via selection
-                      }
-                    }}
-                    style={styles.picker}
-                    dropdownIconColor="#FF8C00"
-                  >
-                    <Picker.Item label="Select Region *" value="" />
-                    {regions.map((region) => (
-                      <Picker.Item key={region.code} label={region.name} value={region.code} />
-                    ))}
-                  </Picker>
-                )}
-              </View>
-
-              {/* Province Picker */}
-              <View style={[styles.pickerContainer, disabled && styles.disabledContainer]}>
-                {loadingProvinces ? (
-                  <ActivityIndicator color="#FF8C00" />
-                ) : (
-                  <Picker
-                    enabled={!disabled && !!selectedRegionCode}
-                    selectedValue={selectedProvinceCode}
-                    onValueChange={(value) => {
-                      setSelectedProvinceCode(value);
-                    }}
-                    style={styles.picker}
-                    dropdownIconColor="#FF8C00"
-                  >
-                    <Picker.Item label="Select Province *" value="" />
-                    {provinces.map((province) => (
-                      <Picker.Item key={province.code} label={province.name} value={province.code} />
-                    ))}
-                  </Picker>
-                )}
-              </View>
-
-              {/* City/Municipality Picker */}
-              <View style={[styles.pickerContainer, disabled && styles.disabledContainer]}>
-                {loadingCities ? (
-                  <ActivityIndicator color="#FF8C00" />
-                ) : (
-                  <Picker
-                    enabled={!disabled && !!selectedProvinceCode}
-                    selectedValue={selectedCityCode}
-                    onValueChange={(value) => {
-                      setSelectedCityCode(value);
-                      const city = cities.find(c => c.code === value);
-                      if (city) {
-                        setCityMunicipality(city.name);
-                      }
-                    }}
-                    style={styles.picker}
-                    dropdownIconColor="#FF8C00"
-                  >
-                    <Picker.Item label="Select City/Municipality *" value="" />
-                    {cities.map((city) => (
-                      <Picker.Item key={city.code} label={city.name} value={city.code} />
-                    ))}
-                  </Picker>
-                )}
-              </View>
-
-              {/* Barangay Picker */}
-              <View style={[styles.pickerContainer, disabled && styles.disabledContainer]}>
-                {loadingBarangays ? (
-                  <ActivityIndicator color="#FF8C00" />
-                ) : (
-                  <Picker
-                    enabled={!disabled && !!selectedCityCode}
-                    selectedValue={barangay}
-                    onValueChange={(value) => {
-                      setBarangay(value);
-                    }}
-                    style={styles.picker}
-                    dropdownIconColor="#FF8C00"
-                  >
-                    <Picker.Item label="Select Barangay *" value="" />
-                    {barangays.map((brgy) => (
-                      <Picker.Item key={brgy.code} label={brgy.name} value={brgy.name} />
-                    ))}
-                  </Picker>
-                )}
-              </View>
-
-              {/* Street Name */}
-              <TextInput
-                style={[styles.input, disabled && styles.disabledInput]}
-                placeholder="Street Name *"
-                placeholderTextColor="#555"
-                value={streetName}
-                onChangeText={setStreetName}
-                editable={!disabled}
-              />
-
-              {/* Landmark */}
-              <TextInput
-                style={[styles.input, disabled && styles.disabledInput]}
-                placeholder="Landmark (Optional)"
-                placeholderTextColor="#555"
-                value={landmark}
-                onChangeText={setLandmark}
-                editable={!disabled}
-              />
-            </View>
-          )}
+          {currentAddress ? (
+            <TextInput
+              style={[styles.input, disabled && styles.disabledInput]}
+              placeholder="Landmark (Optional)"
+              placeholderTextColor="#555"
+              value={landmark}
+              onChangeText={setLandmark}
+              editable={!disabled}
+            />
+          ) : null}
         </View>
 
         {/* Send Button */}
@@ -851,6 +608,7 @@ export default function MechanicDirectRequestScreen() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
-    </ThemedView>
+      </ThemedView>
+    </DebugErrorBoundary>
   );
 }

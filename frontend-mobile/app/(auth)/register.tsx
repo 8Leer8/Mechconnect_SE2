@@ -4,6 +4,7 @@ import {
   TextInput,
   TouchableOpacity,
   Text,
+  Image,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
@@ -271,10 +272,12 @@ export default function RegisterScreen() {
         showNotification({ type: 'success', message: 'Registration successful! Please login.' });
         setTimeout(() => router.replace('../(auth)/login' as any), 1500);
       } else {
-        const errorMessages = Object.entries(data)
-          .map(([key, value]) => `${key}: ${Array.isArray(value) ? value[0] : value}`)
-          .join('\n');
-        showNotification({ type: 'error', message: errorMessages });
+        let message = 'Registration failed';
+        if (data && Object.keys(data).length > 0) {
+          const first = Object.values(data)[0];
+          message = Array.isArray(first) ? first[0] : String(first);
+        }
+        showNotification({ type: 'error', message });
       }
     } catch (error) {
       console.error('Registration error:', error);
@@ -824,6 +827,10 @@ export default function RegisterScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.header}>
+          <Image
+            source={require('@/assets/images/logo_main.png')}
+            style={{ width: 100, height: 100, resizeMode: 'contain', marginBottom: 8 }}
+          />
           <Text style={styles.logo}>MechConnect</Text>
           <Text style={styles.tagline}>Create your account</Text>
         </View>
