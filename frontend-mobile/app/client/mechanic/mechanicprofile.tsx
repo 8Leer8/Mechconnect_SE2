@@ -234,9 +234,14 @@ export default function MechanicProfileScreen() {
             activeOpacity={0.7}
             onPress={() => {
               const providerAccountId = profile.account_id || profile.id;
+              const profileMechanicId = mechanicId || String(profile.id);
               router.push({
                 pathname: '/client/request/direct/mechanicdirectrequest',
-                params: { mechanicId: String(providerAccountId) },
+                params: {
+                  mechanicId: String(profileMechanicId),
+                  providerId: String(providerAccountId),
+                  providerName: profile.full_name,
+                },
               });
             }}
           >

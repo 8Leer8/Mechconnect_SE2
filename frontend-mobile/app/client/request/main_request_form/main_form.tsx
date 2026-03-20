@@ -176,7 +176,7 @@ export default function MainRequestFormScreen() {
             <ThemedText style={{ fontSize: 12, color: '#fff', flex: 1 }}>{streetName}</ThemedText>
           </View>
           <View style={{ flexDirection: 'row', marginBottom: 6 }}>
-            <ThemedText style={{ fontSize: 12, color: '#8E8E93', width: 100 }}>Barangay:</ThemedText>
+            <ThemedText style={{ fontSize: 12, color: '#8E8E93', width: 100 }}>Region:</ThemedText>
             <ThemedText style={{ fontSize: 12, color: '#fff', flex: 1 }}>{barangay}</ThemedText>
           </View>
           <View style={{ flexDirection: 'row', marginBottom: 6 }}>

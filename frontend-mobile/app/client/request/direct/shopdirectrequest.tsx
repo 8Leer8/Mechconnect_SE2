@@ -1,855 +1,899 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View,
-  ScrollView,
-  TouchableOpacity,
-  TextInput,
-  ActivityIndicator,
-  Platform,
+	ActivityIndicator,
+	Modal,
+	Platform,
+	ScrollView,
+	TextInput,
+	TouchableOpacity,
+	View,
 } from 'react-native';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import { Picker } from '@react-native-picker/picker';
 import { FontAwesome } from '@expo/vector-icons';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { Picker } from '@react-native-picker/picker';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Location from 'expo-location';
-import { useLocation } from '../main_request_form/LocationContext';
-import { styles } from '@/style/client/shopDirectRequestStyles';
+import { ThemedText } from '@/components/themed-text';
+import { ThemedView } from '@/components/themed-view';
 import { useNotification } from '@/hooks/useNotification';
+import { reverseGeocodeAddress } from '@/lib/locationAddress';
+import { useLocation } from '../main_request_form/LocationContext';
+import { styles } from '@/style/client/mechanicDirectRequestStyles';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
-const PSGC_API_BASE = 'https://psgc.gitlab.io/api';
-
-interface PSGCLocation {
-  code: string;
-  name: string;
-  [key: string]: any;
-}
-
-interface Shop {
-  id: number;
-  shop_id: number;
-  name: string;
-  full_name: string;
-  services: Service[];
-  contact_number: string;
-  is_verified: boolean;
-}
 
 interface Service {
-  id: number;
-  name: string;
-  description?: string;
-  price: number;
-  add_ons?: AddOn[];
+	id: number;
+	name: string;
+	description?: string;
+	price: number;
 }
 
 interface AddOn {
-  id: number;
-  service_id?: number;
-  category?: string | null;
-  name: string;
-  description: string;
-  price: number;
-}
-
-interface ShopsResponse {
-  shops: Shop[];
+	id: number;
+	name: string;
+	description: string;
+	category?: string | null;
+	price: number;
 }
 
 interface ServicesResponse {
-  services: Service[];
+	services: Service[];
 }
 
 interface AddOnsResponse {
-  add_ons: AddOn[];
+	add_ons: AddOn[];
 }
 
 interface CreateRequestResponse {
-  message?: string;
-  error?: string;
-  [key: string]: any;
+	message?: string;
+	error?: string;
+}
+
+function parseParamInt(value: string | string[] | undefined): number | null {
+	if (!value) return null;
+	const raw = Array.isArray(value) ? value[0] : value;
+	const parsed = Number.parseInt(raw, 10);
+	return Number.isNaN(parsed) ? null : parsed;
+}
+
+function toNumberOrNull(value: unknown): number | null {
+	if (value === null || value === undefined) return null;
+	if (typeof value === 'number') return Number.isNaN(value) ? null : value;
+	if (typeof value === 'string') {
+		const parsed = Number.parseInt(value, 10);
+		return Number.isNaN(parsed) ? null : parsed;
+	}
+	return null;
 }
 
 export default function ShopDirectRequestScreen() {
-  const { showNotification } = useNotification();
-  const { selectedLocation, setSelectedLocation } = useLocation();
-  const params = useLocalSearchParams<{ shopId?: string | string[] }>();
-  const shopId = typeof params.shopId === 'string' ? params.shopId : Array.isArray(params.shopId) ? params.shopId[0] : undefined;
-  const [shops, setShops] = useState<Shop[]>([]);
-  const [selectedProviderId, setSelectedProviderId] = useState<number | null>(null);
-  const [selectedServiceId, setSelectedServiceId] = useState<number | null>(null);
-  const [selectedAddOnIds, setSelectedAddOnIds] = useState<number[]>([]);
-  const [availableServices, setAvailableServices] = useState<Service[]>([]);
-  const [availableAddOns, setAvailableAddOns] = useState<AddOn[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [useCurrentTime, setUseCurrentTime] = useState(true);
-  const [useCurrentLocation, setUseCurrentLocation] = useState(false);
-
-  // Date and time pickers
-  const [selectedDate, setSelectedDate] = useState(new Date());
-  const [selectedTime, setSelectedTime] = useState(new Date());
-  const [showDatePicker, setShowDatePicker] = useState(false);
-  const [showTimePicker, setShowTimePicker] = useState(false);
-
-  // Manual location input fields
-  const [streetName, setStreetName] = useState('');
-  const [cityMunicipality, setCityMunicipality] = useState('');
-  const [barangay, setBarangay] = useState('');
-  const [landmark, setLandmark] = useState('');
-
-  // Current location data
-  const [currentLatitude, setCurrentLatitude] = useState<number | null>(null);
-  const [currentLongitude, setCurrentLongitude] = useState<number | null>(null);
-  const [currentAddress, setCurrentAddress] = useState<string>('');
-  const [fetchingLocation, setFetchingLocation] = useState(false);
-
-  // Individual location components from reverse geocoding
-  const [currentStreetName, setCurrentStreetName] = useState<string>('');
-  const [currentSubdivision, setCurrentSubdivision] = useState<string>('');
-  const [currentBarangay, setCurrentBarangay] = useState<string>('');
-  const [currentCity, setCurrentCity] = useState<string>('');
-
-  // PSGC Location data
-  const [regions, setRegions] = useState<PSGCLocation[]>([]);
-  const [provinces, setProvinces] = useState<PSGCLocation[]>([]);
-  const [cities, setCities] = useState<PSGCLocation[]>([]);
-  const [barangays, setBarangays] = useState<PSGCLocation[]>([]);
-
-  const [selectedRegionCode, setSelectedRegionCode] = useState('');
-  const [selectedProvinceCode, setSelectedProvinceCode] = useState('');
-  const [selectedCityCode, setSelectedCityCode] = useState('');
-
-  const [loadingRegions, setLoadingRegions] = useState(false);
-  const [loadingProvinces, setLoadingProvinces] = useState(false);
-  const [loadingCities, setLoadingCities] = useState(false);
-  const [loadingBarangays, setLoadingBarangays] = useState(false);
-
-  // Refs to prevent multiple simultaneous operations
-  const locationFetchInProgress = useRef(false);
-  const isMountedRef = useRef(true);
-
-  // ─── PSGC Location API Functions ───────────────────────────
-  const fetchRegions = useCallback(async () => {
-    setLoadingRegions(true);
-    try {
-      const response = await fetch(`${PSGC_API_BASE}/regions`);
-      const data = await response.json() as PSGCLocation[];
-      const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
-      setRegions(sorted);
-    } catch (error) {
-      console.error('Error fetching regions:', error);
-      showNotification({ type: 'error', message: 'Failed to load regions' });
-    } finally {
-      setLoadingRegions(false);
-    }
-  }, []);
-
-  const fetchProvinces = useCallback(async (regionCode: string) => {
-    setLoadingProvinces(true);
-    setCities([]);
-    setBarangays([]);
-    try {
-      const response = await fetch(`${PSGC_API_BASE}/regions/${regionCode}/provinces`);
-      const data = await response.json() as PSGCLocation[];
-      const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
-      setProvinces(sorted);
-    } catch (error) {
-      console.error('Error fetching provinces:', error);
-      showNotification({ type: 'error', message: 'Failed to load provinces' });
-    } finally {
-      setLoadingProvinces(false);
-    }
-  }, []);
-
-  const fetchCities = useCallback(async (provinceCode: string) => {
-    setLoadingCities(true);
-    setBarangays([]);
-    try {
-      const response = await fetch(`${PSGC_API_BASE}/provinces/${provinceCode}/cities-municipalities`);
-      const data = await response.json() as PSGCLocation[];
-      const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
-      setCities(sorted);
-    } catch (error) {
-      console.error('Error fetching cities:', error);
-      showNotification({ type: 'error', message: 'Failed to load cities/municipalities' });
-    } finally {
-      setLoadingCities(false);
-    }
-  }, []);
-
-  const fetchBarangays = useCallback(async (cityCode: string) => {
-    setLoadingBarangays(true);
-    try {
-      const response = await fetch(`${PSGC_API_BASE}/cities-municipalities/${cityCode}/barangays`);
-      const data = await response.json() as PSGCLocation[];
-      const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
-      setBarangays(sorted);
-    } catch (error) {
-      console.error('Error fetching barangays:', error);
-      showNotification({ type: 'error', message: 'Failed to load barangays' });
-    } finally {
-      setLoadingBarangays(false);
-    }
-  }, []);
-
-  // ─── Get Current Location ──────────────────────────────────
-  const getCurrentLocation = useCallback(async () => {
-    if (!selectedProviderId) return;
-    
-    // Prevent multiple simultaneous location fetches
-    if (locationFetchInProgress.current) {
-      console.log('Location fetch already in progress, skipping...');
-      return;
-    }
-
-    locationFetchInProgress.current = true;
-    setFetchingLocation(true);
-    
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-
-      if (status !== 'granted') {
-        showNotification({ type: 'warning', title: 'Permission Denied', message: 'Location permission is needed to use current location.' });
-        return;
-      }
-
-      // Get location with timeout
-      const locationPromise = Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
-
-      const timeoutPromise = new Promise<null>((_, reject) => {
-        setTimeout(() => reject(new Error('Location fetch timeout')), 8000);
-      });
-
-      const location = await Promise.race([locationPromise, timeoutPromise]);
-
-      if (!isMountedRef.current) return;
-
-      if (location && 'coords' in location) {
-        setCurrentLatitude(location.coords.latitude);
-        setCurrentLongitude(location.coords.longitude);
-
-        // Reverse geocode to get address with timeout
-        try {
-          const geocodePromise = Location.reverseGeocodeAsync({
-            latitude: location.coords.latitude,
-            longitude: location.coords.longitude,
-          });
-
-          const geocodeTimeout = new Promise<null>((_, reject) => {
-            setTimeout(() => reject(new Error('Geocoding timeout')), 5000);
-          });
-
-          const results = await Promise.race([geocodePromise, geocodeTimeout]);
-
-          if (!isMountedRef.current) return;
-
-          if (results && Array.isArray(results) && results.length > 0) {
-            const loc = results[0];
-            
-            // Store individual components for database mapping
-            setCurrentStreetName(loc.street || loc.name || '');
-            setCurrentSubdivision(loc.district || '');
-            setCurrentBarangay(loc.subregion || loc.district || '');
-            setCurrentCity(loc.city || '');
-            
-            // Build display address
-            const addressParts = [];
-            if (loc.street) addressParts.push(loc.street);
-            if (loc.subregion) addressParts.push(loc.subregion);
-            if (loc.city) addressParts.push(loc.city);
-            if (loc.region) addressParts.push(loc.region);
-            
-            const fullAddress = addressParts.join(', ');
-            setCurrentAddress(fullAddress || 'GPS Location');
-          } else {
-            // Fallback when reverse geocoding returns no results
-            setCurrentAddress('GPS Location');
-            setCurrentStreetName('');
-            setCurrentSubdivision('');
-            setCurrentBarangay('');
-            setCurrentCity('');
-          }
-        } catch (geocodeError) {
-          console.log('Geocoding failed or timed out, using GPS coordinates only');
-          if (isMountedRef.current) {
-            setCurrentAddress('GPS Location');
-            setCurrentStreetName('');
-            setCurrentSubdivision('');
-            setCurrentBarangay('');
-            setCurrentCity('');
-          }
-        }
-      }
-    } catch (error: any) {
-      console.error('Error getting location:', error);
-      if (isMountedRef.current) {
-        if (error.message === 'Location fetch timeout') {
-          showNotification({ type: 'warning', title: 'Timeout', message: 'Could not get location. Please try again or enter location manually.' });
-        } else {
-          showNotification({ type: 'error', message: 'Failed to get location. Please try manual entry.' });
-        }
-      }
-    } finally {
-      if (isMountedRef.current) {
-        setFetchingLocation(false);
-      }
-      locationFetchInProgress.current = false;
-    }
-  }, [selectedProviderId]);
-
-  // ─── Component mount/unmount tracking ───────────────────────
-  useEffect(() => {
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-      locationFetchInProgress.current = false;
-    };
-  }, []);
-
-  // Legacy PSGC fetch disabled: location entry now uses map selection only.
-
-  // Fetch provinces when region is selected
-  useEffect(() => {
-    if (selectedRegionCode) {
-      setSelectedProvinceCode('');
-      setSelectedCityCode('');
-      setCityMunicipality('');
-      setBarangay('');
-      fetchProvinces(selectedRegionCode);
-    }
-  }, [selectedRegionCode, fetchProvinces]);
-
-  // Fetch cities when province is selected
-  useEffect(() => {
-    if (selectedProvinceCode) {
-      setSelectedCityCode('');
-      setCityMunicipality('');
-      setBarangay('');
-      fetchCities(selectedProvinceCode);
-    }
-  }, [selectedProvinceCode, fetchCities]);
-
-  // Fetch barangays when city is selected
-  useEffect(() => {
-    if (selectedCityCode) {
-      setBarangay('');
-      fetchBarangays(selectedCityCode);
-    }
-  }, [selectedCityCode, fetchBarangays]);
-
-  // ─── Fetch Shops ───────────────────────────────────────
-  useEffect(() => {
-    let cancelled = false;
-    const fetchShops = async () => {
-      try {
-        const response = await fetch(`${API_URL}/bookings/direct/shops/`, { credentials: 'include' });
-        if (cancelled) return;
-        const data = await response.json() as ShopsResponse;
-        if (response.ok && !cancelled) setShops(data.shops || []);
-      } catch (error) {
-        if (!cancelled) console.error('Error fetching shops:', error);
-      }
-    };
-    fetchShops();
-    return () => { cancelled = true; };
-  }, []);
-
-  // ─── Pre-select shop from params ───────────────────────
-  useEffect(() => {
-    let cancelled = false;
-    if (shopId && shops.length > 0) {
-      try {
-        const shopIdNum = parseInt(shopId, 10);
-        // Check if shop exists by shop_id (actual shop DB ID) and get the provider ID (account ID)
-        const shop = shops.find(s => s.shop_id === shopIdNum);
-        if (!cancelled && !isNaN(shopIdNum) && shop) {
-          setSelectedProviderId(shop.id); // Use the provider ID (shop owner's account ID)
-        } else if (!isNaN(shopIdNum) && !shop && !cancelled) {
-          showNotification({ type: 'warning', title: 'Shop Not Available', message: 'This shop is not currently available for direct requests. Please try again later.' });
-        }
-      } catch (error) {
-        if (!cancelled) console.error('Error parsing shopId:', error);
-      }
-    }
-    return () => { cancelled = true; };
-  }, [shopId, shops]);
-
-  // Reset dependent state when shopId changes
-  useEffect(() => {
-    setSelectedServiceId(null);
-    setSelectedAddOnIds([]);
-    setAvailableServices([]);
-    setAvailableAddOns([]);
-  }, [shopId]);
-
-  // ─── Fetch Services ────────────────────────────────────────
-  useEffect(() => {
-    let cancelled = false;
-    const fetchServices = async () => {
-      if (selectedProviderId) {
-        try {
-          const response = await fetch(`${API_URL}/bookings/direct/shops/${selectedProviderId}/services/`, { credentials: 'include' });
-          if (cancelled) return;
-          const data = await response.json() as ServicesResponse;
-          if (response.ok && !cancelled) setAvailableServices(data.services || []);
-        } catch (error) {
-          if (!cancelled) console.error('Error fetching shop services:', error);
-        }
-      } else {
-        setAvailableServices([]);
-        setSelectedServiceId(null);
-      }
-    };
-    fetchServices();
-    return () => { cancelled = true; };
-  }, [selectedProviderId]);
-
-  // ─── Fetch Add-ons ─────────────────────────────────────────
-  useEffect(() => {
-    let cancelled = false;
-    const fetchAddOns = async () => {
-      if (selectedServiceId) {
-        try {
-          const response = await fetch(`${API_URL}/bookings/direct/services/${selectedServiceId}/addons/`, { credentials: 'include' });
-          if (cancelled) return;
-          const data = await response.json() as AddOnsResponse;
-          if (response.ok && !cancelled) setAvailableAddOns(data.add_ons || []);
-        } catch (error) {
-          if (!cancelled) console.error('Error fetching service add-ons:', error);
-        }
-      } else {
-        setAvailableAddOns([]);
-        setSelectedAddOnIds([]);
-      }
-    };
-    fetchAddOns();
-    return () => { cancelled = true; };
-  }, [selectedServiceId]);
-
-  useFocusEffect(
-    React.useCallback(() => {
-      if (selectedLocation) {
-        setCurrentLatitude(selectedLocation.latitude);
-        setCurrentLongitude(selectedLocation.longitude);
-        setCurrentAddress(selectedLocation.address);
-        setCurrentStreetName(selectedLocation.streetName);
-        setCurrentSubdivision('');
-        setCurrentBarangay(selectedLocation.barangay);
-        setCurrentCity(selectedLocation.city);
-        setSelectedLocation(null);
-      }
-    }, [selectedLocation, setSelectedLocation])
-  );
-
-  const handleSelectLocation = () => {
-    if (currentLatitude !== null && currentLongitude !== null) {
-      router.push({
-        pathname: '/client/request/main_request_form/map',
-        params: {
-          latitude: currentLatitude.toString(),
-          longitude: currentLongitude.toString(),
-        },
-      });
-      return;
-    }
-    router.push('/client/request/main_request_form/map');
-  };
-
-  // ─── Get current location when switching to Current Location ───
-  useEffect(() => {
-    // Only fetch when user actively switches to current location
-    // Don't fetch on initial render or when provider changes
-    if (useCurrentLocation && selectedProviderId && !fetchingLocation) {
-      // Small delay to prevent rapid successive calls
-      const timeoutId = setTimeout(() => {
-        if (isMountedRef.current && !locationFetchInProgress.current) {
-          getCurrentLocation();
-        }
-      }, 300);
-      
-      return () => {
-        clearTimeout(timeoutId);
-      };
-    }
-  }, [useCurrentLocation, selectedProviderId]);
-
-  const toggleAddOn = (addOnId: number) => {
-    if (!selectedProviderId) return;
-    setSelectedAddOnIds((prev) =>
-      prev.includes(addOnId) ? prev.filter((id) => id !== addOnId) : [...prev, addOnId]
-    );
-  };
-
-  const totalPrice = useMemo(() => {
-    let total = 0;
-    if (selectedServiceId) {
-      const service = availableServices.find((s) => s.id === selectedServiceId);
-      if (service) total += service.price;
-    }
-    selectedAddOnIds.forEach((addOnId) => {
-      const addOn = availableAddOns.find((a) => a.id === addOnId);
-      if (addOn) total += addOn.price;
-    });
-    return total;
-  }, [selectedServiceId, selectedAddOnIds, availableServices, availableAddOns]);
-
-  // ─── Send ──────────────────────────────────────────────────
-  const handleSend = async () => {
-    if (!selectedProviderId) { showNotification({ type: 'error', message: 'Please select a shop first' }); return; }
-    if (!selectedServiceId) { showNotification({ type: 'error', message: 'Please select a service' }); return; }
-
-    if (!currentAddress || currentLatitude === null || currentLongitude === null) {
-      showNotification({ type: 'error', message: 'Please select a location from the map' });
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const scheduledDateTime = new Date(selectedDate);
-      scheduledDateTime.setHours(selectedTime.getHours());
-      scheduledDateTime.setMinutes(selectedTime.getMinutes());
-
-      const requestData = {
-        provider_id: selectedProviderId,
-        service_id: selectedServiceId,
-        add_on_ids: selectedAddOnIds,
-        service_location: {
-          street_name: currentStreetName || 'Selected map location',
-          subdivision_village: currentSubdivision || undefined,
-          barangay: currentBarangay || 'N/A',
-          city_municipality: currentCity || 'N/A',
-          landmark: landmark || undefined,
-        },
-        scheduled_time: useCurrentTime ? new Date().toISOString() : scheduledDateTime.toISOString(),
-      };
-
-      const response = await fetch(`${API_URL}/bookings/direct/shop/create/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(requestData),
-      });
-
-      const data = await response.json() as CreateRequestResponse;
-
-      if (response.ok) {
-        showNotification({ type: 'success', message: data.message || 'Request created successfully!' });
-        const idFromParams = shopId ? parseInt(shopId, 10) : NaN;
-        const fallbackShopId = Number.isNaN(idFromParams) ? null : idFromParams;
-        const matchedShop = shops.find(s => s.id === selectedProviderId);
-        const targetShopId = matchedShop?.shop_id ?? fallbackShopId;
-
-        if (targetShopId) {
-          router.replace({
-            pathname: '/client/shop/shopprofile',
-            params: { shopId: String(targetShopId) },
-          });
-        } else {
-          router.replace('/(clientTabs)/main/discover');
-        }
-      } else {
-        showNotification({ type: 'error', message: data.error || 'Failed to create request' });
-      }
-    } catch (error) {
-      showNotification({ type: 'error', message: 'An error occurred while creating the request' });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const onDateChange = (_event: any, date?: Date) => {
-    setShowDatePicker(Platform.OS === 'ios');
-    if (date) setSelectedDate(date);
-  };
-
-  const onTimeChange = (_event: any, time?: Date) => {
-    setShowTimePicker(Platform.OS === 'ios');
-    if (time) setSelectedTime(time);
-  };
-
-  const formatDateTime = () => {
-    const dateStr = selectedDate.toLocaleDateString();
-    const timeStr = selectedTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    return `${dateStr} ${timeStr}`;
-  };
-
-  const selectedService = availableServices.find((s) => s.id === selectedServiceId);
-  const disabled = !selectedProviderId;
-  const handleBack = () => {
-    const idFromParams = shopId ? parseInt(shopId, 10) : NaN;
-    const fallbackShopId = Number.isNaN(idFromParams) ? null : idFromParams;
-    const matchedShop = shops.find(s => s.id === selectedProviderId);
-    const targetShopId = matchedShop?.shop_id ?? fallbackShopId;
-
-    if (targetShopId) {
-      router.replace({
-        pathname: '/client/shop/shopprofile',
-        params: { shopId: String(targetShopId) },
-      });
-      return;
-    }
-
-    router.replace('/(clientTabs)/main/discover');
-  };
-
-  return (
-    <ThemedView style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={handleBack}>
-          <FontAwesome name="chevron-left" size={16} color="#FF8C00" />
-        </TouchableOpacity>
-        <ThemedText style={styles.headerTitle}>Shop Direct Request</ThemedText>
-        <View style={{ width: 40 }} />
-      </View>
-
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Provider Display */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <FontAwesome name="building" size={14} color="#FF8C00" />
-            <ThemedText style={styles.sectionTitle}>Provider:</ThemedText>
-          </View>
-          <View style={styles.mechanicDisplayContainer}>
-            <ThemedText style={styles.mechanicDisplayText}>
-              {selectedProviderId 
-                ? shops.find(s => s.id === selectedProviderId)?.name || 'Loading shop name...'
-                : (shopId && shops.length === 0) 
-                  ? 'Loading shop name...' 
-                  : 'No shop selected'}
-            </ThemedText>
-          </View>
-        </View>
-
-        {/* Service Selection */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <FontAwesome name="cog" size={14} color="#FF8C00" />
-            <ThemedText style={styles.sectionTitle}>Select Service *</ThemedText>
-          </View>
-          <View style={[styles.pickerContainer, disabled && styles.disabledContainer]}>
-            <Picker
-              enabled={!!selectedProviderId}
-              selectedValue={selectedServiceId}
-              onValueChange={(value) => setSelectedServiceId(value)}
-              style={[styles.picker, disabled && styles.disabledPicker]}
-              dropdownIconColor={selectedProviderId ? '#FF8C00' : '#555'}
-            >
-              <Picker.Item label="Choose a service..." value={null} />
-              {availableServices.map((service) => (
-                <Picker.Item key={service.id} label={`${service.name} - ₱${service.price.toFixed(2)}`} value={service.id} />
-              ))}
-            </Picker>
-          </View>
-        </View>
-
-        {/* Add-ons */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <FontAwesome name="plus-circle" size={14} color="#FF8C00" />
-            <ThemedText style={styles.sectionTitle}>Add-ons</ThemedText>
-          </View>
-          {availableAddOns.length > 0 ? (
-            availableAddOns.map((addOn) => (
-              <TouchableOpacity
-                key={addOn.id}
-                style={[styles.addOnItem, selectedAddOnIds.includes(addOn.id) && styles.addOnItemSelected, disabled && styles.disabledContainer]}
-                onPress={() => toggleAddOn(addOn.id)}
-                disabled={disabled}
-                activeOpacity={0.7}
-              >
-                <View style={styles.addOnCheck}>
-                  <FontAwesome
-                    name={selectedAddOnIds.includes(addOn.id) ? 'check-square' : 'square-o'}
-                    size={18}
-                    color={selectedAddOnIds.includes(addOn.id) ? '#FF8C00' : '#555'}
-                  />
-                </View>
-                <View style={styles.addOnInfo}>
-                  <ThemedText style={[styles.addOnName, disabled && styles.disabledText]}>{addOn.name}</ThemedText>
-                  {!!addOn.category && (
-                    <ThemedText style={[styles.addOnDescription, disabled && styles.disabledText]}>
-                      {addOn.category}
-                    </ThemedText>
-                  )}
-                  <ThemedText style={[styles.addOnDescription, disabled && styles.disabledText]}>{addOn.description}</ThemedText>
-                </View>
-                <ThemedText style={[styles.addOnPrice, disabled && styles.disabledText]}>₱{addOn.price.toFixed(2)}</ThemedText>
-              </TouchableOpacity>
-            ))
-          ) : (
-            <View style={styles.emptyCard}>
-              <FontAwesome name="info-circle" size={14} color="#555" />
-              <ThemedText style={styles.emptyText}>
-                {selectedServiceId ? 'No add-ons available for this service' : 'Select a service to view add-ons'}
-              </ThemedText>
-            </View>
-          )}
-        </View>
-
-        {/* Summary */}
-        <View style={[styles.summaryCard, disabled && styles.disabledContainer]}>
-          <View style={styles.sectionHeader}>
-            <FontAwesome name="list-alt" size={14} color="#FF8C00" />
-            <ThemedText style={styles.sectionTitle}>Summary</ThemedText>
-          </View>
-          {selectedService && (
-            <View style={styles.summaryRow}>
-              <ThemedText style={styles.summaryLabel}>{selectedService.name}</ThemedText>
-              <ThemedText style={styles.summaryValue}>₱{selectedService.price.toFixed(2)}</ThemedText>
-            </View>
-          )}
-          {selectedAddOnIds.map((addOnId) => {
-            const addOn = availableAddOns.find((a) => a.id === addOnId);
-            return addOn ? (
-              <View key={addOnId} style={styles.summaryRow}>
-                <ThemedText style={styles.summaryLabel}>{addOn.name}</ThemedText>
-                <ThemedText style={styles.summaryValue}>₱{addOn.price.toFixed(2)}</ThemedText>
-              </View>
-            ) : null;
-          })}
-          <View style={styles.summaryDivider} />
-          <View style={styles.summaryRow}>
-            <ThemedText style={styles.totalText}>Total</ThemedText>
-            <ThemedText style={styles.totalPrice}>₱{totalPrice.toFixed(2)}</ThemedText>
-          </View>
-        </View>
-
-        {/* Time Selection */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <FontAwesome name="clock-o" size={14} color="#FF8C00" />
-            <ThemedText style={styles.sectionTitle}>Schedule</ThemedText>
-          </View>
-          <View style={styles.pillRow}>
-            <TouchableOpacity
-              style={[styles.pill, useCurrentTime && styles.pillSelected, disabled && styles.disabledContainer]}
-              onPress={() => selectedProviderId && setUseCurrentTime(true)}
-              disabled={disabled}
-              activeOpacity={0.7}
-            >
-              <FontAwesome name="bolt" size={12} color={useCurrentTime ? '#fff' : '#8E8E93'} />
-              <ThemedText style={[styles.pillText, useCurrentTime && styles.pillTextSelected]}>Now</ThemedText>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.pill, !useCurrentTime && styles.pillSelected, disabled && styles.disabledContainer]}
-              onPress={() => selectedProviderId && setUseCurrentTime(false)}
-              disabled={disabled}
-              activeOpacity={0.7}
-            >
-              <FontAwesome name="calendar" size={12} color={!useCurrentTime ? '#fff' : '#8E8E93'} />
-              <ThemedText style={[styles.pillText, !useCurrentTime && styles.pillTextSelected]}>Custom</ThemedText>
-            </TouchableOpacity>
-          </View>
-          {!useCurrentTime && (
-            <View style={styles.dateTimeContainer}>
-              <TouchableOpacity
-                style={[styles.dateTimeBtn, disabled && styles.disabledContainer]}
-                onPress={() => selectedProviderId && setShowDatePicker(true)}
-                disabled={disabled}
-                activeOpacity={0.7}
-              >
-                <FontAwesome name="calendar-o" size={14} color="#FF8C00" />
-                <ThemedText style={styles.dateTimeText}>{selectedDate.toLocaleDateString()}</ThemedText>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.dateTimeBtn, disabled && styles.disabledContainer]}
-                onPress={() => selectedProviderId && setShowTimePicker(true)}
-                disabled={disabled}
-                activeOpacity={0.7}
-              >
-                <FontAwesome name="clock-o" size={14} color="#FF8C00" />
-                <ThemedText style={styles.dateTimeText}>{selectedTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</ThemedText>
-              </TouchableOpacity>
-              {showDatePicker && (
-                <DateTimePicker value={selectedDate} mode="date" display="default" onChange={onDateChange} minimumDate={new Date()} />
-              )}
-              {showTimePicker && (
-                <DateTimePicker value={selectedTime} mode="time" display="default" onChange={onTimeChange} />
-              )}
-              <ThemedText style={styles.selectedDateTimeLabel}>Selected: {formatDateTime()}</ThemedText>
-            </View>
-          )}
-        </View>
-
-        {/* Location Selection */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <FontAwesome name="map-marker" size={14} color="#FF8C00" />
-            <ThemedText style={styles.sectionTitle}>Service Location *</ThemedText>
-          </View>
-
-          <TouchableOpacity
-            style={[styles.selectLocationBtn, disabled && styles.disabledContainer]}
-            onPress={handleSelectLocation}
-            disabled={disabled}
-            activeOpacity={0.7}
-          >
-            <FontAwesome name="map" size={14} color="#FF8C00" />
-            <ThemedText style={[styles.selectLocationText, currentAddress && { color: '#fff' }]}>
-              {currentAddress || 'Select Location on Map'}
-            </ThemedText>
-            <FontAwesome name="chevron-right" size={12} color="#8E8E93" />
-          </TouchableOpacity>
-
-          {currentAddress ? (
-            <View style={styles.currentLocationDisplayCard}>
-              <View style={styles.summaryRow}>
-                <ThemedText style={styles.summaryLabel}>Street</ThemedText>
-                <ThemedText style={styles.summaryValue}>{currentStreetName || 'N/A'}</ThemedText>
-              </View>
-              <View style={styles.summaryRow}>
-                <ThemedText style={styles.summaryLabel}>Barangay</ThemedText>
-                <ThemedText style={styles.summaryValue}>{currentBarangay || 'N/A'}</ThemedText>
-              </View>
-              <View style={styles.summaryRow}>
-                <ThemedText style={styles.summaryLabel}>City</ThemedText>
-                <ThemedText style={styles.summaryValue}>{currentCity || 'N/A'}</ThemedText>
-              </View>
-              <View style={styles.summaryRow}>
-                <ThemedText style={styles.summaryLabel}>Coordinates</ThemedText>
-                <ThemedText style={styles.summaryValue}>
-                  {currentLatitude?.toFixed(6)}, {currentLongitude?.toFixed(6)}
-                </ThemedText>
-              </View>
-            </View>
-          ) : null}
-
-          {currentAddress ? (
-            <TextInput
-              style={[styles.input, disabled && styles.disabledInput]}
-              placeholder="Landmark (Optional)"
-              placeholderTextColor="#555"
-              value={landmark}
-              onChangeText={setLandmark}
-              editable={!disabled}
-            />
-          ) : null}
-        </View>
-
-        {/* Send Button */}
-        <TouchableOpacity
-          style={[styles.sendBtn, (disabled || loading) && styles.sendBtnDisabled]}
-          onPress={handleSend}
-          disabled={disabled || loading}
-          activeOpacity={0.7}
-        >
-          {loading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <>
-              <FontAwesome name="paper-plane" size={16} color="#fff" />
-              <ThemedText style={styles.sendBtnText}>Send Request</ThemedText>
-            </>
-          )}
-        </TouchableOpacity>
-
-        <View style={{ height: 40 }} />
-      </ScrollView>
-    </ThemedView>
-  );
+	const { showNotification } = useNotification();
+	const { selectedLocation, setSelectedLocation } = useLocation();
+	const params = useLocalSearchParams<{
+		shopId?: string | string[];
+		providerId?: string | string[];
+		providerName?: string | string[];
+	}>();
+
+	const routeShopId = parseParamInt(params.shopId);
+	const routeProviderId = parseParamInt(params.providerId);
+	const routeProviderName = Array.isArray(params.providerName)
+		? params.providerName[0]
+		: params.providerName;
+
+	const [selectedServiceId, setSelectedServiceId] = useState<number | null>(null);
+	const [selectedAddOnIds, setSelectedAddOnIds] = useState<number[]>([]);
+
+	const [availableServices, setAvailableServices] = useState<Service[]>([]);
+	const [availableAddOns, setAvailableAddOns] = useState<AddOn[]>([]);
+
+	const [loading, setLoading] = useState(false);
+
+	const [useCurrentTime, setUseCurrentTime] = useState(true);
+	const [selectedDate, setSelectedDate] = useState(new Date());
+	const [selectedTime, setSelectedTime] = useState(new Date());
+	const [showDatePicker, setShowDatePicker] = useState(false);
+	const [showTimePicker, setShowTimePicker] = useState(false);
+
+	const [landmark, setLandmark] = useState('');
+	const [currentLatitude, setCurrentLatitude] = useState<number | null>(null);
+	const [currentLongitude, setCurrentLongitude] = useState<number | null>(null);
+	const [currentAddress, setCurrentAddress] = useState('');
+	const [currentStreetName, setCurrentStreetName] = useState('');
+	const [currentSubdivision, setCurrentSubdivision] = useState('');
+	const [currentBarangay, setCurrentBarangay] = useState('');
+	const [currentCity, setCurrentCity] = useState('');
+	const [isFetchingCurrentLocation, setIsFetchingCurrentLocation] = useState(false);
+	const [currentLocationError, setCurrentLocationError] = useState<string | null>(null);
+	const [locationMode, setLocationMode] = useState<'current' | 'map'>('current');
+	const [confirmVisible, setConfirmVisible] = useState(false);
+	const [hasFetchedCurrentLocation, setHasFetchedCurrentLocation] = useState(false);
+	const isNavigatingToMapRef = useRef(false);
+	const isMountedRef = useRef(true);
+	const locationFetchSeqRef = useRef(0);
+
+	const selectedProviderId = routeProviderId;
+
+	useEffect(() => {
+		isMountedRef.current = true;
+		return () => {
+			isMountedRef.current = false;
+			locationFetchSeqRef.current += 1;
+		};
+	}, []);
+
+	useEffect(() => {
+		let cancelled = false;
+		const controller = new AbortController();
+
+		const fetchServices = async () => {
+			if (!selectedProviderId) {
+				setAvailableServices([]);
+				setSelectedServiceId(null);
+				return;
+			}
+
+			try {
+				const response = await fetch(
+					`${API_URL}/bookings/direct/shops/${selectedProviderId}/services/`,
+					{ credentials: 'include', signal: controller.signal }
+				);
+				if (cancelled || !isMountedRef.current) return;
+
+				const data = (await response.json()) as ServicesResponse;
+				if (cancelled || !isMountedRef.current) return;
+				if (response.ok) {
+					setAvailableServices(data.services || []);
+					return;
+				}
+
+				setAvailableServices([]);
+			} catch {
+				if (!cancelled && isMountedRef.current) {
+					setAvailableServices([]);
+				}
+			}
+		};
+
+		fetchServices();
+		return () => {
+			cancelled = true;
+			controller.abort();
+		};
+	}, [selectedProviderId]);
+
+	useEffect(() => {
+		let cancelled = false;
+		const controller = new AbortController();
+
+		const fetchAddOns = async () => {
+			if (!selectedServiceId) {
+				setAvailableAddOns([]);
+				setSelectedAddOnIds([]);
+				return;
+			}
+
+			try {
+				const response = await fetch(
+					`${API_URL}/bookings/direct/services/${selectedServiceId}/addons/`,
+					{ credentials: 'include', signal: controller.signal }
+				);
+				if (cancelled || !isMountedRef.current) return;
+
+				const data = (await response.json()) as AddOnsResponse;
+				if (cancelled || !isMountedRef.current) return;
+				if (response.ok) {
+					setAvailableAddOns(data.add_ons || []);
+					return;
+				}
+
+				setAvailableAddOns([]);
+			} catch {
+				if (!cancelled && isMountedRef.current) {
+					setAvailableAddOns([]);
+				}
+			}
+		};
+
+		fetchAddOns();
+		return () => {
+			cancelled = true;
+			controller.abort();
+		};
+	}, [selectedServiceId]);
+
+	useFocusEffect(
+		React.useCallback(() => {
+			isNavigatingToMapRef.current = false;
+
+			if (!selectedLocation) return;
+			if (!isMountedRef.current) return;
+
+			setCurrentLatitude(selectedLocation.latitude);
+			setCurrentLongitude(selectedLocation.longitude);
+			setCurrentStreetName(selectedLocation.streetName || 'Selected map location');
+			setCurrentSubdivision('');
+			setCurrentBarangay(selectedLocation.barangay || '');
+			setCurrentCity(selectedLocation.city || '');
+			setCurrentAddress(selectedLocation.address || 'Selected map location');
+			setHasFetchedCurrentLocation(false);
+			setShowDatePicker(false);
+			setShowTimePicker(false);
+			setSelectedLocation(null);
+		}, [selectedLocation, setSelectedLocation])
+	);
+
+	const fetchCurrentLocation = async () => {
+		if (!selectedProviderId) return;
+		if (isFetchingCurrentLocation) return;
+
+		const fetchSeq = ++locationFetchSeqRef.current;
+
+		setShowDatePicker(false);
+		setShowTimePicker(false);
+
+		setIsFetchingCurrentLocation(true);
+		setCurrentLocationError(null);
+
+		try {
+			const permission = await Location.requestForegroundPermissionsAsync();
+			if (!isMountedRef.current || fetchSeq !== locationFetchSeqRef.current) return;
+			if (permission.status !== 'granted') {
+				setCurrentLocationError('Location permission denied');
+				showNotification({
+					type: 'warning',
+					message: 'Please allow location permission to use current location.',
+				});
+				return;
+			}
+
+			const position = await Location.getCurrentPositionAsync({
+				accuracy: Location.Accuracy.High,
+			});
+			if (!isMountedRef.current || fetchSeq !== locationFetchSeqRef.current) return;
+
+			const { latitude, longitude } = position.coords;
+			setCurrentLatitude(latitude);
+			setCurrentLongitude(longitude);
+			setHasFetchedCurrentLocation(true);
+
+			const parsed = await reverseGeocodeAddress(latitude, longitude);
+			if (!isMountedRef.current || fetchSeq !== locationFetchSeqRef.current) return;
+			setCurrentStreetName(parsed.streetName || 'Current location');
+			setCurrentSubdivision(parsed.subdivision || '');
+			setCurrentBarangay(parsed.region || parsed.barangay || '');
+			setCurrentCity(parsed.city || '');
+			setCurrentAddress(parsed.address || 'Current location');
+			setCurrentLocationError(null);
+		} catch {
+			if (!isMountedRef.current || fetchSeq !== locationFetchSeqRef.current) return;
+			setCurrentLocationError('Unable to fetch current location');
+			showNotification({ type: 'error', message: 'Unable to fetch current location. Please try again.' });
+		} finally {
+			if (!isMountedRef.current || fetchSeq !== locationFetchSeqRef.current) return;
+			setIsFetchingCurrentLocation(false);
+		}
+	};
+
+	const toggleAddOn = (addOnId: number) => {
+		setSelectedAddOnIds((prev) =>
+			prev.includes(addOnId) ? prev.filter((id) => id !== addOnId) : [...prev, addOnId]
+		);
+	};
+
+	const totalPrice = useMemo(() => {
+		let total = 0;
+
+		if (selectedServiceId) {
+			const selectedService = availableServices.find((service) => service.id === selectedServiceId);
+			if (selectedService) total += selectedService.price;
+		}
+
+		selectedAddOnIds.forEach((addOnId) => {
+			const addOn = availableAddOns.find((item) => item.id === addOnId);
+			if (addOn) total += addOn.price;
+		});
+
+		return total;
+	}, [selectedServiceId, selectedAddOnIds, availableServices, availableAddOns]);
+
+	const handleSelectLocation = () => {
+		if (isNavigatingToMapRef.current) return;
+		isNavigatingToMapRef.current = true;
+
+		setShowDatePicker(false);
+		setShowTimePicker(false);
+
+		if (currentLatitude !== null && currentLongitude !== null) {
+			router.push({
+				pathname: '/client/request/direct/map',
+				params: {
+					latitude: currentLatitude.toString(),
+					longitude: currentLongitude.toString(),
+				},
+			});
+			return;
+		}
+
+		router.push('/client/request/direct/map');
+	};
+
+	const onDateChange = (event: any, date?: Date) => {
+		if (Platform.OS !== 'ios') {
+			setShowDatePicker(false);
+		}
+
+		if (event?.type === 'dismissed') {
+			return;
+		}
+
+		if (date) setSelectedDate(date);
+	};
+
+	const onTimeChange = (event: any, time?: Date) => {
+		if (Platform.OS !== 'ios') {
+			setShowTimePicker(false);
+		}
+
+		if (event?.type === 'dismissed') {
+			return;
+		}
+
+		if (time) setSelectedTime(time);
+	};
+
+	const formatDateTime = () => {
+		const dateStr = selectedDate.toLocaleDateString();
+		const timeStr = selectedTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+		return `${dateStr} ${timeStr}`;
+	};
+
+	const handleSend = async () => {
+		if (!routeShopId) {
+			showNotification({ type: 'error', message: 'Shop not found' });
+			return;
+		}
+
+		if (!selectedProviderId) {
+			showNotification({ type: 'error', message: 'Shop provider not found' });
+			return;
+		}
+
+		if (!selectedServiceId) {
+			showNotification({ type: 'error', message: 'Please select a service' });
+			return;
+		}
+
+		if (!currentAddress || currentLatitude === null || currentLongitude === null) {
+			if (locationMode === 'current') {
+				showNotification({ type: 'error', message: 'Please fetch your current location first' });
+			} else {
+				showNotification({ type: 'error', message: 'Please select location from the map' });
+			}
+			return;
+		}
+
+		const scheduledDateTime = new Date(selectedDate);
+		scheduledDateTime.setHours(selectedTime.getHours());
+		scheduledDateTime.setMinutes(selectedTime.getMinutes());
+		scheduledDateTime.setSeconds(0);
+		scheduledDateTime.setMilliseconds(0);
+
+		if (!useCurrentTime && scheduledDateTime.getTime() <= Date.now()) {
+			showNotification({ type: 'error', message: 'Please choose a future date and time' });
+			return;
+		}
+
+		setLoading(true);
+
+		try {
+			const requestData = {
+				shop_id: routeShopId,
+				provider_id: selectedProviderId,
+				service_id: selectedServiceId,
+				add_on_ids: selectedAddOnIds,
+				service_location: {
+					street_name: currentStreetName || 'Selected map location',
+					subdivision_village: currentSubdivision || undefined,
+					barangay: currentBarangay || 'N/A',
+					city_municipality: currentCity || 'N/A',
+					landmark: landmark || undefined,
+					latitude: currentLatitude,
+					longitude: currentLongitude,
+				},
+				scheduled_time: useCurrentTime ? new Date().toISOString() : scheduledDateTime.toISOString(),
+			};
+
+			const response = await fetch(`${API_URL}/bookings/direct/shop/create/`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				credentials: 'include',
+				body: JSON.stringify(requestData),
+			});
+
+			const data = (await response.json()) as CreateRequestResponse;
+			if (response.ok) {
+				showNotification({ type: 'success', message: data.message || 'Request created successfully' });
+				router.replace({
+					pathname: '/client/shop/shopprofile',
+					params: { shopId: String(routeShopId) },
+				});
+				return;
+			}
+
+			showNotification({ type: 'error', message: data.error || 'Failed to create request' });
+		} catch {
+			showNotification({ type: 'error', message: 'An error occurred while creating the request' });
+		} finally {
+			setLoading(false);
+		}
+	};
+
+	const handleOpenConfirm = () => {
+		setShowDatePicker(false);
+		setShowTimePicker(false);
+
+		if (!routeShopId) {
+			showNotification({ type: 'error', message: 'Shop not found' });
+			return;
+		}
+
+		if (!selectedProviderId) {
+			showNotification({ type: 'error', message: 'Shop provider not found' });
+			return;
+		}
+
+		if (!selectedServiceId) {
+			showNotification({ type: 'error', message: 'Please select a service' });
+			return;
+		}
+
+		if (!currentAddress || currentLatitude === null || currentLongitude === null) {
+			if (locationMode === 'current') {
+				showNotification({ type: 'error', message: 'Please fetch your current location first' });
+			} else {
+				showNotification({ type: 'error', message: 'Please select location from the map' });
+			}
+			return;
+		}
+
+		const scheduledDateTime = new Date(selectedDate);
+		scheduledDateTime.setHours(selectedTime.getHours());
+		scheduledDateTime.setMinutes(selectedTime.getMinutes());
+		scheduledDateTime.setSeconds(0);
+		scheduledDateTime.setMilliseconds(0);
+
+		if (!useCurrentTime && scheduledDateTime.getTime() <= Date.now()) {
+			showNotification({ type: 'error', message: 'Please choose a future date and time' });
+			return;
+		}
+
+		setConfirmVisible(true);
+	};
+
+	const selectedService = availableServices.find((service) => service.id === selectedServiceId);
+	const selectedAddOns = selectedAddOnIds
+		.map((addOnId) => availableAddOns.find((item) => item.id === addOnId))
+		.filter((item): item is AddOn => Boolean(item));
+	const locationActionLabel = hasFetchedCurrentLocation ? 'Try Again' : 'Fetch Current Location';
+	const locationActionIcon = hasFetchedCurrentLocation ? 'refresh' : 'location-arrow';
+	const disabled = !selectedProviderId;
+
+	const handleBack = () => {
+		if (routeShopId) {
+			router.replace({
+				pathname: '/client/shop/shopprofile',
+				params: { shopId: String(routeShopId) },
+			});
+			return;
+		}
+
+		router.replace('/(clientTabs)/main/discover');
+	};
+
+	return (
+		<ThemedView style={styles.container}>
+			<View style={styles.header}>
+				<TouchableOpacity style={styles.backBtn} onPress={handleBack}>
+					<FontAwesome name="chevron-left" size={16} color="#FF8C00" />
+				</TouchableOpacity>
+				<ThemedText style={styles.headerTitle}>Shop Direct Request</ThemedText>
+				<View style={{ width: 40 }} />
+			</View>
+
+			<ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+				<View style={styles.section}>
+					<View style={styles.sectionHeader}>
+						<FontAwesome name="building" size={14} color="#FF8C00" />
+						<ThemedText style={styles.sectionTitle}>Provider</ThemedText>
+					</View>
+					<View style={styles.mechanicDisplayContainer}>
+						<ThemedText style={styles.mechanicDisplayText}>
+							{routeProviderName || 'Selected shop'}
+						</ThemedText>
+					</View>
+				</View>
+
+				<View style={styles.section}>
+					<View style={styles.sectionHeader}>
+						<FontAwesome name="cog" size={14} color="#FF8C00" />
+						<ThemedText style={styles.sectionTitle}>Select Service *</ThemedText>
+					</View>
+					<View style={[styles.pickerContainer, disabled && styles.disabledContainer]}>
+						<Picker
+							enabled={!!selectedProviderId}
+							selectedValue={selectedServiceId}
+							onValueChange={(value) => {
+								setSelectedServiceId(toNumberOrNull(value));
+								setSelectedAddOnIds([]);
+							}}
+							style={[styles.picker, disabled && styles.disabledPicker]}
+							dropdownIconColor={selectedProviderId ? '#FF8C00' : '#555'}
+						>
+							<Picker.Item label="Choose a service..." value={null} />
+							{availableServices.map((service) => (
+								<Picker.Item key={service.id} label={`${service.name} - P${service.price.toFixed(2)}`} value={service.id} />
+							))}
+						</Picker>
+					</View>
+				</View>
+
+				<View style={styles.section}>
+					<View style={styles.sectionHeader}>
+						<FontAwesome name="plus-circle" size={14} color="#FF8C00" />
+						<ThemedText style={styles.sectionTitle}>Add-ons</ThemedText>
+					</View>
+					{availableAddOns.length > 0 ? (
+						availableAddOns.map((addOn) => (
+							<TouchableOpacity
+								key={addOn.id}
+								style={[styles.addOnItem, selectedAddOnIds.includes(addOn.id) && styles.addOnItemSelected, disabled && styles.disabledContainer]}
+								onPress={() => toggleAddOn(addOn.id)}
+								disabled={disabled}
+								activeOpacity={0.7}
+							>
+								<View style={styles.addOnCheck}>
+									<FontAwesome
+										name={selectedAddOnIds.includes(addOn.id) ? 'check-square' : 'square-o'}
+										size={18}
+										color={selectedAddOnIds.includes(addOn.id) ? '#FF8C00' : '#555'}
+									/>
+								</View>
+								<View style={styles.addOnInfo}>
+									<ThemedText style={[styles.addOnName, disabled && styles.disabledText]}>{addOn.name}</ThemedText>
+									{!!addOn.category && (
+										<ThemedText style={[styles.addOnDescription, disabled && styles.disabledText]}>{addOn.category}</ThemedText>
+									)}
+									<ThemedText style={[styles.addOnDescription, disabled && styles.disabledText]}>{addOn.description}</ThemedText>
+								</View>
+								<ThemedText style={[styles.addOnPrice, disabled && styles.disabledText]}>P{addOn.price.toFixed(2)}</ThemedText>
+							</TouchableOpacity>
+						))
+					) : (
+						<View style={styles.emptyCard}>
+							<FontAwesome name="info-circle" size={14} color="#555" />
+							<ThemedText style={styles.emptyText}>
+								{selectedServiceId ? 'No add-ons available for this service' : 'Select a service to view add-ons'}
+							</ThemedText>
+						</View>
+					)}
+				</View>
+
+				<View style={[styles.summaryCard, disabled && styles.disabledContainer]}>
+					<View style={styles.sectionHeader}>
+						<FontAwesome name="list-alt" size={14} color="#FF8C00" />
+						<ThemedText style={styles.sectionTitle}>Summary</ThemedText>
+					</View>
+					{selectedService && (
+						<View style={styles.summaryRow}>
+							<ThemedText style={styles.summaryLabel}>{selectedService.name}</ThemedText>
+							<ThemedText style={styles.summaryValue}>P{selectedService.price.toFixed(2)}</ThemedText>
+						</View>
+					)}
+					{selectedAddOnIds.map((addOnId) => {
+						const addOn = availableAddOns.find((item) => item.id === addOnId);
+						return addOn ? (
+							<View key={addOn.id} style={styles.summaryRow}>
+								<ThemedText style={styles.summaryLabel}>{addOn.name}</ThemedText>
+								<ThemedText style={styles.summaryValue}>P{addOn.price.toFixed(2)}</ThemedText>
+							</View>
+						) : null;
+					})}
+					<View style={styles.summaryDivider} />
+					<View style={styles.summaryRow}>
+						<ThemedText style={styles.totalText}>Total</ThemedText>
+						<ThemedText style={styles.totalPrice}>P{totalPrice.toFixed(2)}</ThemedText>
+					</View>
+				</View>
+
+				<View style={styles.section}>
+					<View style={styles.sectionHeader}>
+						<FontAwesome name="clock-o" size={14} color="#FF8C00" />
+						<ThemedText style={styles.sectionTitle}>Schedule</ThemedText>
+					</View>
+					<View style={styles.pillRow}>
+						<TouchableOpacity
+							style={[styles.pill, useCurrentTime && styles.pillSelected, disabled && styles.disabledContainer]}
+							onPress={() => {
+								if (!selectedProviderId) return;
+								setUseCurrentTime(true);
+								setShowDatePicker(false);
+								setShowTimePicker(false);
+							}}
+							disabled={disabled}
+							activeOpacity={0.7}
+						>
+							<FontAwesome name="bolt" size={12} color={useCurrentTime ? '#fff' : '#8E8E93'} />
+							<ThemedText style={[styles.pillText, useCurrentTime && styles.pillTextSelected]}>Now</ThemedText>
+						</TouchableOpacity>
+						<TouchableOpacity
+							style={[styles.pill, !useCurrentTime && styles.pillSelected, disabled && styles.disabledContainer]}
+							onPress={() => selectedProviderId && setUseCurrentTime(false)}
+							disabled={disabled}
+							activeOpacity={0.7}
+						>
+							<FontAwesome name="calendar" size={12} color={!useCurrentTime ? '#fff' : '#8E8E93'} />
+							<ThemedText style={[styles.pillText, !useCurrentTime && styles.pillTextSelected]}>Custom</ThemedText>
+						</TouchableOpacity>
+					</View>
+					{!useCurrentTime && (
+						<View style={styles.dateTimeContainer}>
+							<TouchableOpacity
+								style={[styles.dateTimeBtn, disabled && styles.disabledContainer]}
+								onPress={() => {
+									if (!selectedProviderId) return;
+									setShowTimePicker(false);
+									setShowDatePicker(true);
+								}}
+								disabled={disabled}
+								activeOpacity={0.7}
+							>
+								<FontAwesome name="calendar-o" size={14} color="#FF8C00" />
+								<ThemedText style={styles.dateTimeText}>{selectedDate.toLocaleDateString()}</ThemedText>
+							</TouchableOpacity>
+							<TouchableOpacity
+								style={[styles.dateTimeBtn, disabled && styles.disabledContainer]}
+								onPress={() => {
+									if (!selectedProviderId) return;
+									setShowDatePicker(false);
+									setShowTimePicker(true);
+								}}
+								disabled={disabled}
+								activeOpacity={0.7}
+							>
+								<FontAwesome name="clock-o" size={14} color="#FF8C00" />
+								<ThemedText style={styles.dateTimeText}>{selectedTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</ThemedText>
+							</TouchableOpacity>
+							{showDatePicker && (
+								<DateTimePicker
+									value={selectedDate}
+									mode="date"
+									display="default"
+									themeVariant="dark"
+									onChange={onDateChange}
+									minimumDate={new Date()}
+								/>
+							)}
+							{showTimePicker && (
+								<DateTimePicker
+									value={selectedTime}
+									mode="time"
+									display="default"
+									themeVariant="dark"
+									onChange={onTimeChange}
+								/>
+							)}
+							<ThemedText style={styles.selectedDateTimeLabel}>Selected: {formatDateTime()}</ThemedText>
+						</View>
+					)}
+				</View>
+
+				<View style={styles.section}>
+					<View style={styles.sectionHeader}>
+						<FontAwesome name="map-marker" size={14} color="#FF8C00" />
+						<ThemedText style={styles.sectionTitle}>Service Location *</ThemedText>
+					</View>
+
+					<View style={styles.pillRow}>
+						<TouchableOpacity
+							style={[
+								styles.pill,
+								locationMode === 'current' && styles.pillSelected,
+								disabled && styles.disabledContainer,
+							]}
+							onPress={() => {
+								if (disabled) return;
+								locationFetchSeqRef.current += 1;
+								setIsFetchingCurrentLocation(false);
+								setLocationMode('current');
+								setCurrentLocationError(null);
+							}}
+							disabled={disabled}
+							activeOpacity={0.7}
+						>
+							<FontAwesome name="location-arrow" size={12} color={locationMode === 'current' ? '#fff' : '#8E8E93'} />
+							<ThemedText style={[styles.pillText, locationMode === 'current' && styles.pillTextSelected]}>
+								Current Location
+							</ThemedText>
+						</TouchableOpacity>
+
+						<TouchableOpacity
+							style={[
+								styles.pill,
+								locationMode === 'map' && styles.pillSelected,
+								disabled && styles.disabledContainer,
+							]}
+							onPress={() => {
+								if (disabled) return;
+								locationFetchSeqRef.current += 1;
+								setIsFetchingCurrentLocation(false);
+								setLocationMode('map');
+								setHasFetchedCurrentLocation(false);
+								setCurrentLocationError(null);
+							}}
+							disabled={disabled}
+							activeOpacity={0.7}
+						>
+							<FontAwesome name="map" size={12} color={locationMode === 'map' ? '#fff' : '#8E8E93'} />
+							<ThemedText style={[styles.pillText, locationMode === 'map' && styles.pillTextSelected]}>
+								Select Location
+							</ThemedText>
+						</TouchableOpacity>
+					</View>
+
+					{locationMode === 'current' ? (
+						<View style={styles.pillRow}>
+							<TouchableOpacity
+								style={[styles.pill, disabled && styles.disabledContainer]}
+								onPress={fetchCurrentLocation}
+								disabled={disabled || isFetchingCurrentLocation}
+								activeOpacity={0.7}
+							>
+								{isFetchingCurrentLocation ? (
+									<ActivityIndicator color="#8E8E93" size="small" />
+								) : (
+									<FontAwesome name={locationActionIcon} size={12} color="#8E8E93" />
+								)}
+								<ThemedText style={styles.pillText}>{locationActionLabel}</ThemedText>
+							</TouchableOpacity>
+						</View>
+					) : null}
+
+					{currentLocationError ? (
+						<ThemedText style={styles.emptyText}>{currentLocationError}</ThemedText>
+					) : null}
+
+					{locationMode === 'map' ? (
+						<TouchableOpacity style={[styles.selectLocationBtn, disabled && styles.disabledContainer]} onPress={handleSelectLocation} disabled={disabled} activeOpacity={0.7}>
+							<FontAwesome name="map" size={14} color="#FF8C00" />
+							<ThemedText style={[styles.selectLocationText, currentAddress && { color: '#fff' }]}>
+								{currentAddress || 'Select Location on Map'}
+							</ThemedText>
+							<FontAwesome name="chevron-right" size={12} color="#8E8E93" />
+						</TouchableOpacity>
+					) : null}
+
+					{currentAddress ? (
+						<View style={styles.currentLocationDisplayCard}>
+							<View style={styles.summaryRow}>
+								<ThemedText style={styles.summaryLabel}>Street</ThemedText>
+								<ThemedText style={styles.summaryValue}>{currentStreetName || 'N/A'}</ThemedText>
+							</View>
+							<View style={styles.summaryRow}>
+								<ThemedText style={styles.summaryLabel}>Region</ThemedText>
+								<ThemedText style={styles.summaryValue}>{currentBarangay || 'N/A'}</ThemedText>
+							</View>
+							<View style={styles.summaryRow}>
+								<ThemedText style={styles.summaryLabel}>City</ThemedText>
+								<ThemedText style={styles.summaryValue}>{currentCity || 'N/A'}</ThemedText>
+							</View>
+							<View style={styles.summaryRow}>
+								<ThemedText style={styles.summaryLabel}>Coordinates</ThemedText>
+								<ThemedText style={styles.summaryValue}>{currentLatitude?.toFixed(6)}, {currentLongitude?.toFixed(6)}</ThemedText>
+							</View>
+						</View>
+					) : null}
+
+					{currentAddress ? (
+						<TextInput
+							style={[styles.input, { marginTop: 12 }, disabled && styles.disabledInput]}
+							placeholder="Landmark (Optional)"
+							placeholderTextColor="#555"
+							value={landmark}
+							onChangeText={setLandmark}
+							editable={!disabled}
+						/>
+					) : null}
+				</View>
+
+				<TouchableOpacity
+					style={[styles.sendBtn, (disabled || loading) && styles.sendBtnDisabled]}
+					onPress={handleOpenConfirm}
+					disabled={disabled || loading}
+					activeOpacity={0.7}
+				>
+					{loading ? (
+						<ActivityIndicator color="#fff" />
+					) : (
+						<>
+							<FontAwesome name="paper-plane" size={16} color="#fff" />
+							<ThemedText style={styles.sendBtnText}>Send Request</ThemedText>
+						</>
+					)}
+				</TouchableOpacity>
+
+				<View style={{ height: 40 }} />
+			</ScrollView>
+
+			<Modal
+				visible={confirmVisible}
+				transparent
+				animationType="fade"
+				onRequestClose={() => !loading && setConfirmVisible(false)}
+			>
+				<View style={styles.modalBackdrop}>
+					<View style={styles.modalCard}>
+						<ThemedText style={styles.modalTitle}>Confirm Request</ThemedText>
+
+						<View style={styles.modalSummarySection}>
+							<View style={styles.modalSummaryRow}>
+								<ThemedText style={styles.modalSummaryLabel}>Provider</ThemedText>
+								<ThemedText style={styles.modalSummaryValue}>{routeProviderName || 'Selected shop'}</ThemedText>
+							</View>
+							<View style={styles.modalSummaryRow}>
+								<ThemedText style={styles.modalSummaryLabel}>Service</ThemedText>
+								<ThemedText style={styles.modalSummaryValue}>{selectedService?.name || '-'}</ThemedText>
+							</View>
+							{selectedAddOns.map((item) => (
+								<View key={item.id} style={styles.modalSummaryRow}>
+									<ThemedText style={styles.modalSummaryLabel}>{item.name}</ThemedText>
+									<ThemedText style={styles.modalSummaryValue}>P{item.price.toFixed(2)}</ThemedText>
+								</View>
+							))}
+							<View style={styles.modalSummaryRow}>
+								<ThemedText style={styles.modalSummaryLabel}>Schedule</ThemedText>
+								<ThemedText style={styles.modalSummaryValue}>
+									{useCurrentTime ? 'Now' : formatDateTime()}
+								</ThemedText>
+							</View>
+							<View style={styles.modalLocationBlock}>
+								<ThemedText style={styles.modalSummaryLabel}>Location</ThemedText>
+								<ThemedText style={styles.modalLocationValue}>{currentAddress || '-'}</ThemedText>
+							</View>
+							<View style={styles.summaryDivider} />
+							<View style={styles.modalSummaryRow}>
+								<ThemedText style={styles.totalText}>Total</ThemedText>
+								<ThemedText style={styles.totalPrice}>P{totalPrice.toFixed(2)}</ThemedText>
+							</View>
+						</View>
+
+						<View style={styles.modalActions}>
+							<TouchableOpacity
+								style={[styles.modalBtn, styles.modalCancelBtn]}
+								onPress={() => setConfirmVisible(false)}
+								disabled={loading}
+							>
+								<ThemedText style={styles.modalCancelText}>Cancel</ThemedText>
+							</TouchableOpacity>
+							<TouchableOpacity
+								style={[styles.modalBtn, styles.modalConfirmBtn, loading && styles.sendBtnDisabled]}
+								onPress={async () => {
+									setConfirmVisible(false);
+									await handleSend();
+								}}
+								disabled={loading}
+							>
+								{loading ? (
+									<ActivityIndicator color="#fff" size="small" />
+								) : (
+									<ThemedText style={styles.modalConfirmText}>Confirm</ThemedText>
+								)}
+							</TouchableOpacity>
+						</View>
+					</View>
+				</View>
+			</Modal>
+		</ThemedView>
+	);
 }

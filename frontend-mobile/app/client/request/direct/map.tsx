@@ -9,7 +9,7 @@ import { ThemedText } from '@/components/themed-text';
 import { useNotification } from '@/hooks/useNotification';
 import { reverseGeocodeAddress } from '@/lib/locationAddress';
 import { styles } from '@/style/client/directRequestMapStyles';
-import { useLocation } from './LocationContext';
+import { useLocation } from '../main_request_form/LocationContext';
 
 interface MapRegion {
   latitude: number;
@@ -23,16 +23,7 @@ interface PinLocation {
   longitude: number;
 }
 
-interface LocationData {
-  latitude: number;
-  longitude: number;
-  address: string;
-  streetName: string;
-  city: string;
-  barangay: string;
-}
-
-export default function MapScreen() {
+export default function DirectRequestMapScreen() {
   const { showNotification } = useNotification();
   const { setSelectedLocation } = useLocation();
   const mapRef = useRef<MapView>(null);
@@ -166,15 +157,14 @@ export default function MapScreen() {
     setConfirming(true);
     try {
       const parsed = await reverseGeocodePoint(markerLocation.latitude, markerLocation.longitude);
-      const locationData: LocationData = {
+      setSelectedLocation({
         latitude: markerLocation.latitude,
         longitude: markerLocation.longitude,
         address: parsed.address,
         streetName: parsed.streetName,
         city: parsed.city,
         barangay: parsed.region || parsed.barangay,
-      };
-      setSelectedLocation(locationData);
+      });
       router.back();
     } catch {
       showNotification({ type: 'error', message: 'Failed to confirm location' });

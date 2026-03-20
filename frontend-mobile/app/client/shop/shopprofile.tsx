@@ -253,7 +253,11 @@ export default function ShopProfileScreen() {
             onPress={() => {
               router.push({
                 pathname: '/client/request/direct/shopdirectrequest',
-                params: { shopId: String(profile.id) },
+                params: {
+                  shopId: String(profile.id),
+                  providerId: String(profile.owner.account_id),
+                  providerName: profile.shop_name,
+                },
               });
             }}
           >

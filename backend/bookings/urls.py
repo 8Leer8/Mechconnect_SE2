@@ -1,7 +1,7 @@
 from django.urls import path
 from . import views
 from .views.client.client_request_list_views import get_request_detail
-from .views.client_booking_views import client_pay_booking
+from .views.client.client_booking_views import client_pay_booking
 from .views.admin import (
     admin_booking_overview,
     admin_list_disputes,
@@ -16,7 +16,6 @@ urlpatterns = [
     path('requests/', views.list_requests, name='list-requests'),
     path('requests/<int:request_id>/', get_request_detail, name='get-request-detail'),
     path('requests/custom/create/', views.create_custom_request, name='create-custom-request'),
-    path('requests/direct/create/', views.create_direct_request, name='create-direct-request'),
     path('requests/emergency/create/', views.create_emergency_request, name='create-emergency-request'),
     path('requests/emergency/cooldown/', views.get_emergency_cooldown, name='get-emergency-cooldown'),
     path('requests/broadcast/create/', views.create_broadcast_request, name='create-broadcast-request'),

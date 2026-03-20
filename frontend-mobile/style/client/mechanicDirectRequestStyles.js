@@ -326,4 +326,90 @@ export const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#fff',
   },
+  // Confirmation Modal
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    backgroundColor: '#1A1C1E',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+    padding: 16,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#fff',
+    marginBottom: 12,
+  },
+  modalSummarySection: {
+    backgroundColor: '#151719',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+    padding: 12,
+  },
+  modalSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginBottom: 8,
+  },
+  modalSummaryLabel: {
+    fontSize: 14,
+    color: '#B9BEC6',
+    fontWeight: '600',
+    flexShrink: 0,
+  },
+  modalSummaryValue: {
+    fontSize: 14,
+    color: '#F2F4F7',
+    fontWeight: '600',
+    flex: 1,
+    textAlign: 'right',
+  },
+  modalLocationBlock: {
+    marginTop: 2,
+    marginBottom: 10,
+    gap: 6,
+  },
+  modalLocationValue: {
+    fontSize: 14,
+    color: '#E5E7EB',
+    lineHeight: 20,
+    textAlign: 'left',
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 14,
+  },
+  modalBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    paddingVertical: 12,
+  },
+  modalCancelBtn: {
+    backgroundColor: '#2A2C2E',
+  },
+  modalConfirmBtn: {
+    backgroundColor: '#FF8C00',
+  },
+  modalCancelText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#C8C8C8',
+  },
+  modalConfirmText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#fff',
+  },
 });

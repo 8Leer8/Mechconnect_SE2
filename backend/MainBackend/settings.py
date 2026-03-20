@@ -220,7 +220,6 @@ CORS_ALLOW_HEADERS = [
 BREVO_API_KEY = os.getenv('BREVO_API_KEY', '')
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', '')
 EMAIL_TIMEOUT = 10
-EMAIL_TIMEOUT = 10
 
 # Supabase Storage Configuration
 USE_S3 = os.environ.get("USE_S3", "False") == "True"
