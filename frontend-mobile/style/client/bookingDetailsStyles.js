@@ -291,6 +291,40 @@ export const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 10,
   },
+  receiptList: {
+    paddingHorizontal: 4,
+    paddingBottom: 6,
+  },
+  receiptRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  receiptItem: {
+    fontSize: 14,
+    color: '#ccc',
+  },
+  receiptAmount: {
+    fontSize: 14,
+    color: '#fff',
+    fontWeight: '600',
+  },
+  receiptDivider: {
+    height: 1,
+    backgroundColor: '#222426',
+    marginVertical: 8,
+  },
+  receiptTotalLabel: {
+    fontSize: 14,
+    color: '#8E8E93',
+    fontWeight: '600',
+  },
+  receiptTotalValue: {
+    fontSize: 16,
+    color: '#fff',
+    fontWeight: '800',
+  },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',

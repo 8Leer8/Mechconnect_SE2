@@ -166,6 +166,12 @@ export default function LoginScreen() {
           if (acctId) {
             await AsyncStorage.setItem('account_id', String(acctId));
           }
+          if (activeRole) {
+            await AsyncStorage.multiSet([
+              ['user_role', activeRole],
+              ['last_active_role', activeRole],
+            ]);
+          }
           // If backend included token in login response, persist it for API calls
           const token = data?.token || null;
           if (token) {

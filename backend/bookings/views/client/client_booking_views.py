@@ -8,7 +8,7 @@ import logging
 
 from ...models import (
     Booking, Request, ActiveBooking, CancelBooking,
-    ReworkBooking, DisputeBooking, CompleteBooking, Receipt
+    ReworkBooking, DisputeBooking, CompleteBooking, Receipt, BroadcastOffer
 )
 from ...serializers import BookingSerializer, BookingPaymentSerializer
 from users.models import Account
@@ -250,10 +250,39 @@ def _serialize_bookings(bookings_queryset):
 
 def _serialize_single_booking(booking):
     """Helper function to serialize a single booking with all details"""
+    broadcast_request_payload = None
+    accepted_offer = None
+    if hasattr(booking.request, 'broadcast_request') and booking.request.broadcast_request is not None:
+        br = booking.request.broadcast_request
+        broadcast_request_payload = {
+            'latitude': float(br.latitude) if br.latitude is not None else None,
+            'longitude': float(br.longitude) if br.longitude is not None else None,
+        }
+        accepted_offer = BroadcastOffer.objects.filter(
+            broadcast_request=br,
+            status=BroadcastOffer.Status.ACCEPTED,
+        ).order_by('-responded_at', '-id').first()
+
+    distance_value = getattr(booking, 'distance_km', None)
+    if distance_value is None and accepted_offer and accepted_offer.distance_km is not None:
+        distance_value = accepted_offer.distance_km
+
+    eta_value = getattr(booking, 'eta_minutes', None)
+    if eta_value is None and accepted_offer and accepted_offer.estimated_eta_minutes is not None:
+        eta_value = accepted_offer.estimated_eta_minutes
+
+    traffic_level_value = None
+    if accepted_offer and accepted_offer.traffic_level:
+        traffic_level_value = accepted_offer.traffic_level
+
     booking_data = {
         'id': booking.id,
         'status': booking.status,
         'amount_fee': float(booking.amount_fee),
+        'convenience_fee': float(booking.convenience_fee) if getattr(booking, 'convenience_fee', None) is not None else None,
+        'distance_km': float(distance_value) if distance_value is not None else None,
+        'estimated_eta_minutes': int(eta_value) if eta_value is not None else None,
+        'traffic_level': traffic_level_value,
         'booked_at': booking.booked_at.isoformat(),
         'updated_at': booking.updated_at.isoformat(),
         'completed_at': booking.completed_at.isoformat() if booking.completed_at else None,
@@ -261,6 +290,7 @@ def _serialize_single_booking(booking):
             'id': booking.request.id,
             'type': booking.request.request_type,
             'created_at': booking.request.created_at.isoformat(),
+            'broadcast_request': broadcast_request_payload,
         },
         'provider': {
             'id': booking.request.provider.id,

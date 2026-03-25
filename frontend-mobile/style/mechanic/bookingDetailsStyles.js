@@ -509,6 +509,11 @@ export const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 3,
   },
+  largePrimaryButtonDisabled: {
+    backgroundColor: '#3D4D63',
+    borderColor: '#334257',
+    opacity: 0.78,
+  },
   largeSecondaryButton: {
     flexDirection: 'row',
     alignItems: 'center',

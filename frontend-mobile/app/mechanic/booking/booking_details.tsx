@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 // Ensure the router header is hidden for this route so only the in-page header shows
 export const screenOptions = { headerShown: false } as const;
 import { View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl } from 'react-native';
@@ -11,6 +11,8 @@ import WalletBadge from '@/components/wallet-badge';
 import { useNotification } from '@/hooks/useNotification';
 import { useConfirmation } from '@/hooks/useConfirmation';
 import { SkeletonDetailPage } from '@/components/skeletons/SkeletonLoaders';
+import { calculateBroadcastFee } from '@/utils/trafficutils';
+import * as Location from 'expo-location';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 interface BookingDetail {
@@ -20,6 +22,10 @@ interface BookingDetail {
   booked_at: string;
   updated_at: string;
   completed_at: string | null;
+  convenience_fee?: number | null;
+  distance_km?: number | null;
+  traffic_level?: string | null;
+  estimated_eta_minutes?: number | null;
   request: {
     id: number;
     type: string;
@@ -122,6 +128,45 @@ export default function BookingDetailScreen() {
   };
 
   const displayQuotation = getDisplayQuotation();
+
+  const convenienceBreakdown = useMemo(() => {
+    if (!booking) return null;
+
+    const baseFee = 50;
+    const ratePerKm = 15;
+    const safeDistanceKm = Math.max(0, Number((booking as any).distance_km || 0));
+    const distanceFee = safeDistanceKm * ratePerKm;
+
+    const persistedConvenienceFee = Number((booking as any).convenience_fee);
+    const hasPersistedConvenience = Number.isFinite(persistedConvenienceFee) && persistedConvenienceFee > 0;
+
+    if (hasPersistedConvenience) {
+      const trafficFee = Math.max(0, persistedConvenienceFee - baseFee - distanceFee);
+      const level = String((booking as any).traffic_level || '').toLowerCase();
+      const label = level ? `${level.charAt(0).toUpperCase()}${level.slice(1)}` : 'Actual';
+
+      return {
+        baseFee,
+        distanceKm: safeDistanceKm,
+        distanceFee,
+        trafficFee,
+        totalConvenienceFee: persistedConvenienceFee,
+        trafficLabel: label,
+        estimated: false,
+      };
+    }
+
+    const estimated = calculateBroadcastFee(safeDistanceKm);
+    return {
+      baseFee: estimated.baseFee,
+      distanceKm: estimated.distanceKm,
+      distanceFee: estimated.distanceFee,
+      trafficFee: estimated.surchargeAmount,
+      totalConvenienceFee: estimated.totalFee,
+      trafficLabel: `${estimated.traffic.label} ${estimated.traffic.emoji}`,
+      estimated: true,
+    };
+  }, [booking]);
 
   useEffect(() => {
     try { navigation.setOptions && navigation.setOptions({ headerShown: false }); } catch (e) {}
@@ -304,9 +349,32 @@ export default function BookingDetailScreen() {
     }, [bookingId, fetchBookingDetail])
   );
 
-  const onRefresh = () => {
+  const refreshOnTheWayLock = async () => {
+    if (!booking || booking.status !== 'on_the_way') return;
+
+    const payload = await buildMechanicLocationPayload();
+    const response = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/start-travel/`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error((err as any).error || 'Failed to refresh on-the-way pricing');
+    }
+  };
+
+  const onRefresh = async () => {
     setRefreshing(true);
-    fetchBookingDetail();
+    try {
+      await refreshOnTheWayLock();
+    } catch (err: any) {
+      showNotification({ type: 'warning', message: err.message || 'Unable to refresh on-the-way pricing' });
+    } finally {
+      fetchBookingDetail();
+    }
   };
 
   const handleCompleteBooking = async () => {
@@ -404,36 +472,28 @@ export default function BookingDetailScreen() {
       showNotification({ type: 'warning', message: 'No service location available for this booking.' });
       return;
     }
-
-    const loc = booking.service_location;
-    const address = [
-      loc.street_name,
-      loc.subdivision_village,
-      loc.barangay,
-      loc.city_municipality,
-    ]
-      .filter(Boolean)
-      .join(', ');
-
-    // Navigate to in-app map screen
     router.push({
       pathname: '/mechanic/booking/booking_location_map',
       params: {
-        address: address,
-        street: loc.street_name,
-        barangay: loc.barangay,
-        city: loc.city_municipality,
+        bookingId: String(booking.id),
+        role: 'mechanic',
       },
     });
   };
 
   // --- New handlers for status transitions ---
   const [transitioning, setTransitioning] = useState(false);
+  const [startTravelSubmitting, setStartTravelSubmitting] = useState(false);
   const [paymentConfirmedOnUI, setPaymentConfirmedOnUI] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState<number | null>(null);
   const [requestActionLoading, setRequestActionLoading] = useState(false);
 
-  const handleStatusUpdate = async (endpoint: string, successMessage: string, errorMessage: string) => {
+  const handleStatusUpdate = async (
+    endpoint: string,
+    successMessage: string,
+    errorMessage: string,
+    payload?: Record<string, any>
+  ) => {
     if (!booking) return;
     setTransitioning(true);
     try {
@@ -441,13 +501,30 @@ export default function BookingDetailScreen() {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
       });
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
         throw new Error((errData as any).error || errorMessage);
       }
+
+      const result = await response.json().catch(() => ({}));
+      if (endpoint === 'start-travel' || endpoint === 'cancel-job') {
+        setBooking((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            status: (result as any).status || prev.status,
+            distance_km: (result as any).distance_km ?? prev.distance_km,
+            estimated_eta_minutes: (result as any).estimated_eta_minutes ?? prev.estimated_eta_minutes,
+            convenience_fee: (result as any).convenience_fee ?? prev.convenience_fee,
+            traffic_level: (result as any).traffic_level ?? prev.traffic_level,
+          };
+        });
+      }
+
       showNotification({ type: 'success', message: successMessage });
-      fetchBookingDetail();
+      await fetchBookingDetail();
     } catch (err: any) {
       showNotification({ type: 'error', message: err.message || errorMessage });
     } finally {
@@ -455,7 +532,37 @@ export default function BookingDetailScreen() {
     }
   };
 
-  const handleStartTravel = () => handleStatusUpdate('start-travel', 'Status updated to On The Way!', 'Failed to start travel');
+  const buildMechanicLocationPayload = async (): Promise<Record<string, any>> => {
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== 'granted') return {};
+
+      const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      return {
+        mechanic_latitude: current.coords.latitude,
+        mechanic_longitude: current.coords.longitude,
+      };
+    } catch {
+      return {};
+    }
+  };
+
+  const handleStartTravel = async () => {
+    if (startTravelSubmitting || transitioning) return;
+
+    setStartTravelSubmitting(true);
+    try {
+      const payload = await buildMechanicLocationPayload();
+      if (payload.mechanic_latitude == null || payload.mechanic_longitude == null) {
+        showNotification({ type: 'warning', message: 'Location is required to start travel and refresh traffic. Please enable GPS.' });
+        return;
+      }
+
+      await handleStatusUpdate('start-travel', 'Status updated to On The Way!', 'Failed to start travel', payload);
+    } finally {
+      setStartTravelSubmitting(false);
+    }
+  };
   const handleCancelTravel = async () => {
     if (!booking) return;
     const ok = await confirm({
@@ -477,7 +584,9 @@ export default function BookingDetailScreen() {
       confirmText: 'Go Back',
       cancelText: 'Stay',
     });
-    if (ok) handleStatusUpdate('cancel-job', 'Job cancelled.', 'Failed to cancel job');
+    if (!ok) return;
+    const payload = await buildMechanicLocationPayload();
+    handleStatusUpdate('cancel-job', 'Job cancelled.', 'Failed to cancel job', payload);
   };
   const handlePauseJob = () => handleStatusUpdate('pause-job', 'Job paused.', 'Failed to pause job');
   const handleResumeJob = () => handleStatusUpdate('resume-job', 'Job resumed.', 'Failed to resume job');
@@ -645,9 +754,23 @@ export default function BookingDetailScreen() {
         {booking.status === 'accepted' && (
           <>
             <View style={{ width: '100%' }}>
-              <TouchableOpacity style={[styles.largePrimaryButton]} onPress={handleStartTravel} disabled={transitioning}>
-                <FontAwesome name="car" size={18} color="#fff" />
-                <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Start Travel</ThemedText>
+              <TouchableOpacity
+                style={[
+                  styles.largePrimaryButton,
+                  (transitioning || startTravelSubmitting) && styles.largePrimaryButtonDisabled,
+                ]}
+                onPress={handleStartTravel}
+                disabled={transitioning || startTravelSubmitting}
+                activeOpacity={0.85}
+              >
+                {startTravelSubmitting ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <FontAwesome name="car" size={18} color="#fff" />
+                )}
+                <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>
+                  {startTravelSubmitting ? 'Updating Traffic & Fee...' : 'Start Travel'}
+                </ThemedText>
               </TouchableOpacity>
             </View>
             
@@ -729,12 +852,14 @@ export default function BookingDetailScreen() {
                   if (!ok) return;
                   setTransitioning(true);
                   try {
+                    const payload = await buildMechanicLocationPayload();
                     // For paused bookings, revert twice to move back to ON_THE_WAY:
                     // PAUSED -> ACTIVE, then ACTIVE -> ON_THE_WAY
                     const first = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/revert-stage/`, {
                       method: 'POST',
                       credentials: 'include',
                       headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(payload),
                     });
                     if (!first.ok) {
                       const err = await first.json().catch(() => null);
@@ -746,6 +871,7 @@ export default function BookingDetailScreen() {
                       method: 'POST',
                       credentials: 'include',
                       headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(payload),
                     });
                     if (!second.ok) {
                       const err = await second.json().catch(() => null);
@@ -851,10 +977,12 @@ export default function BookingDetailScreen() {
                 if (!ok) return;
                 setTransitioning(true);
                 try {
+                  const payload = await buildMechanicLocationPayload();
                   const res = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/revert-stage/`, {
                     method: 'POST',
                     credentials: 'include',
                     headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
                   });
                   if (!res.ok) {
                     const err = await res.json().catch(() => null);
@@ -921,6 +1049,42 @@ export default function BookingDetailScreen() {
           </View>
           <ThemedText style={styles.amountLarge}>₱{parseFloat(String(booking.amount_fee || '0')).toFixed(2)}</ThemedText>
         </View>
+
+        {convenienceBreakdown && (
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
+                <FontAwesome name="calculator" size={16} color="#FF8C00" />
+              </View>
+              <ThemedText style={styles.sectionTitle}>Convenience Fee</ThemedText>
+            </View>
+
+            <View style={styles.receiptList}>
+              <View style={styles.receiptRow}>
+                <ThemedText style={styles.receiptItem}>Base Fee</ThemedText>
+                <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.baseFee.toFixed(2)}</ThemedText>
+              </View>
+              <View style={styles.receiptRow}>
+                <ThemedText style={styles.receiptItem}>Distance Fee ({convenienceBreakdown.distanceKm.toFixed(2)} km)</ThemedText>
+                <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.distanceFee.toFixed(2)}</ThemedText>
+              </View>
+              <View style={styles.receiptRow}>
+                <ThemedText style={styles.receiptItem}>Traffic Fee ({convenienceBreakdown.trafficLabel})</ThemedText>
+                <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.trafficFee.toFixed(2)}</ThemedText>
+              </View>
+              <View style={styles.receiptDivider} />
+              <View style={styles.receiptRow}>
+                <ThemedText style={styles.receiptTotalLabel}>Total Convenience Fee</ThemedText>
+                <ThemedText style={styles.receiptTotalValue}>₱{convenienceBreakdown.totalConvenienceFee.toFixed(2)}</ThemedText>
+              </View>
+              {convenienceBreakdown.estimated && (
+                <ThemedText style={{ color: '#8E8E93', marginTop: 6, fontStyle: 'italic' }}>
+                  Estimated price until mechanic starts travel.
+                </ThemedText>
+              )}
+            </View>
+          </View>
+        )}
 
         {/* Client Info Section */}
         <View style={styles.sectionCard}>

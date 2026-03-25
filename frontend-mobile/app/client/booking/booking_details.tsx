@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 // Ensure the router header is hidden for this route so only the in-page header shows
 export const screenOptions = { headerShown: false } as const;
 import {View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Linking, Platform, Modal, TextInput, KeyboardAvoidingView } from 'react-native';
@@ -21,6 +21,10 @@ interface BookingDetail {
   booked_at: string;
   updated_at: string;
   completed_at: string | null;
+  convenience_fee?: number | null;
+  distance_km?: number | null;
+  traffic_level?: string | null;
+  estimated_eta_minutes?: number | null;
   request: {
     id: number;
     type: string;
@@ -118,6 +122,36 @@ export default function ClientBookingDetailScreen() {
   };
 
   const displayQuotation = getDisplayQuotation();
+
+  const convenienceBreakdown = useMemo(() => {
+    if (!booking) return null;
+
+    const baseFee = 50;
+    const ratePerKm = 15;
+    const persistedConvenienceFee = Number((booking as any).convenience_fee);
+    const persistedDistanceKm = Number((booking as any).distance_km);
+    const hasPersistedConvenience = Number.isFinite(persistedConvenienceFee) && persistedConvenienceFee > 0;
+    const hasPersistedDistance = Number.isFinite(persistedDistanceKm) && persistedDistanceKm >= 0;
+
+    if (!hasPersistedConvenience || !hasPersistedDistance) {
+      return null;
+    }
+
+    const distanceFee = persistedDistanceKm * ratePerKm;
+    const trafficFee = Math.max(0, persistedConvenienceFee - baseFee - distanceFee);
+    const level = String((booking as any).traffic_level || '').toLowerCase();
+    const label = level ? `${level.charAt(0).toUpperCase()}${level.slice(1)}` : 'Unknown';
+
+    return {
+      baseFee,
+      distanceKm: persistedDistanceKm,
+      distanceFee,
+      trafficFee,
+      totalConvenienceFee: persistedConvenienceFee,
+      trafficLabel: label,
+      estimated: false,
+    };
+  }, [booking]);
 
   const fetchBookingDetail = useCallback(async (silent = false) => {
     if (!bookingId) return;
@@ -286,19 +320,14 @@ export default function ClientBookingDetailScreen() {
   };
 
   const handleNavigateToLocation = () => {
-    if (!booking?.service_location) return;
-    const loc = booking.service_location;
-    const address = [loc.street_name, loc.subdivision_village, loc.barangay, loc.city_municipality]
-      .filter(Boolean)
-      .join(', ');
-    const encoded = encodeURIComponent(address);
-    const url = Platform.select({
-      ios: `comgooglemaps://?q=${encoded}`,
-      android: `geo:0,0?q=${encoded}`,
-      default: `https://www.google.com/maps/search/?api=1&query=${encoded}`,
+    if (!booking) return;
+    router.push({
+      pathname: '/client/booking/booking_location_map',
+      params: {
+        bookingId: String(booking.id),
+        role: 'client',
+      },
     });
-    const fallback = `https://www.google.com/maps/search/?api=1&query=${encoded}`;
-    Linking.canOpenURL(url).then((ok) => Linking.openURL(ok ? url : fallback));
   };
 
   const pickBackjobImage = async () => {
@@ -413,6 +442,49 @@ export default function ClientBookingDetailScreen() {
             )}
           </View>
           <ThemedText style={styles.amountLarge}>₱{parseFloat(String(booking.amount_fee || '0')).toFixed(2)}</ThemedText>
+        </View>
+
+        <View style={styles.sectionCard}>
+          <View style={styles.sectionHeader}>
+            <View style={[styles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
+              <FontAwesome name="calculator" size={16} color="#FF8C00" />
+            </View>
+            <ThemedText style={styles.sectionTitle}>Convenience Fee</ThemedText>
+          </View>
+
+          {convenienceBreakdown ? (
+            <View style={styles.receiptList}>
+              <View style={styles.receiptRow}>
+                <ThemedText style={styles.receiptItem}>Base Fee</ThemedText>
+                <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.baseFee.toFixed(2)}</ThemedText>
+              </View>
+              <View style={styles.receiptRow}>
+                <ThemedText style={styles.receiptItem}>Distance Fee ({convenienceBreakdown.distanceKm.toFixed(2)} km)</ThemedText>
+                <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.distanceFee.toFixed(2)}</ThemedText>
+              </View>
+              <View style={styles.receiptRow}>
+                <ThemedText style={styles.receiptItem}>Traffic Fee ({convenienceBreakdown.trafficLabel})</ThemedText>
+                <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.trafficFee.toFixed(2)}</ThemedText>
+              </View>
+              {typeof booking.estimated_eta_minutes === 'number' && booking.estimated_eta_minutes > 0 && (
+                <View style={styles.receiptRow}>
+                  <ThemedText style={styles.receiptItem}>Estimated ETA</ThemedText>
+                  <ThemedText style={styles.receiptAmount}>{booking.estimated_eta_minutes} min</ThemedText>
+                </View>
+              )}
+              <View style={styles.receiptDivider} />
+              <View style={styles.receiptRow}>
+                <ThemedText style={styles.receiptTotalLabel}>Total Convenience Fee</ThemedText>
+                <ThemedText style={styles.receiptTotalValue}>₱{convenienceBreakdown.totalConvenienceFee.toFixed(2)}</ThemedText>
+              </View>
+            </View>
+          ) : (
+            <View style={styles.noteBox}>
+              <ThemedText style={styles.noteText}>
+                Convenience fee will appear after the mechanic starts travel and locks route traffic.
+              </ThemedText>
+            </View>
+          )}
         </View>
 
         {/* Provider Information */}
@@ -653,10 +725,10 @@ export default function ClientBookingDetailScreen() {
                   <FontAwesome name="location-arrow" size={18} color="#fff" />
                 </View>
                 <View style={styles.navigateTextContainer}>
-                  <ThemedText style={styles.navigateTitle}>Navigate to Location</ThemedText>
-                  <ThemedText style={styles.navigateSubtitle}>Open in Google Maps</ThemedText>
+                  <ThemedText style={styles.navigateTitle}>Open Live Location Map</ThemedText>
+                  <ThemedText style={styles.navigateSubtitle}>Track mechanic and booking location</ThemedText>
                 </View>
-                <FontAwesome name="external-link" size={14} color="#FF8C00" />
+                <FontAwesome name="map" size={14} color="#FF8C00" />
               </TouchableOpacity>
             </>
           ) : (

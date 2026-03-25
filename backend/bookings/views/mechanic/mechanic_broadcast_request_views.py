@@ -55,7 +55,8 @@ def accept_broadcast_request(request, broadcast_id):
     Accept a broadcast request.
     Uses transaction.atomic() and select_for_update() to prevent race conditions.
     Only the first mechanic to accept wins.
-    Expects: mechanic_latitude, mechanic_longitude, distance_km, estimated_price
+    Expects: mechanic_latitude, mechanic_longitude, distance_km, estimated_price,
+    convenience_fee, traffic_level, estimated_eta_minutes
     """
     account_id = request.session.get('account_id')
     
@@ -77,8 +78,44 @@ def accept_broadcast_request(request, broadcast_id):
         # Extract location and pricing data from request
         mechanic_latitude = request.data.get('mechanic_latitude')
         mechanic_longitude = request.data.get('mechanic_longitude')
-        distance_km = request.data.get('distance_km')
-        estimated_price = request.data.get('estimated_price')
+        distance_km_raw = request.data.get('distance_km')
+        estimated_price_raw = request.data.get('estimated_price')
+        convenience_fee_raw = request.data.get('convenience_fee')
+        traffic_level_raw = request.data.get('traffic_level')
+        estimated_eta_minutes_raw = request.data.get('estimated_eta_minutes')
+
+        def _to_float(value):
+            if value is None or value == '':
+                return None
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        def _to_int(value):
+            if value is None or value == '':
+                return None
+            try:
+                return int(round(float(value)))
+            except (TypeError, ValueError):
+                return None
+
+        distance_km = _to_float(distance_km_raw)
+        estimated_price = _to_float(estimated_price_raw)
+        convenience_fee = _to_float(convenience_fee_raw)
+        estimated_eta_minutes = _to_int(estimated_eta_minutes_raw)
+
+        traffic_level = str(traffic_level_raw or '').strip().lower() or None
+        valid_traffic_levels = {'light', 'moderate', 'heavy', 'severe', 'unknown'}
+        if traffic_level and traffic_level not in valid_traffic_levels:
+            traffic_level = 'unknown'
+
+        traffic_surcharge = None
+        if convenience_fee is not None and distance_km is not None:
+            base_fee = 50.0
+            rate_per_km = 15.0
+            calculated = convenience_fee - (base_fee + (distance_km * rate_per_km))
+            traffic_surcharge = max(0.0, calculated)
         
         # Use atomic transaction to prevent race conditions
         with transaction.atomic():
@@ -108,7 +145,7 @@ def accept_broadcast_request(request, broadcast_id):
             mechanic = mechanic.__class__.objects.select_for_update().get(pk=mechanic.pk)
 
             # Compute total amount for the request (estimated_price preferred)
-            if estimated_price:
+            if estimated_price is not None:
                 total_amount = float(estimated_price)
             else:
                 total_amount = 0.0
@@ -137,7 +174,10 @@ def accept_broadcast_request(request, broadcast_id):
                     'mechanic_latitude': mechanic_latitude,
                     'mechanic_longitude': mechanic_longitude,
                     'distance_km': distance_km,
-                    'estimated_price': estimated_price
+                    'estimated_price': estimated_price,
+                    'convenience_fee': convenience_fee,
+                    'traffic_level': traffic_level,
+                    'estimated_eta_minutes': estimated_eta_minutes,
                 }
             )
             
@@ -149,6 +189,9 @@ def accept_broadcast_request(request, broadcast_id):
                 offer.mechanic_longitude = mechanic_longitude
                 offer.distance_km = distance_km
                 offer.estimated_price = estimated_price
+                offer.convenience_fee = convenience_fee
+                offer.traffic_level = traffic_level
+                offer.estimated_eta_minutes = estimated_eta_minutes
                 offer.save()
             
             # Update broadcast request status
@@ -175,7 +218,11 @@ def accept_broadcast_request(request, broadcast_id):
             booking = Booking.objects.create(
                 request=base_request,
                 status=Booking.Status.ACCEPTED,
-                amount_fee=total_amount
+                amount_fee=total_amount,
+                distance_km=distance_km,
+                convenience_fee=convenience_fee,
+                eta_minutes=estimated_eta_minutes,
+                traffic_surcharge=traffic_surcharge,
             )
 
             # Deduct required tokens from mechanic wallet and record transaction
@@ -204,6 +251,9 @@ def accept_broadcast_request(request, broadcast_id):
                 'offer_id': offer.id,
                 'amount_fee': total_amount,
                 'distance_km': distance_km,
+                'convenience_fee': convenience_fee,
+                'traffic_level': traffic_level,
+                'estimated_eta_minutes': estimated_eta_minutes,
                 'tokens_deducted': required_tokens,
                 'tokens_remaining': mechanic.tokens_balance
             }, status=status.HTTP_200_OK)

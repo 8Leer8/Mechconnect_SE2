@@ -8,7 +8,7 @@ import {
   Modal,
   Image,
 } from 'react-native';
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import MapView, { Marker, Polyline, UrlTile } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -16,16 +16,15 @@ import { FontAwesome } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import WalletBadge from '@/components/wallet-badge';
 import { eventBus } from '@/utils/eventBus';
-import { getDistanceKm, getEstimatedPrice } from '@/app/client/request/main_request_form/LocationContext';
+import { getDistanceKm } from '@/app/client/request/main_request_form/LocationContext';
 import { styles } from '@/style/mechanic/mapStyles';
 import { getImageUrl } from '@/lib/imageUtils';
 import { useNotification } from '@/hooks/useNotification';
 import { SkeletonMapJobList } from '@/components/skeletons/SkeletonLoaders';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
-
-// Note: Full map integration requires react-native-maps or similar library
-// This is a placeholder UI that can be connected to a mapping library
+const ORS_KEY = process.env.EXPO_PUBLIC_ORS_API_KEY;
+const TOMTOM_KEY = process.env.EXPO_PUBLIC_TOMTOM_API_KEY;
 
 interface BroadcastRequest {
   id: number;
@@ -51,8 +50,54 @@ interface BroadcastRequest {
   required_tokens?: number;
 }
 
+type TrafficLevel = 'light' | 'moderate' | 'heavy' | 'severe' | 'unknown';
+
+interface TrafficData {
+  level: TrafficLevel;
+  emoji: string;
+  label: string;
+  surchargePercent: number;
+  surchargeLabel: string;
+  color: string;
+  currentSpeed: number;
+  freeFlowSpeed: number;
+  timeNote?: string;
+}
+
+interface RouteResult {
+  distanceKm: number;
+  etaMinutes: number;
+  coords: { latitude: number; longitude: number }[];
+}
+
+interface FeeData {
+  baseFee: number;
+  distanceFee: number;
+  surchargeAmount: number;
+  convenienceFee: number;
+  serviceTotal: number;
+  addOnsTotal: number;
+  overallIncome: number;
+  minFee: number;
+  maxFee: number;
+  isEstimate: boolean;
+  distanceKm: number;
+  etaMinutes: number;
+}
+
+interface CachedRouteData {
+  routeCoords: { latitude: number; longitude: number }[];
+  trafficData: TrafficData;
+  feeData: FeeData;
+}
+
 export default function MapScreen() {
   const mapRef = useRef<MapView>(null);
+  const userLocationRef = useRef<{ latitude: number; longitude: number } | null>(null);
+  const locationWatchRef = useRef<Location.LocationSubscription | null>(null);
+  const lastFetchedBroadcastId = useRef<number | null>(null);
+  const cachedRouteData = useRef<CachedRouteData | null>(null);
+  const markerTapRef = useRef<Record<number, number>>({});
   const { showNotification } = useNotification();
 
   const [broadcasts, setBroadcasts] = useState<BroadcastRequest[]>([]);
@@ -64,8 +109,12 @@ export default function MapScreen() {
   const [accepting, setAccepting] = useState(false);
   const [tokensBalance, setTokensBalance] = useState<number | null>(null);
   const [currentTime, setCurrentTime] = useState(Date.now());
-  
-  // Map state
+  const [routeCoords, setRouteCoords] = useState<{ latitude: number; longitude: number }[]>([]);
+  const [routeLoading, setRouteLoading] = useState(false);
+  const [routeError, setRouteError] = useState<string | null>(null);
+  const [trafficData, setTrafficData] = useState<TrafficData | null>(null);
+  const [feeData, setFeeData] = useState<FeeData | null>(null);
+
   const [region, setRegion] = useState<{
     latitude: number;
     longitude: number;
@@ -80,24 +129,45 @@ export default function MapScreen() {
   useEffect(() => {
     initializeMap();
     fetchBroadcasts();
-    
-    // Poll for broadcasts every 8 seconds
+
     const interval = setInterval(() => {
       fetchBroadcasts(true);
     }, 8000);
-    
+
     fetchTokensBalance();
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      if (locationWatchRef.current) {
+        locationWatchRef.current.remove();
+        locationWatchRef.current = null;
+      }
+    };
   }, []);
 
-  // Update current time every second for countdown timer
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(Date.now());
     }, 1000);
-    
+
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    userLocationRef.current = userLocation;
+  }, [userLocation]);
+
+  const setCurrentUserLocation = (location: { latitude: number; longitude: number }) => {
+    userLocationRef.current = location;
+    setUserLocation(location);
+  };
+
+  const waitForUserLocation = async (timeoutMs = 5000) => {
+    const start = Date.now();
+    while (!userLocationRef.current && Date.now() - start < timeoutMs) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    return userLocationRef.current;
+  };
 
   const fetchTokensBalance = async () => {
     try {
@@ -105,83 +175,370 @@ export default function MapScreen() {
       if (!res.ok) return;
       const data = await res.json();
       setTokensBalance(data.tokens_balance ?? 0);
-    } catch (e) {
+    } catch {
       // ignore
     }
+  };
+
+  const fallbackRegion = {
+    latitude: 14.5995,
+    longitude: 120.9842,
+    latitudeDelta: 0.0922,
+    longitudeDelta: 0.0421,
+  };
+
+  const setRegionFromCoords = (latitude: number, longitude: number) => {
+    setRegion({
+      latitude,
+      longitude,
+      latitudeDelta: 0.0922,
+      longitudeDelta: 0.0421,
+    });
+    setCurrentUserLocation({ latitude, longitude });
+  };
+
+  const getCurrentPositionWithTimeout = async (
+    accuracy: Location.Accuracy,
+    timeoutMs: number,
+    mayShowUserSettingsDialog?: boolean
+  ): Promise<Location.LocationObject | null> => {
+    const locationPromise = Location.getCurrentPositionAsync({
+      accuracy,
+      mayShowUserSettingsDialog,
+    });
+    const timeoutPromise = new Promise<null>((resolve) => {
+      setTimeout(() => resolve(null), timeoutMs);
+    });
+    return Promise.race([locationPromise, timeoutPromise]);
   };
 
   const initializeMap = async () => {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      
+
       if (status !== 'granted') {
-        // Use default Manila location
-        const fallbackRegion = {
-          latitude: 14.5995,
-          longitude: 120.9842,
-          latitudeDelta: 0.0922,
-          longitudeDelta: 0.0421,
-        };
         setRegion(fallbackRegion);
-        setUserLocation({
-          latitude: 14.5995,
-          longitude: 120.9842,
+        setCurrentUserLocation({
+          latitude: fallbackRegion.latitude,
+          longitude: fallbackRegion.longitude,
         });
         return;
       }
 
-      // Get current location with timeout
-      const locationPromise = Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
+      const lastKnown = await Location.getLastKnownPositionAsync({
+        requiredAccuracy: 150,
+        maxAge: 3 * 60 * 1000,
       });
 
-      const timeoutPromise = new Promise<null>((resolve) => {
-        setTimeout(() => resolve(null), 5000); // 5 second timeout
-      });
+      if (lastKnown?.coords) {
+        setRegionFromCoords(lastKnown.coords.latitude, lastKnown.coords.longitude);
+      }
 
-      const location = await Promise.race([locationPromise, timeoutPromise]);
+      let freshLocation: Location.LocationObject | null = null;
 
-      if (location) {
-        const currentRegion = {
-          latitude: location.coords.latitude,
-          longitude: location.coords.longitude,
-          latitudeDelta: 0.0922,
-          longitudeDelta: 0.0421,
-        };
-        setRegion(currentRegion);
-        setUserLocation({
-          latitude: location.coords.latitude,
-          longitude: location.coords.longitude,
-        });
-      } else {
-        // Timeout - use default location
-        console.log('Location fetch timeout, using default location');
-        const fallbackRegion = {
-          latitude: 14.5995,
-          longitude: 120.9842,
-          latitudeDelta: 0.0922,
-          longitudeDelta: 0.0421,
-        };
+      try {
+        freshLocation = await getCurrentPositionWithTimeout(Location.Accuracy.High, 25000, true);
+      } catch {
+        try {
+          freshLocation = await getCurrentPositionWithTimeout(Location.Accuracy.Balanced, 15000);
+        } catch {
+          freshLocation = null;
+        }
+      }
+
+      if (freshLocation?.coords) {
+        setRegionFromCoords(freshLocation.coords.latitude, freshLocation.coords.longitude);
+      } else if (!lastKnown?.coords) {
         setRegion(fallbackRegion);
-        setUserLocation({
-          latitude: 14.5995,
-          longitude: 120.9842,
+        setCurrentUserLocation({
+          latitude: fallbackRegion.latitude,
+          longitude: fallbackRegion.longitude,
         });
       }
-    } catch (error) {
-      console.error('Error getting location:', error);
-      // Use default Manila location
-      const fallbackRegion = {
-        latitude: 14.5995,
-        longitude: 120.9842,
-        latitudeDelta: 0.0922,
-        longitudeDelta: 0.0421,
-      };
+
+      if (locationWatchRef.current) {
+        locationWatchRef.current.remove();
+        locationWatchRef.current = null;
+      }
+
+      locationWatchRef.current = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.Balanced,
+          timeInterval: 8000,
+          distanceInterval: 10,
+          mayShowUserSettingsDialog: false,
+        },
+        (loc) => {
+          if (!loc?.coords) return;
+          setCurrentUserLocation({
+            latitude: loc.coords.latitude,
+            longitude: loc.coords.longitude,
+          });
+        }
+      );
+    } catch {
       setRegion(fallbackRegion);
-      setUserLocation({
-        latitude: 14.5995,
-        longitude: 120.9842,
+      setCurrentUserLocation({
+        latitude: fallbackRegion.latitude,
+        longitude: fallbackRegion.longitude,
       });
+    }
+  };
+
+  const getTrafficClass = (ratio: number) => {
+    if (ratio < 1.2) {
+      return { level: 'light' as const, emoji: '🟢', label: 'Light Traffic', surchargePercent: 0.0, color: '#34C759' };
+    }
+    if (ratio < 1.5) {
+      return { level: 'moderate' as const, emoji: '🟡', label: 'Moderate Traffic', surchargePercent: 0.1, color: '#FFD60A' };
+    }
+    if (ratio < 2.0) {
+      return { level: 'heavy' as const, emoji: '🟠', label: 'Heavy Traffic', surchargePercent: 0.2, color: '#FF9500' };
+    }
+    return { level: 'severe' as const, emoji: '🔴', label: 'Severe Traffic', surchargePercent: 0.3, color: '#FF3B30' };
+  };
+
+  const getTimeBasedTrafficFallback = (): TrafficData => {
+    const hour = new Date().getHours();
+
+    let fallbackLevel: 'light' | 'moderate' | 'severe' = 'moderate';
+    if (hour >= 0 && hour < 5) fallbackLevel = 'light';
+    else if (hour >= 5 && hour < 7) fallbackLevel = 'moderate';
+    else if (hour >= 7 && hour < 10) fallbackLevel = 'severe';
+    else if (hour >= 10 && hour < 17) fallbackLevel = 'moderate';
+    else if (hour >= 17 && hour < 21) fallbackLevel = 'severe';
+    else fallbackLevel = 'moderate';
+
+    const mapByLevel = {
+      light: { emoji: '🟢', label: 'Light Traffic', surchargePercent: 0.0, color: '#34C759' },
+      moderate: { emoji: '🟡', label: 'Moderate Traffic', surchargePercent: 0.1, color: '#FFD60A' },
+      severe: { emoji: '🔴', label: 'Severe Traffic', surchargePercent: 0.3, color: '#FF3B30' },
+    };
+
+    const info = mapByLevel[fallbackLevel];
+
+    return {
+      level: fallbackLevel,
+      emoji: info.emoji,
+      label: info.label,
+      surchargePercent: info.surchargePercent,
+      surchargeLabel: `${Math.round(info.surchargePercent * 100)}%`,
+      color: info.color,
+      currentSpeed: 0,
+      freeFlowSpeed: 0,
+      timeNote: '(estimated based on time of day)',
+    };
+  };
+
+  const fetchRoute = async (broadcast: BroadcastRequest): Promise<RouteResult> => {
+    const currentUserLocation = userLocationRef.current;
+    if (!currentUserLocation) throw new Error('User location unavailable');
+    if (!ORS_KEY) throw new Error('OpenRouteService key is missing');
+
+    const url = `https://api.openrouteservice.org/v2/directions/driving-car?api_key=${encodeURIComponent(ORS_KEY)}&start=${currentUserLocation.longitude},${currentUserLocation.latitude}&end=${broadcast.longitude},${broadcast.latitude}`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch route');
+    }
+
+    const data = await response.json() as any;
+    const coordinates = data?.features?.[0]?.geometry?.coordinates;
+    const segment = data?.features?.[0]?.properties?.segments?.[0];
+
+    if (!Array.isArray(coordinates) || !segment) {
+      throw new Error('Invalid route response');
+    }
+
+    const parsedCoords = coordinates
+      .filter((coord: any) => Array.isArray(coord) && coord.length >= 2)
+      .map((coord: number[]) => ({ latitude: coord[1], longitude: coord[0] }));
+
+    const distanceKm = Number(segment?.distance || 0) / 1000;
+    const etaMinutes = Math.round(Number(segment?.duration || 0) / 60);
+
+    setRouteCoords(parsedCoords);
+
+    return {
+      distanceKm,
+      etaMinutes,
+      coords: parsedCoords,
+    };
+  };
+
+  const fetchTraffic = async (broadcast: BroadcastRequest): Promise<TrafficData> => {
+    try {
+      if (!TOMTOM_KEY) {
+        throw new Error('TomTom key is missing');
+      }
+
+      const url = `https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json?point=${broadcast.latitude},${broadcast.longitude}&key=${encodeURIComponent(TOMTOM_KEY)}`;
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch traffic');
+      }
+
+      const data = await response.json() as any;
+      const flow = data?.flowSegmentData;
+      const currentSpeed = Number(flow?.currentSpeed || 0);
+      const freeFlowSpeed = Number(flow?.freeFlowSpeed || 0);
+
+      if (currentSpeed <= 0 || freeFlowSpeed <= 0) {
+        throw new Error('Invalid traffic response');
+      }
+
+      const ratio = freeFlowSpeed / currentSpeed;
+      const classified = getTrafficClass(ratio);
+
+      return {
+        level: classified.level,
+        emoji: classified.emoji,
+        label: classified.label,
+        surchargePercent: classified.surchargePercent,
+        surchargeLabel: `${Math.round(classified.surchargePercent * 100)}%`,
+        color: classified.color,
+        currentSpeed,
+        freeFlowSpeed,
+      };
+    } catch {
+      return getTimeBasedTrafficFallback();
+    }
+  };
+
+  const calculateFee = (distanceKm: number, traffic: TrafficData, broadcast: BroadcastRequest) => {
+    const BASE_FEE = 50;
+    const RATE_PER_KM = 15;
+    const distanceFee = distanceKm * RATE_PER_KM;
+    const surcharge = distanceFee * traffic.surchargePercent;
+    const convFee = BASE_FEE + distanceFee + surcharge;
+    const serviceTotal = broadcast.services.reduce((sum, s) => sum + (s.minimum_price || 0), 0);
+    const addOnsTotal = broadcast.add_ons?.reduce((sum, a) => sum + (a.price || 0), 0) || 0;
+    const overallIncome = serviceTotal + addOnsTotal + convFee;
+    const minFee = BASE_FEE + distanceFee;
+    const maxFee = BASE_FEE + distanceFee + distanceFee * 0.3;
+
+    return {
+      baseFee: BASE_FEE,
+      distanceFee,
+      surchargeAmount: surcharge,
+      convenienceFee: convFee,
+      serviceTotal,
+      addOnsTotal,
+      overallIncome,
+      minFee,
+      maxFee,
+      isEstimate: true,
+    };
+  };
+
+  const fetchRouteAndTraffic = async (broadcast: BroadcastRequest) => {
+    const currentUserLocation = await waitForUserLocation();
+
+    if (!currentUserLocation) {
+      setRouteError('Location is not available yet.');
+      return;
+    }
+
+    if (lastFetchedBroadcastId.current === broadcast.id && cachedRouteData.current) {
+      setRouteCoords(cachedRouteData.current.routeCoords);
+      setTrafficData(cachedRouteData.current.trafficData);
+      setFeeData(cachedRouteData.current.feeData);
+      setRouteError(null);
+
+      if (mapRef.current) {
+        mapRef.current.fitToCoordinates(
+          [
+            { latitude: currentUserLocation.latitude, longitude: currentUserLocation.longitude },
+            { latitude: broadcast.latitude, longitude: broadcast.longitude },
+          ],
+          {
+            edgePadding: { top: 80, right: 40, bottom: 400, left: 40 },
+            animated: true,
+          }
+        );
+      }
+      return;
+    }
+
+    setRouteLoading(true);
+    setRouteError(null);
+
+    try {
+      const [routeResult, trafficResult] = await Promise.all([
+        fetchRoute(broadcast),
+        fetchTraffic(broadcast),
+      ]);
+
+      const feeResult = calculateFee(routeResult.distanceKm, trafficResult, broadcast);
+      const enrichedFee: FeeData = {
+        ...feeResult,
+        distanceKm: routeResult.distanceKm,
+        etaMinutes: routeResult.etaMinutes,
+      };
+
+      setTrafficData(trafficResult);
+      setFeeData(enrichedFee);
+
+      cachedRouteData.current = {
+        routeCoords: routeResult.coords,
+        trafficData: trafficResult,
+        feeData: enrichedFee,
+      };
+      lastFetchedBroadcastId.current = broadcast.id;
+
+      if (mapRef.current) {
+        mapRef.current.fitToCoordinates(
+          [
+            { latitude: currentUserLocation.latitude, longitude: currentUserLocation.longitude },
+            { latitude: broadcast.latitude, longitude: broadcast.longitude },
+          ],
+          {
+            edgePadding: { top: 80, right: 40, bottom: 400, left: 40 },
+            animated: true,
+          }
+        );
+      }
+    } catch {
+      const fallbackTraffic = getTimeBasedTrafficFallback();
+      const fallbackDistanceKm = getDistanceKm(currentUserLocation, {
+        latitude: broadcast.latitude,
+        longitude: broadcast.longitude,
+      });
+      const fallbackEtaMinutes = Math.max(1, Math.round((fallbackDistanceKm / 25) * 60));
+      const fallbackCoords = [
+        {
+          latitude: currentUserLocation.latitude,
+          longitude: currentUserLocation.longitude,
+        },
+        {
+          latitude: broadcast.latitude,
+          longitude: broadcast.longitude,
+        },
+      ];
+      const fallbackFeeBase = calculateFee(fallbackDistanceKm, fallbackTraffic, broadcast);
+      const fallbackFee: FeeData = {
+        ...fallbackFeeBase,
+        distanceKm: fallbackDistanceKm,
+        etaMinutes: fallbackEtaMinutes,
+      };
+
+      setRouteCoords(fallbackCoords);
+      setTrafficData(fallbackTraffic);
+      setFeeData(fallbackFee);
+      setRouteError(null);
+
+      if (mapRef.current) {
+        mapRef.current.fitToCoordinates(
+          fallbackCoords,
+          {
+            edgePadding: { top: 80, right: 40, bottom: 400, left: 40 },
+            animated: true,
+          }
+        );
+      }
+    } finally {
+      setRouteLoading(false);
     }
   };
 
@@ -205,49 +562,63 @@ export default function MapScreen() {
       setBroadcasts(data.broadcasts || []);
     } catch (err: any) {
       if (!silent) setError(err.message);
-      console.error('Error fetching broadcasts:', err);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   };
 
-  const handleBroadcastPress = (broadcast: BroadcastRequest) => {
+  const handleBroadcastPress = async (broadcast: BroadcastRequest) => {
     setSelectedBroadcast(broadcast);
+    await fetchRouteAndTraffic(broadcast);
     setModalVisible(true);
-    fetchTokensBalance();
+    void fetchTokensBalance();
   };
 
-  // Calculate distance and estimated earnings for a broadcast
-  const calculateBroadcastEarnings = (broadcast: BroadcastRequest) => {
-    if (!userLocation) return null;
+  const handleCardPressShowRoute = async (broadcast: BroadcastRequest) => {
+    setSelectedBroadcast(broadcast);
+    await fetchRouteAndTraffic(broadcast);
+  };
 
-    const distanceKm = getDistanceKm(
-      userLocation,
-      { latitude: broadcast.latitude, longitude: broadcast.longitude }
-    );
+  const handleBroadcastMarkerPress = (broadcast: BroadcastRequest) => {
+    const now = Date.now();
+    const lastTap = markerTapRef.current[broadcast.id] ?? 0;
+    markerTapRef.current[broadcast.id] = now;
 
-    const serviceTotal = broadcast.services.reduce((sum, s) => sum + (s.minimum_price || 0), 0);
-    const addOnsTotal = broadcast.add_ons?.reduce((sum, a) => sum + (a.price || 0), 0) || 0;
-    const basePrice = serviceTotal + addOnsTotal;
+    if (now - lastTap < 350) {
+      void handleBroadcastPress(broadcast);
+      return;
+    }
 
-    const totalPrice = getEstimatedPrice(distanceKm, basePrice, 10);
+    void handleCardPressShowRoute(broadcast);
+  };
 
-    return {
-      distanceKm,
-      basePrice,
-      distanceCharge: totalPrice - basePrice,
-      totalPrice
-    };
+  const closeBroadcastModal = () => {
+    setModalVisible(false);
+    setRouteCoords([]);
+    setRouteLoading(false);
+    setRouteError(null);
+    setTrafficData(null);
+    setFeeData(null);
+
+    if (userLocation && mapRef.current) {
+      mapRef.current.animateToRegion(
+        {
+          latitude: userLocation.latitude,
+          longitude: userLocation.longitude,
+          latitudeDelta: 0.0922,
+          longitudeDelta: 0.0421,
+        },
+        1000
+      );
+    }
   };
 
   const handleAcceptBroadcast = async () => {
     if (!selectedBroadcast || !userLocation) return;
-    
+
     setAccepting(true);
     try {
-      const earnings = calculateBroadcastEarnings(selectedBroadcast);
-      
       const response = await fetch(`${API_URL}/bookings/broadcasts/${selectedBroadcast.id}/accept/`, {
         method: 'POST',
         credentials: 'include',
@@ -255,8 +626,11 @@ export default function MapScreen() {
         body: JSON.stringify({
           mechanic_latitude: userLocation.latitude,
           mechanic_longitude: userLocation.longitude,
-          distance_km: earnings?.distanceKm,
-          estimated_price: earnings?.totalPrice
+          distance_km: feeData?.distanceKm,
+          estimated_price: feeData?.overallIncome,
+          convenience_fee: feeData?.convenienceFee,
+          traffic_level: trafficData?.level ?? 'unknown',
+          estimated_eta_minutes: feeData?.etaMinutes,
         }),
       });
 
@@ -264,18 +638,17 @@ export default function MapScreen() {
 
       if (response.ok) {
         showNotification({ type: 'success', title: 'Accepted!', message: 'You have accepted the broadcast request. Check your bookings.' });
-        setModalVisible(false);
+        closeBroadcastModal();
         fetchBroadcasts(true);
         fetchTokensBalance();
-        try { eventBus.emit('walletChanged'); } catch(e){}
+        try { eventBus.emit('walletChanged'); } catch {}
       } else {
         showNotification({ type: 'warning', title: 'Already Taken', message: data.error || 'This broadcast is no longer available. Another mechanic was faster.' });
-        setModalVisible(false);
+        closeBroadcastModal();
         fetchBroadcasts(true);
       }
-    } catch (err: any) {
+    } catch {
       showNotification({ type: 'error', message: 'Failed to accept broadcast request' });
-      console.error('Error accepting broadcast:', err);
     } finally {
       setAccepting(false);
     }
@@ -284,20 +657,22 @@ export default function MapScreen() {
   const getTimeRemaining = (expiresAt: string): string => {
     const expiry = new Date(expiresAt).getTime();
     const diff = expiry - currentTime;
-    
+
     if (diff <= 0) return 'Expired';
-    
+
     const minutes = Math.floor(diff / 60000);
     const seconds = Math.floor((diff % 60000) / 1000);
-    
+
     return `${minutes}m ${seconds}s`;
   };
 
   const filteredBroadcasts = broadcasts;
+  const routeDistanceDisplay = feeData?.distanceKm?.toFixed(2) ?? '--';
+  const routeEtaDisplay = feeData?.etaMinutes ?? '--';
+  const sx = styles as any;
 
   return (
     <ThemedView style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
         <ThemedText style={styles.headerTitle}>Nearby Jobs</ThemedText>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -308,43 +683,33 @@ export default function MapScreen() {
         </View>
       </View>
 
-
-      {/* Map View */}
       <View style={styles.mapContainer}>
         {region ? (
           <MapView
             ref={mapRef}
             style={styles.map}
-            provider={PROVIDER_GOOGLE}
             initialRegion={region}
             showsUserLocation={true}
             showsMyLocationButton={true}
-            customMapStyle={[
-              {
-                elementType: 'geometry',
-                stylers: [{ color: '#1A1C1E' }],
-              },
-              {
-                elementType: 'labels.text.fill',
-                stylers: [{ color: '#8E8E93' }],
-              },
-              {
-                elementType: 'labels.text.stroke',
-                stylers: [{ color: '#1A1C1E' }],
-              },
-              {
-                featureType: 'road',
-                elementType: 'geometry',
-                stylers: [{ color: '#2A2C2E' }],
-              },
-              {
-                featureType: 'water',
-                elementType: 'geometry',
-                stylers: [{ color: '#111214' }],
-              },
-            ]}
           >
-            {/* Broadcast Request Markers */}
+            <UrlTile
+              urlTemplate={`https://api.tomtom.com/map/1/tile/basic/main/{z}/{x}/{y}.png?key=${TOMTOM_KEY}`}
+              maximumZ={22}
+              flipY={false}
+              zIndex={-1}
+            />
+
+            {routeCoords.length > 0 && (
+              <Polyline
+                coordinates={routeCoords}
+                strokeColor="#FF8C00"
+                strokeWidth={5}
+                geodesic
+                lineCap="round"
+                lineJoin="round"
+              />
+            )}
+
             {filteredBroadcasts.map((broadcast) => (
               <Marker
                 key={`broadcast-${broadcast.id}`}
@@ -355,9 +720,19 @@ export default function MapScreen() {
                 title="Broadcast Request"
                 description={broadcast.description}
                 pinColor="#34C759"
-                onPress={() => handleBroadcastPress(broadcast)}
+                onPress={() => handleBroadcastMarkerPress(broadcast)}
               />
             ))}
+
+            {selectedBroadcast && modalVisible && (
+              <Marker
+                coordinate={{
+                  latitude: selectedBroadcast.latitude,
+                  longitude: selectedBroadcast.longitude,
+                }}
+                pinColor="#FF3B30"
+              />
+            )}
           </MapView>
         ) : (
           <View style={styles.mapLoadingContainer}>
@@ -365,8 +740,7 @@ export default function MapScreen() {
             <ThemedText style={styles.mapLoadingText}>Loading map...</ThemedText>
           </View>
         )}
-        
-        {/* Map Stats Overlay */}
+
         <View style={styles.mapOverlay}>
           <View style={styles.mapStats}>
             <FontAwesome name="map-marker" size={16} color="#FF8C00" />
@@ -383,8 +757,7 @@ export default function MapScreen() {
             </View>
           )}
         </View>
-        
-        {/* My Location Button */}
+
         <TouchableOpacity
           style={styles.myLocationButton}
           onPress={() => {
@@ -402,11 +775,10 @@ export default function MapScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Job List */}
       <View style={styles.jobListContainer}>
         <ThemedText style={styles.jobListTitle}>Available Jobs</ThemedText>
-        <ScrollView 
-          style={styles.jobList} 
+        <ScrollView
+          style={styles.jobList}
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF8C00" />
@@ -430,12 +802,14 @@ export default function MapScreen() {
             </View>
           ) : (
             <>
-              {/* Render Broadcast Requests */}
               {filteredBroadcasts.map((broadcast) => (
-                <TouchableOpacity 
-                  key={`broadcast-${broadcast.id}`} 
+                <TouchableOpacity
+                  key={`broadcast-${broadcast.id}`}
                   style={[styles.jobCard, styles.broadcastCard]}
-                  onPress={() => handleBroadcastPress(broadcast)}
+                  activeOpacity={0.9}
+                  onPress={() => {
+                    void handleCardPressShowRoute(broadcast);
+                  }}
                 >
                   <View style={styles.jobCardHeader}>
                     <View style={[styles.statusDot, { backgroundColor: '#34C759' }]} />
@@ -452,7 +826,7 @@ export default function MapScreen() {
                   </ThemedText>
 
                   <View style={styles.servicesContainer}>
-                    {broadcast.services.slice(0, 2).map((service, idx) => (
+                    {broadcast.services.slice(0, 2).map((service) => (
                       <View key={service.id} style={styles.serviceTag}>
                         <ThemedText style={styles.serviceTagText}>{service.name}</ThemedText>
                       </View>
@@ -473,7 +847,7 @@ export default function MapScreen() {
                         {getTimeRemaining(broadcast.expires_at)}
                       </ThemedText>
                     </View>
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       style={styles.acceptButton}
                       onPress={() => handleBroadcastPress(broadcast)}
                     >
@@ -483,24 +857,22 @@ export default function MapScreen() {
                   </View>
                 </TouchableOpacity>
               ))}
-
-          </>
+            </>
           )}
         </ScrollView>
       </View>
 
-      {/* Broadcast Detail Modal */}
       <Modal
         animationType="slide"
         transparent={true}
         visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}
+        onRequestClose={closeBroadcastModal}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <ThemedText style={styles.modalTitle}>Broadcast Request Details</ThemedText>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
+              <TouchableOpacity onPress={closeBroadcastModal}>
                 <FontAwesome name="times" size={24} color="#8E8E93" />
               </TouchableOpacity>
             </View>
@@ -508,7 +880,6 @@ export default function MapScreen() {
             <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
               {selectedBroadcast && (
                 <>
-                  {/* Timer */}
                   <View style={styles.modalTimer}>
                     <FontAwesome name="clock-o" size={20} color="#FF8C00" />
                     <ThemedText style={styles.modalTimerText}>
@@ -516,27 +887,106 @@ export default function MapScreen() {
                     </ThemedText>
                   </View>
 
-                  {/* Concern Picture */}
                   {selectedBroadcast.concern_picture && (
                     <View style={styles.modalSection}>
                       <ThemedText style={styles.modalSectionTitle}>Concern Photo</ThemedText>
-                      <Image 
-                        source={{ uri: getImageUrl(selectedBroadcast.concern_picture) || '' }} 
+                      <Image
+                        source={{ uri: getImageUrl(selectedBroadcast.concern_picture) || '' }}
                         style={styles.modalConcernImage}
                         resizeMode="cover"
-                        onError={(error) => console.error('Image load error:', error.nativeEvent.error)}
-                        onLoad={() => console.log('Image loaded successfully:', selectedBroadcast.concern_picture)}
                       />
                     </View>
                   )}
 
-                  {/* Description */}
                   <View style={styles.modalSection}>
                     <ThemedText style={styles.modalSectionTitle}>Description</ThemedText>
                     <ThemedText style={styles.modalText}>{selectedBroadcast.description}</ThemedText>
                   </View>
 
-                  {/* Services */}
+                  <View style={sx.modalCard}>
+                    <View style={sx.cardTitleRow}>
+                      <FontAwesome name="map-marker" size={14} color="#FF8C00" />
+                      <ThemedText style={sx.cardTitleText}>Route to Client</ThemedText>
+                    </View>
+                    {routeLoading ? (
+                      <View style={sx.routeLoadingWrap}>
+                        <ActivityIndicator color="#FF8C00" />
+                      </View>
+                    ) : (
+                      <>
+                        <ThemedText style={sx.cardPrimaryText}>
+                          Distance: {routeDistanceDisplay} km (via road)
+                        </ThemedText>
+                        <ThemedText style={sx.cardSecondaryText}>
+                          ETA: ~{routeEtaDisplay} mins
+                        </ThemedText>
+                        {routeError ? (
+                          <ThemedText style={sx.routeErrorText}>{routeError}</ThemedText>
+                        ) : null}
+                      </>
+                    )}
+                  </View>
+
+                  {trafficData && (
+                    <View style={sx.modalCard}>
+                      <View style={sx.cardTitleRow}>
+                        <FontAwesome name="road" size={14} color="#FF8C00" />
+                        <ThemedText style={sx.cardTitleText}>Current Traffic</ThemedText>
+                      </View>
+                      <ThemedText style={[sx.cardPrimaryText, { color: trafficData.color }]}>
+                        {trafficData.label}
+                      </ThemedText>
+                      <ThemedText style={sx.cardSecondaryText}>
+                        Current speed: {trafficData.currentSpeed} km/h
+                      </ThemedText>
+                      <ThemedText style={sx.cardSecondaryText}>
+                        Normal speed: {trafficData.freeFlowSpeed} km/h
+                      </ThemedText>
+                      <ThemedText style={sx.cardSecondaryText}>
+                        Surcharge: {trafficData.surchargeLabel}
+                      </ThemedText>
+                      {trafficData.timeNote ? (
+                        <ThemedText style={sx.trafficNoteText}>{trafficData.timeNote}</ThemedText>
+                      ) : null}
+                    </View>
+                  )}
+
+                  {feeData && (
+                    <View style={sx.modalCard}>
+                      <View style={sx.cardTitleRow}>
+                        <FontAwesome name="calculator" size={14} color="#FF8C00" />
+                        <ThemedText style={sx.cardTitleText}>Convenience Fee</ThemedText>
+                      </View>
+                      <View style={sx.cardRow}>
+                        <ThemedText style={sx.cardRowLabel}>Base Fee</ThemedText>
+                        <ThemedText style={sx.cardRowValue}>₱{feeData.baseFee.toFixed(2)}</ThemedText>
+                      </View>
+                      <View style={sx.cardRow}>
+                        <ThemedText style={sx.cardRowLabel}>Distance ({feeData.distanceKm.toFixed(2)}km)</ThemedText>
+                        <ThemedText style={sx.cardRowValue}>₱{feeData.distanceFee.toFixed(2)}</ThemedText>
+                      </View>
+                      <View style={sx.cardRow}>
+                        <ThemedText style={sx.cardRowLabel}>Traffic Surcharge</ThemedText>
+                        <ThemedText style={sx.cardRowValue}>₱{feeData.surchargeAmount.toFixed(2)}</ThemedText>
+                      </View>
+                      <View style={sx.cardDivider} />
+                      <View style={sx.cardRow}>
+                        <ThemedText style={sx.cardRowLabelBold}>Convenience Fee</ThemedText>
+                        <ThemedText style={sx.cardRowValueBold}>₱{feeData.convenienceFee.toFixed(2)}</ThemedText>
+                      </View>
+                      <ThemedText style={sx.rangeText}>
+                        Range: ₱{feeData.minFee.toFixed(2)} - ₱{feeData.maxFee.toFixed(2)}
+                      </ThemedText>
+                    </View>
+                  )}
+
+                  <View style={sx.disclaimerCard}>
+                    <FontAwesome name="info-circle" size={16} color="#FF8C00" />
+                    <ThemedText style={sx.disclaimerText}>
+                      Once you accept, distance is saved from your accept location. Traffic level and ETA shown here are estimated at acceptance and visible to the client.
+                    </ThemedText>
+                  </View>
+
                   <View style={styles.modalSection}>
                     <ThemedText style={styles.modalSectionTitle}>Services Requested</ThemedText>
                     {selectedBroadcast.services.map((service) => (
@@ -552,7 +1002,6 @@ export default function MapScreen() {
                     ))}
                   </View>
 
-                  {/* Add-ons */}
                   {selectedBroadcast.add_ons && selectedBroadcast.add_ons.length > 0 && (
                     <View style={styles.modalSection}>
                       <ThemedText style={styles.modalSectionTitle}>Add-ons</ThemedText>
@@ -570,75 +1019,53 @@ export default function MapScreen() {
                     </View>
                   )}
 
-                  {/* Price Breakdown */}
-                  <View style={styles.modalPriceBreakdown}>
-                    <View style={styles.modalPriceRow}>
-                      <ThemedText style={styles.modalPriceLabel}>Service Fees:</ThemedText>
-                      <ThemedText style={styles.modalPriceValue}>
-                        ₱{selectedBroadcast.services.reduce((sum, s) => sum + parseFloat(String(s.minimum_price || '0')), 0).toFixed(2)}
-                      </ThemedText>
-                    </View>
-                    {selectedBroadcast.add_ons && selectedBroadcast.add_ons.length > 0 && (
-                      <View style={styles.modalPriceRow}>
-                        <ThemedText style={styles.modalPriceLabel}>Add-ons:</ThemedText>
-                        <ThemedText style={styles.modalPriceValue}>
-                          ₱{(selectedBroadcast.add_ons?.reduce((sum, a) => sum + parseFloat(String(a.price || '0')), 0) || 0).toFixed(2)}
-                        </ThemedText>
+                  {feeData && (
+                    <View style={sx.incomeCard}>
+                      <View style={sx.cardTitleRow}>
+                        <FontAwesome name="money" size={14} color="#34C759" />
+                        <ThemedText style={sx.incomeTitleStyle}>Your Total Income</ThemedText>
                       </View>
+                      <View style={sx.cardRow}>
+                        <ThemedText style={sx.cardRowLabel}>Services Total</ThemedText>
+                        <ThemedText style={sx.cardRowValue}>₱{feeData.serviceTotal.toFixed(2)}</ThemedText>
+                      </View>
+                      <View style={sx.cardRow}>
+                        <ThemedText style={sx.cardRowLabel}>Add-ons Total</ThemedText>
+                        <ThemedText style={sx.cardRowValue}>₱{feeData.addOnsTotal.toFixed(2)}</ThemedText>
+                      </View>
+                      <View style={sx.cardRow}>
+                        <ThemedText style={sx.cardRowLabel}>Convenience Fee</ThemedText>
+                        <ThemedText style={sx.cardRowValue}>₱{feeData.convenienceFee.toFixed(2)}</ThemedText>
+                      </View>
+                      <View style={sx.cardDivider} />
+                      <View style={sx.cardRow}>
+                        <ThemedText style={sx.totalStyleLabel}>TOTAL</ThemedText>
+                        <ThemedText style={sx.totalStyleValue}>₱{feeData.overallIncome.toFixed(2)}</ThemedText>
+                      </View>
+                    </View>
+                  )}
+
+                  <View style={sx.tokensCard}>
+                    <View style={sx.cardTitleRow}>
+                      <FontAwesome name="ticket" size={14} color="#FF8C00" />
+                      <ThemedText style={sx.tokensTitle}>Tokens</ThemedText>
+                    </View>
+                    <View style={sx.tokensRow}>
+                      <ThemedText style={sx.tokensLabel}>Required</ThemedText>
+                      <ThemedText style={sx.tokensValue}>{selectedBroadcast?.required_tokens ?? '--'}</ThemedText>
+                    </View>
+                    <View style={sx.tokensRow}>
+                      <ThemedText style={sx.tokensLabel}>Balance</ThemedText>
+                      <ThemedText style={sx.tokensValue}>{tokensBalance ?? '--'}</ThemedText>
+                    </View>
+                    {selectedBroadcast && typeof selectedBroadcast.required_tokens === 'number' && tokensBalance !== null && tokensBalance < selectedBroadcast.required_tokens && (
+                      <ThemedText style={sx.tokensWarning}>Insufficient tokens. Please top up to accept this job.</ThemedText>
                     )}
-                    {(() => {
-                      const earnings = calculateBroadcastEarnings(selectedBroadcast);
-                      return earnings ? (
-                        <>
-                          <View style={styles.modalPriceRow}>
-                            <ThemedText style={styles.modalPriceLabel}>
-                              Distance ({earnings.distanceKm.toFixed(2)} km):
-                            </ThemedText>
-                            <ThemedText style={styles.modalPriceValue}>
-                              ₱{earnings.distanceCharge.toFixed(2)}
-                            </ThemedText>
-                          </View>
-                          <View style={styles.modalPriceNote}>
-                            <ThemedText style={styles.modalPriceNoteText}>
-                              ₱10/km from your current location
-                            </ThemedText>
-                          </View>
-                        </>
-                      ) : null;
-                    })()}
                   </View>
 
-                  {/* Total Estimate */}
-                  {(() => {
-                    const earnings = calculateBroadcastEarnings(selectedBroadcast);
-                    const fallbackTotal = (
-                      selectedBroadcast.services.reduce((sum, s) => sum + (s.minimum_price || 0), 0) +
-                      (selectedBroadcast.add_ons?.reduce((sum, a) => sum + (a.price || 0), 0) || 0)
-                    );
-                    return (
-                      <View style={styles.modalTotal}>
-                        <ThemedText style={styles.modalTotalLabel}>Total Estimated Earnings</ThemedText>
-                        <ThemedText style={styles.modalTotalValue}>
-                          ₱{(earnings?.totalPrice || fallbackTotal).toFixed(2)}
-                        </ThemedText>
-                      </View>
-                    );
-                  })()}
                 </>
               )}
             </ScrollView>
-
-            {/* Tokens requirement + Accept Button */}
-            <View style={styles.modalSection}>
-              <ThemedText style={styles.modalSectionTitle}>Tokens Required to Accept</ThemedText>
-              <ThemedText style={styles.modalText}>
-                {selectedBroadcast?.required_tokens ? `${selectedBroadcast.required_tokens} tokens` : 'Calculating...'}
-              </ThemedText>
-              <ThemedText style={[styles.modalText, { marginTop: 8 }]}>Your balance: {tokensBalance ?? '...'}</ThemedText>
-              {selectedBroadcast && typeof selectedBroadcast.required_tokens === 'number' && tokensBalance !== null && tokensBalance < selectedBroadcast.required_tokens && (
-                <ThemedText style={{ color: '#FF3B30', marginTop: 8 }}>You need to top up tokens to accept this job.</ThemedText>
-              )}
-            </View>
 
             <View style={styles.modalFooter}>
               <TouchableOpacity
@@ -661,7 +1088,7 @@ export default function MapScreen() {
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.modalCancelButton}
-                onPress={() => setModalVisible(false)}
+                onPress={closeBroadcastModal}
               >
                 <ThemedText style={styles.modalCancelText}>Cancel</ThemedText>
               </TouchableOpacity>

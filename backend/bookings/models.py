@@ -76,6 +76,29 @@ class Booking(models.Model):
     request = models.OneToOneField(Request, on_delete=models.CASCADE)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
     amount_fee = models.DecimalField(max_digits=10, decimal_places=2)
+    distance_km = models.DecimalField(
+        max_digits=6, decimal_places=2,
+        null=True, blank=True,
+        help_text="Road distance in km from ORS when mechanic accepted the booking"
+    )
+    convenience_fee = models.DecimalField(
+        max_digits=10, decimal_places=2,
+        null=True, blank=True,
+        help_text="Locked convenience fee when mechanic pressed On The Way"
+    )
+    eta_minutes = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text="Estimated travel time in minutes from ORS when fee was locked"
+    )
+    fee_locked_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Timestamp when mechanic pressed On The Way and fee was locked"
+    )
+    traffic_surcharge = models.DecimalField(
+    max_digits=10, decimal_places=2,
+    null=True, blank=True,
+    help_text="Real traffic surcharge added when mechanic went OTW"
+    )
     booked_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     completed_at = models.DateTimeField(null=True, blank=True)
@@ -304,7 +327,7 @@ class BroadcastOffer(models.Model):
         decimal_places=2, 
         null=True, 
         blank=True,
-        help_text="Distance from mechanic to service location in kilometers"
+        help_text="Distance from mechanic to service location in kilometers when accepted"
     )
     estimated_price = models.DecimalField(
         max_digits=10, 
@@ -313,7 +336,20 @@ class BroadcastOffer(models.Model):
         blank=True,
         help_text="Estimated total price: service minimum prices + distance charge (₱10/km, min 5km)"
     )
-    
+    convenience_fee = models.DecimalField(
+        max_digits=10, decimal_places=2,
+        null=True, blank=True,
+        help_text="Estimated convenience fee (base + distance + traffic surcharge)"
+    )
+    traffic_level = models.CharField(
+        max_length=20,
+        null=True, blank=True,
+        help_text="Traffic level when mechanic viewed: light/moderate/heavy/severe"
+    )
+    estimated_eta_minutes = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text="Estimated travel time in minutes from ORS when mechanic viewed"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     responded_at = models.DateTimeField(null=True, blank=True)
 
@@ -349,3 +385,38 @@ class RequestAssignment(models.Model):
 
     def __str__(self):
         return f"Assignment: {self.mechanic} -> Request {self.request_id} ({self.role})"
+class MechanicLocation(models.Model):
+    """
+    Stores live mechanic GPS location
+    while booking status is on_the_way.
+    Updated every 5 seconds from mechanic phone.
+    Uses OneToOne so only ONE location record
+    exists per booking at any time.
+    Automatically overwritten on each update
+    so database doesn't grow infinitely.
+    """
+    booking = models.OneToOneField(
+        Booking,
+        on_delete=models.CASCADE,
+        related_name='mechanic_location'
+    )
+    latitude = models.DecimalField(
+        max_digits=9,
+        decimal_places=6,
+        help_text="Mechanic current latitude"
+    )
+    longitude = models.DecimalField(
+        max_digits=9,
+        decimal_places=6,
+        help_text="Mechanic current longitude"
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        help_text="Last time location was updated"
+    )
+
+    class Meta:
+        db_table = 'bookings_mechaniclocation'
+
+    def __str__(self):
+        return f"Location for Booking {self.booking_id} — ({self.latitude}, {self.longitude})"

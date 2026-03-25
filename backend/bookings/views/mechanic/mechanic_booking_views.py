@@ -2,12 +2,15 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
+from django.conf import settings
 from django.utils import timezone
 from datetime import timedelta
 from django.db.models import Prefetch, Sum, Q
 from django.db import transaction
+from decimal import Decimal
 import logging
 import traceback
+import requests
 from ...models import (
     Booking,
     Request,
@@ -33,6 +36,235 @@ import json
 
 EMERGENCY_REQUEST_TTL_MINUTES = 5
 
+ORS_API_KEY = getattr(settings, 'EXPO_PUBLIC_ORS_API_KEY', '')
+TOMTOM_API_KEY = getattr(settings, 'EXPO_PUBLIC_TOMTOM_API_KEY', '')
+BASE_FEE = Decimal('50')
+RATE_PER_KM = Decimal('15')
+
+
+def _to_float(value):
+    if value is None or value == '':
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _get_traffic_from_tomtom(latitude: float, longitude: float):
+    if not TOMTOM_API_KEY:
+        return None
+
+    url = (
+        "https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json"
+        f"?point={latitude},{longitude}&key={TOMTOM_API_KEY}"
+    )
+    response = requests.get(url, timeout=12)
+    if not response.ok:
+        return None
+
+    payload = response.json() or {}
+    flow = payload.get('flowSegmentData') or {}
+    current_speed = float(flow.get('currentSpeed') or 0)
+    free_flow_speed = float(flow.get('freeFlowSpeed') or 0)
+    if current_speed <= 0 or free_flow_speed <= 0:
+        return None
+
+    ratio = free_flow_speed / current_speed
+    if ratio < 1.2:
+        return {'traffic_level': 'light', 'surcharge_percent': Decimal('0.00')}
+    if ratio < 1.5:
+        return {'traffic_level': 'moderate', 'surcharge_percent': Decimal('0.10')}
+    if ratio < 2.0:
+        return {'traffic_level': 'heavy', 'surcharge_percent': Decimal('0.20')}
+    return {'traffic_level': 'severe', 'surcharge_percent': Decimal('0.30')}
+
+
+def _traffic_level_to_surcharge_percent(level: str):
+    level_map = {
+        'light': Decimal('0.00'),
+        'moderate': Decimal('0.10'),
+        'heavy': Decimal('0.20'),
+        'severe': Decimal('0.30'),
+    }
+    return level_map.get((level or '').lower(), Decimal('0.10'))
+
+
+def _get_realtime_traffic_snapshot(mechanic_lat, mechanic_lng, destination_lat, destination_lng):
+    """
+    Try multiple nearby points for TomTom flow data to improve success rate.
+    Some coordinates can return no segment; midpoint/start/end probes are more reliable.
+    """
+    candidates = []
+    if mechanic_lat is not None and mechanic_lng is not None and destination_lat is not None and destination_lng is not None:
+        mid_lat = (mechanic_lat + destination_lat) / 2.0
+        mid_lng = (mechanic_lng + destination_lng) / 2.0
+        candidates.append((mid_lat, mid_lng))
+    if mechanic_lat is not None and mechanic_lng is not None:
+        candidates.append((mechanic_lat, mechanic_lng))
+    if destination_lat is not None and destination_lng is not None:
+        candidates.append((destination_lat, destination_lng))
+
+    for lat, lng in candidates:
+        try:
+            snapshot = _get_traffic_from_tomtom(lat, lng)
+            if snapshot:
+                return snapshot
+        except Exception:
+            continue
+    return None
+
+
+def _get_route_from_ors(start_lng: float, start_lat: float, end_lng: float, end_lat: float):
+    if not ORS_API_KEY:
+        return None
+
+    url = (
+        "https://api.openrouteservice.org/v2/directions/driving-car"
+        f"?api_key={ORS_API_KEY}&start={start_lng},{start_lat}&end={end_lng},{end_lat}"
+    )
+    response = requests.get(url, timeout=15)
+    if not response.ok:
+        return None
+
+    payload = response.json() or {}
+    feature = (payload.get('features') or [{}])[0]
+    segment = ((feature.get('properties') or {}).get('segments') or [{}])[0]
+    distance_m = float(segment.get('distance') or 0)
+    duration_s = float(segment.get('duration') or 0)
+    if distance_m <= 0 or duration_s <= 0:
+        return None
+
+    return {
+        'distance_km': Decimal(str(distance_m / 1000)).quantize(Decimal('0.01')),
+        'eta_minutes': max(1, int(round(duration_s / 60))),
+    }
+
+
+def _get_booking_destination_coordinates(booking):
+    destination_lat = None
+    destination_lng = None
+
+    service_location = getattr(booking.request, 'service_location', None)
+    if service_location is not None:
+        try:
+            if service_location.latitude is not None and service_location.longitude is not None:
+                destination_lat = float(service_location.latitude)
+                destination_lng = float(service_location.longitude)
+        except (TypeError, ValueError):
+            destination_lat = None
+            destination_lng = None
+
+    if (destination_lat is None or destination_lng is None) and hasattr(booking.request, 'broadcast_request'):
+        br = booking.request.broadcast_request
+        try:
+            destination_lat = float(br.latitude)
+            destination_lng = float(br.longitude)
+        except (TypeError, ValueError):
+            destination_lat = None
+            destination_lng = None
+
+    return destination_lat, destination_lng
+
+
+def _get_accepted_offer_for_booking(booking):
+    if not hasattr(booking.request, 'broadcast_request'):
+        return None
+
+    from ...models import BroadcastOffer
+
+    return BroadcastOffer.objects.filter(
+        broadcast_request=booking.request.broadcast_request,
+        status=BroadcastOffer.Status.ACCEPTED,
+    ).order_by('-responded_at', '-id').first()
+
+
+def _refresh_on_the_way_metrics(booking, mechanic_lat=None, mechanic_lng=None):
+    accepted_offer = _get_accepted_offer_for_booking(booking)
+    destination_lat, destination_lng = _get_booking_destination_coordinates(booking)
+
+    # Reuse latest known mechanic coordinates when request payload is missing.
+    if (mechanic_lat is None or mechanic_lng is None) and accepted_offer:
+        try:
+            if mechanic_lat is None and accepted_offer.mechanic_latitude is not None:
+                mechanic_lat = float(accepted_offer.mechanic_latitude)
+            if mechanic_lng is None and accepted_offer.mechanic_longitude is not None:
+                mechanic_lng = float(accepted_offer.mechanic_longitude)
+        except (TypeError, ValueError):
+            mechanic_lat = mechanic_lat if mechanic_lat is not None else None
+            mechanic_lng = mechanic_lng if mechanic_lng is not None else None
+
+    route_data = None
+    if (
+        mechanic_lat is not None and mechanic_lng is not None and
+        destination_lat is not None and destination_lng is not None
+    ):
+        try:
+            route_data = _get_route_from_ors(mechanic_lng, mechanic_lat, destination_lng, destination_lat)
+        except Exception:
+            route_data = None
+
+    distance_km = route_data['distance_km'] if route_data else None
+    effective_distance_km = distance_km if distance_km is not None else booking.distance_km
+    eta_minutes = route_data['eta_minutes'] if route_data else None
+
+    traffic_snapshot = _get_realtime_traffic_snapshot(
+        mechanic_lat,
+        mechanic_lng,
+        destination_lat,
+        destination_lng,
+    )
+
+    traffic_level = (traffic_snapshot or {}).get('traffic_level')
+    if not traffic_level:
+        traffic_level = 'moderate'
+
+    surcharge_percent = (traffic_snapshot or {}).get('surcharge_percent')
+    if surcharge_percent is None:
+        surcharge_percent = _traffic_level_to_surcharge_percent(traffic_level)
+
+    convenience_fee = None
+    traffic_surcharge = None
+    if effective_distance_km is not None:
+        distance_fee = (effective_distance_km * RATE_PER_KM).quantize(Decimal('0.01'))
+        traffic_surcharge = (distance_fee * surcharge_percent).quantize(Decimal('0.01'))
+        convenience_fee = (BASE_FEE + distance_fee + traffic_surcharge).quantize(Decimal('0.01'))
+
+    booking.status = Booking.Status.ON_THE_WAY
+    booking.distance_km = distance_km if distance_km is not None else booking.distance_km
+    booking.eta_minutes = eta_minutes if eta_minutes is not None else booking.eta_minutes
+    booking.convenience_fee = convenience_fee if convenience_fee is not None else booking.convenience_fee
+    booking.traffic_surcharge = traffic_surcharge if traffic_surcharge is not None else booking.traffic_surcharge
+    booking.fee_locked_at = timezone.now()
+    booking.save(update_fields=[
+        "status",
+        "distance_km",
+        "eta_minutes",
+        "convenience_fee",
+        "traffic_surcharge",
+        "fee_locked_at",
+    ])
+
+    if accepted_offer:
+        if mechanic_lat is not None:
+            accepted_offer.mechanic_latitude = Decimal(str(mechanic_lat)).quantize(Decimal('0.000001'))
+        if mechanic_lng is not None:
+            accepted_offer.mechanic_longitude = Decimal(str(mechanic_lng)).quantize(Decimal('0.000001'))
+        if distance_km is not None:
+            accepted_offer.distance_km = distance_km
+        if convenience_fee is not None:
+            accepted_offer.convenience_fee = convenience_fee
+        accepted_offer.traffic_level = traffic_level
+        if eta_minutes is not None:
+            accepted_offer.estimated_eta_minutes = eta_minutes
+        accepted_offer.responded_at = timezone.now()
+        accepted_offer.save()
+
+    return {
+        "traffic_level": traffic_level,
+        "accepted_offer": accepted_offer,
+    }
+
 
 
 # (All imports are already at the top of the file. No need to repeat here.)
@@ -53,15 +285,17 @@ def mechanic_start_travel(request, booking_id):
     except Booking.DoesNotExist:
         return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
 
-    # Allow idempotent start: if already on_the_way, return success; otherwise require ACCEPTED
+    # Allow refresh when already on_the_way: recompute metrics and relock fee values.
     if booking.status not in [Booking.Status.ACCEPTED, Booking.Status.ON_THE_WAY]:
         return Response({"error": "Booking must be in 'accepted' or 'on_the_way' status to start travel."}, status=status.HTTP_400_BAD_REQUEST)
 
-    if booking.status == Booking.Status.ON_THE_WAY:
-        return Response({"message": "Travel already started.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
+    previous_status = booking.status
 
-    booking.status = Booking.Status.ON_THE_WAY
-    booking.save(update_fields=["status"])
+    mechanic_lat = _to_float(request.data.get('mechanic_latitude'))
+    mechanic_lng = _to_float(request.data.get('mechanic_longitude'))
+
+    refresh_result = _refresh_on_the_way_metrics(booking, mechanic_lat, mechanic_lng)
+    traffic_level = refresh_result["traffic_level"]
 
     notify_booking_parties(
         account.id,
@@ -71,7 +305,20 @@ def mechanic_start_travel(request, booking_id):
         "Mechanic is now on the way",
     )
 
-    return Response({"message": "Travel started.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
+    return Response(
+        {
+            "message": "Travel refreshed. Real-time fee and ETA locked." if previous_status == Booking.Status.ON_THE_WAY else "Travel started. Real-time fee and ETA locked.",
+            "booking_id": booking.id,
+            "status": booking.status,
+            "distance_km": float(booking.distance_km) if booking.distance_km is not None else None,
+            "estimated_eta_minutes": int(booking.eta_minutes) if booking.eta_minutes is not None else None,
+            "convenience_fee": float(booking.convenience_fee) if booking.convenience_fee is not None else None,
+            "traffic_surcharge": float(booking.traffic_surcharge) if booking.traffic_surcharge is not None else None,
+            "traffic_level": traffic_level,
+            "fee_locked_at": booking.fee_locked_at.isoformat() if booking.fee_locked_at else None,
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 @api_view(["POST"])
@@ -171,8 +418,9 @@ def mechanic_cancel_job(request, booking_id):
     if booking.status != Booking.Status.ACTIVE:
         return Response({"error": "Booking must be in 'active' status to cancel job."}, status=status.HTTP_400_BAD_REQUEST)
 
-    booking.status = Booking.Status.ON_THE_WAY
-    booking.save(update_fields=["status"])
+    mechanic_lat = _to_float(request.data.get('mechanic_latitude'))
+    mechanic_lng = _to_float(request.data.get('mechanic_longitude'))
+    refresh_result = _refresh_on_the_way_metrics(booking, mechanic_lat, mechanic_lng)
 
     notify_booking_parties(
         account.id,
@@ -182,7 +430,20 @@ def mechanic_cancel_job(request, booking_id):
         "Job was cancelled and booking moved back to on_the_way",
     )
 
-    return Response({"message": "Job cancelled, status reverted to on_the_way.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
+    return Response(
+        {
+            "message": "Job cancelled, status reverted to on_the_way.",
+            "booking_id": booking.id,
+            "status": booking.status,
+            "distance_km": float(booking.distance_km) if booking.distance_km is not None else None,
+            "estimated_eta_minutes": int(booking.eta_minutes) if booking.eta_minutes is not None else None,
+            "convenience_fee": float(booking.convenience_fee) if booking.convenience_fee is not None else None,
+            "traffic_surcharge": float(booking.traffic_surcharge) if booking.traffic_surcharge is not None else None,
+            "traffic_level": refresh_result["traffic_level"],
+            "fee_locked_at": booking.fee_locked_at.isoformat() if booking.fee_locked_at else None,
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 @api_view(["POST"]) 
@@ -476,8 +737,13 @@ def mechanic_revert_stage(request, booking_id):
             # ignore failures to set started_at; still proceed with status change
             pass
 
-    booking.status = new_status
-    booking.save(update_fields=["status"])
+    if new_status == Booking.Status.ON_THE_WAY:
+        mechanic_lat = _to_float(request.data.get('mechanic_latitude'))
+        mechanic_lng = _to_float(request.data.get('mechanic_longitude'))
+        _refresh_on_the_way_metrics(booking, mechanic_lat, mechanic_lng)
+    else:
+        booking.status = new_status
+        booking.save(update_fields=["status"])
 
     notify_booking_parties(
         account.id,

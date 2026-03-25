@@ -24,12 +24,7 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.mards.frontendmobile",
-      "config": {
-        "googleMaps": {
-          "apiKey": "AIzaSyBSCUix6pe_wL407JajHMq4O7Jkde6usT4"
-        }
-      }
+      "package": "com.mards.frontendmobile"
     },
     "web": {
       "output": "static",

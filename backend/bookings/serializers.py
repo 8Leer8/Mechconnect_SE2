@@ -119,6 +119,8 @@ class RequestAssignmentSerializer(serializers.ModelSerializer):
 
 
 class RequestSerializer(serializers.ModelSerializer):
+    type = serializers.CharField(source='request_type', read_only=True)
+    broadcast_request = serializers.SerializerMethodField()
     client = AccountBasicSerializer(source='client.account', read_only=True)
     provider = AccountBasicSerializer(read_only=True)
     shop = ShopBasicSerializer(read_only=True)
@@ -128,7 +130,16 @@ class RequestSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Request
-        fields = ['id', 'client', 'provider', 'shop', 'request_type', 'service_location', 'created_at', 'request_details', 'assigned_mechanics']
+        fields = ['id', 'type', 'request_type', 'broadcast_request', 'client', 'provider', 'shop', 'service_location', 'created_at', 'request_details', 'assigned_mechanics']
+
+    def get_broadcast_request(self, obj):
+        if not hasattr(obj, 'broadcast_request') or obj.broadcast_request is None:
+            return None
+        br = obj.broadcast_request
+        return {
+            'latitude': float(br.latitude) if br.latitude is not None else None,
+            'longitude': float(br.longitude) if br.longitude is not None else None,
+        }
     
     def get_request_details(self, obj):
         if obj.request_type == 'custom':
@@ -176,11 +187,13 @@ class ActiveBookingSerializer(serializers.ModelSerializer):
 class BookingSerializer(serializers.ModelSerializer):
     request = RequestSerializer(read_only=True)
     active_details = serializers.SerializerMethodField()
+    estimated_eta_minutes = serializers.IntegerField(source='eta_minutes', read_only=True)
+    traffic_level = serializers.SerializerMethodField()
 
     class Meta:
         model = Booking
         fields = [
-            'id', 'request', 'status', 'amount_fee', 'booked_at',
+            'id', 'request', 'status', 'amount_fee', 'convenience_fee', 'distance_km', 'estimated_eta_minutes', 'traffic_level', 'booked_at',
             'updated_at', 'completed_at', 'active_details'
         ]
         read_only_fields = ['id', 'request', 'amount_fee', 'booked_at', 'updated_at', 'completed_at', 'active_details']
@@ -194,6 +207,15 @@ class BookingSerializer(serializers.ModelSerializer):
             except ActiveBooking.DoesNotExist:
                 return None
         return None
+
+    def get_traffic_level(self, obj):
+        if not hasattr(obj, 'request') or not hasattr(obj.request, 'broadcast_request'):
+            return None
+        offer = BroadcastOffer.objects.filter(
+            broadcast_request=obj.request.broadcast_request,
+            status=BroadcastOffer.Status.ACCEPTED,
+        ).order_by('-responded_at', '-id').first()
+        return offer.traffic_level if offer and offer.traffic_level else None
 
     def update(self, instance, validated_data):
         # Allow status update via PATCH
