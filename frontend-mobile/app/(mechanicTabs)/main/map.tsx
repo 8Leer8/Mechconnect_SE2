@@ -95,6 +95,7 @@ export default function MapScreen() {
   const mapRef = useRef<MapView>(null);
   const userLocationRef = useRef<{ latitude: number; longitude: number } | null>(null);
   const locationWatchRef = useRef<Location.LocationSubscription | null>(null);
+  const isInitializingMapRef = useRef(false);
   const lastFetchedBroadcastId = useRef<number | null>(null);
   const cachedRouteData = useRef<CachedRouteData | null>(null);
   const markerTapRef = useRef<Record<number, number>>({});
@@ -114,6 +115,8 @@ export default function MapScreen() {
   const [routeError, setRouteError] = useState<string | null>(null);
   const [trafficData, setTrafficData] = useState<TrafficData | null>(null);
   const [feeData, setFeeData] = useState<FeeData | null>(null);
+  const [mapInitFailed, setMapInitFailed] = useState(false);
+  const [mapInitMessage, setMapInitMessage] = useState('Failed to load map location.');
 
   const [region, setRegion] = useState<{
     latitude: number;
@@ -180,11 +183,27 @@ export default function MapScreen() {
     }
   };
 
-  const fallbackRegion = {
-    latitude: 14.5995,
-    longitude: 120.9842,
-    latitudeDelta: 0.0922,
-    longitudeDelta: 0.0421,
+  const toFiniteNumber = (value: unknown): number | null => {
+    if (value === null || value === undefined || value === '') return null;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : null;
+  };
+
+  const normalizeBroadcast = (raw: any): BroadcastRequest | null => {
+    if (!raw || typeof raw !== 'object') return null;
+
+    const latitude = toFiniteNumber(raw.latitude);
+    const longitude = toFiniteNumber(raw.longitude);
+
+    if (latitude === null || longitude === null) return null;
+
+    return {
+      ...raw,
+      latitude,
+      longitude,
+      services: Array.isArray(raw.services) ? raw.services : [],
+      add_ons: Array.isArray(raw.add_ons) ? raw.add_ons : [],
+    } as BroadcastRequest;
   };
 
   const setRegionFromCoords = (latitude: number, longitude: number) => {
@@ -213,15 +232,25 @@ export default function MapScreen() {
   };
 
   const initializeMap = async () => {
+    if (isInitializingMapRef.current) return;
+    isInitializingMapRef.current = true;
+
     try {
+      setMapInitFailed(false);
+      setMapInitMessage('Failed to load map location.');
+
+      const servicesEnabled = await Location.hasServicesEnabledAsync();
+      if (!servicesEnabled) {
+        setMapInitFailed(true);
+        setMapInitMessage('Map failed: location services are off. Please enable GPS and refresh.');
+        return;
+      }
+
       const { status } = await Location.requestForegroundPermissionsAsync();
 
       if (status !== 'granted') {
-        setRegion(fallbackRegion);
-        setCurrentUserLocation({
-          latitude: fallbackRegion.latitude,
-          longitude: fallbackRegion.longitude,
-        });
+        setMapInitFailed(true);
+        setMapInitMessage('Map failed: location permission denied. Tap refresh to try again.');
         return;
       }
 
@@ -249,11 +278,9 @@ export default function MapScreen() {
       if (freshLocation?.coords) {
         setRegionFromCoords(freshLocation.coords.latitude, freshLocation.coords.longitude);
       } else if (!lastKnown?.coords) {
-        setRegion(fallbackRegion);
-        setCurrentUserLocation({
-          latitude: fallbackRegion.latitude,
-          longitude: fallbackRegion.longitude,
-        });
+        setMapInitFailed(true);
+        setMapInitMessage('Map failed: unable to fetch current location. Tap refresh to retry.');
+        return;
       }
 
       if (locationWatchRef.current) {
@@ -277,12 +304,15 @@ export default function MapScreen() {
         }
       );
     } catch {
-      setRegion(fallbackRegion);
-      setCurrentUserLocation({
-        latitude: fallbackRegion.latitude,
-        longitude: fallbackRegion.longitude,
-      });
+      setMapInitFailed(true);
+      setMapInitMessage('Map failed: location fetch error. Tap refresh to retry.');
+    } finally {
+      isInitializingMapRef.current = false;
     }
+  };
+
+  const retryMapInitialization = async () => {
+    await initializeMap();
   };
 
   const getTrafficClass = (ratio: number) => {
@@ -559,7 +589,10 @@ export default function MapScreen() {
 
       if (!response.ok) throw new Error('Failed to fetch broadcasts');
       const data = await response.json() as any;
-      setBroadcasts(data.broadcasts || []);
+      const normalized = (Array.isArray(data.broadcasts) ? data.broadcasts : [])
+        .map((item: any) => normalizeBroadcast(item))
+        .filter((item: BroadcastRequest | null): item is BroadcastRequest => item !== null);
+      setBroadcasts(normalized);
     } catch (err: any) {
       if (!silent) setError(err.message);
     } finally {
@@ -684,7 +717,21 @@ export default function MapScreen() {
       </View>
 
       <View style={styles.mapContainer}>
-        {region ? (
+        {mapInitFailed ? (
+          <View style={styles.mapLoadingContainer}>
+            <View style={styles.mapErrorCard}>
+              <View style={styles.mapErrorHeader}>
+                <FontAwesome name="exclamation-triangle" size={18} color="#FF3B30" />
+                <ThemedText style={styles.mapErrorTitle}>Map Unavailable</ThemedText>
+              </View>
+              <ThemedText style={styles.mapErrorText}>{mapInitMessage}</ThemedText>
+              <TouchableOpacity style={styles.mapRetryButton} onPress={retryMapInitialization}>
+                <FontAwesome name="refresh" size={12} color="#fff" />
+                <ThemedText style={styles.mapRetryText}>Retry</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : region ? (
           <MapView
             ref={mapRef}
             style={styles.map}
@@ -692,12 +739,14 @@ export default function MapScreen() {
             showsUserLocation={true}
             showsMyLocationButton={true}
           >
-            <UrlTile
-              urlTemplate={`https://api.tomtom.com/map/1/tile/basic/main/{z}/{x}/{y}.png?key=${TOMTOM_KEY}`}
-              maximumZ={22}
-              flipY={false}
-              zIndex={-1}
-            />
+            {!!TOMTOM_KEY && (
+              <UrlTile
+                urlTemplate={`https://api.tomtom.com/map/1/tile/basic/main/{z}/{x}/{y}.png?key=${TOMTOM_KEY}`}
+                maximumZ={22}
+                flipY={false}
+                zIndex={-1}
+              />
+            )}
 
             {routeCoords.length > 0 && (
               <Polyline
@@ -768,7 +817,10 @@ export default function MapScreen() {
                 latitudeDelta: 0.0922,
                 longitudeDelta: 0.0421,
               }, 1000);
+              return;
             }
+
+            void retryMapInitialization();
           }}
         >
           <FontAwesome name="crosshairs" size={20} color="#fff" />
