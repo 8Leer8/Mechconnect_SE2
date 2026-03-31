@@ -86,10 +86,24 @@ function toNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function isValidCoordinate(latitude: number, longitude: number): boolean {
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return false;
+  if (latitude < -90 || latitude > 90) return false;
+  if (longitude < -180 || longitude > 180) return false;
+  if (latitude === 0 && longitude === 0) return false;
+  return true;
+}
+
+function toValidCoordinate(lat: unknown, lng: unknown): Coordinates | null {
+  const latitude = toNumber(lat);
+  const longitude = toNumber(lng);
+  if (latitude === null || longitude === null) return null;
+  if (!isValidCoordinate(latitude, longitude)) return null;
+  return { latitude, longitude };
+}
+
 function hasValidCoord(lat: unknown, lng: unknown): lat is number {
-  const latNum = toNumber(lat);
-  const lngNum = toNumber(lng);
-  return !!latNum && !!lngNum && latNum !== 0 && lngNum !== 0;
+  return toValidCoordinate(lat, lng) !== null;
 }
 
 function haversineDistanceKm(a: Coordinates, b: Coordinates): number {
@@ -175,12 +189,7 @@ function parseMechanicLocationPayload(payload: any): Coordinates | null {
     payload.location?.lng ??
     payload.location?.lon;
 
-  const latitude = toNumber(latCandidate);
-  const longitude = toNumber(lngCandidate);
-
-  if (latitude === null || longitude === null || latitude === 0 || longitude === 0) return null;
-
-  return { latitude, longitude };
+  return toValidCoordinate(latCandidate, lngCandidate);
 }
 
 export default function BookingLocationMapScreen() {
@@ -337,20 +346,14 @@ export default function BookingLocationMapScreen() {
       bookingData?.longitude;
 
     if (hasValidCoord(broadcastLat, broadcastLng)) {
-      return {
-        latitude: Number(broadcastLat),
-        longitude: Number(broadcastLng),
-      };
+      return toValidCoordinate(broadcastLat, broadcastLng);
     }
 
     const loc = bookingData.service_location;
     if (!loc) return null;
 
     if (hasValidCoord(loc.latitude, loc.longitude)) {
-      return {
-        latitude: Number(loc.latitude),
-        longitude: Number(loc.longitude),
-      };
+      return toValidCoordinate(loc.latitude, loc.longitude);
     }
 
     const street = String(loc.street_name || '').trim();
@@ -377,11 +380,8 @@ export default function BookingLocationMapScreen() {
         if (response.ok) {
           const result = await response.json();
           if (Array.isArray(result) && result.length > 0) {
-            const lat = toNumber(result[0]?.lat);
-            const lng = toNumber(result[0]?.lon);
-            if (lat && lng) {
-              return { latitude: lat, longitude: lng };
-            }
+            const coord = toValidCoordinate(result[0]?.lat, result[0]?.lon);
+            if (coord) return coord;
           }
         }
       }
@@ -399,11 +399,8 @@ export default function BookingLocationMapScreen() {
       if (cityResponse.ok) {
         const cityResult = await cityResponse.json();
         if (Array.isArray(cityResult) && cityResult.length > 0) {
-          const lat = toNumber(cityResult[0]?.lat);
-          const lng = toNumber(cityResult[0]?.lon);
-          if (lat && lng) {
-            return { latitude: lat, longitude: lng };
-          }
+          const coord = toValidCoordinate(cityResult[0]?.lat, cityResult[0]?.lon);
+          if (coord) return coord;
         }
       }
     }
@@ -449,10 +446,7 @@ export default function BookingLocationMapScreen() {
           accuracy: Location.Accuracy.Balanced,
         });
 
-        return {
-          latitude: current.coords.latitude,
-          longitude: current.coords.longitude,
-        };
+        return toValidCoordinate(current.coords.latitude, current.coords.longitude) ?? MANILA_FALLBACK;
       } catch {
         return MANILA_FALLBACK;
       }
@@ -500,11 +494,11 @@ export default function BookingLocationMapScreen() {
     const points = coordinates
       .map((c: number[]) => {
         if (!Array.isArray(c) || c.length < 2) return null;
-        return { latitude: c[1], longitude: c[0] };
+        return toValidCoordinate(c[1], c[0]);
       })
-      .filter(Boolean) as Coordinates[];
+      .filter((point): point is Coordinates => point !== null);
 
-    if (points.length === 0) throw new Error('Empty route coordinates');
+    if (points.length < 2) throw new Error('Empty route coordinates');
 
     return {
       points,
@@ -736,10 +730,8 @@ export default function BookingLocationMapScreen() {
             },
             (location) => {
               if (!isMounted) return;
-              const next = {
-                latitude: location.coords.latitude,
-                longitude: location.coords.longitude,
-              };
+              const next = toValidCoordinate(location.coords.latitude, location.coords.longitude);
+              if (!next) return;
               setMechanicCoords(next);
               setLastMechanicUpdateAt(Date.now());
             }
@@ -939,6 +931,12 @@ export default function BookingLocationMapScreen() {
   const routeColor = isOnTheWay ? (traffic?.color || '#FF8C00') : '#FF8C00';
   const distanceLabel = distanceKm !== null ? `${distanceKm.toFixed(1)} km` : '--';
   const etaLabel = etaMinutes !== null ? `~${etaMinutes} mins` : '--';
+  const safeMechanicCoords = mechanicCoords && isValidCoordinate(mechanicCoords.latitude, mechanicCoords.longitude)
+    ? mechanicCoords
+    : null;
+  const safeClientCoords = clientCoords && isValidCoordinate(clientCoords.latitude, clientCoords.longitude)
+    ? clientCoords
+    : null;
 
   return (
     <ThemedView style={styles.container}>
@@ -952,14 +950,16 @@ export default function BookingLocationMapScreen() {
 
       <View style={styles.mapWrap}>
         <MapView ref={mapRef} style={styles.map} initialRegion={initialRegion}>
-          <UrlTile
-            urlTemplate={`https://api.tomtom.com/map/1/tile/basic/main/{z}/{x}/{y}.png?key=${TOMTOM_KEY || ''}`}
-            maximumZ={22}
-            flipY={false}
-            zIndex={-1}
-          />
+          {!!TOMTOM_KEY && (
+            <UrlTile
+              urlTemplate={`https://api.tomtom.com/map/1/tile/basic/main/{z}/{x}/{y}.png?key=${TOMTOM_KEY}`}
+              maximumZ={22}
+              flipY={false}
+              zIndex={-1}
+            />
+          )}
 
-          {routeCoords.length > 0 && (
+          {routeCoords.length >= 2 && (
             <Polyline
               coordinates={routeCoords}
               strokeWidth={5}
@@ -971,17 +971,17 @@ export default function BookingLocationMapScreen() {
             />
           )}
 
-          {mechanicCoords && (
+          {safeMechanicCoords && (
             <Marker
-              coordinate={mechanicCoords}
+              coordinate={safeMechanicCoords}
               pinColor="#FF8C00"
               title="Mechanic"
             />
           )}
 
-          {clientCoords && (
+          {safeClientCoords && (
             <Marker
-              coordinate={clientCoords}
+              coordinate={safeClientCoords}
               pinColor="#FF3B30"
               title="Client Location"
             />

@@ -150,7 +150,7 @@ export default function MapScreen() {
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(Date.now());
-    }, 1000);
+    }, 5000);
 
     return () => clearInterval(timer);
   }, []);
@@ -189,24 +189,49 @@ export default function MapScreen() {
     return Number.isFinite(num) ? num : null;
   };
 
+  const isValidCoordinate = (latitude: number, longitude: number): boolean => {
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return false;
+    if (latitude < -90 || latitude > 90) return false;
+    if (longitude < -180 || longitude > 180) return false;
+    if (latitude === 0 && longitude === 0) return false;
+    return true;
+  };
+
+  const toValidCoordinate = (latitude: unknown, longitude: unknown) => {
+    const lat = toFiniteNumber(latitude);
+    const lng = toFiniteNumber(longitude);
+    if (lat === null || lng === null) return null;
+    if (!isValidCoordinate(lat, lng)) return null;
+    return { latitude: lat, longitude: lng };
+  };
+
+  const sanitizeRouteCoordinates = (coords: any[]): { latitude: number; longitude: number }[] => {
+    if (!Array.isArray(coords)) return [];
+    return coords
+      .map((coord: any) => {
+        if (!Array.isArray(coord) || coord.length < 2) return null;
+        return toValidCoordinate(coord[1], coord[0]);
+      })
+      .filter((coord): coord is { latitude: number; longitude: number } => coord !== null);
+  };
+
   const normalizeBroadcast = (raw: any): BroadcastRequest | null => {
     if (!raw || typeof raw !== 'object') return null;
 
-    const latitude = toFiniteNumber(raw.latitude);
-    const longitude = toFiniteNumber(raw.longitude);
-
-    if (latitude === null || longitude === null) return null;
+    const validCoord = toValidCoordinate(raw.latitude, raw.longitude);
+    if (!validCoord) return null;
 
     return {
       ...raw,
-      latitude,
-      longitude,
+      latitude: validCoord.latitude,
+      longitude: validCoord.longitude,
       services: Array.isArray(raw.services) ? raw.services : [],
       add_ons: Array.isArray(raw.add_ons) ? raw.add_ons : [],
     } as BroadcastRequest;
   };
 
   const setRegionFromCoords = (latitude: number, longitude: number) => {
+    if (!isValidCoordinate(latitude, longitude)) return;
     setRegion({
       latitude,
       longitude,
@@ -297,10 +322,9 @@ export default function MapScreen() {
         },
         (loc) => {
           if (!loc?.coords) return;
-          setCurrentUserLocation({
-            latitude: loc.coords.latitude,
-            longitude: loc.coords.longitude,
-          });
+          const next = toValidCoordinate(loc.coords.latitude, loc.coords.longitude);
+          if (!next) return;
+          setCurrentUserLocation(next);
         }
       );
     } catch {
@@ -380,9 +404,10 @@ export default function MapScreen() {
       throw new Error('Invalid route response');
     }
 
-    const parsedCoords = coordinates
-      .filter((coord: any) => Array.isArray(coord) && coord.length >= 2)
-      .map((coord: number[]) => ({ latitude: coord[1], longitude: coord[0] }));
+    const parsedCoords = sanitizeRouteCoordinates(coordinates);
+    if (parsedCoords.length < 2) {
+      throw new Error('Route has insufficient valid coordinates');
+    }
 
     const distanceKm = Number(segment?.distance || 0) / 1000;
     const etaMinutes = Math.round(Number(segment?.duration || 0) / 60);
@@ -476,11 +501,12 @@ export default function MapScreen() {
       setFeeData(cachedRouteData.current.feeData);
       setRouteError(null);
 
-      if (mapRef.current) {
+      const target = toValidCoordinate(broadcast.latitude, broadcast.longitude);
+      if (mapRef.current && target) {
         mapRef.current.fitToCoordinates(
           [
             { latitude: currentUserLocation.latitude, longitude: currentUserLocation.longitude },
-            { latitude: broadcast.latitude, longitude: broadcast.longitude },
+            target,
           ],
           {
             edgePadding: { top: 80, right: 40, bottom: 400, left: 40 },
@@ -517,11 +543,12 @@ export default function MapScreen() {
       };
       lastFetchedBroadcastId.current = broadcast.id;
 
-      if (mapRef.current) {
+      const target = toValidCoordinate(broadcast.latitude, broadcast.longitude);
+      if (mapRef.current && target) {
         mapRef.current.fitToCoordinates(
           [
             { latitude: currentUserLocation.latitude, longitude: currentUserLocation.longitude },
-            { latitude: broadcast.latitude, longitude: broadcast.longitude },
+            target,
           ],
           {
             edgePadding: { top: 80, right: 40, bottom: 400, left: 40 },
@@ -536,15 +563,13 @@ export default function MapScreen() {
         longitude: broadcast.longitude,
       });
       const fallbackEtaMinutes = Math.max(1, Math.round((fallbackDistanceKm / 25) * 60));
+      const fallbackTarget = toValidCoordinate(broadcast.latitude, broadcast.longitude);
       const fallbackCoords = [
         {
           latitude: currentUserLocation.latitude,
           longitude: currentUserLocation.longitude,
         },
-        {
-          latitude: broadcast.latitude,
-          longitude: broadcast.longitude,
-        },
+        ...(fallbackTarget ? [fallbackTarget] : []),
       ];
       const fallbackFeeBase = calculateFee(fallbackDistanceKm, fallbackTraffic, broadcast);
       const fallbackFee: FeeData = {
@@ -553,12 +578,12 @@ export default function MapScreen() {
         etaMinutes: fallbackEtaMinutes,
       };
 
-      setRouteCoords(fallbackCoords);
+      setRouteCoords(fallbackCoords.length >= 2 ? fallbackCoords : []);
       setTrafficData(fallbackTraffic);
       setFeeData(fallbackFee);
       setRouteError(null);
 
-      if (mapRef.current) {
+      if (mapRef.current && fallbackCoords.length >= 2) {
         mapRef.current.fitToCoordinates(
           fallbackCoords,
           {
@@ -702,6 +727,9 @@ export default function MapScreen() {
   const filteredBroadcasts = broadcasts;
   const routeDistanceDisplay = feeData?.distanceKm?.toFixed(2) ?? '--';
   const routeEtaDisplay = feeData?.etaMinutes ?? '--';
+  const selectedBroadcastCoordinate = selectedBroadcast
+    ? toValidCoordinate(selectedBroadcast.latitude, selectedBroadcast.longitude)
+    : null;
   const sx = styles as any;
 
   return (
@@ -748,7 +776,7 @@ export default function MapScreen() {
               />
             )}
 
-            {routeCoords.length > 0 && (
+            {routeCoords.length >= 2 && (
               <Polyline
                 coordinates={routeCoords}
                 strokeColor="#FF8C00"
@@ -773,12 +801,9 @@ export default function MapScreen() {
               />
             ))}
 
-            {selectedBroadcast && modalVisible && (
+            {selectedBroadcastCoordinate && modalVisible && (
               <Marker
-                coordinate={{
-                  latitude: selectedBroadcast.latitude,
-                  longitude: selectedBroadcast.longitude,
-                }}
+                coordinate={selectedBroadcastCoordinate}
                 pinColor="#FF3B30"
               />
             )}

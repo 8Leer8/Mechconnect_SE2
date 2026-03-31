@@ -37,6 +37,7 @@ export default function Index() {
   const progressAnim = useRef(new Animated.Value(0)).current;
   const hasNavigatedRef = useRef(false);
   const [lineWidth, setLineWidth] = useState(0);
+  const [loadingStatus, setLoadingStatus] = useState('Checking session...');
 
   useEffect(() => {
     Animated.loop(
@@ -58,6 +59,40 @@ export default function Index() {
 
   useEffect(() => {
     let isMounted = true;
+    let retryTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    const wait = (ms: number) =>
+      new Promise<void>((resolve) => {
+        retryTimeout = setTimeout(() => resolve(), ms);
+      });
+
+    const isNetworkFailure = (error: unknown) => {
+      const message = String((error as any)?.message || '').toLowerCase();
+      return (
+        message.includes('network request failed') ||
+        message.includes('failed to fetch') ||
+        message.includes('network error') ||
+        message.includes('timeout')
+      );
+    };
+
+    const fetchWithTimeout = async (url: string, timeoutMs = 12000) => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        return await fetch(url, {
+          method: 'GET',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    };
 
     const finishAndNavigate = (path: string) => {
       if (!isMounted || hasNavigatedRef.current) return;
@@ -109,78 +144,42 @@ export default function Index() {
     };
 
     const bootstrapAuth = async () => {
-      try {
-        if (!API_URL) {
-          await tryAsyncStorageFallback();
-          return;
-        }
+      if (!API_URL) {
+        await tryAsyncStorageFallback();
+        return;
+      }
 
-        const response = await fetch(`${API_URL}/users/check-session/`, {
-          method: 'GET',
-          credentials: 'include',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-          },
-        });
+      while (isMounted && !hasNavigatedRef.current) {
+        try {
+          setLoadingStatus('Checking session...');
 
-        if (!response.ok) {
-          await tryAsyncStorageFallback();
-          return;
-        }
+          const response = await fetchWithTimeout(`${API_URL}/users/check-session/`);
 
-        const data = (await response.json()) as SessionResponse;
-
-        if (data?.authenticated) {
-          const roleFromSession = data.role || null;
-          let roleFromStorage: string | null = null;
-          let roleFromLastActiveStorage: string | null = null;
-          let roleFromApi: string | null = null;
-          let isWorkingForShopMechanic = false;
-
-          try {
-            const [storedRole, storedLastActiveRole] = await AsyncStorage.multiGet([USER_ROLE_KEY, LAST_ACTIVE_ROLE_KEY]);
-            roleFromStorage = storedRole?.[1] || null;
-            roleFromLastActiveStorage = storedLastActiveRole?.[1] || null;
-          } catch {
-            roleFromStorage = null;
-            roleFromLastActiveStorage = null;
+          if (!response.ok) {
+            await tryAsyncStorageFallback();
+            return;
           }
 
-          try {
-            const roleResponse = await fetch(`${API_URL}/users/profile/active-role/`, {
-              method: 'GET',
-              credentials: 'include',
-              headers: {
-                'Content-Type': 'application/json',
-                Accept: 'application/json',
-              },
-            });
+          const data = (await response.json()) as SessionResponse;
 
-            if (roleResponse.ok) {
-              const roleData = (await roleResponse.json()) as { active_role?: string };
-              roleFromApi = roleData?.active_role || null;
-            }
-          } catch {
-            roleFromApi = null;
-          }
+          if (data?.authenticated) {
+            const roleFromSession = data.role || null;
+            let roleFromStorage: string | null = null;
+            let roleFromLastActiveStorage: string | null = null;
+            let roleFromApi: string | null = null;
+            let isWorkingForShopMechanic = false;
 
-          const finalRole = roleFromApi || roleFromSession || roleFromLastActiveStorage || roleFromStorage;
-
-          if (finalRole) {
             try {
-              await AsyncStorage.multiSet([
-                [USER_ROLE_KEY, finalRole],
-                [LAST_ACTIVE_ROLE_KEY, finalRole],
-              ]);
+              const [storedRole, storedLastActiveRole] = await AsyncStorage.multiGet([USER_ROLE_KEY, LAST_ACTIVE_ROLE_KEY]);
+              roleFromStorage = storedRole?.[1] || null;
+              roleFromLastActiveStorage = storedLastActiveRole?.[1] || null;
             } catch {
-              // Non-fatal cache write issue.
+              roleFromStorage = null;
+              roleFromLastActiveStorage = null;
             }
-          }
 
-          if (finalRole === 'mechanic') {
             try {
-              const profileResponse = await fetch(`${API_URL}/users/profile/details/`, {
+              const roleResponse = await fetch(`${API_URL}/users/profile/active-role/`, {
                 method: 'GET',
                 credentials: 'include',
                 headers: {
@@ -189,28 +188,71 @@ export default function Index() {
                 },
               });
 
-              if (profileResponse.ok) {
-                const profileData = await profileResponse.json();
-                const mechanicProfile = profileData?.profile?.current_role_profile?.mechanic;
-                isWorkingForShopMechanic = !!mechanicProfile?.is_working_for_shop;
+              if (roleResponse.ok) {
+                const roleData = (await roleResponse.json()) as { active_role?: string };
+                roleFromApi = roleData?.active_role || null;
               }
             } catch {
-              isWorkingForShopMechanic = false;
+              roleFromApi = null;
             }
+
+            const finalRole = roleFromApi || roleFromSession || roleFromLastActiveStorage || roleFromStorage;
+
+            if (finalRole) {
+              try {
+                await AsyncStorage.multiSet([
+                  [USER_ROLE_KEY, finalRole],
+                  [LAST_ACTIVE_ROLE_KEY, finalRole],
+                ]);
+              } catch {
+                // Non-fatal cache write issue.
+              }
+            }
+
+            if (finalRole === 'mechanic') {
+              try {
+                const profileResponse = await fetch(`${API_URL}/users/profile/details/`, {
+                  method: 'GET',
+                  credentials: 'include',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                  },
+                });
+
+                if (profileResponse.ok) {
+                  const profileData = await profileResponse.json();
+                  const mechanicProfile = profileData?.profile?.current_role_profile?.mechanic;
+                  isWorkingForShopMechanic = !!mechanicProfile?.is_working_for_shop;
+                }
+              } catch {
+                isWorkingForShopMechanic = false;
+              }
+            }
+
+            navigateByRole(finalRole, isWorkingForShopMechanic);
+            return;
           }
 
-          navigateByRole(finalRole, isWorkingForShopMechanic);
-          return;
-        }
-
-        await clearAuthStorage();
-        navigateToLogin();
-      } catch {
-        try {
-          await tryAsyncStorageFallback();
-        } catch {
           await clearAuthStorage();
           navigateToLogin();
+          return;
+        } catch (error) {
+          if (!isMounted || hasNavigatedRef.current) return;
+
+          if (isNetworkFailure(error)) {
+            setLoadingStatus('No internet connection. Waiting for network...');
+            await wait(2500);
+            continue;
+          }
+
+          try {
+            await tryAsyncStorageFallback();
+          } catch {
+            await clearAuthStorage();
+            navigateToLogin();
+          }
+          return;
         }
       }
     };
@@ -219,6 +261,7 @@ export default function Index() {
 
     return () => {
       isMounted = false;
+      if (retryTimeout) clearTimeout(retryTimeout);
     };
   }, [progressAnim, router]);
 
@@ -236,6 +279,7 @@ export default function Index() {
         style={styles.logo}
       />
       <Text style={styles.title}>MechConnect: On-Demand Home Auto Repair Platform</Text>
+      <Text style={styles.subtitle}>{loadingStatus}</Text>
 
       <View style={styles.bottomLoaderWrap}>
         <Animated.View
@@ -309,6 +353,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     maxWidth: 340,
     lineHeight: 30,
+  },
+  subtitle: {
+    marginTop: 10,
+    fontSize: 13,
+    color: '#9EA1A8',
+    textAlign: 'center',
   },
   bottomLoaderWrap: {
     position: 'absolute',
