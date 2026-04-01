@@ -128,28 +128,48 @@ export default function ClientBookingDetailScreen() {
 
     const baseFee = 50;
     const ratePerKm = 15;
-    const persistedConvenienceFee = Number((booking as any).convenience_fee);
-    const persistedDistanceKm = Number((booking as any).distance_km);
+    const persistedConvenienceFee = Number((booking as any).convenience_fee || 0);
+    const persistedDistanceKm = Number((booking as any).distance_km || 0);
+    const distanceKm = Number.isFinite(persistedDistanceKm) ? Math.max(0, persistedDistanceKm) : 0;
+    const distanceFee = distanceKm * ratePerKm;
+
+    const levelRaw = String((booking as any).traffic_level || 'moderate').toLowerCase();
+    const normalizedLevel = (['light', 'moderate', 'heavy', 'severe'] as const).includes(levelRaw as any)
+      ? (levelRaw as 'light' | 'moderate' | 'heavy' | 'severe')
+      : 'moderate';
+    const trafficConfig: Record<'light' | 'moderate' | 'heavy' | 'severe', { surcharge: number; speedKmh: number; label: string }> = {
+      light: { surcharge: 0, speedKmh: 40, label: 'Light' },
+      moderate: { surcharge: 0.1, speedKmh: 28, label: 'Moderate' },
+      heavy: { surcharge: 0.2, speedKmh: 20, label: 'Heavy' },
+      severe: { surcharge: 0.3, speedKmh: 12, label: 'Severe' },
+    };
+
+    const trafficMeta = trafficConfig[normalizedLevel];
+    const estimatedTrafficFee = distanceFee * trafficMeta.surcharge;
+    const isOnTheWay = booking.status === 'on_the_way';
     const hasPersistedConvenience = Number.isFinite(persistedConvenienceFee) && persistedConvenienceFee > 0;
-    const hasPersistedDistance = Number.isFinite(persistedDistanceKm) && persistedDistanceKm >= 0;
+    const trafficFee = (isOnTheWay && hasPersistedConvenience)
+      ? Math.max(0, persistedConvenienceFee - baseFee - distanceFee)
+      : estimatedTrafficFee;
+    const totalConvenienceFee = (isOnTheWay && hasPersistedConvenience)
+      ? persistedConvenienceFee
+      : baseFee + distanceFee + trafficFee;
 
-    if (!hasPersistedConvenience || !hasPersistedDistance) {
-      return null;
-    }
-
-    const distanceFee = persistedDistanceKm * ratePerKm;
-    const trafficFee = Math.max(0, persistedConvenienceFee - baseFee - distanceFee);
-    const level = String((booking as any).traffic_level || '').toLowerCase();
-    const label = level ? `${level.charAt(0).toUpperCase()}${level.slice(1)}` : 'Unknown';
+    const persistedEta = Number((booking as any).estimated_eta_minutes || 0);
+    const derivedEta = Math.max(1, Math.ceil((distanceKm / Math.max(1, trafficMeta.speedKmh)) * 60));
+    const etaMinutes = isOnTheWay && Number.isFinite(persistedEta) && persistedEta > 0
+      ? Math.round(persistedEta)
+      : derivedEta;
 
     return {
       baseFee,
-      distanceKm: persistedDistanceKm,
+      distanceKm,
       distanceFee,
       trafficFee,
-      totalConvenienceFee: persistedConvenienceFee,
-      trafficLabel: label,
-      estimated: false,
+      totalConvenienceFee,
+      trafficLabel: trafficMeta.label,
+      etaMinutes,
+      estimated: !isOnTheWay,
     };
   }, [booking]);
 
@@ -704,16 +724,16 @@ export default function ClientBookingDetailScreen() {
                     <ThemedText style={styles.receiptItem}>Distance Fee ({convenienceBreakdown.distanceKm.toFixed(2)} km)</ThemedText>
                     <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.distanceFee.toFixed(2)}</ThemedText>
                   </View>
-                  {convenienceBreakdown.trafficFee > 0 && (
-                    <View style={styles.receiptRow}>
-                      <ThemedText style={styles.receiptItem}>Traffic Fee ({convenienceBreakdown.trafficLabel})</ThemedText>
-                      <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.trafficFee.toFixed(2)}</ThemedText>
-                    </View>
-                  )}
-                  {typeof booking.estimated_eta_minutes === 'number' && booking.estimated_eta_minutes > 0 && (
+                  <View style={styles.receiptRow}>
+                    <ThemedText style={styles.receiptItem}>
+                      {convenienceBreakdown.estimated ? 'Estimated Traffic Fee' : 'Traffic Fee'} ({convenienceBreakdown.trafficLabel})
+                    </ThemedText>
+                    <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.trafficFee.toFixed(2)}</ThemedText>
+                  </View>
+                  {typeof convenienceBreakdown.etaMinutes === 'number' && convenienceBreakdown.etaMinutes > 0 && (
                     <View style={styles.receiptRow}>
                       <ThemedText style={styles.receiptItem}>Estimated ETA</ThemedText>
-                      <ThemedText style={styles.receiptAmount}>{booking.estimated_eta_minutes} min</ThemedText>
+                      <ThemedText style={styles.receiptAmount}>{convenienceBreakdown.etaMinutes} min</ThemedText>
                     </View>
                   )}
                 </>

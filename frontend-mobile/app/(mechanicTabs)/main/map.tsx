@@ -176,7 +176,7 @@ export default function MapScreen() {
     try {
       const res = await fetch(`${API_URL}/users/mechanic/wallet/`, { credentials: 'include' });
       if (!res.ok) return;
-      const data = await res.json();
+      const data = await res.json() as any;
       setTokensBalance(data.tokens_balance ?? 0);
     } catch {
       // ignore
