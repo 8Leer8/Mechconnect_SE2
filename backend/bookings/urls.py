@@ -44,6 +44,8 @@ urlpatterns = [
     path('bookings/<int:booking_id>/', views.get_booking_detail, name='get-booking-detail'),
     # Client selects payment method when booking is in pending_payment
     path('bookings/<int:booking_id>/pay/', client_pay_booking, name='client-pay-booking'),
+    # Live mechanic location (GET for client polling, POST for mechanic pushing GPS)
+    path('bookings/<int:booking_id>/mechanic-location/', views.mechanic_location_view, name='mechanic-location'),
 
     # Mechanic booking endpoints (provider side)
     path('mechanic/bookings/', views.list_mechanic_bookings, name='list-mechanic-bookings'),

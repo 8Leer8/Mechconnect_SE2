@@ -20,6 +20,7 @@ from ...models import (
     CompleteBooking,
     Receipt,
     CancelBooking,
+    MechanicLocation,
 )
 from ...models import Quotation, QuotationItem
 from users.models import Account
@@ -915,6 +916,74 @@ def mechanic_accept_backjob(request, booking_id):
         pass
 
     return Response({"message": "Backjob accepted", "backjob_id": backjob.id, "status": backjob.status}, status=status.HTTP_200_OK)
+
+
+@api_view(["GET", "POST"])
+@permission_classes([AllowAny])
+def mechanic_location_view(request, booking_id):
+    """
+    GET  — Returns the latest mechanic GPS coordinates for a booking.
+           Used by the client-side app to poll mechanic location every 5 seconds.
+    POST — Upserts the MechanicLocation row for a booking.
+           Used by the mechanic-side app to push GPS coordinates every 5 seconds.
+    Only works when booking status is 'on_the_way'.
+    """
+    account_id = request.session.get("account_id")
+    if not account_id:
+        return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        account = Account.objects.get(id=account_id)
+    except Account.DoesNotExist:
+        return Response({"error": "Account not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    # Try to find the booking — accessible by either the mechanic (provider) or the client
+    try:
+        booking = Booking.objects.get(id=booking_id)
+    except Booking.DoesNotExist:
+        return Response({"error": "Booking not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    # Verify access: must be the booking's provider OR the booking's client
+    is_provider = booking.request.provider_id == account.id
+    is_client = booking.request.client.account_id == account.id
+    if not is_provider and not is_client:
+        return Response({"error": "You do not have permission to access this booking"}, status=status.HTTP_403_FORBIDDEN)
+
+    if request.method == "GET":
+        try:
+            loc = MechanicLocation.objects.get(booking=booking)
+            return Response({
+                "latitude": float(loc.latitude),
+                "longitude": float(loc.longitude),
+                "updated_at": loc.updated_at.isoformat(),
+            }, status=status.HTTP_200_OK)
+        except MechanicLocation.DoesNotExist:
+            return Response({"error": "Mechanic location not available yet"}, status=status.HTTP_404_NOT_FOUND)
+
+    # POST — only the mechanic (provider) can update location
+    if not is_provider:
+        return Response({"error": "Only the assigned mechanic can update location"}, status=status.HTTP_403_FORBIDDEN)
+
+    if booking.status != Booking.Status.ON_THE_WAY:
+        return Response({"error": "Location updates are only accepted when booking is on_the_way"}, status=status.HTTP_400_BAD_REQUEST)
+
+    latitude = _to_float(request.data.get("latitude"))
+    longitude = _to_float(request.data.get("longitude"))
+
+    if latitude is None or longitude is None:
+        return Response({"error": "latitude and longitude are required"}, status=status.HTTP_400_BAD_REQUEST)
+
+    loc, created = MechanicLocation.objects.update_or_create(
+        booking=booking,
+        defaults={"latitude": Decimal(str(latitude)).quantize(Decimal('0.000001')),
+                   "longitude": Decimal(str(longitude)).quantize(Decimal('0.000001'))},
+    )
+
+    return Response({
+        "latitude": float(loc.latitude),
+        "longitude": float(loc.longitude),
+        "updated_at": loc.updated_at.isoformat(),
+    }, status=status.HTTP_200_OK)
 
 
 def _count_pending_direct_requests(account):

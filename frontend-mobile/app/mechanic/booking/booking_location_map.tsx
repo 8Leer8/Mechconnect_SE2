@@ -708,6 +708,18 @@ export default function BookingLocationMapScreen() {
     if (role === 'mechanic') {
       let isMounted = true;
 
+      const pushLocationToBackend = (coords: Coordinates) => {
+        if (!API_URL || !bookingId) return;
+        fetch(`${API_URL}/bookings/${bookingId}/mechanic-location/`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ latitude: coords.latitude, longitude: coords.longitude }),
+        }).catch(() => {
+          // Non-fatal: backend push failures don't affect local tracking.
+        });
+      };
+
       (async () => {
         try {
           const servicesEnabled = await Location.hasServicesEnabledAsync();
@@ -734,6 +746,7 @@ export default function BookingLocationMapScreen() {
               if (!next) return;
               setMechanicCoords(next);
               setLastMechanicUpdateAt(Date.now());
+              pushLocationToBackend(next);
             }
           );
 
@@ -742,6 +755,12 @@ export default function BookingLocationMapScreen() {
           // Keep existing coordinates if watcher setup fails.
         }
       })();
+
+      // Push location to backend every 5 seconds (supplements watcher which may fire less often)
+      const locationPushInterval = setInterval(() => {
+        const coords = mechanicCoordsRef.current;
+        if (coords) pushLocationToBackend(coords);
+      }, 5000);
 
       updateIntervalRef.current = setInterval(() => {
         const from = mechanicCoordsRef.current;
@@ -754,6 +773,7 @@ export default function BookingLocationMapScreen() {
 
       return () => {
         isMounted = false;
+        clearInterval(locationPushInterval);
         cleanupLiveResources();
       };
     }

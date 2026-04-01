@@ -387,6 +387,11 @@ export default function ClientBookingDetailScreen() {
     );
   }
 
+  const quotationEstimatedTotal = parseFloat(String(displayQuotation?.total_amount || 0)) || 0;
+  const convenienceFeeTotal = convenienceBreakdown ? convenienceBreakdown.totalConvenienceFee : 0;
+  const totalFee = convenienceFeeTotal + quotationEstimatedTotal;
+  const showPricingQuotationCard = !!(convenienceBreakdown || displayQuotation);
+
   return (
     <ThemedView style={styles.container}>
       {/* Header */}
@@ -444,48 +449,7 @@ export default function ClientBookingDetailScreen() {
           <ThemedText style={styles.amountLarge}>₱{parseFloat(String(booking.amount_fee || '0')).toFixed(2)}</ThemedText>
         </View>
 
-        <View style={styles.sectionCard}>
-          <View style={styles.sectionHeader}>
-            <View style={[styles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
-              <FontAwesome name="calculator" size={16} color="#FF8C00" />
-            </View>
-            <ThemedText style={styles.sectionTitle}>Convenience Fee</ThemedText>
-          </View>
 
-          {convenienceBreakdown ? (
-            <View style={styles.receiptList}>
-              <View style={styles.receiptRow}>
-                <ThemedText style={styles.receiptItem}>Base Fee</ThemedText>
-                <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.baseFee.toFixed(2)}</ThemedText>
-              </View>
-              <View style={styles.receiptRow}>
-                <ThemedText style={styles.receiptItem}>Distance Fee ({convenienceBreakdown.distanceKm.toFixed(2)} km)</ThemedText>
-                <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.distanceFee.toFixed(2)}</ThemedText>
-              </View>
-              <View style={styles.receiptRow}>
-                <ThemedText style={styles.receiptItem}>Traffic Fee ({convenienceBreakdown.trafficLabel})</ThemedText>
-                <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.trafficFee.toFixed(2)}</ThemedText>
-              </View>
-              {typeof booking.estimated_eta_minutes === 'number' && booking.estimated_eta_minutes > 0 && (
-                <View style={styles.receiptRow}>
-                  <ThemedText style={styles.receiptItem}>Estimated ETA</ThemedText>
-                  <ThemedText style={styles.receiptAmount}>{booking.estimated_eta_minutes} min</ThemedText>
-                </View>
-              )}
-              <View style={styles.receiptDivider} />
-              <View style={styles.receiptRow}>
-                <ThemedText style={styles.receiptTotalLabel}>Total Convenience Fee</ThemedText>
-                <ThemedText style={styles.receiptTotalValue}>₱{convenienceBreakdown.totalConvenienceFee.toFixed(2)}</ThemedText>
-              </View>
-            </View>
-          ) : (
-            <View style={styles.noteBox}>
-              <ThemedText style={styles.noteText}>
-                Convenience fee will appear after the mechanic starts travel and locks route traffic.
-              </ThemedText>
-            </View>
-          )}
-        </View>
 
         {/* Provider Information */}
         {booking.provider && (
@@ -577,30 +541,7 @@ export default function ClientBookingDetailScreen() {
           </TouchableOpacity>
         )}
 
-        {/* Quotation (read-only for clients) - show for several statuses */}
-        {(booking.status === 'accepted' || booking.status === 'on_the_way' || booking.status === 'active' || booking.status === 'pending_payment' || booking.status === 'completed') && displayQuotation && (
-          <View style={styles.sectionCard}>
-            <View style={styles.sectionHeader}>
-              <View style={[styles.sectionIcon, { backgroundColor: '#007AFF15' }]}>
-                <FontAwesome name="file-text-o" size={16} color="#007AFF" />
-              </View>
-              <ThemedText style={styles.sectionTitle}>Quotation</ThemedText>
-            </View>
-            <View style={{ paddingVertical: 8 }}>
-              {(displayQuotation.items || []).map((it: any, idx: number) => (
-                <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 }}>
-                  <ThemedText style={{ flex: 1 }}>{it.description || (it.service && `Service #${it.service}`) || 'Item'}</ThemedText>
-                  <ThemedText>₱{((it.unit_price || 0) * (it.quantity || 1)).toFixed(2)}</ThemedText>
-                </View>
-              ))}
-              <View style={{ height: 1, backgroundColor: '#eee', marginVertical: 8 }} />
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                <ThemedText style={{ fontWeight: '600' }}>Estimated Total</ThemedText>
-                <ThemedText style={{ fontWeight: '600' }}>₱{parseFloat(String(displayQuotation.total_amount || 0)).toFixed(2)}</ThemedText>
-              </View>
-            </View>
-          </View>
-        )}
+
 
         {/* Payment: show options only when booking is pending_payment and no payment recorded.
             If the booking already includes a payment (from the server), show a confirmation message.
@@ -720,16 +661,18 @@ export default function ClientBookingDetailScreen() {
                 )}
               </View>
 
-              <TouchableOpacity style={styles.navigateButton} onPress={handleNavigateToLocation} activeOpacity={0.7}>
-                <View style={styles.navigateIconCircle}>
-                  <FontAwesome name="location-arrow" size={18} color="#fff" />
-                </View>
-                <View style={styles.navigateTextContainer}>
-                  <ThemedText style={styles.navigateTitle}>Open Live Location Map</ThemedText>
-                  <ThemedText style={styles.navigateSubtitle}>Track mechanic and booking location</ThemedText>
-                </View>
-                <FontAwesome name="map" size={14} color="#FF8C00" />
-              </TouchableOpacity>
+              {booking.status === 'on_the_way' && (
+                <TouchableOpacity style={styles.navigateButton} onPress={handleNavigateToLocation} activeOpacity={0.7}>
+                  <View style={styles.navigateIconCircle}>
+                    <FontAwesome name="location-arrow" size={18} color="#fff" />
+                  </View>
+                  <View style={styles.navigateTextContainer}>
+                    <ThemedText style={styles.navigateTitle}>Open Live Location Map</ThemedText>
+                    <ThemedText style={styles.navigateSubtitle}>Track mechanic and booking location</ThemedText>
+                  </View>
+                  <FontAwesome name="map" size={14} color="#FF8C00" />
+                </TouchableOpacity>
+              )}
             </>
           ) : (
             <View style={styles.noLocationCard}>
@@ -738,6 +681,82 @@ export default function ClientBookingDetailScreen() {
             </View>
           )}
         </View>
+
+        {showPricingQuotationCard && (
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
+                <FontAwesome name="calculator" size={16} color="#FF8C00" />
+              </View>
+              <ThemedText style={styles.sectionTitle}>Pricing & Quotation</ThemedText>
+            </View>
+
+            <View style={styles.receiptList}>
+              <ThemedText style={[styles.noteLabel, { marginBottom: 8 }]}>Convenience Fee</ThemedText>
+
+              {convenienceBreakdown ? (
+                <>
+                  <View style={styles.receiptRow}>
+                    <ThemedText style={styles.receiptItem}>Base Fee</ThemedText>
+                    <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.baseFee.toFixed(2)}</ThemedText>
+                  </View>
+                  <View style={styles.receiptRow}>
+                    <ThemedText style={styles.receiptItem}>Distance Fee ({convenienceBreakdown.distanceKm.toFixed(2)} km)</ThemedText>
+                    <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.distanceFee.toFixed(2)}</ThemedText>
+                  </View>
+                  {convenienceBreakdown.trafficFee > 0 && (
+                    <View style={styles.receiptRow}>
+                      <ThemedText style={styles.receiptItem}>Traffic Fee ({convenienceBreakdown.trafficLabel})</ThemedText>
+                      <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.trafficFee.toFixed(2)}</ThemedText>
+                    </View>
+                  )}
+                  {typeof booking.estimated_eta_minutes === 'number' && booking.estimated_eta_minutes > 0 && (
+                    <View style={styles.receiptRow}>
+                      <ThemedText style={styles.receiptItem}>Estimated ETA</ThemedText>
+                      <ThemedText style={styles.receiptAmount}>{booking.estimated_eta_minutes} min</ThemedText>
+                    </View>
+                  )}
+                </>
+              ) : (
+                <View style={styles.noteBox}>
+                  <ThemedText style={styles.noteText}>
+                    Convenience fee will appear after mechanic starts travel.
+                  </ThemedText>
+                </View>
+              )}
+
+              <View style={styles.receiptDivider} />
+              <ThemedText style={[styles.noteLabel, { marginBottom: 8 }]}>Quotation</ThemedText>
+
+              {displayQuotation && (displayQuotation.items || []).length > 0 ? (
+                (displayQuotation.items || []).map((it: any, idx: number) => (
+                  <View key={idx} style={styles.receiptRow}>
+                    <ThemedText style={styles.receiptItem}>{it.description || (it.service && `Service #${it.service}`) || 'Item'}</ThemedText>
+                    <ThemedText style={styles.receiptAmount}>₱{((it.unit_price || 0) * (it.quantity || 1)).toFixed(2)}</ThemedText>
+                  </View>
+                ))
+              ) : (
+                <View style={styles.noteBox}>
+                  <ThemedText style={styles.noteText}>No quotation available yet.</ThemedText>
+                </View>
+              )}
+
+              <View style={styles.receiptDivider} />
+              <View style={styles.receiptRow}>
+                <ThemedText style={styles.receiptTotalLabel}>Convenience Fee Total</ThemedText>
+                <ThemedText style={styles.receiptTotalValue}>₱{convenienceFeeTotal.toFixed(2)}</ThemedText>
+              </View>
+              <View style={styles.receiptRow}>
+                <ThemedText style={styles.receiptTotalLabel}>Quotation Estimated Total</ThemedText>
+                <ThemedText style={styles.receiptTotalValue}>₱{quotationEstimatedTotal.toFixed(2)}</ThemedText>
+              </View>
+              <View style={styles.receiptRow}>
+                <ThemedText style={styles.receiptTotalLabel}>Total Fee</ThemedText>
+                <ThemedText style={styles.receiptTotalValue}>₱{totalFee.toFixed(2)}</ThemedText>
+              </View>
+            </View>
+          </View>
+        )}
 
         {/* Booking Timeline */}
         <View style={styles.sectionCard}>
@@ -1014,7 +1033,6 @@ export default function ClientBookingDetailScreen() {
           </View>
         </Modal>
 
-        <View style={{ height: 40 }} />
       </ScrollView>
     </ThemedView>
   );

@@ -90,7 +90,7 @@ export const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 16,
-    paddingBottom: 220,
+    paddingBottom: 40,
   },
   // Status Card
   statusCard: {

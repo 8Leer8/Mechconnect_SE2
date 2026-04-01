@@ -194,7 +194,7 @@ export default function HomeScreen() {
       }
 
       if (profileRes.ok) {
-        const profileData = await profileRes.json();
+        const profileData = await profileRes.json() as any;
         const p = profileData.profile || profileData;
         const n = p?.full_name || `${p?.firstname || ''} ${p?.lastname || ''}`.trim();
         if (n) setClientName(n);

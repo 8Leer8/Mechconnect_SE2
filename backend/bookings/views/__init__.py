@@ -61,6 +61,7 @@ __all__ = [
     'mechanic_accept_emergency_request',
     'mechanic_decline_direct_request',
     'mechanic_complete_booking',
+    'mechanic_location_view',
     
     # Mechanic emergency views
     'get_emergency_requests',

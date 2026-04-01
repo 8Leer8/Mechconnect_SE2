@@ -15,6 +15,13 @@ import { calculateBroadcastFee } from '@/utils/trafficutils';
 import * as Location from 'expo-location';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
+
+const parseApiErrorMessage = (payload: unknown, fallback: string) => {
+  if (!payload || typeof payload !== 'object') return fallback;
+  const value = (payload as Record<string, unknown>).error;
+  return typeof value === 'string' && value.trim() ? value : fallback;
+};
+
 interface BookingDetail {
   id: number;
   status: string;
@@ -196,7 +203,7 @@ export default function BookingDetailScreen() {
       });
 
       if (!response.ok) throw new Error('Failed to fetch booking details');
-      const data = await response.json();
+      const data = await response.json() as any;
       const bookingData = data.booking || data;
       setBooking(bookingData);
       const currentStatus = bookingData.status;
@@ -271,7 +278,7 @@ export default function BookingDetailScreen() {
           headers: { 'Content-Type': 'application/json' },
         });
         if (reqRes.ok) {
-          const reqData = await reqRes.json();
+          const reqData = await reqRes.json() as any;
           const requestObj = reqData.request || reqData;
           // Map request shape to BookingDetail-like object for the UI
           const mappedBooking = {
@@ -327,7 +334,7 @@ export default function BookingDetailScreen() {
         setQuotation(null);
         return;
       }
-      const data = await res.json();
+      const data = await res.json() as any;
       setQuotation(data);
     } catch (e) {
       setQuotation(null);
@@ -362,7 +369,7 @@ export default function BookingDetailScreen() {
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
-      throw new Error((err as any).error || 'Failed to refresh on-the-way pricing');
+      throw new Error(parseApiErrorMessage(err, 'Failed to refresh on-the-way pricing'));
     }
   };
 
@@ -389,7 +396,7 @@ export default function BookingDetailScreen() {
       });
       if (!response.ok) {
         const err = await response.json().catch(() => null);
-        throw new Error(err?.error || 'Failed to complete booking');
+        throw new Error(parseApiErrorMessage(err, 'Failed to complete booking'));
       }
       // refresh booking
       await fetchBookingDetail();
@@ -505,7 +512,7 @@ export default function BookingDetailScreen() {
       });
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
-        throw new Error((errData as any).error || errorMessage);
+        throw new Error(parseApiErrorMessage(errData, errorMessage));
       }
 
       const result = await response.json().catch(() => ({}));
@@ -627,7 +634,7 @@ export default function BookingDetailScreen() {
       });
       if (!response.ok) {
         const err = await response.json().catch(() => null);
-        throw new Error(err?.error || 'Failed to accept request');
+        throw new Error(parseApiErrorMessage(err, 'Failed to accept request'));
       }
       showNotification({ type: 'success', message: 'Request accepted' });
       // Go back to bookings list — it will refresh on focus
@@ -653,7 +660,7 @@ export default function BookingDetailScreen() {
       });
       if (!response.ok) {
         const err = await response.json().catch(() => null);
-        throw new Error(err?.error || 'Failed to decline request');
+        throw new Error(parseApiErrorMessage(err, 'Failed to decline request'));
       }
       showNotification({ type: 'success', message: 'Request declined' });
       // After decline, go back to list
@@ -707,6 +714,21 @@ export default function BookingDetailScreen() {
   const clientName = booking.client
     ? `${booking.client.firstname || ''} ${booking.client.lastname || ''}`.trim() || booking.client.username || 'Client'
     : 'Client';
+
+  const quotationEstimatedTotal = parseFloat(String(displayQuotation?.total_amount || 0)) || 0;
+  const convenienceFeeTotal = convenienceBreakdown ? convenienceBreakdown.totalConvenienceFee : 0;
+  const totalFee = convenienceFeeTotal + quotationEstimatedTotal;
+  const showPricingQuotationCard = (
+    booking.status === 'accepted' ||
+    booking.status === 'on_the_way' ||
+    booking.status === 'active' ||
+    booking.status === 'completed'
+  ) && !!(convenienceBreakdown || displayQuotation);
+  const canEditQuotation = (
+    booking.status === 'accepted' ||
+    booking.status === 'on_the_way' ||
+    booking.status === 'active'
+  );
 
   return (
     <ThemedView style={styles.container}>
@@ -863,7 +885,7 @@ export default function BookingDetailScreen() {
                     });
                     if (!first.ok) {
                       const err = await first.json().catch(() => null);
-                      throw new Error(err?.error || 'Failed to revert stage');
+                      throw new Error(parseApiErrorMessage(err, 'Failed to revert stage'));
                     }
 
                     // second revert
@@ -875,7 +897,7 @@ export default function BookingDetailScreen() {
                     });
                     if (!second.ok) {
                       const err = await second.json().catch(() => null);
-                      throw new Error(err?.error || 'Failed to revert to on_the_way');
+                      throw new Error(parseApiErrorMessage(err, 'Failed to revert to on_the_way'));
                     }
 
                     showNotification({ type: 'success', message: 'Reverted to On the Way' });
@@ -940,7 +962,7 @@ export default function BookingDetailScreen() {
                   });
                   if (!pr.ok) {
                     const e = await pr.json().catch(() => null);
-                    throw new Error(e?.error || 'Failed to confirm payment');
+                    throw new Error(parseApiErrorMessage(e, 'Failed to confirm payment'));
                   }
                   const response = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/complete/`, {
                     method: 'POST',
@@ -950,7 +972,7 @@ export default function BookingDetailScreen() {
                   });
                   if (!response.ok) {
                     const err = await response.json().catch(() => null);
-                    throw new Error(err?.error || 'Failed to complete booking');
+                    throw new Error(parseApiErrorMessage(err, 'Failed to complete booking'));
                   }
                   showNotification({ type: 'success', message: 'Booking marked as complete' });
                   fetchBookingDetail();
@@ -986,7 +1008,7 @@ export default function BookingDetailScreen() {
                   });
                   if (!res.ok) {
                     const err = await res.json().catch(() => null);
-                    throw new Error(err?.error || 'Failed to revert stage');
+                    throw new Error(parseApiErrorMessage(err, 'Failed to revert stage'));
                   }
                   showNotification({ type: 'success', message: 'Reverted to previous stage' });
                   fetchBookingDetail();
@@ -1050,41 +1072,7 @@ export default function BookingDetailScreen() {
           <ThemedText style={styles.amountLarge}>₱{parseFloat(String(booking.amount_fee || '0')).toFixed(2)}</ThemedText>
         </View>
 
-        {convenienceBreakdown && (
-          <View style={styles.sectionCard}>
-            <View style={styles.sectionHeader}>
-              <View style={[styles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
-                <FontAwesome name="calculator" size={16} color="#FF8C00" />
-              </View>
-              <ThemedText style={styles.sectionTitle}>Convenience Fee</ThemedText>
-            </View>
 
-            <View style={styles.receiptList}>
-              <View style={styles.receiptRow}>
-                <ThemedText style={styles.receiptItem}>Base Fee</ThemedText>
-                <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.baseFee.toFixed(2)}</ThemedText>
-              </View>
-              <View style={styles.receiptRow}>
-                <ThemedText style={styles.receiptItem}>Distance Fee ({convenienceBreakdown.distanceKm.toFixed(2)} km)</ThemedText>
-                <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.distanceFee.toFixed(2)}</ThemedText>
-              </View>
-              <View style={styles.receiptRow}>
-                <ThemedText style={styles.receiptItem}>Traffic Fee ({convenienceBreakdown.trafficLabel})</ThemedText>
-                <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.trafficFee.toFixed(2)}</ThemedText>
-              </View>
-              <View style={styles.receiptDivider} />
-              <View style={styles.receiptRow}>
-                <ThemedText style={styles.receiptTotalLabel}>Total Convenience Fee</ThemedText>
-                <ThemedText style={styles.receiptTotalValue}>₱{convenienceBreakdown.totalConvenienceFee.toFixed(2)}</ThemedText>
-              </View>
-              {convenienceBreakdown.estimated && (
-                <ThemedText style={{ color: '#8E8E93', marginTop: 6, fontStyle: 'italic' }}>
-                  Estimated price until mechanic starts travel.
-                </ThemedText>
-              )}
-            </View>
-          </View>
-        )}
 
         {/* Client Info Section */}
         <View style={styles.sectionCard}>
@@ -1200,6 +1188,91 @@ export default function BookingDetailScreen() {
           )}
         </View>
 
+        {showPricingQuotationCard && (
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
+                <FontAwesome name="calculator" size={16} color="#FF8C00" />
+              </View>
+              <ThemedText style={styles.sectionTitle}>Pricing & Quotation</ThemedText>
+            </View>
+
+            <View style={styles.receiptList}>
+              <ThemedText style={[styles.noteLabel, { marginBottom: 8 }]}>Convenience Fee</ThemedText>
+              {convenienceBreakdown ? (
+                <>
+                  <View style={styles.receiptRow}>
+                    <ThemedText style={styles.receiptItem}>Base Fee</ThemedText>
+                    <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.baseFee.toFixed(2)}</ThemedText>
+                  </View>
+                  <View style={styles.receiptRow}>
+                    <ThemedText style={styles.receiptItem}>Distance Fee ({convenienceBreakdown.distanceKm.toFixed(2)} km)</ThemedText>
+                    <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.distanceFee.toFixed(2)}</ThemedText>
+                  </View>
+                  {convenienceBreakdown.trafficFee > 0 && (
+                    <View style={styles.receiptRow}>
+                      <ThemedText style={styles.receiptItem}>Traffic Fee ({convenienceBreakdown.trafficLabel})</ThemedText>
+                      <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.trafficFee.toFixed(2)}</ThemedText>
+                    </View>
+                  )}
+                  {typeof booking.estimated_eta_minutes === 'number' && booking.estimated_eta_minutes > 0 && (
+                    <View style={styles.receiptRow}>
+                      <ThemedText style={styles.receiptItem}>Estimated ETA</ThemedText>
+                      <ThemedText style={styles.receiptAmount}>{booking.estimated_eta_minutes} min</ThemedText>
+                    </View>
+                  )}
+                  {convenienceBreakdown.estimated && (
+                    <ThemedText style={{ color: '#8E8E93', marginTop: 6, fontStyle: 'italic' }}>
+                      Estimated price until mechanic starts travel.
+                    </ThemedText>
+                  )}
+                </>
+              ) : (
+                <View style={styles.noteBox}>
+                  <ThemedText style={styles.noteText}>Convenience fee will appear after mechanic starts travel.</ThemedText>
+                </View>
+              )}
+
+              <View style={styles.receiptDivider} />
+              <ThemedText style={[styles.noteLabel, { marginBottom: 8 }]}>Quotation</ThemedText>
+              {displayQuotation && (displayQuotation.items || []).length > 0 ? (
+                (displayQuotation.items || []).map((it: any, idx: number) => (
+                  <View key={idx} style={styles.receiptRow}>
+                    <ThemedText style={styles.receiptItem}>{it.description || (it.service && `Service #${it.service}`) || 'Item'}</ThemedText>
+                    <ThemedText style={styles.receiptAmount}>₱{((it.unit_price || 0) * (it.quantity || 1)).toFixed(2)}</ThemedText>
+                  </View>
+                ))
+              ) : (
+                <View style={styles.noteBox}>
+                  <ThemedText style={styles.noteText}>No quotation yet.</ThemedText>
+                </View>
+              )}
+
+              <View style={styles.receiptDivider} />
+              <View style={styles.receiptRow}>
+                <ThemedText style={styles.receiptTotalLabel}>Convenience Fee Total</ThemedText>
+                <ThemedText style={styles.receiptTotalValue}>₱{convenienceFeeTotal.toFixed(2)}</ThemedText>
+              </View>
+              <View style={styles.receiptRow}>
+                <ThemedText style={styles.receiptTotalLabel}>Quotation Estimated Total</ThemedText>
+                <ThemedText style={styles.receiptTotalValue}>₱{quotationEstimatedTotal.toFixed(2)}</ThemedText>
+              </View>
+              <View style={styles.receiptRow}>
+                <ThemedText style={styles.receiptTotalLabel}>Total Fee</ThemedText>
+                <ThemedText style={styles.receiptTotalValue}>₱{totalFee.toFixed(2)}</ThemedText>
+              </View>
+
+              {canEditQuotation && (
+                <View style={{ marginTop: 10 }}>
+                  <TouchableOpacity style={[styles.finishLargeButton]} onPress={() => routerHook.push({ pathname: '/mechanic/booking/quotation_edit', params: { bookingId: String(booking.id) } })}>
+                    <ThemedText style={[styles.actionButtonText, { color: '#fff' }]}>{quotation ? 'Edit Quotation' : 'Create Quotation'}</ThemedText>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          </View>
+        )}
+
         {/* Booking Timeline */}
         {/* Receipt / Services (shown when pending payment) */}
         {booking.status === 'pending_payment' && (
@@ -1275,113 +1348,7 @@ export default function BookingDetailScreen() {
           </View>
         )}
 
-        {/* Quotation card - visible when booking is booked/accepted */}
-        {booking.status === 'accepted' && (
-          <View style={styles.sectionCard}>
-            <View style={styles.sectionHeader}>
-              <View style={[styles.sectionIcon, { backgroundColor: '#007AFF15' }]}>
-                <FontAwesome name="file-text-o" size={16} color="#007AFF" />
-              </View>
-              <ThemedText style={styles.sectionTitle}>Quotation</ThemedText>
-            </View>
 
-            {displayQuotation && (displayQuotation.items || []).length > 0 ? (
-              <View style={{ paddingVertical: 8 }}>
-                {(displayQuotation.items || []).map((it: any, idx: number) => (
-                  <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 }}>
-                    <ThemedText style={{ flex: 1 }}>{it.description || (it.service && `Service #${it.service}`) || 'Item'}</ThemedText>
-                    <ThemedText>₱{((it.unit_price || 0) * (it.quantity || 1)).toFixed(2)}</ThemedText>
-                  </View>
-                ))}
-                <View style={{ height: 1, backgroundColor: '#eee', marginVertical: 8 }} />
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <ThemedText style={{ fontWeight: '600' }}>Estimated Total</ThemedText>
-                  <ThemedText style={{ fontWeight: '600' }}>₱{parseFloat(String(displayQuotation.total_amount || 0)).toFixed(2)}</ThemedText>
-                </View>
-                <View style={{ marginTop: 10 }}>
-                  <TouchableOpacity style={[styles.finishLargeButton]} onPress={() => routerHook.push({ pathname: '/mechanic/booking/quotation_edit', params: { bookingId: String(booking.id) } })}>
-                    <ThemedText style={[styles.actionButtonText, { color: '#fff' }]}>{quotation ? 'Edit Quotation' : 'Create Quotation'}</ThemedText>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ) : (
-              <View style={{ paddingVertical: 8 }}>
-                <ThemedText style={{ marginBottom: 8, color: '#666' }}>No quotation yet.</ThemedText>
-              </View>
-            )}
-          </View>
-        )}
-
-        {/* Quotation card - visible when mechanic is on the way */}
-        {booking.status === 'on_the_way' && (
-          <View style={styles.sectionCard}>
-            <View style={styles.sectionHeader}>
-              <View style={[styles.sectionIcon, { backgroundColor: '#007AFF15' }]}>
-                <FontAwesome name="file-text-o" size={16} color="#007AFF" />
-              </View>
-              <ThemedText style={styles.sectionTitle}>Quotation</ThemedText>
-            </View>
-
-            {displayQuotation && (displayQuotation.items || []).length > 0 ? (
-              <View style={{ paddingVertical: 8 }}>
-                {(displayQuotation.items || []).map((it: any, idx: number) => (
-                  <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 }}>
-                    <ThemedText style={{ flex: 1 }}>{it.description || (it.service && `Service #${it.service}`) || 'Item'}</ThemedText>
-                    <ThemedText>₱{((it.unit_price || 0) * (it.quantity || 1)).toFixed(2)}</ThemedText>
-                  </View>
-                ))}
-                <View style={{ height: 1, backgroundColor: '#eee', marginVertical: 8 }} />
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <ThemedText style={{ fontWeight: '600' }}>Estimated Total</ThemedText>
-                  <ThemedText style={{ fontWeight: '600' }}>₱{parseFloat(String(displayQuotation.total_amount || 0)).toFixed(2)}</ThemedText>
-                </View>
-                <View style={{ marginTop: 10 }}>
-                  <TouchableOpacity style={[styles.finishLargeButton]} onPress={() => routerHook.push({ pathname: '/mechanic/booking/quotation_edit', params: { bookingId: String(booking.id) } })}>
-                    <ThemedText style={[styles.actionButtonText, { color: '#fff' }]}>{quotation ? 'Edit Quotation' : 'Create Quotation'}</ThemedText>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ) : (
-              <View style={{ paddingVertical: 8 }}>
-                <ThemedText style={{ marginBottom: 8, color: '#666' }}>No quotation yet.</ThemedText>
-              </View>
-            )}
-          </View>
-        )}
-
-        {/* Quotation card - visible when booking is completed (read-only) */}
-        {booking.status === 'completed' && (
-          <View style={styles.sectionCard}>
-            <View style={styles.sectionHeader}>
-              <View style={[styles.sectionIcon, { backgroundColor: '#007AFF15' }]}>
-                <FontAwesome name="file-text-o" size={16} color="#007AFF" />
-              </View>
-              <ThemedText style={styles.sectionTitle}>Quotation</ThemedText>
-            </View>
-
-            {displayQuotation && (displayQuotation.items || []).length > 0 ? (
-              <View style={{ paddingVertical: 8 }}>
-                {(displayQuotation.items || []).map((it: any, idx: number) => (
-                  <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 }}>
-                    <ThemedText style={{ flex: 1 }}>{it.description || (it.service && `Service #${it.service}`) || 'Item'}</ThemedText>
-                    <ThemedText>₱{((it.unit_price || 0) * (it.quantity || 1)).toFixed(2)}</ThemedText>
-                  </View>
-                ))}
-                <View style={{ height: 1, backgroundColor: '#eee', marginVertical: 8 }} />
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <ThemedText style={{ fontWeight: '600' }}>Estimated Total</ThemedText>
-                  <ThemedText style={{ fontWeight: '600' }}>₱{parseFloat(String(displayQuotation.total_amount || 0)).toFixed(2)}</ThemedText>
-                </View>
-                {/* Read-only in completed status - no edit button */}
-              </View>
-            ) : (
-              <View style={{ paddingVertical: 8 }}>
-                <ThemedText style={{ marginBottom: 8, color: '#666' }}>No quotation available.</ThemedText>
-              </View>
-            )}
-          </View>
-
-        )}
 
         <View style={styles.sectionCard}>
           <View style={styles.sectionHeader}>
@@ -1483,42 +1450,7 @@ export default function BookingDetailScreen() {
           </View>
         )}
 
-        {/* Quotation card - visible when booking is active */}
-        {booking.status === 'active' && (
-          <View style={styles.sectionCard}>
-            <View style={styles.sectionHeader}>
-              <View style={[styles.sectionIcon, { backgroundColor: '#007AFF15' }]}>
-                <FontAwesome name="file-text-o" size={16} color="#007AFF" />
-              </View>
-              <ThemedText style={styles.sectionTitle}>Quotation</ThemedText>
-            </View>
 
-            {displayQuotation && (displayQuotation.items || []).length > 0 ? (
-              <View style={{ paddingVertical: 8 }}>
-                {(displayQuotation.items || []).map((it: any, idx: number) => (
-                  <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 }}>
-                    <ThemedText style={{ flex: 1 }}>{it.description || (it.service && `Service #${it.service}`) || 'Item'}</ThemedText>
-                    <ThemedText>₱{((it.unit_price || 0) * (it.quantity || 1)).toFixed(2)}</ThemedText>
-                  </View>
-                ))}
-                <View style={{ height: 1, backgroundColor: '#eee', marginVertical: 8 }} />
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <ThemedText style={{ fontWeight: '600' }}>Estimated Total</ThemedText>
-                  <ThemedText style={{ fontWeight: '600' }}>₱{parseFloat(String(displayQuotation.total_amount || 0)).toFixed(2)}</ThemedText>
-                </View>
-                <View style={{ marginTop: 10 }}>
-                  <TouchableOpacity style={[styles.finishLargeButton]} onPress={() => routerHook.push({ pathname: '/mechanic/booking/quotation_edit', params: { bookingId: String(booking.id) } })}>
-                    <ThemedText style={[styles.actionButtonText, { color: '#fff' }]}>{quotation ? 'Edit Quotation' : 'Create Quotation'}</ThemedText>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ) : (
-              <View style={{ paddingVertical: 8 }}>
-                <ThemedText style={{ marginBottom: 8, color: '#666' }}>No quotation yet.</ThemedText>
-              </View>
-            )}
-          </View>
-        )}
 
         
 
