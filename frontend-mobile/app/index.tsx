@@ -15,6 +15,7 @@ const ACCOUNT_ID_KEY = 'account_id';
 const AUTH_TOKEN_KEY = 'auth_token';
 const USER_ROLE_KEY = 'user_role';
 const LAST_ACTIVE_ROLE_KEY = 'last_active_role';
+const ONBOARDING_SEEN_KEY = 'onboarding_seen';
 
 const getRouteFromRole = (role?: string | null, isWorkingForShopMechanic = false) => {
   if (!role) return '/(clientTabs)/main/home';
@@ -37,7 +38,6 @@ export default function Index() {
   const progressAnim = useRef(new Animated.Value(0)).current;
   const hasNavigatedRef = useRef(false);
   const [lineWidth, setLineWidth] = useState(0);
-  const [loadingStatus, setLoadingStatus] = useState('Checking session...');
 
   useEffect(() => {
     Animated.loop(
@@ -77,21 +77,20 @@ export default function Index() {
     };
 
     const fetchWithTimeout = async (url: string, timeoutMs = 12000) => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-      try {
-        return await fetch(url, {
-          method: 'GET',
-          credentials: 'include',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-          },
-          signal: controller.signal,
-        });
-      } finally {
-        clearTimeout(timeoutId);
-      }
+      const request = fetch(url, {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+      });
+
+      const timeout = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('Request timeout')), timeoutMs);
+      });
+
+      return Promise.race([request, timeout]);
     };
 
     const finishAndNavigate = (path: string) => {
@@ -123,40 +122,30 @@ export default function Index() {
       finishAndNavigate('/(auth)/login');
     };
 
-    const tryAsyncStorageFallback = async () => {
-      const [storedAccountId, storedRole, storedLastActiveRole] = await AsyncStorage.multiGet([
-        ACCOUNT_ID_KEY,
-        USER_ROLE_KEY,
-        LAST_ACTIVE_ROLE_KEY,
-      ]);
-      const accountId = storedAccountId?.[1];
-      const role = storedRole?.[1];
-      const lastActiveRole = storedLastActiveRole?.[1];
-      const finalRole = lastActiveRole || role;
-
-      if (accountId && finalRole) {
-        navigateByRole(finalRole);
-        return;
+    const bootstrapAuth = async () => {
+      try {
+        const onboardingSeen = await AsyncStorage.getItem(ONBOARDING_SEEN_KEY);
+        if (!onboardingSeen) {
+          finishAndNavigate('/onboarding');
+          return;
+        }
+      } catch {
+        // If storage fails, continue with normal auth bootstrap.
       }
 
-      await clearAuthStorage();
-      navigateToLogin();
-    };
-
-    const bootstrapAuth = async () => {
       if (!API_URL) {
-        await tryAsyncStorageFallback();
+        await clearAuthStorage();
+        navigateToLogin();
         return;
       }
 
       while (isMounted && !hasNavigatedRef.current) {
         try {
-          setLoadingStatus('Checking session...');
-
           const response = await fetchWithTimeout(`${API_URL}/users/check-session/`);
 
           if (!response.ok) {
-            await tryAsyncStorageFallback();
+            await clearAuthStorage();
+            navigateToLogin();
             return;
           }
 
@@ -164,19 +153,8 @@ export default function Index() {
 
           if (data?.authenticated) {
             const roleFromSession = data.role || null;
-            let roleFromStorage: string | null = null;
-            let roleFromLastActiveStorage: string | null = null;
             let roleFromApi: string | null = null;
             let isWorkingForShopMechanic = false;
-
-            try {
-              const [storedRole, storedLastActiveRole] = await AsyncStorage.multiGet([USER_ROLE_KEY, LAST_ACTIVE_ROLE_KEY]);
-              roleFromStorage = storedRole?.[1] || null;
-              roleFromLastActiveStorage = storedLastActiveRole?.[1] || null;
-            } catch {
-              roleFromStorage = null;
-              roleFromLastActiveStorage = null;
-            }
 
             try {
               const roleResponse = await fetch(`${API_URL}/users/profile/active-role/`, {
@@ -196,17 +174,21 @@ export default function Index() {
               roleFromApi = null;
             }
 
-            const finalRole = roleFromApi || roleFromSession || roleFromLastActiveStorage || roleFromStorage;
+            const finalRole = roleFromApi || roleFromSession;
 
-            if (finalRole) {
-              try {
-                await AsyncStorage.multiSet([
-                  [USER_ROLE_KEY, finalRole],
-                  [LAST_ACTIVE_ROLE_KEY, finalRole],
-                ]);
-              } catch {
-                // Non-fatal cache write issue.
-              }
+            if (!finalRole) {
+              await clearAuthStorage();
+              navigateToLogin();
+              return;
+            }
+
+            try {
+              await AsyncStorage.multiSet([
+                [USER_ROLE_KEY, finalRole],
+                [LAST_ACTIVE_ROLE_KEY, finalRole],
+              ]);
+            } catch {
+              // Non-fatal cache write issue.
             }
 
             if (finalRole === 'mechanic') {
@@ -221,7 +203,7 @@ export default function Index() {
                 });
 
                 if (profileResponse.ok) {
-                  const profileData = await profileResponse.json();
+                  const profileData = await profileResponse.json() as any;
                   const mechanicProfile = profileData?.profile?.current_role_profile?.mechanic;
                   isWorkingForShopMechanic = !!mechanicProfile?.is_working_for_shop;
                 }
@@ -241,17 +223,12 @@ export default function Index() {
           if (!isMounted || hasNavigatedRef.current) return;
 
           if (isNetworkFailure(error)) {
-            setLoadingStatus('No internet connection. Waiting for network...');
             await wait(2500);
             continue;
           }
 
-          try {
-            await tryAsyncStorageFallback();
-          } catch {
-            await clearAuthStorage();
-            navigateToLogin();
-          }
+          await clearAuthStorage();
+          navigateToLogin();
           return;
         }
       }
@@ -279,7 +256,6 @@ export default function Index() {
         style={styles.logo}
       />
       <Text style={styles.title}>MechConnect: On-Demand Home Auto Repair Platform</Text>
-      <Text style={styles.subtitle}>{loadingStatus}</Text>
 
       <View style={styles.bottomLoaderWrap}>
         <Animated.View
@@ -353,12 +329,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     maxWidth: 340,
     lineHeight: 30,
-  },
-  subtitle: {
-    marginTop: 10,
-    fontSize: 13,
-    color: '#9EA1A8',
-    textAlign: 'center',
   },
   bottomLoaderWrap: {
     position: 'absolute',

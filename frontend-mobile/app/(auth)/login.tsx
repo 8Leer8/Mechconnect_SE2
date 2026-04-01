@@ -39,6 +39,16 @@ interface ActiveRoleResponse {
   roles?: string[];
 }
 
+interface ProfileDetailsResponse {
+  profile?: {
+    current_role_profile?: {
+      mechanic?: {
+        is_working_for_shop?: boolean;
+      };
+    };
+  };
+}
+
 export default function LoginScreen() {
   const router = useRouter();
   const { showNotification } = useNotification();
@@ -130,7 +140,7 @@ export default function LoginScreen() {
             });
 
             if (profileResponse.ok) {
-              const profileData = await profileResponse.json();
+              const profileData = await profileResponse.json() as ProfileDetailsResponse;
               const mechanicProfile = profileData.profile?.current_role_profile?.mechanic;
               
               if (mechanicProfile?.is_working_for_shop) {
