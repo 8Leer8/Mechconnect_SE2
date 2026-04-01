@@ -699,7 +699,7 @@ export default function MapScreen() {
         closeBroadcastModal();
         fetchBroadcasts(true);
         fetchTokensBalance();
-        try { eventBus.emit('walletChanged'); } catch {}
+        try { eventBus.emit('walletChanged'); } catch { }
       } else {
         showNotification({ type: 'warning', title: 'Already Taken', message: data.error || 'This broadcast is no longer available. Another mechanic was faster.' });
         closeBroadcastModal();
