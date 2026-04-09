@@ -30,7 +30,7 @@ if gusto niyo gumamit ng local database
 gawin niyo una instructions sa taas
 gawa kayo database sa xampp name mechconnect_se2
 punta kayo sa backend/.env then read niyo lng comment sa variable na USE_SUPABASE 
-if false mag migrate kayo para ma add tables sa bago database
+if false mag migrate kayo para ma add tables sa bago databasenpm
 commands:
     python manage.py makemigrations
     python manage.py migrate

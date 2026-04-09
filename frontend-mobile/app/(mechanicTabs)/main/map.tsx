@@ -7,6 +7,8 @@ import {
   RefreshControl,
   Modal,
   Image,
+  AppState,
+  AppStateStatus,
 } from 'react-native';
 import MapView, { Marker, Polyline, UrlTile } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -78,6 +80,8 @@ interface FeeData {
   serviceTotal: number;
   addOnsTotal: number;
   overallIncome: number;
+  platformCommission: number;
+  netIncome: number;
   minFee: number;
   maxFee: number;
   isEstimate: boolean;
@@ -90,6 +94,34 @@ interface CachedRouteData {
   trafficData: TrafficData;
   feeData: FeeData;
 }
+
+interface PricingConfig {
+  base_distance_fee: number;
+  price_per_km: number;
+  free_distance_km: number;
+  traffic_low_multiplier: number;
+  traffic_medium_multiplier: number;
+  traffic_high_multiplier: number;
+  convenience_fee_percentage: number;
+  convenience_fee_fixed: number;
+  min_job_price: number;
+  platform_commission_percentage: number;
+  token_deduction_percentage: number;
+}
+
+const DEFAULT_PRICING_CONFIG: PricingConfig = {
+  base_distance_fee: 50,
+  price_per_km: 15,
+  free_distance_km: 2,
+  traffic_low_multiplier: 1,
+  traffic_medium_multiplier: 1.25,
+  traffic_high_multiplier: 1.5,
+  convenience_fee_percentage: 5,
+  convenience_fee_fixed: 0,
+  min_job_price: 100,
+  platform_commission_percentage: 10,
+  token_deduction_percentage: 2,
+};
 
 export default function MapScreen() {
   const mapRef = useRef<MapView>(null);
@@ -115,6 +147,7 @@ export default function MapScreen() {
   const [routeError, setRouteError] = useState<string | null>(null);
   const [trafficData, setTrafficData] = useState<TrafficData | null>(null);
   const [feeData, setFeeData] = useState<FeeData | null>(null);
+  const [pricingConfig, setPricingConfig] = useState<PricingConfig>(DEFAULT_PRICING_CONFIG);
   const [mapInitFailed, setMapInitFailed] = useState(false);
   const [mapInitMessage, setMapInitMessage] = useState('Failed to load map location.');
 
@@ -132,9 +165,11 @@ export default function MapScreen() {
   useEffect(() => {
     initializeMap();
     fetchBroadcasts();
+    fetchPricingConfig();
 
     const interval = setInterval(() => {
       fetchBroadcasts(true);
+      fetchPricingConfig();
     }, 8000);
 
     fetchTokensBalance();
@@ -144,6 +179,20 @@ export default function MapScreen() {
         locationWatchRef.current.remove();
         locationWatchRef.current = null;
       }
+    };
+  }, []);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (nextState === 'active') {
+        fetchPricingConfig();
+        fetchBroadcasts(true);
+        fetchTokensBalance();
+      }
+    });
+
+    return () => {
+      subscription.remove();
     };
   }, []);
 
@@ -182,6 +231,44 @@ export default function MapScreen() {
       // ignore
     }
   };
+
+  const fetchPricingConfig = async () => {
+    try {
+      const response = await fetch(`${API_URL}/pricing/config/`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      const data = await response.json() as Partial<PricingConfig>;
+      setPricingConfig({
+        base_distance_fee: Number(data.base_distance_fee ?? DEFAULT_PRICING_CONFIG.base_distance_fee),
+        price_per_km: Number(data.price_per_km ?? DEFAULT_PRICING_CONFIG.price_per_km),
+        free_distance_km: Number(data.free_distance_km ?? DEFAULT_PRICING_CONFIG.free_distance_km),
+        traffic_low_multiplier: Number(data.traffic_low_multiplier ?? DEFAULT_PRICING_CONFIG.traffic_low_multiplier),
+        traffic_medium_multiplier: Number(data.traffic_medium_multiplier ?? DEFAULT_PRICING_CONFIG.traffic_medium_multiplier),
+        traffic_high_multiplier: Number(data.traffic_high_multiplier ?? DEFAULT_PRICING_CONFIG.traffic_high_multiplier),
+        convenience_fee_percentage: Number(data.convenience_fee_percentage ?? DEFAULT_PRICING_CONFIG.convenience_fee_percentage),
+        convenience_fee_fixed: Number(data.convenience_fee_fixed ?? DEFAULT_PRICING_CONFIG.convenience_fee_fixed),
+        min_job_price: Number(data.min_job_price ?? DEFAULT_PRICING_CONFIG.min_job_price),
+        platform_commission_percentage: Number(data.platform_commission_percentage ?? DEFAULT_PRICING_CONFIG.platform_commission_percentage),
+        token_deduction_percentage: Number(data.token_deduction_percentage ?? DEFAULT_PRICING_CONFIG.token_deduction_percentage),
+      });
+      cachedRouteData.current = null;
+      lastFetchedBroadcastId.current = null;
+    } catch {
+      // keep defaults when config endpoint is unavailable
+    }
+  };
+
+  useEffect(() => {
+    if (!modalVisible) return;
+    fetchPricingConfig();
+  }, [modalVisible]);
 
   const toFiniteNumber = (value: unknown): number | null => {
     if (value === null || value === undefined || value === '') return null;
@@ -341,15 +428,39 @@ export default function MapScreen() {
 
   const getTrafficClass = (ratio: number) => {
     if (ratio < 1.2) {
-      return { level: 'light' as const, emoji: '🟢', label: 'Light Traffic', surchargePercent: 0.0, color: '#34C759' };
+      return {
+        level: 'light' as const,
+        emoji: '🟢',
+        label: 'Light Traffic',
+        surchargePercent: Math.max(0, pricingConfig.traffic_low_multiplier - 1),
+        color: '#34C759',
+      };
     }
     if (ratio < 1.5) {
-      return { level: 'moderate' as const, emoji: '🟡', label: 'Moderate Traffic', surchargePercent: 0.1, color: '#FFD60A' };
+      return {
+        level: 'moderate' as const,
+        emoji: '🟡',
+        label: 'Moderate Traffic',
+        surchargePercent: Math.max(0, pricingConfig.traffic_medium_multiplier - 1),
+        color: '#FFD60A',
+      };
     }
     if (ratio < 2.0) {
-      return { level: 'heavy' as const, emoji: '🟠', label: 'Heavy Traffic', surchargePercent: 0.2, color: '#FF9500' };
+      return {
+        level: 'heavy' as const,
+        emoji: '🟠',
+        label: 'Heavy Traffic',
+        surchargePercent: Math.max(0, pricingConfig.traffic_high_multiplier - 1),
+        color: '#FF9500',
+      };
     }
-    return { level: 'severe' as const, emoji: '🔴', label: 'Severe Traffic', surchargePercent: 0.3, color: '#FF3B30' };
+    return {
+      level: 'severe' as const,
+      emoji: '🔴',
+      label: 'Severe Traffic',
+      surchargePercent: Math.max(0, pricingConfig.traffic_high_multiplier - 1),
+      color: '#FF3B30',
+    };
   };
 
   const getTimeBasedTrafficFallback = (): TrafficData => {
@@ -364,9 +475,24 @@ export default function MapScreen() {
     else fallbackLevel = 'moderate';
 
     const mapByLevel = {
-      light: { emoji: '🟢', label: 'Light Traffic', surchargePercent: 0.0, color: '#34C759' },
-      moderate: { emoji: '🟡', label: 'Moderate Traffic', surchargePercent: 0.1, color: '#FFD60A' },
-      severe: { emoji: '🔴', label: 'Severe Traffic', surchargePercent: 0.3, color: '#FF3B30' },
+      light: {
+        emoji: '🟢',
+        label: 'Light Traffic',
+        surchargePercent: Math.max(0, pricingConfig.traffic_low_multiplier - 1),
+        color: '#34C759',
+      },
+      moderate: {
+        emoji: '🟡',
+        label: 'Moderate Traffic',
+        surchargePercent: Math.max(0, pricingConfig.traffic_medium_multiplier - 1),
+        color: '#FFD60A',
+      },
+      severe: {
+        emoji: '🔴',
+        label: 'Severe Traffic',
+        surchargePercent: Math.max(0, pricingConfig.traffic_high_multiplier - 1),
+        color: '#FF3B30',
+      },
     };
 
     const info = mapByLevel[fallbackLevel];
@@ -462,25 +588,47 @@ export default function MapScreen() {
   };
 
   const calculateFee = (distanceKm: number, traffic: TrafficData, broadcast: BroadcastRequest) => {
-    const BASE_FEE = 50;
-    const RATE_PER_KM = 15;
-    const distanceFee = distanceKm * RATE_PER_KM;
-    const surcharge = distanceFee * traffic.surchargePercent;
-    const convFee = BASE_FEE + distanceFee + surcharge;
+    const freeDistance = Number(pricingConfig.free_distance_km || 0);
+    const baseDistanceFee = Number(pricingConfig.base_distance_fee || 0);
+    const pricePerKm = Number(pricingConfig.price_per_km || 0);
+    const billableKm = Math.max(0, distanceKm - freeDistance);
+    const baseFeeApplied = distanceKm > freeDistance ? baseDistanceFee : 0;
+    const distanceComponent = billableKm * pricePerKm;
+    const travelFee = baseFeeApplied + distanceComponent;
+    const surcharge = travelFee * traffic.surchargePercent;
+
     const serviceTotal = broadcast.services.reduce((sum, s) => sum + (s.minimum_price || 0), 0);
     const addOnsTotal = broadcast.add_ons?.reduce((sum, a) => sum + (a.price || 0), 0) || 0;
-    const overallIncome = serviceTotal + addOnsTotal + convFee;
-    const minFee = BASE_FEE + distanceFee;
-    const maxFee = BASE_FEE + distanceFee + distanceFee * 0.3;
+    const serviceSubtotal = serviceTotal + addOnsTotal;
+    const convFee = (serviceSubtotal * (Number(pricingConfig.convenience_fee_percentage || 0) / 100))
+      + Number(pricingConfig.convenience_fee_fixed || 0);
+
+    const rawJobAmount = serviceSubtotal + travelFee + surcharge + convFee;
+    const overallIncome = Math.max(rawJobAmount, Number(pricingConfig.min_job_price || 0));
+    const platformCommission = overallIncome * (Number(pricingConfig.platform_commission_percentage || 0) / 100);
+    const netIncome = Math.max(0, overallIncome - platformCommission);
+
+    const minSurcharge = travelFee * Math.max(0, pricingConfig.traffic_low_multiplier - 1);
+    const maxSurcharge = travelFee * Math.max(0, pricingConfig.traffic_high_multiplier - 1);
+    const minFee = Math.max(
+      serviceSubtotal + travelFee + minSurcharge + convFee,
+      Number(pricingConfig.min_job_price || 0)
+    );
+    const maxFee = Math.max(
+      serviceSubtotal + travelFee + maxSurcharge + convFee,
+      Number(pricingConfig.min_job_price || 0)
+    );
 
     return {
-      baseFee: BASE_FEE,
-      distanceFee,
+      baseFee: baseFeeApplied,
+      distanceFee: distanceComponent,
       surchargeAmount: surcharge,
       convenienceFee: convFee,
       serviceTotal,
       addOnsTotal,
       overallIncome,
+      platformCommission,
+      netIncome,
       minFee,
       maxFee,
       isEstimate: true,
@@ -685,8 +833,6 @@ export default function MapScreen() {
           mechanic_latitude: userLocation.latitude,
           mechanic_longitude: userLocation.longitude,
           distance_km: feeData?.distanceKm,
-          estimated_price: feeData?.overallIncome,
-          convenience_fee: feeData?.convenienceFee,
           traffic_level: trafficData?.level ?? 'unknown',
           estimated_eta_minutes: feeData?.etaMinutes,
         }),
@@ -727,6 +873,13 @@ export default function MapScreen() {
   const filteredBroadcasts = broadcasts;
   const routeDistanceDisplay = feeData?.distanceKm?.toFixed(2) ?? '--';
   const routeEtaDisplay = feeData?.etaMinutes ?? '--';
+  const requiredTokensPreview = feeData
+    ? Math.ceil(
+        Math.max(0, feeData.overallIncome)
+        * (Math.max(0, Number(pricingConfig.token_deduction_percentage || 0)) / 100)
+      )
+    : (typeof selectedBroadcast?.required_tokens === 'number' ? selectedBroadcast.required_tokens : null);
+  const hasInsufficientTokens = requiredTokensPreview !== null && tokensBalance !== null && tokensBalance < requiredTokensPreview;
   const selectedBroadcastCoordinate = selectedBroadcast
     ? toValidCoordinate(selectedBroadcast.latitude, selectedBroadcast.longitude)
     : null;
@@ -1032,7 +1185,7 @@ export default function MapScreen() {
                     <View style={sx.modalCard}>
                       <View style={sx.cardTitleRow}>
                         <FontAwesome name="calculator" size={14} color="#FF8C00" />
-                        <ThemedText style={sx.cardTitleText}>Convenience Fee</ThemedText>
+                        <ThemedText style={sx.cardTitleText}>Travel, Traffic & Convenience</ThemedText>
                       </View>
                       <View style={sx.cardRow}>
                         <ThemedText style={sx.cardRowLabel}>Base Fee</ThemedText>
@@ -1052,7 +1205,7 @@ export default function MapScreen() {
                         <ThemedText style={sx.cardRowValueBold}>₱{feeData.convenienceFee.toFixed(2)}</ThemedText>
                       </View>
                       <ThemedText style={sx.rangeText}>
-                        Range: ₱{feeData.minFee.toFixed(2)} - ₱{feeData.maxFee.toFixed(2)}
+                        Estimated total range: ₱{feeData.minFee.toFixed(2)} - ₱{feeData.maxFee.toFixed(2)}
                       </ThemedText>
                     </View>
                   )}
@@ -1100,7 +1253,7 @@ export default function MapScreen() {
                     <View style={sx.incomeCard}>
                       <View style={sx.cardTitleRow}>
                         <FontAwesome name="money" size={14} color="#34C759" />
-                        <ThemedText style={sx.incomeTitleStyle}>Your Total Income</ThemedText>
+                        <ThemedText style={sx.incomeTitleStyle}>Job Amount Summary</ThemedText>
                       </View>
                       <View style={sx.cardRow}>
                         <ThemedText style={sx.cardRowLabel}>Services Total</ThemedText>
@@ -1111,13 +1264,29 @@ export default function MapScreen() {
                         <ThemedText style={sx.cardRowValue}>₱{feeData.addOnsTotal.toFixed(2)}</ThemedText>
                       </View>
                       <View style={sx.cardRow}>
+                        <ThemedText style={sx.cardRowLabel}>Travel Fee</ThemedText>
+                        <ThemedText style={sx.cardRowValue}>₱{(feeData.baseFee + feeData.distanceFee).toFixed(2)}</ThemedText>
+                      </View>
+                      <View style={sx.cardRow}>
+                        <ThemedText style={sx.cardRowLabel}>Traffic Surcharge</ThemedText>
+                        <ThemedText style={sx.cardRowValue}>₱{feeData.surchargeAmount.toFixed(2)}</ThemedText>
+                      </View>
+                      <View style={sx.cardRow}>
                         <ThemedText style={sx.cardRowLabel}>Convenience Fee</ThemedText>
                         <ThemedText style={sx.cardRowValue}>₱{feeData.convenienceFee.toFixed(2)}</ThemedText>
                       </View>
+                      <View style={sx.cardRow}>
+                        <ThemedText style={sx.cardRowLabel}>Platform Commission</ThemedText>
+                        <ThemedText style={sx.cardRowValue}>₱{feeData.platformCommission.toFixed(2)}</ThemedText>
+                      </View>
                       <View style={sx.cardDivider} />
                       <View style={sx.cardRow}>
-                        <ThemedText style={sx.totalStyleLabel}>TOTAL</ThemedText>
+                        <ThemedText style={sx.totalStyleLabel}>JOB TOTAL</ThemedText>
                         <ThemedText style={sx.totalStyleValue}>₱{feeData.overallIncome.toFixed(2)}</ThemedText>
+                      </View>
+                      <View style={sx.cardRow}>
+                        <ThemedText style={sx.totalStyleLabel}>EST. NET</ThemedText>
+                        <ThemedText style={sx.totalStyleValue}>₱{feeData.netIncome.toFixed(2)}</ThemedText>
                       </View>
                     </View>
                   )}
@@ -1129,13 +1298,13 @@ export default function MapScreen() {
                     </View>
                     <View style={sx.tokensRow}>
                       <ThemedText style={sx.tokensLabel}>Required</ThemedText>
-                      <ThemedText style={sx.tokensValue}>{selectedBroadcast?.required_tokens ?? '--'}</ThemedText>
+                      <ThemedText style={sx.tokensValue}>{requiredTokensPreview ?? '--'}</ThemedText>
                     </View>
                     <View style={sx.tokensRow}>
                       <ThemedText style={sx.tokensLabel}>Balance</ThemedText>
                       <ThemedText style={sx.tokensValue}>{tokensBalance ?? '--'}</ThemedText>
                     </View>
-                    {selectedBroadcast && typeof selectedBroadcast.required_tokens === 'number' && tokensBalance !== null && tokensBalance < selectedBroadcast.required_tokens && (
+                    {hasInsufficientTokens && (
                       <ThemedText style={sx.tokensWarning}>Insufficient tokens. Please top up to accept this job.</ThemedText>
                     )}
                   </View>
@@ -1149,10 +1318,10 @@ export default function MapScreen() {
                 style={[
                   styles.modalAcceptButton,
                   accepting && styles.modalAcceptButtonDisabled,
-                  (selectedBroadcast && typeof selectedBroadcast.required_tokens === 'number' && tokensBalance !== null && tokensBalance < selectedBroadcast.required_tokens) ? styles.modalAcceptButtonDisabled : null,
+                  hasInsufficientTokens ? styles.modalAcceptButtonDisabled : null,
                 ]}
                 onPress={handleAcceptBroadcast}
-                disabled={accepting || !!(selectedBroadcast && typeof selectedBroadcast.required_tokens === 'number' && tokensBalance !== null && tokensBalance < selectedBroadcast.required_tokens)}
+                disabled={accepting || hasInsufficientTokens}
               >
                 {accepting ? (
                   <ActivityIndicator color="#fff" />

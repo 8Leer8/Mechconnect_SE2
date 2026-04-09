@@ -280,6 +280,7 @@ def _serialize_single_booking(booking):
         'status': booking.status,
         'amount_fee': float(booking.amount_fee),
         'convenience_fee': float(booking.convenience_fee) if getattr(booking, 'convenience_fee', None) is not None else None,
+        'traffic_surcharge': float(booking.traffic_surcharge) if getattr(booking, 'traffic_surcharge', None) is not None else None,
         'distance_km': float(distance_value) if distance_value is not None else None,
         'estimated_eta_minutes': int(eta_value) if eta_value is not None else None,
         'traffic_level': traffic_level_value,

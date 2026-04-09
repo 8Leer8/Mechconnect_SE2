@@ -29,6 +29,28 @@ interface CreateRequestResponse {
   request_id?: number;
 }
 
+interface PricingConfig {
+  base_distance_fee: number;
+  price_per_km: number;
+  free_distance_km: number;
+  traffic_low_multiplier: number;
+  traffic_medium_multiplier: number;
+  traffic_high_multiplier: number;
+  convenience_fee_percentage: number;
+  convenience_fee_fixed: number;
+}
+
+const DEFAULT_PRICING_CONFIG: PricingConfig = {
+  base_distance_fee: 50,
+  price_per_km: 15,
+  free_distance_km: 2,
+  traffic_low_multiplier: 1,
+  traffic_medium_multiplier: 1.25,
+  traffic_high_multiplier: 1.5,
+  convenience_fee_percentage: 5,
+  convenience_fee_fixed: 0,
+};
+
 export default function MainRequestFormScreen() {
   const { showNotification } = useNotification();
   const { selectedLocation, setSelectedLocation } = useLocation();
@@ -56,6 +78,42 @@ export default function MainRequestFormScreen() {
   const [landmark, setLandmark] = useState('');
   const [latitude, setLatitude] = useState<number | null>(null);
   const [longitude, setLongitude] = useState<number | null>(null);
+  const [pricingConfig, setPricingConfig] = useState<PricingConfig>(DEFAULT_PRICING_CONFIG);
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchPricingConfig = async () => {
+      try {
+        const response = await fetch(`${API_URL}/pricing/config/`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (!response.ok) return;
+
+        const data = await response.json() as Partial<PricingConfig>;
+        if (!isMounted) return;
+
+        setPricingConfig({
+          base_distance_fee: Number(data.base_distance_fee ?? DEFAULT_PRICING_CONFIG.base_distance_fee),
+          price_per_km: Number(data.price_per_km ?? DEFAULT_PRICING_CONFIG.price_per_km),
+          free_distance_km: Number(data.free_distance_km ?? DEFAULT_PRICING_CONFIG.free_distance_km),
+          traffic_low_multiplier: Number(data.traffic_low_multiplier ?? DEFAULT_PRICING_CONFIG.traffic_low_multiplier),
+          traffic_medium_multiplier: Number(data.traffic_medium_multiplier ?? DEFAULT_PRICING_CONFIG.traffic_medium_multiplier),
+          traffic_high_multiplier: Number(data.traffic_high_multiplier ?? DEFAULT_PRICING_CONFIG.traffic_high_multiplier),
+          convenience_fee_percentage: Number(data.convenience_fee_percentage ?? DEFAULT_PRICING_CONFIG.convenience_fee_percentage),
+          convenience_fee_fixed: Number(data.convenience_fee_fixed ?? DEFAULT_PRICING_CONFIG.convenience_fee_fixed),
+        });
+      } catch {
+        // Keep defaults when config endpoint is unavailable.
+      }
+    };
+
+    fetchPricingConfig();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // ─── Fetch Services (only for Broadcast mode) ─────────────
   useEffect(() => {
@@ -117,12 +175,6 @@ export default function MainRequestFormScreen() {
     setSelectedServiceIds((prev) =>
       prev.includes(serviceId) ? prev.filter((id) => id !== serviceId) : [...prev, serviceId]
     );
-  };
-
-  const getTotalMinimumPrice = () => {
-    return services
-      .filter((service) => selectedServiceIds.includes(service.id))
-      .reduce((sum, service) => sum + service.minimum_price, 0);
   };
 
   const takePhoto = async () => {
@@ -401,14 +453,8 @@ export default function MainRequestFormScreen() {
             )}
             {selectedServiceIds.length > 0 && (
               <View style={styles.priceBreakdown}>
-                <View style={styles.priceRow}>
-                  <FontAwesome name="tag" size={12} color="#FF8C00" />
-                  <ThemedText style={styles.priceBreakdownText}>
-                    Total Min Price: ₱{getTotalMinimumPrice().toFixed(2)}
-                  </ThemedText>
-                </View>
                 <ThemedText style={styles.priceNote}>
-                  + Distance charge: ₱10/km from mechanic location
+                  + Distance pricing: ₱{pricingConfig.base_distance_fee.toFixed(2)} base + ₱{pricingConfig.price_per_km.toFixed(2)}/km after {pricingConfig.free_distance_km.toFixed(2)} km free distance. Traffic and convenience fees apply.
                 </ThemedText>
               </View>
             )}

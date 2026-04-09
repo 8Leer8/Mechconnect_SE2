@@ -51,6 +51,7 @@ urlpatterns = [
     # Mechanic wallet endpoints
     path('mechanic/wallet/', views.mechanic_wallet, name='mechanic_wallet'),
     path('mechanic/wallet/topup/', views.mechanic_wallet_topup, name='mechanic_wallet_topup'),
+    path('mechanic/wallet/token-pricing/', views.get_token_pricing_view, name='mechanic-wallet-token-pricing'),
 ]
 
 #Admin Urls

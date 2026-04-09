@@ -5,6 +5,7 @@ from .models import (
     RequestAssignment, Receipt
 )
 from services.models import Service, ServiceAddOn
+from services.pricing_utils import get_convenience_fee, get_required_tokens
 from users.models import Account, Client
 from shops.models import Shop
 from MainBackend.storage_utils import get_media_url
@@ -275,7 +276,7 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
         return ServiceAddOnSerializer([addon.service_add_on for addon in add_ons], many=True).data
 
     def get_required_tokens(self, obj):
-        """Calculate required tokens (2% of total service price) rounded up to integer."""
+        """Calculate required tokens preview using configurable token deduction percentage."""
         try:
             total_amount = 0.0
             for service in obj.services.all():
@@ -286,9 +287,9 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
             for ar in add_ons:
                 total_amount += float(ar.service_add_on.price)
 
-            import math
-            required = math.ceil(total_amount * 0.02)
-            return required
+            # Add convenience fee computed from service subtotal.
+            total_amount += float(get_convenience_fee(total_amount))
+            return get_required_tokens(total_amount)
         except Exception:
             return 0
 

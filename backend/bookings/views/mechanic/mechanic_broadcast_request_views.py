@@ -11,7 +11,14 @@ from ...models import (
 from ...serializers import BroadcastRequestSerializer
 from ...ws_utils import notify_booking_parties
 from users.models import Account, TokenTransaction
-import math
+from services.pricing_utils import (
+    get_distance_fee,
+    get_traffic_surcharge,
+    get_convenience_fee,
+    apply_min_job_price,
+    get_platform_commission,
+    get_required_tokens,
+)
 
 
 @api_view(['GET'])
@@ -55,8 +62,8 @@ def accept_broadcast_request(request, broadcast_id):
     Accept a broadcast request.
     Uses transaction.atomic() and select_for_update() to prevent race conditions.
     Only the first mechanic to accept wins.
-    Expects: mechanic_latitude, mechanic_longitude, distance_km, estimated_price,
-    convenience_fee, traffic_level, estimated_eta_minutes
+    Expects: mechanic_latitude, mechanic_longitude, distance_km,
+    traffic_level, estimated_eta_minutes
     """
     account_id = request.session.get('account_id')
     
@@ -79,8 +86,6 @@ def accept_broadcast_request(request, broadcast_id):
         mechanic_latitude = request.data.get('mechanic_latitude')
         mechanic_longitude = request.data.get('mechanic_longitude')
         distance_km_raw = request.data.get('distance_km')
-        estimated_price_raw = request.data.get('estimated_price')
-        convenience_fee_raw = request.data.get('convenience_fee')
         traffic_level_raw = request.data.get('traffic_level')
         estimated_eta_minutes_raw = request.data.get('estimated_eta_minutes')
 
@@ -101,22 +106,20 @@ def accept_broadcast_request(request, broadcast_id):
                 return None
 
         distance_km = _to_float(distance_km_raw)
-        estimated_price = _to_float(estimated_price_raw)
-        convenience_fee = _to_float(convenience_fee_raw)
         estimated_eta_minutes = _to_int(estimated_eta_minutes_raw)
 
-        traffic_level = str(traffic_level_raw or '').strip().lower() or None
-        valid_traffic_levels = {'light', 'moderate', 'heavy', 'severe', 'unknown'}
-        if traffic_level and traffic_level not in valid_traffic_levels:
-            traffic_level = 'unknown'
+        raw_level = str(traffic_level_raw or '').strip().lower() or 'low'
+        traffic_level = {
+            'light': 'low',
+            'low': 'low',
+            'moderate': 'medium',
+            'medium': 'medium',
+            'heavy': 'high',
+            'severe': 'high',
+            'high': 'high',
+            'unknown': 'low',
+        }.get(raw_level, 'low')
 
-        traffic_surcharge = None
-        if convenience_fee is not None and distance_km is not None:
-            base_fee = 50.0
-            rate_per_km = 15.0
-            calculated = convenience_fee - (base_fee + (distance_km * rate_per_km))
-            traffic_surcharge = max(0.0, calculated)
-        
         # Use atomic transaction to prevent race conditions
         with transaction.atomic():
             # Lock the broadcast request row
@@ -144,18 +147,31 @@ def accept_broadcast_request(request, broadcast_id):
             # Re-lock mechanic row to avoid token race conditions
             mechanic = mechanic.__class__.objects.select_for_update().get(pk=mechanic.pk)
 
-            # Compute total amount for the request (estimated_price preferred)
-            if estimated_price is not None:
-                total_amount = float(estimated_price)
-            else:
-                total_amount = 0.0
-                for service in broadcast_request.services.all():
-                    total_amount += float(service.minimum_price)
-                for addon_relation in broadcast_request.add_ons.all():
-                    total_amount += float(addon_relation.service_add_on.price)
+            # Always compute amount server-side to avoid client-side hardcoded pricing drift.
+            service_total = 0.0
+            for service in broadcast_request.services.all():
+                service_total += float(service.minimum_price)
 
-            # Calculate required tokens as 2% of total, rounded up
-            required_tokens = math.ceil(total_amount * 0.02)
+            add_ons_total = 0.0
+            for addon_relation in broadcast_request.add_ons.all():
+                add_ons_total += float(addon_relation.service_add_on.price)
+
+            service_subtotal = service_total + add_ons_total
+            distance_fee = 0.0
+            traffic_surcharge = 0.0
+            if distance_km is not None:
+                distance_fee = get_distance_fee(distance_km)
+                traffic_surcharge = get_traffic_surcharge(distance_fee, traffic_level)
+
+            # Convenience is derived from service subtotal (not travel base) for clearer additive pricing.
+            convenience_fee = get_convenience_fee(service_subtotal)
+
+            subtotal_amount = service_subtotal + distance_fee + traffic_surcharge + float(convenience_fee)
+            total_amount = apply_min_job_price(subtotal_amount)
+            platform_commission = get_platform_commission(total_amount)
+
+            # Calculate required tokens from configurable pricing percentage.
+            required_tokens = get_required_tokens(total_amount)
 
             # Check mechanic has enough tokens
             if mechanic.tokens_balance < required_tokens:
@@ -174,7 +190,7 @@ def accept_broadcast_request(request, broadcast_id):
                     'mechanic_latitude': mechanic_latitude,
                     'mechanic_longitude': mechanic_longitude,
                     'distance_km': distance_km,
-                    'estimated_price': estimated_price,
+                    'estimated_price': total_amount,
                     'convenience_fee': convenience_fee,
                     'traffic_level': traffic_level,
                     'estimated_eta_minutes': estimated_eta_minutes,
@@ -188,7 +204,7 @@ def accept_broadcast_request(request, broadcast_id):
                 offer.mechanic_latitude = mechanic_latitude
                 offer.mechanic_longitude = mechanic_longitude
                 offer.distance_km = distance_km
-                offer.estimated_price = estimated_price
+                offer.estimated_price = total_amount
                 offer.convenience_fee = convenience_fee
                 offer.traffic_level = traffic_level
                 offer.estimated_eta_minutes = estimated_eta_minutes
@@ -254,6 +270,7 @@ def accept_broadcast_request(request, broadcast_id):
                 'convenience_fee': convenience_fee,
                 'traffic_level': traffic_level,
                 'estimated_eta_minutes': estimated_eta_minutes,
+                'platform_commission': platform_commission,
                 'tokens_deducted': required_tokens,
                 'tokens_remaining': mechanic.tokens_balance
             }, status=status.HTTP_200_OK)
