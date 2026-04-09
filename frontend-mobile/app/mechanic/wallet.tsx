@@ -123,7 +123,7 @@ export default function WalletScreen() {
           <FontAwesome name="chevron-left" size={16} color="#FF8C00" />
         </TouchableOpacity>
         <View style={styles.headerCenter}>
-          <ThemedText style={styles.headerTitle}>Tokens</ThemedText>
+          <ThemedText style={styles.headerTitle}>Credits</ThemedText>
           <ThemedText style={styles.headerSubtitle}>Manage your credits</ThemedText>
         </View>
         <TouchableOpacity style={styles.refreshBtn} onPress={fetchBalance}>
@@ -137,21 +137,21 @@ export default function WalletScreen() {
           <View style={styles.balanceIconCircle}>
             <FontAwesome name="database" size={28} color="#FF8C00" />
           </View>
-          <ThemedText style={styles.balanceLabel}>Token Balance</ThemedText>
+          <ThemedText style={styles.balanceLabel}>Credit Balance</ThemedText>
           <ThemedText style={styles.balanceValue}>{balance === null ? '...' : balance}</ThemedText>
-          <ThemedText style={styles.balanceSub}>Available tokens</ThemedText>
+          <ThemedText style={styles.balanceSub}>Available credits</ThemedText>
         </View>
 
-        {/* Buy Tokens */}
+        {/* Buy Credits */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <View style={[styles.sectionDot, { backgroundColor: '#FF8C00' }]} />
-            <ThemedText style={styles.sectionTitle}>Buy Tokens</ThemedText>
+            <ThemedText style={styles.sectionTitle}>Buy Credits</ThemedText>
           </View>
           <ThemedText style={styles.balanceSub}>
             {tokenPricing.token_packages.length > 0
-              ? 'Select from configured token packages'
-              : `Min ${tokenPricing.min_token_purchase} • Max ${tokenPricing.max_token_purchase} • ₱${tokenPricing.base_token_price.toFixed(2)} / token`}
+              ? 'Select from configured credit packages'
+              : `Min ${tokenPricing.min_token_purchase} • Max ${tokenPricing.max_token_purchase} • ₱${tokenPricing.base_token_price.toFixed(2)} / credit`}
           </ThemedText>
           <View style={styles.packagesGrid}>
             {tokenPackages.map((pkg) => (
@@ -166,7 +166,7 @@ export default function WalletScreen() {
                   <FontAwesome name="database" size={20} color="#FF8C00" />
                 </View>
                 <ThemedText style={styles.packageAmount}>{pkg.tokens}</ThemedText>
-                <ThemedText style={styles.packageLabel}>tokens • ₱{pkg.price.toFixed(2)}</ThemedText>
+                <ThemedText style={styles.packageLabel}>credits • ₱{pkg.price.toFixed(2)}</ThemedText>
                 <View style={styles.packageBuyBtn}>
                   {topUpLoading === pkg.tokens ? (
                     <ActivityIndicator size="small" color="#fff" />
@@ -189,7 +189,7 @@ export default function WalletScreen() {
             <View style={styles.emptyCard}>
               <FontAwesome name="exchange" size={28} color="#555" />
               <ThemedText style={styles.emptyTitle}>No Transactions Yet</ThemedText>
-              <ThemedText style={styles.emptySubtext}>Purchase tokens to see your history</ThemedText>
+              <ThemedText style={styles.emptySubtext}>Purchase credits to see your history</ThemedText>
             </View>
           ) : (
             <View style={styles.txList}>

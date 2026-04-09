@@ -35,8 +35,8 @@ export default function WalletSection() {
         <FontAwesome name="database" size={18} color="#FF8C00" />
       </View>
       <View style={styles.info}>
-        <ThemedText style={styles.label}>Token Balance</ThemedText>
-        <ThemedText style={styles.amount}>{balance === null ? '...' : `${balance} tokens`}</ThemedText>
+        <ThemedText style={styles.label}>Credit Balance</ThemedText>
+        <ThemedText style={styles.amount}>{balance === null ? '...' : `${balance} credits`}</ThemedText>
       </View>
       <TouchableOpacity style={styles.addBtn} onPress={() => router.push('/mechanic/wallet')} activeOpacity={0.7}>
         <FontAwesome name="plus" size={11} color="#fff" />

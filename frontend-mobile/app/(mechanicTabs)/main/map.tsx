@@ -1294,7 +1294,7 @@ export default function MapScreen() {
                   <View style={sx.tokensCard}>
                     <View style={sx.cardTitleRow}>
                       <FontAwesome name="ticket" size={14} color="#FF8C00" />
-                      <ThemedText style={sx.tokensTitle}>Tokens</ThemedText>
+                      <ThemedText style={sx.tokensTitle}>Credits</ThemedText>
                     </View>
                     <View style={sx.tokensRow}>
                       <ThemedText style={sx.tokensLabel}>Required</ThemedText>
@@ -1305,7 +1305,7 @@ export default function MapScreen() {
                       <ThemedText style={sx.tokensValue}>{tokensBalance ?? '--'}</ThemedText>
                     </View>
                     {hasInsufficientTokens && (
-                      <ThemedText style={sx.tokensWarning}>Insufficient tokens. Please top up to accept this job.</ThemedText>
+                      <ThemedText style={sx.tokensWarning}>Insufficient credits. Please top up to accept this job.</ThemedText>
                     )}
                   </View>
 
