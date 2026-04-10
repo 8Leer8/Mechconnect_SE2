@@ -64,6 +64,18 @@ type TrafficData = {
   estimated: boolean;
 };
 
+type TrafficMultiplierConfig = {
+  traffic_low_multiplier: number;
+  traffic_medium_multiplier: number;
+  traffic_high_multiplier: number;
+};
+
+const DEFAULT_TRAFFIC_MULTIPLIERS: TrafficMultiplierConfig = {
+  traffic_low_multiplier: 1,
+  traffic_medium_multiplier: 1.25,
+  traffic_high_multiplier: 1.5,
+};
+
 const MANILA_FALLBACK: Coordinates = {
   latitude: 14.5995,
   longitude: 120.9842,
@@ -74,11 +86,15 @@ const DEFAULT_TRAFFIC: TrafficData = {
   label: 'Moderate',
   emoji: '🟡',
   color: '#FFD60A',
-  surchargePercent: 10,
+  surchargePercent: Math.round(Math.max(0, DEFAULT_TRAFFIC_MULTIPLIERS.traffic_medium_multiplier - 1) * 100),
   currentSpeed: 0,
   freeFlowSpeed: 0,
   estimated: true,
 };
+
+function multiplierToPercent(multiplier: number): number {
+  return Math.round(Math.max(0, multiplier - 1) * 100);
+}
 
 function toNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
@@ -122,20 +138,47 @@ function haversineDistanceKm(a: Coordinates, b: Coordinates): number {
   return R * c;
 }
 
-function classifyTraffic(ratio: number): Omit<TrafficData, 'currentSpeed' | 'freeFlowSpeed' | 'estimated'> {
+function classifyTraffic(
+  ratio: number,
+  multipliers: TrafficMultiplierConfig
+): Omit<TrafficData, 'currentSpeed' | 'freeFlowSpeed' | 'estimated'> {
   if (ratio < 1.2) {
-    return { level: 'light', label: 'Light', emoji: '🟢', color: '#34C759', surchargePercent: 0 };
+    return {
+      level: 'light',
+      label: 'Light',
+      emoji: '🟢',
+      color: '#34C759',
+      surchargePercent: multiplierToPercent(multipliers.traffic_low_multiplier),
+    };
   }
   if (ratio < 1.5) {
-    return { level: 'moderate', label: 'Moderate', emoji: '🟡', color: '#FFD60A', surchargePercent: 10 };
+    return {
+      level: 'moderate',
+      label: 'Moderate',
+      emoji: '🟡',
+      color: '#FFD60A',
+      surchargePercent: multiplierToPercent(multipliers.traffic_medium_multiplier),
+    };
   }
   if (ratio < 2.0) {
-    return { level: 'heavy', label: 'Heavy', emoji: '🟠', color: '#FF9500', surchargePercent: 20 };
+    return {
+      level: 'heavy',
+      label: 'Heavy',
+      emoji: '🟠',
+      color: '#FF9500',
+      surchargePercent: multiplierToPercent(multipliers.traffic_high_multiplier),
+    };
   }
-  return { level: 'severe', label: 'Severe', emoji: '🔴', color: '#FF3B30', surchargePercent: 30 };
+  return {
+    level: 'severe',
+    label: 'Severe',
+    emoji: '🔴',
+    color: '#FF3B30',
+    surchargePercent: multiplierToPercent(multipliers.traffic_high_multiplier),
+  };
 }
 
-function timeBasedTrafficFallback(): TrafficData {
+function timeBasedTrafficFallback(multipliers: TrafficMultiplierConfig): TrafficData {
   const hour = new Date().getHours();
   let level: TrafficLevel = 'moderate';
 
@@ -147,10 +190,30 @@ function timeBasedTrafficFallback(): TrafficData {
   else level = 'moderate';
 
   const byLevel = {
-    light: { label: 'Light' as const, emoji: '🟢', color: '#34C759', surchargePercent: 0 },
-    moderate: { label: 'Moderate' as const, emoji: '🟡', color: '#FFD60A', surchargePercent: 10 },
-    heavy: { label: 'Heavy' as const, emoji: '🟠', color: '#FF9500', surchargePercent: 20 },
-    severe: { label: 'Severe' as const, emoji: '🔴', color: '#FF3B30', surchargePercent: 30 },
+    light: {
+      label: 'Light' as const,
+      emoji: '🟢',
+      color: '#34C759',
+      surchargePercent: multiplierToPercent(multipliers.traffic_low_multiplier),
+    },
+    moderate: {
+      label: 'Moderate' as const,
+      emoji: '🟡',
+      color: '#FFD60A',
+      surchargePercent: multiplierToPercent(multipliers.traffic_medium_multiplier),
+    },
+    heavy: {
+      label: 'Heavy' as const,
+      emoji: '🟠',
+      color: '#FF9500',
+      surchargePercent: multiplierToPercent(multipliers.traffic_high_multiplier),
+    },
+    severe: {
+      label: 'Severe' as const,
+      emoji: '🔴',
+      color: '#FF3B30',
+      surchargePercent: multiplierToPercent(multipliers.traffic_high_multiplier),
+    },
   };
 
   const selected = byLevel[level] || byLevel.moderate;
@@ -225,6 +288,7 @@ export default function BookingLocationMapScreen() {
 
   const [traffic, setTraffic] = useState<TrafficData | null>(null);
   const [trafficEstimatedNote, setTrafficEstimatedNote] = useState(false);
+  const [trafficMultipliers, setTrafficMultipliers] = useState<TrafficMultiplierConfig>(DEFAULT_TRAFFIC_MULTIPLIERS);
 
   const [lastMechanicUpdateAt, setLastMechanicUpdateAt] = useState<number | null>(null);
   const [showSignalLost, setShowSignalLost] = useState(false);
@@ -241,6 +305,34 @@ export default function BookingLocationMapScreen() {
   useEffect(() => {
     mechanicCoordsRef.current = mechanicCoords;
   }, [mechanicCoords]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchTrafficMultipliers = async () => {
+      try {
+        const response = await fetch(`${API_URL}/pricing/config/`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (!response.ok) return;
+        const data = await response.json() as Partial<TrafficMultiplierConfig>;
+        if (!isMounted) return;
+        setTrafficMultipliers({
+          traffic_low_multiplier: Number(data.traffic_low_multiplier ?? DEFAULT_TRAFFIC_MULTIPLIERS.traffic_low_multiplier),
+          traffic_medium_multiplier: Number(data.traffic_medium_multiplier ?? DEFAULT_TRAFFIC_MULTIPLIERS.traffic_medium_multiplier),
+          traffic_high_multiplier: Number(data.traffic_high_multiplier ?? DEFAULT_TRAFFIC_MULTIPLIERS.traffic_high_multiplier),
+        });
+      } catch {
+        // Keep defaults when config endpoint is unavailable.
+      }
+    };
+
+    fetchTrafficMultipliers();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const cleanupLiveResources = useCallback(() => {
     if (pollIntervalRef.current) {
@@ -526,7 +618,7 @@ export default function BookingLocationMapScreen() {
     if (!currentSpeed || !freeFlowSpeed) throw new Error('Invalid traffic response');
 
     const ratio = freeFlowSpeed / currentSpeed;
-    const classified = classifyTraffic(ratio);
+    const classified = classifyTraffic(ratio, trafficMultipliers);
 
     return {
       ...classified,
@@ -534,7 +626,7 @@ export default function BookingLocationMapScreen() {
       freeFlowSpeed,
       estimated: false,
     };
-  }, []);
+  }, [trafficMultipliers]);
 
   const refreshRouteAndTraffic = useCallback(async (from: Coordinates, to: Coordinates, currentStatus: string) => {
     let nextDistance = distanceKm;
@@ -567,7 +659,7 @@ export default function BookingLocationMapScreen() {
         setTraffic(trafficData);
         setTrafficEstimatedNote(false);
       } catch {
-        const fallback = timeBasedTrafficFallback();
+        const fallback = timeBasedTrafficFallback(trafficMultipliers);
         setTraffic(fallback);
         setTrafficEstimatedNote(true);
       }
@@ -637,11 +729,12 @@ export default function BookingLocationMapScreen() {
 
         if (bookingStatus === 'on_the_way') {
           const baselineTraffic = String(bookingData.traffic_level || '').toLowerCase();
-          if (baselineTraffic === 'light' || baselineTraffic === 'moderate' || baselineTraffic === 'heavy' || baselineTraffic === 'severe') {
+          if (baselineTraffic === 'light' || baselineTraffic === 'low' || baselineTraffic === 'moderate' || baselineTraffic === 'medium' || baselineTraffic === 'heavy' || baselineTraffic === 'high' || baselineTraffic === 'severe') {
             const preset = classifyTraffic(
-              baselineTraffic === 'light' ? 1.1 :
-              baselineTraffic === 'moderate' ? 1.3 :
-              baselineTraffic === 'heavy' ? 1.7 : 2.1
+              baselineTraffic === 'light' || baselineTraffic === 'low' ? 1.1 :
+              (baselineTraffic === 'moderate' || baselineTraffic === 'medium' ? 1.3 :
+                (baselineTraffic === 'heavy' || baselineTraffic === 'high' ? 1.7 : 2.1)),
+              trafficMultipliers
             );
             setTraffic({
               ...preset,
@@ -651,7 +744,10 @@ export default function BookingLocationMapScreen() {
             });
             setTrafficEstimatedNote(true);
           } else {
-            setTraffic(DEFAULT_TRAFFIC);
+            setTraffic({
+              ...DEFAULT_TRAFFIC,
+              surchargePercent: multiplierToPercent(trafficMultipliers.traffic_medium_multiplier),
+            });
             setTrafficEstimatedNote(true);
           }
         } else {
@@ -665,7 +761,7 @@ export default function BookingLocationMapScreen() {
     } finally {
       setScreenLoading(false);
     }
-  }, [cleanupLiveResources, fetchBooking, refreshRouteAndTraffic, resolveClientCoordinates, resolveMechanicCoordinates]);
+  }, [cleanupLiveResources, fetchBooking, refreshRouteAndTraffic, resolveClientCoordinates, resolveMechanicCoordinates, trafficMultipliers]);
 
   const retryLocationResolution = useCallback(async () => {
     if (!booking) return;

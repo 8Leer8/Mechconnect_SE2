@@ -30,6 +30,7 @@ from ...serializers import QuotationSerializer
 from ...ws_utils import notify_booking_parties
 from chat.models import Conversation, Message
 from chat.serializers import MessageSerializer
+from services.pricing_utils import get_distance_fee, get_traffic_surcharge, get_convenience_fee, apply_min_job_price
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 import json
@@ -39,8 +40,6 @@ EMERGENCY_REQUEST_TTL_MINUTES = 5
 
 ORS_API_KEY = getattr(settings, 'EXPO_PUBLIC_ORS_API_KEY', '')
 TOMTOM_API_KEY = getattr(settings, 'EXPO_PUBLIC_TOMTOM_API_KEY', '')
-BASE_FEE = Decimal('50')
-RATE_PER_KM = Decimal('15')
 
 
 def _to_float(value):
@@ -50,6 +49,39 @@ def _to_float(value):
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _get_request_service_subtotal(base_request):
+    """Return service + add-ons subtotal from request details for additive pricing."""
+    if not base_request:
+        return 0.0
+
+    subtotal = 0.0
+    try:
+        request_type = str(getattr(base_request, 'request_type', '') or '').lower()
+
+        if request_type == 'direct' and hasattr(base_request, 'directrequest'):
+            direct = base_request.directrequest
+            if direct and direct.service is not None:
+                subtotal += float(direct.service.minimum_price or 0.0)
+
+            add_ons = DirectRequestAddOn.objects.filter(request=base_request).select_related('service_add_on')
+            for addon in add_ons:
+                if addon.service_add_on is not None:
+                    subtotal += float(addon.service_add_on.price or 0.0)
+
+        elif request_type == 'broadcast' and hasattr(base_request, 'broadcast_request'):
+            broadcast = base_request.broadcast_request
+            if broadcast is not None:
+                for service in broadcast.services.all():
+                    subtotal += float(service.minimum_price or 0.0)
+                for addon_relation in broadcast.add_ons.all():
+                    if addon_relation.service_add_on is not None:
+                        subtotal += float(addon_relation.service_add_on.price or 0.0)
+    except Exception:
+        return 0.0
+
+    return max(0.0, subtotal)
 
 
 def _get_traffic_from_tomtom(latitude: float, longitude: float):
@@ -73,22 +105,12 @@ def _get_traffic_from_tomtom(latitude: float, longitude: float):
 
     ratio = free_flow_speed / current_speed
     if ratio < 1.2:
-        return {'traffic_level': 'light', 'surcharge_percent': Decimal('0.00')}
+        return {'traffic_level': 'low'}
     if ratio < 1.5:
-        return {'traffic_level': 'moderate', 'surcharge_percent': Decimal('0.10')}
+        return {'traffic_level': 'medium'}
     if ratio < 2.0:
-        return {'traffic_level': 'heavy', 'surcharge_percent': Decimal('0.20')}
-    return {'traffic_level': 'severe', 'surcharge_percent': Decimal('0.30')}
-
-
-def _traffic_level_to_surcharge_percent(level: str):
-    level_map = {
-        'light': Decimal('0.00'),
-        'moderate': Decimal('0.10'),
-        'heavy': Decimal('0.20'),
-        'severe': Decimal('0.30'),
-    }
-    return level_map.get((level or '').lower(), Decimal('0.10'))
+        return {'traffic_level': 'high'}
+    return {'traffic_level': 'high'}
 
 
 def _get_realtime_traffic_snapshot(mechanic_lat, mechanic_lng, destination_lat, destination_lng):
@@ -218,18 +240,19 @@ def _refresh_on_the_way_metrics(booking, mechanic_lat=None, mechanic_lng=None):
 
     traffic_level = (traffic_snapshot or {}).get('traffic_level')
     if not traffic_level:
-        traffic_level = 'moderate'
-
-    surcharge_percent = (traffic_snapshot or {}).get('surcharge_percent')
-    if surcharge_percent is None:
-        surcharge_percent = _traffic_level_to_surcharge_percent(traffic_level)
+        traffic_level = 'medium'
 
     convenience_fee = None
     traffic_surcharge = None
     if effective_distance_km is not None:
-        distance_fee = (effective_distance_km * RATE_PER_KM).quantize(Decimal('0.01'))
-        traffic_surcharge = (distance_fee * surcharge_percent).quantize(Decimal('0.01'))
-        convenience_fee = (BASE_FEE + distance_fee + traffic_surcharge).quantize(Decimal('0.01'))
+        distance_fee = get_distance_fee(effective_distance_km)
+        traffic_surcharge_value = get_traffic_surcharge(distance_fee, traffic_level)
+        service_subtotal = _get_request_service_subtotal(booking.request)
+        if service_subtotal <= 0:
+            service_subtotal = max(0.0, float(getattr(booking, 'amount_fee', 0.0) or 0.0))
+        convenience_fee_value = get_convenience_fee(service_subtotal)
+        traffic_surcharge = Decimal(str(traffic_surcharge_value)).quantize(Decimal('0.01'))
+        convenience_fee = Decimal(str(convenience_fee_value)).quantize(Decimal('0.01'))
 
     booking.status = Booking.Status.ON_THE_WAY
     booking.distance_km = distance_km if distance_km is not None else booking.distance_km
@@ -1069,7 +1092,7 @@ def _serialize_pending_direct_requests(account):
         add_ons_total = 0.0
         for addon in req.directrequestaddon_set.all():
             add_ons_total += float(addon.service_add_on.price)
-        total_amount = base_price + add_ons_total
+        total_amount = apply_min_job_price(base_price + add_ons_total)
 
         loc = req.service_location
         service_location = None
@@ -1490,6 +1513,8 @@ def mechanic_accept_direct_request(request, request_id):
             total_amount = float(body_amount)
         except (TypeError, ValueError):
             pass
+
+    total_amount = apply_min_job_price(total_amount)
 
     direct.request_status = DirectRequest.Status.ACCEPTED
     direct.save(update_fields=["request_status"])

@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     'chat',
     'storages',
     'mechconnect_ai',
+    'pricing',
 ]
 
 MIDDLEWARE = [
