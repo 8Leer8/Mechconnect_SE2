@@ -25,6 +25,9 @@ class Request(models.Model):
     shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name="shop_requests", null=True, blank=True)
     request_type = models.CharField(max_length=20, choices=Type.choices)
     service_location = models.ForeignKey(ServiceLocation, on_delete=models.CASCADE, null=True, blank=True)
+    vehicle_type = models.CharField(max_length=80, null=True, blank=True)
+    vehicle_brand = models.CharField(max_length=80, null=True, blank=True)
+    vehicle_model = models.CharField(max_length=120, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
 class CustomRequest(models.Model):
@@ -245,6 +248,7 @@ class BroadcastRequest(models.Model):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.SEARCHING)
     latitude = models.DecimalField(max_digits=9, decimal_places=6)  # -90 to 90
     longitude = models.DecimalField(max_digits=9, decimal_places=6)  # -180 to 180
+    search_radius_km = models.PositiveIntegerField(default=5)
     expires_at = models.DateTimeField()
     
     # Timestamps

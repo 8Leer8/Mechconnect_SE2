@@ -117,6 +117,9 @@ def list_requests(request):
             if req.request_type == 'custom' and hasattr(req, 'customrequest'):
                 custom_requests.append({
                     'id': req.id,
+                    'vehicle_type': req.vehicle_type,
+                    'vehicle_brand': req.vehicle_brand,
+                    'vehicle_model': req.vehicle_model,
                     'provider': {
                         'id': req.provider.id,
                         'name': f"{req.provider.firstname} {req.provider.lastname}"
@@ -169,6 +172,9 @@ def list_requests(request):
                 
                 direct_requests.append({
                     'id': req.id,
+                    'vehicle_type': req.vehicle_type,
+                    'vehicle_brand': req.vehicle_brand,
+                    'vehicle_model': req.vehicle_model,
                     'provider': {
                         'id': req.provider.id,
                         'name': f"{req.provider.firstname} {req.provider.lastname}"
@@ -204,6 +210,9 @@ def list_requests(request):
                 emergency_status = 'accepted' if (hasattr(req, 'booking') or req.provider_id) else 'pending'
                 emergency_requests.append({
                     'id': req.id,
+                    'vehicle_type': req.vehicle_type,
+                    'vehicle_brand': req.vehicle_brand,
+                    'vehicle_model': req.vehicle_model,
                     'provider': {
                         'id': req.provider.id,
                         'name': f"{req.provider.firstname} {req.provider.lastname}"
@@ -233,6 +242,9 @@ def list_requests(request):
                 
                 broadcast_requests.append({
                     'id': req.id,
+                    'vehicle_type': req.vehicle_type,
+                    'vehicle_brand': req.vehicle_brand,
+                    'vehicle_model': req.vehicle_model,
                     'provider': {
                         'id': req.provider.id,
                         'name': f"{req.provider.firstname} {req.provider.lastname}"
@@ -249,6 +261,7 @@ def list_requests(request):
                         'name': service.name
                     } for service in broadcast_services],
                     'status': req.broadcast_request.status,
+                    'search_radius_km': req.broadcast_request.search_radius_km,
                     'concern_picture': req.broadcast_request.concern_picture.url if req.broadcast_request.concern_picture else None,
                     'service_location': {
                         'street_name': req.service_location.street_name,

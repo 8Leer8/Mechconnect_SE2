@@ -19,6 +19,11 @@ interface MatchedMechanic {
   average_rating: number; status: string; matched_specialties: string[];
 }
 
+interface CreateCustomRequestResponse {
+  message?: string;
+  error?: string;
+}
+
 export default function RecommendProviderScreen() {
   const { showNotification } = useNotification();
   const params = useLocalSearchParams();
@@ -33,6 +38,9 @@ export default function RecommendProviderScreen() {
   const ai_recommendations: AIRecommendation[] = JSON.parse(params.ai_recommendations as string || '[]');
   const matched_shops: MatchedShop[] = JSON.parse(params.matched_shops as string || '[]');
   const matched_mechanics: MatchedMechanic[] = JSON.parse(params.matched_mechanics as string || '[]');
+  const vehicle_type = params.vehicle_type as string || '';
+  const vehicle_brand = params.vehicle_brand as string || '';
+  const vehicle_model = params.vehicle_model as string || '';
 
   // ─── State ────────────────────────────────────────────────
   const [sentIds, setSentIds] = useState<Set<string>>(new Set());
@@ -49,6 +57,9 @@ export default function RecommendProviderScreen() {
     try {
       const formData = new FormData();
       formData.append('description', description);
+      formData.append('vehicle_type', vehicle_type);
+      formData.append('vehicle_brand', vehicle_brand);
+      formData.append('vehicle_model', vehicle_model);
 
       if (type === 'shop') {
         formData.append('shop_id', id.toString());
@@ -76,7 +87,7 @@ export default function RecommendProviderScreen() {
         body: formData as any,
       });
 
-      const data = await response.json();
+      const data = await response.json() as CreateCustomRequestResponse;
 
       if (response.ok) {
         setSentIds(prev => new Set(prev).add(key));

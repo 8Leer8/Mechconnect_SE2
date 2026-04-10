@@ -16,6 +16,8 @@ from users.models import Account
 from services.models import Service, ServiceAddOn
 
 logger = logging.getLogger(__name__)
+MIN_SEARCH_RADIUS_KM = 1
+MAX_SEARCH_RADIUS_KM = 50
 
 
 @api_view(['POST'])
@@ -48,6 +50,10 @@ def create_broadcast_request(request):
         latitude = request.data.get('latitude')
         longitude = request.data.get('longitude')
         concern_picture = request.FILES.get('concern_picture')
+        search_radius_km_raw = request.data.get('search_radius_km', request.data.get('radius_km', 5))
+        vehicle_type = str(request.data.get('vehicle_type') or '').strip()
+        vehicle_brand = str(request.data.get('vehicle_brand') or '').strip()
+        vehicle_model = str(request.data.get('vehicle_model') or '').strip()
         
         # Parse JSON fields
         try:
@@ -79,6 +85,11 @@ def create_broadcast_request(request):
             return Response({
                 'error': 'Description and service location are required'
             }, status=status.HTTP_400_BAD_REQUEST)
+
+        if not vehicle_type or not vehicle_brand or not vehicle_model:
+            return Response({
+                'error': 'Vehicle type, brand, and model are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
         
         if not service_ids or len(service_ids) == 0:
             return Response({
@@ -96,6 +107,18 @@ def create_broadcast_request(request):
         except (ValueError, TypeError):
             return Response({
                 'error': 'Invalid latitude or longitude format'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            search_radius_km = int(search_radius_km_raw)
+        except (TypeError, ValueError):
+            return Response({
+                'error': 'Invalid search radius'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        if search_radius_km < MIN_SEARCH_RADIUS_KM or search_radius_km > MAX_SEARCH_RADIUS_KM:
+            return Response({
+                'error': 'Search radius must be between 1 and 50 km'
             }, status=status.HTTP_400_BAD_REQUEST)
         
         # Validate services exist
@@ -119,7 +142,10 @@ def create_broadcast_request(request):
             client=client,
             provider=None,  # No provider yet
             request_type='broadcast',
-            service_location=service_location
+            service_location=service_location,
+            vehicle_type=vehicle_type,
+            vehicle_brand=vehicle_brand,
+            vehicle_model=vehicle_model,
         )
         
         # Create broadcast request with expiration (30 minutes from now)
@@ -142,6 +168,7 @@ def create_broadcast_request(request):
                 concern_picture=concern_picture,
                 latitude=latitude,
                 longitude=longitude,
+                search_radius_km=search_radius_km,
                 expires_at=expires_at,
                 status=BroadcastRequest.Status.SEARCHING
             )

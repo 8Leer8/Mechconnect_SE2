@@ -17,6 +17,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { useNotification } from '@/hooks/useNotification';
+import VehicleTypeModal from '@/components/VehicleTypeModal';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const { height } = Dimensions.get('window');
@@ -39,6 +40,9 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
   } | null>(null);
   const [fetchingLocation, setFetchingLocation] = useState(false);
   const [cooldownSeconds, setCooldownSeconds] = useState(0);
+  const [vehicleType, setVehicleType] = useState('');
+  const [vehicleBrand, setVehicleBrand] = useState('');
+  const [vehicleModel, setVehicleModel] = useState('');
 
   const formatCooldown = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -73,6 +77,9 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
       setDescription('');
       setConcernPicture(null);
       setLocation(null);
+      setVehicleType('');
+      setVehicleBrand('');
+      setVehicleModel('');
       // Automatically get location when modal opens
       getCurrentLocation();
       fetchEmergencyCooldown();
@@ -160,6 +167,11 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
       return;
     }
 
+    if (!vehicleType || !vehicleBrand || !vehicleModel) {
+      showNotification({ type: 'error', message: 'Please select your vehicle type, brand, and model.' });
+      return;
+    }
+
     setLoading(true);
     try {
       const formData = new FormData();
@@ -178,6 +190,9 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
         longitude: location.longitude,
       };
       formData.append('service_location', JSON.stringify(serviceLocationData));
+      formData.append('vehicle_type', vehicleType);
+      formData.append('vehicle_brand', vehicleBrand);
+      formData.append('vehicle_model', vehicleModel);
 
       // Add picture (optional)
       if (concernPicture) {
@@ -300,6 +315,22 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
                 value={description}
                 onChangeText={setDescription}
                 editable={!loading}
+              />
+            </View>
+
+            <View style={styles.inputSection}>
+              <View style={styles.sectionHeader}>
+                <FontAwesome name="car" size={14} color="#8E8E93" />
+                <ThemedText style={styles.sectionTitle}>Vehicle Information *</ThemedText>
+              </View>
+              <VehicleTypeModal
+                vehicleType={vehicleType}
+                vehicleBrand={vehicleBrand}
+                vehicleModel={vehicleModel}
+                onVehicleTypeChange={setVehicleType}
+                onVehicleBrandChange={setVehicleBrand}
+                onVehicleModelChange={setVehicleModel}
+                disabled={loading}
               />
             </View>
 
@@ -493,6 +524,17 @@ const styles = StyleSheet.create({
     color: '#ECEDEE',
     minHeight: 90,
     textAlignVertical: 'top',
+  },
+  pickerContainer: {
+    backgroundColor: '#2C2C2E',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#3A3A3C',
+    overflow: 'hidden',
+  },
+  picker: {
+    color: '#ECEDEE',
+    backgroundColor: 'transparent',
   },
   imagePreviewContainer: {
     position: 'relative',

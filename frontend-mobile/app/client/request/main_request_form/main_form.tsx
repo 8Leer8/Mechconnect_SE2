@@ -9,6 +9,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useLocation } from './LocationContext';
 import { styles } from '@/style/client/broadcastRequestStyles';
 import { useNotification } from '@/hooks/useNotification';
+import VehicleTypeModal from '@/components/VehicleTypeModal';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -47,6 +48,10 @@ export default function MainRequestFormScreen() {
   const [description, setDescription] = useState('');
   const [concernPicture, setConcernPicture] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [searchRadiusKm, setSearchRadiusKm] = useState(5);
+  const [vehicleType, setVehicleType] = useState('');
+  const [vehicleBrand, setVehicleBrand] = useState('');
+  const [vehicleModel, setVehicleModel] = useState('');
 
   // Location fields (shared by both modes)
   const [selectedAddress, setSelectedAddress] = useState<string>('');
@@ -94,6 +99,9 @@ export default function MainRequestFormScreen() {
         setStreetName(selectedLocation.streetName);
         setCityMunicipality(selectedLocation.city);
         setBarangay(selectedLocation.barangay);
+        if (selectedLocation.radiusKm) {
+          setSearchRadiusKm(selectedLocation.radiusKm);
+        }
         setSelectedLocation(null);
       }
       return () => { isMounted = false; };
@@ -147,10 +155,17 @@ export default function MainRequestFormScreen() {
     if (selectedAddress && latitude !== null && longitude !== null) {
       router.push({
         pathname: '/client/request/main_request_form/map',
-        params: { latitude: latitude.toString(), longitude: longitude.toString() },
+        params: {
+          latitude: latitude.toString(),
+          longitude: longitude.toString(),
+          radiusKm: searchRadiusKm.toString(),
+        },
       });
     } else {
-      router.push('/client/request/main_request_form/map');
+      router.push({
+        pathname: '/client/request/main_request_form/map',
+        params: { radiusKm: searchRadiusKm.toString() },
+      });
     }
   };
 
@@ -189,6 +204,12 @@ export default function MainRequestFormScreen() {
               {latitude?.toFixed(6)}, {longitude?.toFixed(6)}
             </ThemedText>
           </View>
+          {!isCustomMode && (
+            <View style={{ flexDirection: 'row', marginTop: 6 }}>
+              <ThemedText style={{ fontSize: 12, color: '#8E8E93', width: 100 }}>Broadcast Radius:</ThemedText>
+              <ThemedText style={{ fontSize: 12, color: '#fff', flex: 1 }}>{searchRadiusKm} km</ThemedText>
+            </View>
+          )}
         </View>
       )}
 
@@ -225,12 +246,21 @@ export default function MainRequestFormScreen() {
       showNotification({ type: 'error', message: 'Please select a location from the map' });
       return;
     }
+    if (!vehicleType || !vehicleBrand || !vehicleModel) {
+      showNotification({ type: 'error', message: 'Please select your vehicle type, brand, and model' });
+      return;
+    }
 
     setLoading(true);
     try {
       const formData = new FormData();
       formData.append('service_ids', JSON.stringify(selectedServiceIds));
       formData.append('description', description);
+      formData.append('search_radius_km', String(searchRadiusKm));
+      formData.append('radius_km', String(searchRadiusKm));
+      formData.append('vehicle_type', vehicleType);
+      formData.append('vehicle_brand', vehicleBrand);
+      formData.append('vehicle_model', vehicleModel);
       formData.append('latitude', latitude.toString());
       formData.append('longitude', longitude.toString());
       formData.append('service_location', JSON.stringify({
@@ -281,6 +311,10 @@ export default function MainRequestFormScreen() {
       showNotification({ type: 'error', message: 'Please select a location from the map' });
       return;
     }
+    if (!vehicleType || !vehicleBrand || !vehicleModel) {
+      showNotification({ type: 'error', message: 'Please select your vehicle type, brand, and model' });
+      return;
+    }
 
     setLoading(true);
     try {
@@ -306,6 +340,9 @@ export default function MainRequestFormScreen() {
             ai_recommendations: JSON.stringify(data.ai_recommendations),
             matched_shops: JSON.stringify(data.matched_shops),
             matched_mechanics: JSON.stringify(data.matched_mechanics),
+            vehicle_type: vehicleType,
+            vehicle_brand: vehicleBrand,
+            vehicle_model: vehicleModel,
           },
         });
       } else {
@@ -436,6 +473,21 @@ export default function MainRequestFormScreen() {
         )}
 
         {/* Description */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <FontAwesome name="car" size={14} color="#FF8C00" />
+            <ThemedText style={styles.sectionTitle}>Vehicle Information *</ThemedText>
+          </View>
+          <VehicleTypeModal
+            vehicleType={vehicleType}
+            vehicleBrand={vehicleBrand}
+            vehicleModel={vehicleModel}
+            onVehicleTypeChange={setVehicleType}
+            onVehicleBrandChange={setVehicleBrand}
+            onVehicleModelChange={setVehicleModel}
+          />
+        </View>
+
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <FontAwesome name="pencil" size={14} color="#FF8C00" />

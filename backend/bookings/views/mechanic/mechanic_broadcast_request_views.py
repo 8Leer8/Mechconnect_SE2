@@ -14,6 +14,20 @@ from users.models import Account, TokenTransaction
 import math
 
 
+def _haversine_km(lat1, lon1, lat2, lon2):
+    radius_km = 6371.0
+    lat1_rad = math.radians(float(lat1))
+    lon1_rad = math.radians(float(lon1))
+    lat2_rad = math.radians(float(lat2))
+    lon2_rad = math.radians(float(lon2))
+
+    dlat = lat2_rad - lat1_rad
+    dlon = lon2_rad - lon1_rad
+    a = math.sin(dlat / 2) ** 2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon / 2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return radius_km * c
+
+
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def get_active_broadcasts(request):
@@ -35,11 +49,30 @@ def get_active_broadcasts(request):
         if account_id:
             active_broadcasts = active_broadcasts.exclude(request__client__account_id=account_id)
         
+        mechanic_lat = request.GET.get('mechanic_latitude')
+        mechanic_lng = request.GET.get('mechanic_longitude')
+
+        if mechanic_lat is not None and mechanic_lng is not None:
+            try:
+                mechanic_lat = float(mechanic_lat)
+                mechanic_lng = float(mechanic_lng)
+            except (TypeError, ValueError):
+                return Response({
+                    'error': 'Invalid mechanic coordinates'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            filtered = []
+            for br in active_broadcasts:
+                distance_km = _haversine_km(mechanic_lat, mechanic_lng, br.latitude, br.longitude)
+                if distance_km <= float(br.search_radius_km or 5):
+                    filtered.append(br)
+            active_broadcasts = filtered
+
         serializer = BroadcastRequestSerializer(active_broadcasts, many=True, context={'request': request})
         
         return Response({
             'broadcasts': serializer.data,
-            'count': active_broadcasts.count()
+            'count': len(active_broadcasts)
         }, status=status.HTTP_200_OK)
     
     except Exception as e:

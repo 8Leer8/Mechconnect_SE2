@@ -1,0 +1,799 @@
+{
+  "vehicle_types": [
+    {
+      "type": "Car",
+      "brands": [
+        {
+          "name": "Toyota",
+          "models": [
+            "Vios (1.3 J MT)", "Vios (1.3 E MT)", "Vios (1.3 E CVT)", "Vios (1.3 XLE CVT)",
+            "Wigo (1.0 G MT)", "Wigo (1.0 G CVT)", "Wigo (1.0 TRD S MT)",
+            "Raize (1.0 G CVT)", "Raize (1.0 GR-S CVT)",
+            "Avanza (1.3 J MT)", "Avanza (1.5 E MT)", "Avanza (1.5 G CVT)",
+            "Veloz (1.5 CVT)",
+            "Rush (1.5 E AT)", "Rush (1.5 G AT)",
+            "Innova (2.0 J MT)", "Innova (2.0 E AT)", "Innova (2.0 G AT)", "Innova (2.0 V AT)",
+            "Innova Cross (2.0 HV Hybrid)",
+            "Fortuner (2.4 G 4x2 AT)", "Fortuner (2.4 G 4x4 MT)", "Fortuner (2.8 V 4x4 AT)",
+            "Fortuner (2.8 GR-S 4x4 AT)",
+            "Hilux (2.4 J MT 4x2)", "Hilux (2.4 E MT 4x2)", "Hilux (2.4 G MT 4x4)",
+            "Hilux (2.8 V AT 4x4)", "Hilux (Conquest)",
+            "Tamaraw (1.5 E MT)", "Tamaraw (1.5 G CVT)",
+            "Hiace (Commuter GL)", "Hiace (Super Grandia Elite)", "Hiace (GL Grandia)",
+            "Land Cruiser (300 GR Sport)", "Land Cruiser (LC79)",
+            "Corolla Cross (1.8 HEV Hybrid)", "Corolla Cross (1.8 V)",
+            "Yaris Cross (1.5 HEV Hybrid)",
+            "Camry (2.5 HEV Hybrid)",
+            "GR86 (2.4 MT)", "GR86 (2.4 AT)",
+            "Prius (1.8 HEV Hybrid)"
+          ]
+        },
+        {
+          "name": "Mitsubishi",
+          "models": [
+            "Mirage (1.2 GLX MT)", "Mirage (1.2 GLS CVT)",
+            "Mirage G4 (1.2 GLX MT)", "Mirage G4 (1.2 GLS CVT)", "Mirage G4 (1.2 GLS+ CVT)",
+            "Xpander (1.5 GLX MT)", "Xpander (1.5 GLS AT)", "Xpander (1.5 Cross AT)",
+            "Xpander (1.5 Cross Plus AT)",
+            "Montero Sport (2.4 GLX 4x2 MT)", "Montero Sport (2.4 GLS 4x2 AT)",
+            "Montero Sport (2.4 GT 4x4 AT)", "Montero Sport (2.4 GSR 4x4 AT)",
+            "Strada (2.4 GLX MT 4x2)", "Strada (2.4 GLS AT 4x2)",
+            "Strada (2.4 GT AT 4x4)", "Strada (2.4 GLS+ AT 4x4)",
+            "L300 (FB Exceed)", "L300 (Cab & Chassis)",
+            "Outlander PHEV (Plug-in Hybrid)",
+            "Eclipse Cross (1.5 Turbo GLS AT)"
+          ]
+        },
+        {
+          "name": "Ford",
+          "models": [
+            "Ranger (XL 2.2 4x2 MT)", "Ranger (XLS 2.2 4x2 AT)",
+            "Ranger (XLT 2.0 4x2 AT)", "Ranger (Wildtrak 2.0 4x4 AT)",
+            "Ranger (Raptor 2.0 4x4 AT)", "Ranger (Raptor V6 4x4 AT)",
+            "Everest (Ambiente 2.0 4x2 AT)", "Everest (Trend 2.0 4x2 AT)",
+            "Everest (Sport 2.0 4x2 AT)", "Everest (Titanium 2.0 4x4 AT)",
+            "Everest (Sport 3.0 V6 4x4 AT)",
+            "Territory (1.5 Trend AT)", "Territory (1.5 Titanium AT)",
+            "Bronco Sport (1.5 Big Bend AT)", "Bronco Sport (2.0 Badlands AT)",
+            "Explorer (2.3 Ecoboost ST AT)",
+            "Mustang (2.3 Ecoboost AT)", "Mustang (5.0 GT AT)",
+            "EcoSport (1.5 Trend AT)", "EcoSport (1.0 Titanium AT)"
+          ]
+        },
+        {
+          "name": "Honda",
+          "models": [
+            "City (1.5 S CVT)", "City (1.5 V CVT)", "City (1.5 RS CVT)",
+            "City Hatchback (1.5 V CVT)", "City Hatchback (1.5 RS CVT)",
+            "Civic (1.5 Turbo CVT)", "Civic (1.5 Turbo RS CVT)",
+            "BR-V (1.5 S CVT)", "BR-V (1.5 V CVT)",
+            "HR-V (1.8 S CVT)", "HR-V (1.8 E CVT)", "HR-V (1.8 V CVT)",
+            "CR-V (1.5 S 2WD CVT)", "CR-V (1.5 S AWD CVT)", "CR-V (1.5 V AWD CVT)",
+            "Jazz (1.5 V CVT)", "Jazz (1.5 RS Navi CVT)",
+            "Accord (1.5 Turbo CVT)", "Accord (e:HEV Hybrid)",
+            "Pilot (AWD AT)",
+            "Odyssey (2.4 AT)"
+          ]
+        },
+        {
+          "name": "Nissan",
+          "models": [
+            "Almera (1.0 Turbo VL CVT)", "Almera (1.0 Turbo VE CVT)",
+            "Kicks (1.6 VL CVT)", "Kicks (1.6 VE CVT)",
+            "Terra (2.5 S 4x2 AT)", "Terra (2.5 VL 4x4 AT)",
+            "Navara (2.5 EL 4x2 AT)", "Navara (2.5 VL 4x4 AT)",
+            "Navara (2.5 Pro-4X 4x4 AT)",
+            "Patrol (5.6 4x4 AT)",
+            "X-Trail (2.5 SV AT)", "X-Trail (e-Power Hybrid)",
+            "NV350 Urvan (Standard)", "NV350 Urvan (Premium)",
+            "Leaf (Electric)"
+          ]
+        },
+        {
+          "name": "Suzuki",
+          "models": [
+            "S-Presso (1.0 GL MT)", "S-Presso (1.0 GL+ AT)",
+            "Celerio (1.0 GL MT)", "Celerio (1.0 GL+ AT)",
+            "Alto (0.8 MT)",
+            "Dzire (1.2 GL MT)", "Dzire (1.2 GL+ AT)",
+            "Ciaz (1.4 GL AT)",
+            "Ertiga (1.5 GL MT)", "Ertiga (1.5 GL AT)", "Ertiga (1.5 GX AT)",
+            "XL7 (1.5 GL AT)", "XL7 (1.5 Alpha AT)",
+            "Vitara (1.6 GL MT)", "Vitara (1.4 Boosterjet AT)"
+          ]
+        },
+        {
+          "name": "Hyundai",
+          "models": [
+            "Reina (1.4 GL MT)", "Reina (1.4 GL IVT)",
+            "Accent (1.4 GL MT)", "Accent (1.4 GL IVT)",
+            "Tucson (2.0 GL AT)", "Tucson (1.6 Turbo GLS AT)",
+            "Santa Fe (2.2 GLS AT)", "Santa Fe (2.2 GLS CRDi AT)",
+            "Starex (2.5 CRDi MT)", "Starex (2.5 CRDi AT)",
+            "Stargazer (1.5 GL IVT)", "Stargazer (1.5 GX IVT)",
+            "Creta (1.5 GL IVT)", "Creta (1.5 GX IVT)",
+            "Ioniq 5 (Electric Standard)", "Ioniq 5 (Electric Extended)",
+            "Ioniq 6 (Electric)",
+            "Kona Electric"
+          ]
+        },
+        {
+          "name": "Kia",
+          "models": [
+            "Picanto (1.0 LX MT)", "Picanto (1.0 EX AT)",
+            "Sonet (1.5 LX MT)", "Sonet (1.5 EX AT)", "Sonet (1.0 Turbo GT AT)",
+            "Stonic (1.4 LX MT)", "Stonic (1.4 EX AT)",
+            "Seltos (1.5 LX AT)", "Seltos (1.5 EX AT)", "Seltos (1.4 Turbo GT AT)",
+            "Sportage (2.0 LX AT)", "Sportage (2.0 EX AT)",
+            "Carnival (2.2 EX AT)", "Carnival (2.2 SX AT)",
+            "EV6 (Electric Standard)", "EV6 (Electric Long Range)"
+          ]
+        },
+        {
+          "name": "Isuzu",
+          "models": [
+            "D-Max (1.9 LS MT 4x2)", "D-Max (3.0 LS-A AT 4x2)",
+            "D-Max (3.0 LS-A AT 4x4)", "D-Max (3.0 V-Cross 4x4 AT)",
+            "mu-X (1.9 LS-A AT 4x2)", "mu-X (3.0 LS-A AT 4x2)",
+            "mu-X (3.0 LS-E AT 4x4)",
+            "Crosswind (2.5 MT)", "Crosswind (2.5 AT)"
+          ]
+        },
+        {
+          "name": "MG (Morris Garages)",
+          "models": [
+            "MG 3 (1.5 Style MT)", "MG 3 (1.5 Luxe AT)",
+            "MG 5 (1.5 Turbo Trophy AT)",
+            "ZS (1.5 Style AT)", "ZS (1.5 Alpha AT)",
+            "ZS EV (Electric Standard)", "ZS EV (Electric Pro)",
+            "HS (1.5 Turbo Style AT)", "HS (1.5 Turbo Alpha AT)",
+            "RX5 (2.0 Turbo AT)",
+            "VS HEV (Hybrid AT)",
+            "MG 6 (1.5 Turbo Trophy AT)"
+          ]
+        },
+        {
+          "name": "BYD",
+          "models": [
+            "Dolphin (Electric Active)", "Dolphin (Electric Boost)",
+            "Atto 3 (Electric Standard)", "Atto 3 (Electric Extended)",
+            "Seal (Electric Standard)", "Seal (Electric Performance)",
+            "Han (Electric)",
+            "Tang (Plug-in Hybrid)", "Tang (Electric)",
+            "Song Plus (Plug-in Hybrid)", "Song Plus (Electric)",
+            "Destroyer 05 (Plug-in Hybrid)",
+            "Sealion 6 (Plug-in Hybrid)"
+          ]
+        },
+        {
+          "name": "GAC Motor",
+          "models": [
+            "GS3 Emzoom (1.5 Comfort AT)", "GS3 Emzoom (1.5 Elite AT)",
+            "GS4 (1.5 Comfort AT)", "GS4 (1.5 Elite AT)",
+            "GS8 (2.0 Turbo AT)",
+            "Empow (1.5 Turbo AT)",
+            "Aion Y (Electric)",
+            "Aion S (Electric)"
+          ]
+        },
+        {
+          "name": "Geely",
+          "models": [
+            "Coolray (1.5 Turbo Sport AT)", "Coolray (1.5 Turbo Premium AT)",
+            "Okavango (1.5 Turbo AT)",
+            "Azkarra (1.8 HEV Hybrid AT)",
+            "Emgrand (1.5 GL AT)",
+            "Monjaro (2.0 Turbo 4WD AT)"
+          ]
+        },
+        {
+          "name": "Mazda",
+          "models": [
+            "Mazda2 (1.5 Sedan AT)", "Mazda2 (1.5 Hatchback AT)",
+            "Mazda3 (2.0 Sedan AT)", "Mazda3 (2.0 Hatchback AT)", "Mazda3 (2.5 Turbo AT)",
+            "CX-3 (2.0 AT)",
+            "CX-30 (2.0 AT)", "CX-30 (2.5 Turbo AT)",
+            "CX-5 (2.0 FWD AT)", "CX-5 (2.5 AWD AT)", "CX-5 (2.5 Turbo AWD AT)",
+            "CX-8 (2.5 AWD AT)",
+            "CX-50 (2.5 HEV Hybrid)",
+            "MX-5 (2.0 MT)", "MX-5 (2.0 AT)"
+          ]
+        },
+        {
+          "name": "Subaru",
+          "models": [
+            "Forester (2.0 i-L EyeSight)", "Forester (2.0 i-S EyeSight)",
+            "XV (2.0 i-S EyeSight)",
+            "Outback (2.5 EyeSight)",
+            "WRX (2.4 Turbo MT)", "WRX (2.4 Turbo AT)",
+            "Levorg (1.8 Turbo GT EyeSight)",
+            "BRZ (2.4 MT)", "BRZ (2.4 AT)"
+          ]
+        },
+        {
+          "name": "Volkswagen",
+          "models": [
+            "Santana (1.4 TSI AT)",
+            "Golf (1.4 TSI AT)", "Golf GTI (2.0 TSI AT)",
+            "T-Cross (1.0 Comfortline AT)", "T-Cross (1.0 Highline AT)",
+            "T-ROC (1.5 Sport AT)",
+            "Tiguan (1.4 Comfortline AT)", "Tiguan (2.0 Highline 4MOTION AT)",
+            "Lavida (1.4 TSI AT)"
+          ]
+        },
+        {
+          "name": "Chevrolet",
+          "models": [
+            "Colorado (Work Truck 4x2 MT)", "Colorado (LT 4x2 AT)",
+            "Colorado (Z71 4x4 AT)", "Colorado (ZR2 4x4 AT)",
+            "Trailblazer (LT 4x2 AT)", "Trailblazer (LTZ 4x4 AT)"
+          ]
+        },
+        {
+          "name": "Jetour",
+          "models": [
+            "X70 (1.5 Turbo AT)", "X70 Plus (1.5 Turbo AT)",
+            "Dashing (1.5 Turbo AT)",
+            "T2 (1.5 Turbo AT)"
+          ]
+        },
+        {
+          "name": "Chery",
+          "models": [
+            "Tiggo 5x (1.5 Turbo AT)",
+            "Tiggo 7 Pro (1.5 Turbo AT)",
+            "Tiggo 8 Pro (1.5 Turbo AT)", "Tiggo 8 Pro e+ (Plug-in Hybrid)",
+            "Omoda 5 (1.5 Turbo AT)",
+            "Omoda 5 EV (Electric)"
+          ]
+        },
+        {
+          "name": "GWM (Great Wall Motors)",
+          "models": [
+            "Cannon (Ultra 2.0 Diesel AT)", "Cannon (Elite 2.0 Diesel AT)",
+            "Cannon (Premium 2.0 Diesel AT)",
+            "Haval H6 (1.5 Turbo AT)", "Haval H6 HEV (Hybrid)"
+          ]
+        },
+        {
+          "name": "Lexus",
+          "models": [
+            "LX 600 (3.5 V6 Twin Turbo AT)",
+            "ES 350 (3.5 AT)",
+            "NX 250 (2.5 AT)", "NX 350h (Hybrid)",
+            "RX 350 (2.4 Turbo AT)", "RX 350h (Hybrid)",
+            "UX 250h (Hybrid)",
+            "IS 300 (3.5 AT)"
+          ]
+        },
+        {
+          "name": "Mercedes-Benz",
+          "models": [
+            "A180 (1.3 AT)",
+            "C200 (1.5 Mild Hybrid AT)", "C300 (2.0 AT)",
+            "E200 (1.5 Mild Hybrid AT)", "E300 (2.0 AT)",
+            "GLA 200 (1.3 AT)", "GLB 200 (1.3 AT)",
+            "GLC 200 (1.5 Mild Hybrid AT)", "GLC 300 (2.0 AT)",
+            "GLE 300d (2.0 Diesel AT)"
+          ]
+        },
+        {
+          "name": "BMW",
+          "models": [
+            "118i (1.5 AT)", "120i (2.0 AT)",
+            "320i (2.0 AT)", "330i (2.0 AT)",
+            "520i (2.0 AT)", "530i (2.0 AT)",
+            "X1 (2.0 AT)", "X2 (2.0 AT)",
+            "X3 (2.0 AT)", "X5 (3.0 AT)"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "Motorcycle",
+      "brands": [
+        {
+          "name": "Honda",
+          "subcategories": {
+            "Scooter / AT": [
+              "Navi (110cc)", "BeAT (110cc)", "Scoopy (110cc)",
+              "Giorno (110cc)", "Giorno+ (110cc)",
+              "Click 125i", "Click 160",
+              "PCX 160", "ADV 160", "ADV 350",
+              "X-ADV (750cc)",
+              "EM1 e: (Electric)", "CUV e: (Electric)",
+              "Winner X (150cc)", "Airblade 160"
+            ],
+            "Underbone / Moped": [
+              "Wave RSX (110cc)", "XRM 125 DS",
+              "XRM 125 DSX", "XRM 125 Motard",
+              "RS125 Fi", "TMX 125 Alpha", "TMX Supremo"
+            ],
+            "Sport / Naked": [
+              "CB150X", "CB300R",
+              "CB500F", "CB500 Hornet",
+              "CB650R", "CB1000R", "CB1000 Hornet",
+              "CBR150R", "CBR500R", "CBR650R",
+              "CBR1000RR-R Fireblade SP",
+              "CL500"
+            ],
+            "Adventure / Touring": [
+              "NX500", "XL750 Transalp",
+              "CRF1100L Africa Twin",
+              "CRF1100L Africa Twin Adventure Sports",
+              "Gold Wing (1800cc)"
+            ],
+            "Off-Road": [
+              "CRF125F", "CRF150L", "CRF150R",
+              "XR150L", "CRF250R", "CRF250RX",
+              "CRF300L", "CRF300 Rally", "CRF450R"
+            ],
+            "Cruiser": [
+              "Rebel 300", "Rebel 500", "Rebel 1100"
+            ]
+          }
+        },
+        {
+          "name": "Yamaha",
+          "subcategories": {
+            "Scooter / AT": [
+              "Mio i 125", "Mio Gravis (125cc)",
+              "Mio Fazzio (125cc)", "Mio Gear (125cc)",
+              "Aerox 155", "NMAX 155", "NMAX Tech Max 155",
+              "Lexi (155cc)",
+              "XMAX (300cc)", "TMAX (560cc)"
+            ],
+            "Underbone / Sport": [
+              "Sniper 150 MX", "Sniper 155R",
+              "FZi (150cc)", "FZ-S Fi"
+            ],
+            "Naked / Sport": [
+              "MT-15 (155cc)", "MT-03 (321cc)",
+              "MT-07 (689cc)", "MT-09 (890cc)",
+              "XSR 155", "XSR 700", "XSR 900"
+            ],
+            "Super Sport": [
+              "YZF R15M (155cc)", "YZF R15 V4",
+              "YZF-R3 (321cc)", "YZF-R7 (689cc)",
+              "YZF-R9 (890cc)"
+            ],
+            "Adventure / Touring": [
+              "Tracer 9 GT (890cc)",
+              "Tenere 700 (689cc)"
+            ],
+            "Off-Road": [
+              "WR155R", "WR250R"
+            ]
+          }
+        },
+        {
+          "name": "Suzuki",
+          "subcategories": {
+            "Scooter / AT": [
+              "Address (110cc)",
+              "Avenis 125",
+              "Burgman Street 125",
+              "Skydrive Sport (115cc)",
+              "Skydrive Crossover (115cc)"
+            ],
+            "Underbone": [
+              "Smash 115 Fi",
+              "Raider R150 Fi",
+              "Raider J Crossover 150"
+            ],
+            "Naked / Sport": [
+              "GSX-S150", "GSX-R150",
+              "Gixxer SF 155",
+              "GSX-8S (776cc)", "GSX-8T (776cc)",
+              "GSX-S1000 (999cc)", "GSX-S1000GX (999cc)"
+            ],
+            "Adventure": [
+              "V-Strom 250 SX",
+              "V-Strom 650 XT",
+              "V-Strom 1050 DE"
+            ],
+            "Off-Road": [
+              "DR-Z4S", "DR-Z4SM"
+            ]
+          }
+        },
+        {
+          "name": "Kawasaki",
+          "subcategories": {
+            "Underbone / Street": [
+              "Barako 175",
+              "W175 (Standard)", "W175 (Cafe)"
+            ],
+            "Scooter": [
+              "J125 (125cc)"
+            ],
+            "Naked / Sport": [
+              "Z125 Pro", "Z400", "Z500",
+              "Z650", "Z650RS",
+              "Z900", "Z900RS",
+              "Z1000",
+              "Ninja 400", "Ninja 500",
+              "Ninja 650", "Ninja 650 KRT",
+              "Ninja ZX-4R", "Ninja ZX-4RR",
+              "Ninja ZX-6R", "Ninja ZX-10R"
+            ],
+            "Adventure": [
+              "KLX 150BF", "KLX 230",
+              "KLX 300", "KLX 300SM",
+              "Versys 650", "Versys-X 300"
+            ],
+            "Cruiser": [
+              "Vulcan S 650",
+              "W800"
+            ]
+          }
+        },
+        {
+          "name": "TVS",
+          "models": [
+            "Raider 125 (Drum)", "Raider 125 (Disc)",
+            "Ntorq 125 (Race Edition)",
+            "Jupiter 125 (Classic)", "Jupiter 125 (ZX)",
+            "Apache RTR 160 4V", "Apache RTR 200 4V",
+            "Apache RR 310",
+            "Ronin 225"
+          ]
+        },
+        {
+          "name": "Rusi",
+          "models": [
+            "DL 100 (100cc)", "DL 125 (125cc)",
+            "TC 110 (110cc)", "TC 150 (150cc)",
+            "Macho 150 (150cc)",
+            "Sparkle 150i (150cc Fi)",
+            "Force 150i (150cc Fi)",
+            "Flash 150X (150cc)",
+            "RC 150 (150cc)",
+            "KR 125 (125cc)",
+            "Cafe 250 (250cc)"
+          ]
+        },
+        {
+          "name": "Kymco",
+          "models": [
+            "Like 125i", "Like 150i",
+            "Agility 125 RS",
+            "CT 125",
+            "Downtown 350i",
+            "X-Town 250i",
+            "Xciting S 400",
+            "AK 550"
+          ]
+        },
+        {
+          "name": "CFMoto",
+          "models": [
+            "150NK (150cc)", "300NK (300cc)",
+            "400NK (400cc)", "650NK (650cc)",
+            "650MT (650cc)", "800MT (800cc)",
+            "CLX 700 (700cc)", "450SR (450cc)",
+            "450MT (450cc)"
+          ]
+        },
+        {
+          "name": "KTM",
+          "models": [
+            "Duke 125", "Duke 200", "Duke 390",
+            "Duke 790", "Duke 890",
+            "RC 200", "RC 390",
+            "Adventure 390",
+            "Adventure 790", "Adventure 890",
+            "1290 Super Duke R"
+          ]
+        },
+        {
+          "name": "Skygo",
+          "models": [
+            "SG110-10 (110cc)", "SG125-8i (125cc)",
+            "SG150-8 (150cc)", "SG150 Sport",
+            "SG200 GY (200cc)", "SG250 GY (250cc)",
+            "Horizon 150 (150cc)",
+            "Elegance 150 (150cc)"
+          ]
+        },
+        {
+          "name": "Motorstar",
+          "models": [
+            "MSX 110 (110cc)", "MSX 125 (125cc)",
+            "MSX 150 (150cc)",
+            "Torero 110 (110cc)",
+            "Cafe 150 (150cc)",
+            "Torino 150 (150cc)",
+            "Adventure 200 (200cc)"
+          ]
+        },
+        {
+          "name": "SYM",
+          "models": [
+            "Jet 14 (125cc)",
+            "Orbit III (125cc)",
+            "Fiddle III (125cc)",
+            "Cruisym 300 (300cc)",
+            "Wolf Classic (150cc)",
+            "T2 (150cc)"
+          ]
+        },
+        {
+          "name": "Bajaj",
+          "models": [
+            "Pulsar N150 (150cc)", "Pulsar N160 (160cc)",
+            "Pulsar NS200 (200cc)", "Pulsar RS200 (200cc)",
+            "Dominar 400 (400cc)",
+            "Avenger Street 160 (160cc)"
+          ]
+        },
+        {
+          "name": "Benelli",
+          "models": [
+            "TNT 150i (150cc)",
+            "TNT 249 (249cc)", "TNT 300 (300cc)",
+            "Leoncino 250 (250cc)", "Leoncino 500 (500cc)",
+            "TRK 251 (251cc)", "TRK 502 (502cc)",
+            "302R (302cc)"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "Van / MPV",
+      "brands": [
+        {
+          "name": "Toyota",
+          "models": [
+            "Hiace Commuter (2.8 MT)", "Hiace Commuter Deluxe (2.8 AT)",
+            "Hiace GL Grandia (2.8 AT)", "Hiace Super Grandia (2.8 AT)",
+            "Hiace Super Grandia Elite (2.8 AT)",
+            "Avanza (1.3 J MT)", "Avanza (1.5 E MT)", "Avanza (1.5 G CVT)",
+            "Veloz (1.5 CVT)"
+          ]
+        },
+        {
+          "name": "Mitsubishi",
+          "models": [
+            "L300 FB Exceed (2.2 MT)",
+            "L300 Cab & Chassis (2.2 MT)",
+            "Xpander (1.5 GLX MT)", "Xpander (1.5 GLS AT)",
+            "Xpander Cross (1.5 AT)"
+          ]
+        },
+        {
+          "name": "Nissan",
+          "models": [
+            "NV350 Urvan Standard (2.5 MT)",
+            "NV350 Urvan Premium (2.5 AT)"
+          ]
+        },
+        {
+          "name": "Hyundai",
+          "models": [
+            "Starex (2.5 CRDi MT)", "Starex (2.5 CRDi AT)",
+            "Stargazer (1.5 GL IVT)", "Stargazer (1.5 GX IVT)",
+            "H-100 FB (2.5 MT)"
+          ]
+        },
+        {
+          "name": "Kia",
+          "models": [
+            "Carnival (2.2 CRDi EX AT)",
+            "Carnival (2.2 CRDi SX AT)"
+          ]
+        },
+        {
+          "name": "Foton",
+          "models": [
+            "View Transvan (2.8 MT)",
+            "Gratour (1.2 MT)",
+            "Traveller (2.5 MT)"
+          ]
+        },
+        {
+          "name": "Suzuki",
+          "models": [
+            "Ertiga (1.5 GL MT)", "Ertiga (1.5 GL AT)", "Ertiga (1.5 GX AT)",
+            "XL7 (1.5 GL AT)", "XL7 (1.5 Alpha AT)"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "Truck / Pickup",
+      "brands": [
+        {
+          "name": "Toyota",
+          "models": [
+            "Hilux (2.4 J MT 4x2)", "Hilux (2.4 E MT 4x2)", "Hilux (2.4 E AT 4x2)",
+            "Hilux (2.4 G MT 4x4)", "Hilux (2.4 G AT 4x4)",
+            "Hilux (2.8 V AT 4x4)", "Hilux (2.8 GR-S AT 4x4)",
+            "Tamaraw (1.5 E MT)", "Tamaraw (1.5 G CVT)"
+          ]
+        },
+        {
+          "name": "Ford",
+          "models": [
+            "Ranger (XL 2.0 4x2 MT)", "Ranger (XLS 2.0 4x2 AT)",
+            "Ranger (XLT 2.0 4x2 AT)", "Ranger (Wildtrak 2.0 4x4 AT)",
+            "Ranger (Raptor 2.0 4x4 AT)", "Ranger (Raptor V6 3.0 4x4 AT)"
+          ]
+        },
+        {
+          "name": "Mitsubishi",
+          "models": [
+            "Strada (2.4 GLX MT 4x2)", "Strada (2.4 GLS AT 4x2)",
+            "Strada (2.4 GT AT 4x4)", "Strada (2.4 GLS+ AT 4x4)",
+            "L300 (Cab & Chassis 2.2 MT)"
+          ]
+        },
+        {
+          "name": "Nissan",
+          "models": [
+            "Navara (2.5 EL 4x2 AT)", "Navara (2.5 VL 4x4 AT)",
+            "Navara (2.5 Pro-4X 4x4 AT)"
+          ]
+        },
+        {
+          "name": "Isuzu",
+          "models": [
+            "D-Max (1.9 LS MT 4x2)", "D-Max (3.0 LS-A AT 4x2)",
+            "D-Max (3.0 LS-A AT 4x4)", "D-Max (3.0 V-Cross 4x4 AT)"
+          ]
+        },
+        {
+          "name": "Chevrolet",
+          "models": [
+            "Colorado (Work Truck 4x2 MT)", "Colorado (LT 4x2 AT)",
+            "Colorado (Z71 4x4 AT)", "Colorado (ZR2 4x4 AT)"
+          ]
+        },
+        {
+          "name": "GWM",
+          "models": [
+            "Cannon (Ultra 2.0 Diesel AT)",
+            "Cannon (Elite 2.0 Diesel AT)",
+            "Cannon (Premium 2.0 Diesel AT)"
+          ]
+        },
+        {
+          "name": "Foton",
+          "models": [
+            "Toplander (2.4 4x2 AT)", "Toplander (2.4 4x4 AT)"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "Heavy Vehicle",
+      "brands": [
+        {
+          "name": "Isuzu",
+          "models": [
+            "Elf NHR (Dropside)", "Elf NHR (FB Body)", "Elf NHR (Wing Van)",
+            "Elf NKR (Dropside)", "Elf NKR (FB Body)",
+            "Forward FRR (Dropside)", "Forward FRR (Boom Truck)",
+            "Giga CYH (Dump Truck)", "Giga CYZ (Trailer Head)",
+            "C-Series Mixer Truck"
+          ]
+        },
+        {
+          "name": "Mitsubishi Fuso",
+          "models": [
+            "Canter FE71 (3.5T Dropside)", "Canter FE84 (4.5T Dropside)",
+            "Canter FE84 (FB Body)",
+            "Fighter FK61 (6T Dropside)", "Fighter FK65 (6.5T)",
+            "Rosa (Mini Bus)", "Super Great (10W Trailer)"
+          ]
+        },
+        {
+          "name": "Hino",
+          "models": [
+            "300 Series Dutro (Dropside)", "300 Series Dutro (FB Body)",
+            "500 Series Ranger (Dropside)", "500 Series Ranger (Boom Truck)",
+            "700 Series Profia (Trailer Head)",
+            "FB Bus (School Bus)", "Commuter Bus"
+          ]
+        },
+        {
+          "name": "UD Trucks",
+          "models": [
+            "Kuzer (3T Dropside)", "Kuzer (3T FB Body)",
+            "Condor MK (Dropside)", "Condor MK (Boom Truck)",
+            "Quester (Trailer Head)"
+          ]
+        },
+        {
+          "name": "Foton",
+          "models": [
+            "Aumark S (Dropside)", "Aumark S (FB Body)",
+            "Tornado (6W Dropside)",
+            "Auman (10W Trailer Head)",
+            "Foton Dump Truck"
+          ]
+        },
+        {
+          "name": "Sinotruk",
+          "models": [
+            "HOWO 371 (10W Dump)", "HOWO A7 (Trailer Head)",
+            "Steyr King (Dump Truck)", "Sitrak C7H (Trailer Head)"
+          ]
+        },
+        {
+          "name": "Shacman",
+          "models": [
+            "X3000 (Dump Truck)", "H3000 (Trailer Head)",
+            "F3000 (Dropside)"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "PH Special Vehicles",
+      "brands": [
+        {
+          "name": "Jeepney",
+          "models": [
+            "Traditional Jeepney (Sarao-style)",
+            "Traditional Jeepney (Owner-type)",
+            "Modern PUV Jeepney (Diesel Euro 4)",
+            "Modern PUV Jeepney (Electric)",
+            "Mini Bus PUV"
+          ]
+        },
+        {
+          "name": "Multicab / AUV",
+          "models": [
+            "Suzuki Multicab (FB Type)",
+            "Suzuki Multicab (Shuttle/Jeepney Type)",
+            "Suzuki Multicab (Drop Side)",
+            "Suzuki Multicab (Closed Van)",
+            "Daihatsu Multicab (FB Type)",
+            "Subaru Sambar Multicab",
+            "Carry Cab (Mini Truck)"
+          ]
+        },
+        {
+          "name": "Tricycle",
+          "models": [
+            "Standard Sidecar Tricycle (Honda TMX-based)",
+            "Standard Sidecar Tricycle (Yamaha-based)",
+            "Standard Sidecar Tricycle (Rusi-based)",
+            "Electric Tricycle (E-Trike)",
+            "Trimobile (3-Wheel Cab)",
+            "Kulig / Motorized Pedicab"
+          ]
+        },
+        {
+          "name": "E-bike / E-scooter",
+          "models": [
+            "Standard E-bike (Class 1)",
+            "Electric Moped / E-Scooter",
+            "Electric Bicycle (Pedal Assist)",
+            "E-Trike (Cargo Type)"
+          ]
+        },
+        {
+          "name": "UV Express / AUV",
+          "models": [
+            "Toyota Hi-Ace (UV Express)",
+            "Nissan NV350 Urvan (UV Express)",
+            "Hyundai H-100 (AUV)",
+            "Mitsubishi L300 (AUV/UV Express)",
+            "Foton View (UV Express)"
+          ]
+        },
+        {
+          "name": "Kuliglig / Farm Vehicle",
+          "models": [
+            "Kuliglig Single Axle (Hand Tractor)",
+            "Kuliglig Double Axle",
+            "Power Tiller Cargo (Farm Use)",
+            "Mini Dump Truck (Farm)"
+          ]
+        }
+      ]
+    }
+  ]
+}

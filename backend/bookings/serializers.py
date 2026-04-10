@@ -102,7 +102,7 @@ class BroadcastRequestDetailSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = BroadcastRequest
-        fields = ['id', 'description', 'concern_picture', 'status', 'services', 'add_ons', 'expires_at']
+        fields = ['id', 'description', 'concern_picture', 'status', 'services', 'add_ons', 'search_radius_km', 'expires_at']
     
     def get_add_ons(self, obj):
         from .models import BroadcastRequestAddOn
@@ -130,7 +130,11 @@ class RequestSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Request
-        fields = ['id', 'type', 'request_type', 'broadcast_request', 'client', 'provider', 'shop', 'service_location', 'created_at', 'request_details', 'assigned_mechanics']
+        fields = [
+            'id', 'type', 'request_type', 'broadcast_request', 'client', 'provider', 'shop',
+            'service_location', 'vehicle_type', 'vehicle_brand', 'vehicle_model',
+            'created_at', 'request_details', 'assigned_mechanics'
+        ]
 
     def get_broadcast_request(self, obj):
         if not hasattr(obj, 'broadcast_request') or obj.broadcast_request is None:
@@ -139,6 +143,7 @@ class RequestSerializer(serializers.ModelSerializer):
         return {
             'latitude': float(br.latitude) if br.latitude is not None else None,
             'longitude': float(br.longitude) if br.longitude is not None else None,
+            'search_radius_km': br.search_radius_km,
         }
     
     def get_request_details(self, obj):
@@ -253,13 +258,17 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
     required_tokens = serializers.SerializerMethodField()
     latitude = serializers.FloatField()
     longitude = serializers.FloatField()
+    vehicle_type = serializers.CharField(source='request.vehicle_type', read_only=True)
+    vehicle_brand = serializers.CharField(source='request.vehicle_brand', read_only=True)
+    vehicle_model = serializers.CharField(source='request.vehicle_model', read_only=True)
     
     class Meta:
         model = BroadcastRequest
         fields = [
             'id', 'description', 'latitude', 'longitude', 
             'services', 'add_ons', 'created_at', 'expires_at', 'accepted_at',
-            'status', 'concern_picture', 'required_tokens'
+            'status', 'concern_picture', 'required_tokens', 'search_radius_km',
+            'vehicle_type', 'vehicle_brand', 'vehicle_model'
         ]
     
     def get_concern_picture(self, obj):

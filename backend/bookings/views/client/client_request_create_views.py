@@ -19,6 +19,13 @@ from shops.models import Shop                          # added
 EMERGENCY_COOLDOWN_MINUTES = 5
 
 
+def _extract_vehicle_fields(request):
+    vehicle_type = str(request.data.get('vehicle_type') or '').strip()
+    vehicle_brand = str(request.data.get('vehicle_brand') or '').strip()
+    vehicle_model = str(request.data.get('vehicle_model') or '').strip()
+    return vehicle_type, vehicle_brand, vehicle_model
+
+
 def _get_emergency_cooldown_seconds(client):
     latest_emergency = Request.objects.filter(
         client=client,
@@ -95,6 +102,7 @@ def create_custom_request(request):
         description = request.data.get('description')
         service_location_data = request.data.get('service_location')
         concern_picture = request.FILES.get('concern_picture')
+        vehicle_type, vehicle_brand, vehicle_model = _extract_vehicle_fields(request)
         
         # Parse service_location JSON string when sent via FormData
         # (same lng sa broadcast_request_views)
@@ -110,6 +118,11 @@ def create_custom_request(request):
         if not description or not service_location_data:
             return Response({
                 'error': 'Description and service location are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        if not vehicle_type or not vehicle_brand or not vehicle_model:
+            return Response({
+                'error': 'Vehicle type, brand, and model are required'
             }, status=status.HTTP_400_BAD_REQUEST)
         
         # Get provider if specified
@@ -150,7 +163,10 @@ def create_custom_request(request):
             provider=provider,
             shop=shop,                                     # 👈 added
             request_type='custom',
-            service_location=service_location
+            service_location=service_location,
+            vehicle_type=vehicle_type,
+            vehicle_brand=vehicle_brand,
+            vehicle_model=vehicle_model,
         )
         
         # Create custom request
@@ -201,6 +217,7 @@ def create_mechanic_direct_request(request):
         service_location_data = request.data.get('service_location')
         add_on_ids = request.data.get('add_on_ids', [])
         _scheduled_time = request.data.get('scheduled_time')
+        vehicle_type, vehicle_brand, vehicle_model = _extract_vehicle_fields(request)
 
         if not provider_id:
             return Response({'error': 'Provider is required'}, status=status.HTTP_400_BAD_REQUEST)
@@ -210,6 +227,9 @@ def create_mechanic_direct_request(request):
 
         if not service_location_data:
             return Response({'error': 'Service location is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not vehicle_type or not vehicle_brand or not vehicle_model:
+            return Response({'error': 'Vehicle type, brand, and model are required'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             provider = Account.objects.get(id=provider_id)
@@ -245,6 +265,9 @@ def create_mechanic_direct_request(request):
             provider=provider,
             request_type='direct',
             service_location=service_location,
+            vehicle_type=vehicle_type,
+            vehicle_brand=vehicle_brand,
+            vehicle_model=vehicle_model,
         )
 
         direct_request = DirectRequest.objects.create(
@@ -488,6 +511,7 @@ def create_shop_direct_request(request):
         service_location_data = request.data.get('service_location')
         add_on_ids = request.data.get('add_on_ids', [])
         _scheduled_time = request.data.get('scheduled_time')
+        vehicle_type, vehicle_brand, vehicle_model = _extract_vehicle_fields(request)
 
         if isinstance(service_location_data, str):
             try:
@@ -503,6 +527,9 @@ def create_shop_direct_request(request):
 
         if not service_location_data:
             return Response({'error': 'Service location is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not vehicle_type or not vehicle_brand or not vehicle_model:
+            return Response({'error': 'Vehicle type, brand, and model are required'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             shop = Shop.objects.select_related('shop_owner', 'shop_owner__account').get(id=shop_id)
@@ -537,6 +564,9 @@ def create_shop_direct_request(request):
             shop=shop,
             request_type='direct',
             service_location=service_location,
+            vehicle_type=vehicle_type,
+            vehicle_brand=vehicle_brand,
+            vehicle_model=vehicle_model,
         )
 
         direct_request = DirectRequest.objects.create(
@@ -617,6 +647,7 @@ def create_emergency_request(request):
         description = request.data.get('description', '')  # Optional
         service_location_data = request.data.get('service_location')
         concern_picture = request.FILES.get('concern_picture')
+        vehicle_type, vehicle_brand, vehicle_model = _extract_vehicle_fields(request)
         
         # Parse service_location JSON string when sent via FormData
         if isinstance(service_location_data, str):
@@ -631,6 +662,11 @@ def create_emergency_request(request):
         if not service_location_data:
             return Response({
                 'error': 'Service location is required for emergency requests'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        if not vehicle_type or not vehicle_brand or not vehicle_model:
+            return Response({
+                'error': 'Vehicle type, brand, and model are required'
             }, status=status.HTTP_400_BAD_REQUEST)
         
         # Get provider if specified
@@ -659,7 +695,10 @@ def create_emergency_request(request):
             client=client,
             provider=provider,
             request_type='emergency',
-            service_location=service_location
+            service_location=service_location,
+            vehicle_type=vehicle_type,
+            vehicle_brand=vehicle_brand,
+            vehicle_model=vehicle_model,
         )
         
         # Create emergency request

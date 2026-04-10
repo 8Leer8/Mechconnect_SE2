@@ -53,6 +53,50 @@ export const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#fff',
   },
+  pickerContainer: {
+    backgroundColor: '#1A1C1E',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+    overflow: 'hidden',
+  },
+  picker: {
+    color: '#fff',
+    backgroundColor: 'transparent',
+  },
+  radiusRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    justifyContent: 'space-between',
+  },
+  radiusChip: {
+    width: '31%',
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#1A1C1E',
+    alignItems: 'center',
+  },
+  radiusChipSelected: {
+    backgroundColor: '#FF8C00',
+    borderColor: '#FF8C00',
+  },
+  radiusChipText: {
+    color: '#A8ADB8',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  radiusChipTextSelected: {
+    color: '#fff',
+  },
+  radiusHint: {
+    marginTop: 10,
+    fontSize: 12,
+    color: '#8E8E93',
+  },
   // Services grid
   servicesGrid: {
     flexDirection: 'row',

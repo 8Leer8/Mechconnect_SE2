@@ -606,7 +606,14 @@ export default function MapScreen() {
     try {
       if (!silent) setLoading(true);
       setError(null);
-      const response = await fetch(`${API_URL}/bookings/broadcasts/active/`, {
+      const query = new URLSearchParams();
+      if (userLocationRef.current) {
+        query.set('mechanic_latitude', String(userLocationRef.current.latitude));
+        query.set('mechanic_longitude', String(userLocationRef.current.longitude));
+      }
+      const endpoint = `${API_URL}/bookings/broadcasts/active/${query.toString() ? `?${query.toString()}` : ''}`;
+
+      const response = await fetch(endpoint, {
         method: 'GET',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },

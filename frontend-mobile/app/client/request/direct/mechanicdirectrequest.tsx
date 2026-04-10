@@ -15,6 +15,7 @@ import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import * as Location from 'expo-location';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import VehicleTypeModal from '@/components/VehicleTypeModal';
 import { useNotification } from '@/hooks/useNotification';
 import { reverseGeocodeAddress } from '@/lib/locationAddress';
 import { useLocation } from '../main_request_form/LocationContext';
@@ -84,6 +85,9 @@ export default function MechanicDirectRequestScreen() {
 
 	const [selectedServiceId, setSelectedServiceId] = useState<number | null>(null);
 	const [selectedAddOnIds, setSelectedAddOnIds] = useState<number[]>([]);
+	const [vehicleType, setVehicleType] = useState('');
+	const [vehicleBrand, setVehicleBrand] = useState('');
+	const [vehicleModel, setVehicleModel] = useState('');
 
 	const [availableServices, setAvailableServices] = useState<Service[]>([]);
 	const [availableAddOns, setAvailableAddOns] = useState<AddOn[]>([]);
@@ -307,6 +311,11 @@ export default function MechanicDirectRequestScreen() {
 			return;
 		}
 
+		if (!vehicleType || !vehicleBrand || !vehicleModel) {
+			showNotification({ type: 'error', message: 'Please select your vehicle type, brand, and model' });
+			return;
+		}
+
 		if (!currentAddress || currentLatitude === null || currentLongitude === null) {
 			if (locationMode === 'current') {
 				showNotification({ type: 'error', message: 'Please fetch your current location first' });
@@ -334,6 +343,9 @@ export default function MechanicDirectRequestScreen() {
 				provider_id: selectedProviderId,
 				service_id: selectedServiceId,
 				add_on_ids: selectedAddOnIds,
+				vehicle_type: vehicleType,
+				vehicle_brand: vehicleBrand,
+				vehicle_model: vehicleModel,
 				service_location: {
 					street_name: currentStreetName || 'Selected map location',
 					subdivision_village: currentSubdivision || undefined,
@@ -380,6 +392,11 @@ export default function MechanicDirectRequestScreen() {
 
 		if (!selectedServiceId) {
 			showNotification({ type: 'error', message: 'Please select a service' });
+			return;
+		}
+
+		if (!vehicleType || !vehicleBrand || !vehicleModel) {
+			showNotification({ type: 'error', message: 'Please select your vehicle type, brand, and model' });
 			return;
 		}
 
@@ -448,6 +465,22 @@ export default function MechanicDirectRequestScreen() {
 							{routeProviderName || 'Selected mechanic'}
 						</ThemedText>
 					</View>
+				</View>
+
+				<View style={styles.section}>
+					<View style={styles.sectionHeader}>
+						<FontAwesome name="car" size={14} color="#FF8C00" />
+						<ThemedText style={styles.sectionTitle}>Vehicle Information *</ThemedText>
+					</View>
+					<VehicleTypeModal
+						vehicleType={vehicleType}
+						vehicleBrand={vehicleBrand}
+						vehicleModel={vehicleModel}
+						onVehicleTypeChange={setVehicleType}
+						onVehicleBrandChange={setVehicleBrand}
+						onVehicleModelChange={setVehicleModel}
+						disabled={disabled}
+					/>
 				</View>
 
 				<View style={styles.section}>
