@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { View, ScrollView, TouchableOpacity, RefreshControl } from 'react-native';
+import { View, ScrollView, TouchableOpacity, RefreshControl, BackHandler } from 'react-native';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -64,7 +65,9 @@ interface ShopProfile {
 
 export default function ShopProfileScreen() {
   const router = useRouter();
-  const { shopId } = useLocalSearchParams<{ shopId: string }>();
+  const { shopId } = useLocalSearchParams<{
+    shopId: string;
+  }>();
   const [profile, setProfile] = useState<ShopProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -132,8 +135,23 @@ export default function ShopProfileScreen() {
   };
 
   const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
     router.replace('/(clientTabs)/main/discover');
   };
+
+  useFocusEffect(
+    React.useCallback(() => {
+      const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+        handleBack();
+        return true;
+      });
+
+      return () => subscription.remove();
+    }, [router])
+  );
 
   if (loading) {
     return (

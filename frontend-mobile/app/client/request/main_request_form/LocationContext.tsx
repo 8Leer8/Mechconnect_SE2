@@ -75,24 +75,18 @@ export function getDistanceKm(
 }
 
 /**
- * Calculate estimated price from service minimum and distance config values.
+ * Calculate estimated price: service minimum price + distance charge
+ * Distance charge: 10 pesos per km based on actual distance
  * @param distanceKm - actual distance in km
  * @param serviceMinimumPrice - base service price
- * @param perKmRate - dynamic rate per km from pricing config
- * @param baseDistanceFee - dynamic base distance fee from pricing config
- * @param freeDistanceKm - dynamic free distance threshold from pricing config
+ * @param perKmRate - rate per km (default 10 pesos)
  * @returns total estimated price
  */
 export function getEstimatedPrice(
   distanceKm: number,
   serviceMinimumPrice: number,
-  perKmRate: number,
-  baseDistanceFee: number = 0,
-  freeDistanceKm: number = 0
+  perKmRate: number = 10
 ): number {
-  const safeDistanceKm = Math.max(0, distanceKm);
-  const safeFreeDistanceKm = Math.max(0, freeDistanceKm);
-  const billableDistanceKm = Math.max(0, safeDistanceKm - safeFreeDistanceKm);
-  const distancePrice = (safeDistanceKm > safeFreeDistanceKm ? baseDistanceFee : 0) + (billableDistanceKm * perKmRate);
+  const distancePrice = distanceKm * perKmRate;
   return serviceMinimumPrice + distancePrice;
 }

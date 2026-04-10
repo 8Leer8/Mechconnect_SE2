@@ -30,6 +30,30 @@ interface CreateRequestResponse {
   request_id?: number;
 }
 
+interface AIPredictResponse {
+  ai_recommendations?: unknown;
+  matched_shops?: unknown;
+  matched_mechanics?: unknown;
+  error?: string;
+}
+
+interface NearbyProvider {
+  id: number;
+  provider_type: 'mechanic' | 'shop';
+  name: string;
+  distance_km: number;
+  rating: number | null;
+  specialization: string | null;
+  profile_photo: string | null;
+}
+
+interface NearbyProvidersResponse {
+  providers?: NearbyProvider[];
+  mechanics?: NearbyProvider[];
+  shops?: NearbyProvider[];
+  count: number;
+}
+
 interface PricingConfig {
   base_distance_fee: number;
   price_per_km: number;
@@ -84,6 +108,9 @@ export default function MainRequestFormScreen() {
   const [latitude, setLatitude] = useState<number | null>(null);
   const [longitude, setLongitude] = useState<number | null>(null);
   const [pricingConfig, setPricingConfig] = useState<PricingConfig>(DEFAULT_PRICING_CONFIG);
+  const [nearbyProviders, setNearbyProviders] = useState<NearbyProvider[]>([]);
+  const [loadingNearby, setLoadingNearby] = useState(false);
+  const [showNearbySection, setShowNearbySection] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -165,6 +192,66 @@ export default function MainRequestFormScreen() {
       return () => { isMounted = false; };
     }, [selectedLocation, setSelectedLocation])
   );
+
+  useEffect(() => {
+    if (isCustomMode || latitude === null || longitude === null || !selectedAddress) {
+      setNearbyProviders([]);
+      setShowNearbySection(false);
+      setLoadingNearby(false);
+      return;
+    }
+
+    let cancelled = false;
+    const fetchNearbyMechanics = async () => {
+      try {
+        if (!cancelled) {
+          setShowNearbySection(true);
+          setLoadingNearby(true);
+        }
+
+        const query = new URLSearchParams({
+          lat: String(latitude),
+          lng: String(longitude),
+          radius_km: '5',
+        });
+
+        const response = await fetch(`${API_URL}/users/mechanics/nearby/?${query.toString()}`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to fetch nearby mechanics');
+        }
+
+        const data = await response.json() as NearbyProvidersResponse;
+        if (!cancelled) {
+          const providers = Array.isArray(data.providers)
+            ? data.providers
+            : Array.isArray(data.mechanics)
+              ? data.mechanics
+              : [];
+          setNearbyProviders(providers);
+        }
+      } catch {
+        if (!cancelled) {
+          // Keep this section silent on API errors per UX requirement.
+          setShowNearbySection(false);
+          setNearbyProviders([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingNearby(false);
+        }
+      }
+    };
+
+    fetchNearbyMechanics();
+    return () => {
+      cancelled = true;
+    };
+  }, [isCustomMode, latitude, longitude, selectedAddress]);
 
   // ─── Toggle Custom Mode ────────────────────────────────────
   const handleToggleCustomMode = () => {
@@ -262,6 +349,87 @@ export default function MainRequestFormScreen() {
               <ThemedText style={{ fontSize: 12, color: '#fff', flex: 1 }}>{searchRadiusKm} km</ThemedText>
             </View>
           )}
+        </View>
+      )}
+
+      {selectedAddress && !isCustomMode && showNearbySection && (
+        <View style={styles.nearbySection}>
+          <View style={styles.sectionHeader}>
+            <FontAwesome name="wrench" size={14} color="#FF8C00" />
+            <ThemedText style={styles.sectionTitle}>Nearby Providers</ThemedText>
+          </View>
+          <ThemedText style={styles.nearbySubtitle}>Top 3 closest within 5 km</ThemedText>
+
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.nearbyScrollContent}>
+            {loadingNearby ? (
+              [0, 1, 2].map((idx) => (
+                <View key={`nearby-skeleton-${idx}`} style={[styles.nearbyChip, styles.nearbyChipSkeleton]}>
+                  <View style={styles.nearbyIconSkeleton} />
+                  <View style={styles.nearbyLineLg} />
+                </View>
+              ))
+            ) : nearbyProviders.length === 0 ? (
+              <View style={styles.nearbyEmptyWrap}>
+                <ThemedText style={styles.nearbyEmptyText}>No providers found nearby</ThemedText>
+              </View>
+            ) : (
+              nearbyProviders.map((provider) => (
+                <TouchableOpacity
+                  key={`nearby-provider-${provider.provider_type}-${provider.id}`}
+                  style={styles.nearbyChip}
+                  activeOpacity={0.8}
+                  onPress={() => {
+                    if (provider.provider_type === 'shop') {
+                      router.push({
+                        pathname: '/client/request/main_request_form/shop-profile/[id]',
+                        params: {
+                          id: String(provider.id),
+                          shopId: String(provider.id),
+                          distance_km: String(provider.distance_km),
+                        },
+                      });
+                    } else {
+                      router.push({
+                        pathname: '/client/request/main_request_form/mechanic-profile/[id]',
+                        params: {
+                          id: String(provider.id),
+                          mechanicId: String(provider.id),
+                          distance_km: String(provider.distance_km),
+                        },
+                      });
+                    }
+                  }}
+                >
+                  <View style={styles.nearbyHeaderRow}>
+                    <View style={styles.nearbyTypeIconWrap}>
+                      <FontAwesome
+                        name={provider.provider_type === 'shop' ? 'building-o' : 'wrench'}
+                        size={12}
+                        color="#FF8C00"
+                      />
+                    </View>
+                    <ThemedText style={styles.nearbyName} numberOfLines={1}>{provider.name}</ThemedText>
+                  </View>
+
+                  <View style={styles.nearbyStatRow}>
+                    <FontAwesome name="map-marker" size={11} color="#FF8C00" />
+                    <ThemedText style={styles.nearbyStatText}>{provider.distance_km.toFixed(2)} km away</ThemedText>
+                  </View>
+
+                  <View style={styles.nearbyStatRow}>
+                    <FontAwesome name="star" size={11} color="#FF8C00" />
+                    <ThemedText style={styles.nearbyStatText}>
+                      {provider.rating !== null ? `${provider.rating.toFixed(1)} rating` : 'New provider'}
+                    </ThemedText>
+                  </View>
+
+                  <ThemedText style={styles.nearbyMeta} numberOfLines={1}>
+                    {provider.specialization || (provider.provider_type === 'shop' ? 'General automotive services' : 'General mechanic')}
+                  </ThemedText>
+                </TouchableOpacity>
+              ))
+            )}
+          </ScrollView>
         </View>
       )}
 
@@ -377,7 +545,7 @@ export default function MainRequestFormScreen() {
         body: JSON.stringify({ description }),
       });
 
-      const data = await response.json();
+      const data = await response.json() as AIPredictResponse;
 
       if (response.ok) {
         router.push({

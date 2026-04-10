@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Animated,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   ScrollView,
   TextInput,
@@ -45,6 +46,7 @@ export default function MapScreen() {
   const { height: screenHeight } = useWindowDimensions();
   const mapRef = useRef<MapView>(null);
   const geocodeDebounceRef = useRef<number | null>(null);
+  const locationRequestInFlight = useRef(false);
   const mapHeightAnim = useRef(new Animated.Value(340)).current;
   const params = useLocalSearchParams();
 
@@ -55,6 +57,7 @@ export default function MapScreen() {
   const [loading, setLoading] = useState(true);
   const [confirming, setConfirming] = useState(false);
   const [locating, setLocating] = useState(false);
+  const [showLocationHelp, setShowLocationHelp] = useState(false);
   const [address, setAddress] = useState('');
   const [region, setRegion] = useState<Region | null>(null);
   const [circleCenter, setCircleCenter] = useState<{ latitude: number; longitude: number } | null>(null);
@@ -71,16 +74,6 @@ export default function MapScreen() {
   const [topBarHeight, setTopBarHeight] = useState(0);
   const COLLAPSED_SHEET_CONTENT_HEIGHT = 220;
   const EXPANDED_SHEET_CONTENT_HEIGHT = 340;
-
-  const defaultRegion = useMemo(
-    () => ({
-      latitude: 14.5995,
-      longitude: 120.9842,
-      latitudeDelta: 0.0922,
-      longitudeDelta: 0.0421,
-    }),
-    []
-  );
 
   useEffect(() => {
     initializeMap();
@@ -101,6 +94,40 @@ export default function MapScreen() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!loading || region || (initialLat !== null && initialLng !== null)) {
+      setShowLocationHelp(false);
+      return;
+    }
+
+    const timerId = setTimeout(() => {
+      setShowLocationHelp(true);
+    }, 10000);
+
+    return () => clearTimeout(timerId);
+  }, [initialLat, initialLng, loading, region]);
+
+  useEffect(() => {
+    if (!loading || region || (initialLat !== null && initialLng !== null)) {
+      return;
+    }
+
+    const retryId = setInterval(async () => {
+      const resolved = await centerToCurrentLocation({
+        animate: false,
+        setAsSelected: false,
+        silentFailure: true,
+      });
+
+      if (resolved) {
+        setLoading(false);
+        setShowLocationHelp(false);
+      }
+    }, 4000);
+
+    return () => clearInterval(retryId);
+  }, [initialLat, initialLng, loading, region]);
 
   useEffect(() => {
     if (!topBarHeight) return;
@@ -141,27 +168,51 @@ export default function MapScreen() {
       return;
     }
 
-    await centerToCurrentLocation({ animate: false, setAsSelected: false });
+    const resolved = await centerToCurrentLocation({
+      animate: false,
+      setAsSelected: false,
+      silentFailure: true,
+    });
+
+    if (resolved) {
+      setLoading(false);
+      setShowLocationHelp(false);
+    }
   };
 
   const centerToCurrentLocation = async ({
     animate,
     setAsSelected,
+    silentFailure = false,
   }: {
     animate: boolean;
     setAsSelected: boolean;
-  }) => {
+    silentFailure?: boolean;
+  }): Promise<boolean> => {
+    if (locationRequestInFlight.current) {
+      return false;
+    }
+
+    locationRequestInFlight.current = true;
+
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        showNotification({
-          type: 'warning',
-          message: 'Location permission is needed. Showing default map area.',
-        });
+        if (!silentFailure) {
+          showNotification({
+            type: 'warning',
+            message: 'Location permission is needed to open the map.',
+          });
+        }
+        return false;
+      }
 
-        setRegion(defaultRegion);
-        setLoading(false);
-        return;
+      const servicesEnabled = await Location.hasServicesEnabledAsync();
+      if (!servicesEnabled) {
+        if (!silentFailure) {
+          showNotification({ type: 'warning', message: 'Please enable location services first.' });
+        }
+        return false;
       }
 
       const current = await Location.getCurrentPositionAsync({
@@ -187,11 +238,30 @@ export default function MapScreen() {
       } else if (!circleCenter) {
         setAddress('');
       }
+      return true;
     } catch {
-      setRegion(defaultRegion);
-      showNotification({ type: 'error', message: 'Unable to get current location' });
+      if (!silentFailure) {
+        showNotification({ type: 'error', message: 'Unable to get current location' });
+      }
+      return false;
     } finally {
-      setLoading(false);
+      locationRequestInFlight.current = false;
+    }
+  };
+
+  const handleOpenLocationSettings = async () => {
+    try {
+      if (Platform.OS === 'android') {
+        await Location.enableNetworkProviderAsync();
+      }
+    } catch {
+      // If the OS prompt fails, fall back to app settings.
+    }
+
+    try {
+      await Linking.openSettings();
+    } catch {
+      showNotification({ type: 'info', message: 'Open your device settings and enable Location.' });
     }
   };
 
@@ -230,8 +300,10 @@ export default function MapScreen() {
     if (locating) return;
     setLocating(true);
     try {
-      await centerToCurrentLocation({ animate: true, setAsSelected: false });
-      showNotification({ type: 'info', message: 'Centered to your current location.' });
+      const resolved = await centerToCurrentLocation({ animate: true, setAsSelected: false });
+      if (resolved) {
+        showNotification({ type: 'info', message: 'Centered to your current location.' });
+      }
     } finally {
       setLocating(false);
     }
@@ -300,7 +372,18 @@ export default function MapScreen() {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#FF8C00" />
-        <ThemedText style={styles.loadingText}>Loading map...</ThemedText>
+        <ThemedText style={styles.loadingText}>Getting your location...</ThemedText>
+        {showLocationHelp && (
+          <View style={styles.loadingNoticeCard}>
+            <ThemedText style={styles.loadingNoticeTitle}>Still waiting for location</ThemedText>
+            <ThemedText style={styles.loadingNoticeText}>
+              Turn on location services, then try again.
+            </ThemedText>
+            <TouchableOpacity style={styles.loadingNoticeButton} onPress={handleOpenLocationSettings} activeOpacity={0.85}>
+              <ThemedText style={styles.loadingNoticeButtonText}>Open Location Settings</ThemedText>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
     );
   }

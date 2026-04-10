@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import {View, ScrollView, TouchableOpacity, RefreshControl, } from 'react-native';
+import React, { useRef, useState, useEffect } from 'react';
+import {View, ScrollView, TouchableOpacity, RefreshControl, BackHandler } from 'react-native';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -63,16 +64,25 @@ interface MechanicProfile {
 
 export default function MechanicProfileScreen() {
   const router = useRouter();
-  const { mechanicId } = useLocalSearchParams<{ mechanicId: string }>();
+  const { mechanicId } = useLocalSearchParams<{
+    mechanicId: string;
+  }>();
+  const isMountedRef = useRef(true);
   const [profile, setProfile] = useState<MechanicProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   const fetchMechanicProfile = async (silent = false) => {
     try {
-      if (!silent) setLoading(true);
-      setError(null);
+      if (!silent && isMountedRef.current) setLoading(true);
+      if (isMountedRef.current) setError(null);
 
       const response = await fetch(`${API_URL}/users/mechanics/${mechanicId}/profile/`, {
         method: 'GET',
@@ -83,12 +93,18 @@ export default function MechanicProfileScreen() {
       if (!response.ok) throw new Error('Failed to fetch mechanic profile');
 
       const data = await response.json() as { mechanic: MechanicProfile };
-      setProfile(data.mechanic);
+      if (isMountedRef.current) {
+        setProfile(data.mechanic);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      if (isMountedRef.current) {
+        setError(err instanceof Error ? err.message : 'An error occurred');
+      }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   };
 
@@ -123,8 +139,23 @@ export default function MechanicProfileScreen() {
   };
 
   const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
     router.replace('/(clientTabs)/main/discover');
   };
+
+  useFocusEffect(
+    React.useCallback(() => {
+      const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+        handleBack();
+        return true;
+      });
+
+      return () => subscription.remove();
+    }, [router])
+  );
 
   if (loading) {
     return (
