@@ -290,6 +290,9 @@ def _serialize_single_booking(booking):
         'request': {
             'id': booking.request.id,
             'type': booking.request.request_type,
+            'vehicle_type': booking.request.vehicle_type,
+            'vehicle_brand': booking.request.vehicle_brand,
+            'vehicle_model': booking.request.vehicle_model,
             'created_at': booking.request.created_at.isoformat(),
             'broadcast_request': broadcast_request_payload,
         },

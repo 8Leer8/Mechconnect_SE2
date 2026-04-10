@@ -20,6 +20,9 @@ interface BookingDetail {
   request: {
     id: number;
     type: string;
+    vehicle_type?: string | null;
+    vehicle_brand?: string | null;
+    vehicle_model?: string | null;
     created_at: string;
     request_details?: any;
   };
@@ -321,6 +324,21 @@ export default function ShopOwnerBookingDetailScreen() {
         booking.client.email ||
         'Client'
       : 'Client';
+  const resolvedVehicleType =
+    booking.request?.vehicle_type ||
+    booking.request?.request_details?.vehicle_type ||
+    booking.request?.request_details?.vehicle?.type ||
+    null;
+  const resolvedVehicleBrand =
+    booking.request?.vehicle_brand ||
+    booking.request?.request_details?.vehicle_brand ||
+    booking.request?.request_details?.vehicle?.brand ||
+    null;
+  const resolvedVehicleModel =
+    booking.request?.vehicle_model ||
+    booking.request?.request_details?.vehicle_model ||
+    booking.request?.request_details?.vehicle?.model ||
+    null;
 
   return (
     <ThemedView style={styles.container}>
@@ -396,6 +414,36 @@ export default function ShopOwnerBookingDetailScreen() {
           <ThemedText style={styles.amountLarge}>
             ₱{parseFloat(String(booking.amount_fee || '0')).toFixed(2)}
           </ThemedText>
+        </View>
+
+        <View style={styles.sectionCard}>
+          <View style={styles.sectionHeader}>
+            <View style={[styles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
+              <FontAwesome name="car" size={16} color="#FF8C00" />
+            </View>
+            <ThemedText style={styles.sectionTitle}>Request Information</ThemedText>
+          </View>
+
+          <View style={styles.infoGrid}>
+            <View style={styles.infoItem}>
+              <ThemedText style={styles.infoLabel}>Vehicle Type</ThemedText>
+              <ThemedText style={[styles.infoValue, !resolvedVehicleType ? styles.infoLabel : null]}>
+                {resolvedVehicleType || 'Not specified'}
+              </ThemedText>
+            </View>
+            <View style={styles.infoItem}>
+              <ThemedText style={styles.infoLabel}>Vehicle Brand</ThemedText>
+              <ThemedText style={[styles.infoValue, !resolvedVehicleBrand ? styles.infoLabel : null]}>
+                {resolvedVehicleBrand || 'Not specified'}
+              </ThemedText>
+            </View>
+            <View style={styles.infoItem}>
+              <ThemedText style={styles.infoLabel}>Vehicle Model</ThemedText>
+              <ThemedText style={[styles.infoValue, !resolvedVehicleModel ? styles.infoLabel : null]}>
+                {resolvedVehicleModel || 'Not specified'}
+              </ThemedText>
+            </View>
+          </View>
         </View>
 
         {/* Client Info */}

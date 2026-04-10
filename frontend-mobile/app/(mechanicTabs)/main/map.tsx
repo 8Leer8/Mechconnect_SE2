@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   TouchableOpacity,
@@ -15,7 +15,7 @@ import * as Location from 'expo-location';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import WalletBadge from '@/components/wallet-badge';
 import { eventBus } from '@/utils/eventBus';
 import { getDistanceKm } from '@/app/client/request/main_request_form/LocationContext';
@@ -33,6 +33,11 @@ interface BroadcastRequest {
   description: string;
   latitude: number;
   longitude: number;
+  radius_km?: number;
+  search_radius_km?: number;
+  vehicle_type?: string | null;
+  vehicle_brand?: string | null;
+  vehicle_model?: string | null;
   services: {
     id: number;
     name: string;
@@ -131,6 +136,7 @@ export default function MapScreen() {
   const lastFetchedBroadcastId = useRef<number | null>(null);
   const cachedRouteData = useRef<CachedRouteData | null>(null);
   const markerTapRef = useRef<Record<number, number>>({});
+  const lastBroadcastFetchLocationRef = useRef<{ latitude: number; longitude: number } | null>(null);
   const { showNotification } = useNotification();
 
   const [broadcasts, setBroadcasts] = useState<BroadcastRequest[]>([]);
@@ -164,17 +170,10 @@ export default function MapScreen() {
 
   useEffect(() => {
     initializeMap();
-    fetchBroadcasts();
     fetchPricingConfig();
-
-    const interval = setInterval(() => {
-      fetchBroadcasts(true);
-      fetchPricingConfig();
-    }, 8000);
 
     fetchTokensBalance();
     return () => {
-      clearInterval(interval);
       if (locationWatchRef.current) {
         locationWatchRef.current.remove();
         locationWatchRef.current = null;
@@ -182,11 +181,21 @@ export default function MapScreen() {
     };
   }, []);
 
+  useFocusEffect(
+    React.useCallback(() => {
+      if (userLocationRef.current) {
+        fetchBroadcasts(true);
+      }
+    }, [])
+  );
+
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
       if (nextState === 'active') {
         fetchPricingConfig();
-        fetchBroadcasts(true);
+        if (userLocationRef.current) {
+          fetchBroadcasts(true);
+        }
         fetchTokensBalance();
       }
     });
@@ -211,6 +220,18 @@ export default function MapScreen() {
   const setCurrentUserLocation = (location: { latitude: number; longitude: number }) => {
     userLocationRef.current = location;
     setUserLocation(location);
+
+    if (!lastBroadcastFetchLocationRef.current) {
+      lastBroadcastFetchLocationRef.current = location;
+      fetchBroadcasts(true);
+      return;
+    }
+
+    const movedKm = getDistanceKm(lastBroadcastFetchLocationRef.current, location);
+    if (movedKm >= 0.1) {
+      lastBroadcastFetchLocationRef.current = location;
+      fetchBroadcasts(true);
+    }
   };
 
   const waitForUserLocation = async (timeoutMs = 5000) => {
@@ -747,7 +768,12 @@ export default function MapScreen() {
 
   const onRefresh = () => {
     setRefreshing(true);
-    fetchBroadcasts(true);
+    if (userLocationRef.current) {
+      fetchBroadcasts(true);
+    } else {
+      setRefreshing(false);
+      void initializeMap();
+    }
   };
 
   const fetchBroadcasts = async (silent = false) => {
@@ -756,8 +782,8 @@ export default function MapScreen() {
       setError(null);
       const query = new URLSearchParams();
       if (userLocationRef.current) {
-        query.set('mechanic_latitude', String(userLocationRef.current.latitude));
-        query.set('mechanic_longitude', String(userLocationRef.current.longitude));
+        query.set('mechanic_lat', String(userLocationRef.current.latitude));
+        query.set('mechanic_lng', String(userLocationRef.current.longitude));
       }
       const endpoint = `${API_URL}/bookings/broadcasts/active/${query.toString() ? `?${query.toString()}` : ''}`;
 
@@ -877,7 +903,18 @@ export default function MapScreen() {
     return `${minutes}m ${seconds}s`;
   };
 
-  const filteredBroadcasts = broadcasts;
+  const filteredBroadcasts = useMemo(() => {
+    if (!userLocation) return [];
+    return broadcasts.filter((broadcast) => {
+      const radiusKm = Number(broadcast.radius_km ?? broadcast.search_radius_km ?? 5);
+      if (!Number.isFinite(radiusKm) || radiusKm <= 0) return false;
+      const distanceKm = getDistanceKm(userLocation, {
+        latitude: broadcast.latitude,
+        longitude: broadcast.longitude,
+      });
+      return distanceKm <= radiusKm;
+    });
+  }, [broadcasts, userLocation]);
   const routeDistanceDisplay = feeData?.distanceKm?.toFixed(2) ?? '--';
   const routeEtaDisplay = feeData?.etaMinutes ?? '--';
   const requiredTokensPreview = feeData
@@ -1033,9 +1070,9 @@ export default function MapScreen() {
             </View>
           ) : filteredBroadcasts.length === 0 ? (
             <View style={styles.emptyContainer}>
-              <FontAwesome name="map-marker" size={64} color="#8E8E93" />
-              <ThemedText style={styles.emptyText}>No jobs available</ThemedText>
-              <ThemedText style={styles.emptySubtext}>Check back later for new jobs</ThemedText>
+              <FontAwesome name="map-marker" size={64} color="#FF8C00" />
+              <ThemedText style={styles.emptyText}>No broadcast requests in your area</ThemedText>
+              <ThemedText style={styles.emptySubtext}>Check back later or expand your search area</ThemedText>
             </View>
           ) : (
             <>
@@ -1138,6 +1175,46 @@ export default function MapScreen() {
                   <View style={styles.modalSection}>
                     <ThemedText style={styles.modalSectionTitle}>Description</ThemedText>
                     <ThemedText style={styles.modalText}>{selectedBroadcast.description}</ThemedText>
+                  </View>
+
+                  <View style={sx.modalCard}>
+                    <View style={sx.cardTitleRow}>
+                      <FontAwesome name="car" size={14} color="#FF8C00" />
+                      <ThemedText style={sx.cardTitleText}>Vehicle Information</ThemedText>
+                    </View>
+                    <View style={sx.cardRow}>
+                      <ThemedText style={sx.cardRowLabel}>Vehicle Type</ThemedText>
+                      <ThemedText
+                        style={[
+                          sx.cardRowValue,
+                          !selectedBroadcast.vehicle_type ? { color: '#8E8E93' } : null,
+                        ]}
+                      >
+                        {selectedBroadcast.vehicle_type || 'Not specified'}
+                      </ThemedText>
+                    </View>
+                    <View style={sx.cardRow}>
+                      <ThemedText style={sx.cardRowLabel}>Brand</ThemedText>
+                      <ThemedText
+                        style={[
+                          sx.cardRowValue,
+                          !selectedBroadcast.vehicle_brand ? { color: '#8E8E93' } : null,
+                        ]}
+                      >
+                        {selectedBroadcast.vehicle_brand || 'Not specified'}
+                      </ThemedText>
+                    </View>
+                    <View style={sx.cardRow}>
+                      <ThemedText style={sx.cardRowLabel}>Model</ThemedText>
+                      <ThemedText
+                        style={[
+                          sx.cardRowValue,
+                          !selectedBroadcast.vehicle_model ? { color: '#8E8E93' } : null,
+                        ]}
+                      >
+                        {selectedBroadcast.vehicle_model || 'Not specified'}
+                      </ThemedText>
+                    </View>
                   </View>
 
                   <View style={sx.modalCard}>

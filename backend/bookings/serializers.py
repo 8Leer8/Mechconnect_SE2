@@ -259,6 +259,7 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
     required_tokens = serializers.SerializerMethodField()
     latitude = serializers.FloatField()
     longitude = serializers.FloatField()
+    radius_km = serializers.IntegerField(source='search_radius_km', read_only=True)
     vehicle_type = serializers.CharField(source='request.vehicle_type', read_only=True)
     vehicle_brand = serializers.CharField(source='request.vehicle_brand', read_only=True)
     vehicle_model = serializers.CharField(source='request.vehicle_model', read_only=True)
@@ -268,7 +269,7 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'description', 'latitude', 'longitude', 
             'services', 'add_ons', 'created_at', 'expires_at', 'accepted_at',
-            'status', 'concern_picture', 'required_tokens', 'search_radius_km',
+            'status', 'concern_picture', 'required_tokens', 'search_radius_km', 'radius_km',
             'vehicle_type', 'vehicle_brand', 'vehicle_model'
         ]
     

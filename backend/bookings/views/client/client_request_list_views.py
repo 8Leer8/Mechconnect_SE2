@@ -318,6 +318,9 @@ def get_request_detail(request, request_id):
         base = {
             'id': req.id,
             'request_type': req.request_type,
+            'vehicle_type': req.vehicle_type,
+            'vehicle_brand': req.vehicle_brand,
+            'vehicle_model': req.vehicle_model,
             'created_at': req.created_at.isoformat() if req.created_at else None,
             'service_location': {
                 'street_name': req.service_location.street_name,

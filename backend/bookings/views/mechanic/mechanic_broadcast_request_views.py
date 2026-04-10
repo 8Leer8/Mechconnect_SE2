@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django.utils import timezone
 from django.db import transaction
+import math
 
 from ...models import (
     Request, BroadcastRequest, BroadcastOffer, Booking
@@ -56,8 +57,8 @@ def get_active_broadcasts(request):
         if account_id:
             active_broadcasts = active_broadcasts.exclude(request__client__account_id=account_id)
         
-        mechanic_lat = request.GET.get('mechanic_latitude')
-        mechanic_lng = request.GET.get('mechanic_longitude')
+        mechanic_lat = request.GET.get('mechanic_lat', request.GET.get('mechanic_latitude'))
+        mechanic_lng = request.GET.get('mechanic_lng', request.GET.get('mechanic_longitude'))
 
         if mechanic_lat is not None and mechanic_lng is not None:
             try:

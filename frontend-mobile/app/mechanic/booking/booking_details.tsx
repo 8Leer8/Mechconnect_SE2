@@ -36,6 +36,9 @@ interface BookingDetail {
   request: {
     id: number;
     type: string;
+    vehicle_type?: string | null;
+    vehicle_brand?: string | null;
+    vehicle_model?: string | null;
     created_at: string;
   };
   provider?: {
@@ -454,6 +457,7 @@ export default function BookingDetailScreen() {
             request: {
               id: requestObj.id,
               type: requestObj.type,
+              vehicle_type: requestObj.vehicle_type ?? requestObj.request_details?.vehicle_type ?? null,
               created_at: requestObj.created_at,
               request_details: requestObj.request_details || null,
             },
@@ -878,6 +882,21 @@ export default function BookingDetailScreen() {
   const clientName = booking.client
     ? `${booking.client.firstname || ''} ${booking.client.lastname || ''}`.trim() || booking.client.username || 'Client'
     : 'Client';
+  const resolvedVehicleType =
+    booking.request?.vehicle_type ||
+    (booking.request as any)?.request_details?.vehicle_type ||
+    (booking.request as any)?.request_details?.vehicle?.type ||
+    null;
+  const resolvedVehicleBrand =
+    booking.request?.vehicle_brand ||
+    (booking.request as any)?.request_details?.vehicle_brand ||
+    (booking.request as any)?.request_details?.vehicle?.brand ||
+    null;
+  const resolvedVehicleModel =
+    booking.request?.vehicle_model ||
+    (booking.request as any)?.request_details?.vehicle_model ||
+    (booking.request as any)?.request_details?.vehicle?.model ||
+    null;
 
   const quotationEstimatedTotal = parseFloat(String(displayQuotation?.total_amount || 0)) || 0;
   const serviceSubtotalTotal = convenienceBreakdown ? convenienceBreakdown.serviceSubtotal : quotationEstimatedTotal;
@@ -1237,6 +1256,35 @@ export default function BookingDetailScreen() {
             </ThemedText>
           </View>
           <ThemedText style={styles.amountLarge}>₱{parseFloat(String(booking.amount_fee || '0')).toFixed(2)}</ThemedText>
+        </View>
+
+        <View style={styles.sectionCard}>
+          <View style={styles.sectionHeader}>
+            <View style={[styles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
+              <FontAwesome name="car" size={16} color="#FF8C00" />
+            </View>
+            <ThemedText style={styles.sectionTitle}>Request Information</ThemedText>
+          </View>
+          <View style={styles.infoGrid}>
+            <View style={styles.infoItem}>
+              <ThemedText style={styles.infoLabel}>Vehicle Type</ThemedText>
+              <ThemedText style={[styles.infoValue, !resolvedVehicleType ? styles.infoLabel : null]}>
+                {resolvedVehicleType || 'Not specified'}
+              </ThemedText>
+            </View>
+            <View style={styles.infoItem}>
+              <ThemedText style={styles.infoLabel}>Vehicle Brand</ThemedText>
+              <ThemedText style={[styles.infoValue, !resolvedVehicleBrand ? styles.infoLabel : null]}>
+                {resolvedVehicleBrand || 'Not specified'}
+              </ThemedText>
+            </View>
+            <View style={styles.infoItem}>
+              <ThemedText style={styles.infoLabel}>Vehicle Model</ThemedText>
+              <ThemedText style={[styles.infoValue, !resolvedVehicleModel ? styles.infoLabel : null]}>
+                {resolvedVehicleModel || 'Not specified'}
+              </ThemedText>
+            </View>
+          </View>
         </View>
 
 
