@@ -507,7 +507,8 @@ export default function BookingDetailScreen() {
   useEffect(() => {
     try {
       if (!lastMessage) return;
-      const bid = Number(lastMessage.booking_id || lastMessage.bookingId || lastMessage.booking);
+      const message = lastMessage as unknown as Record<string, unknown>;
+      const bid = Number(message.booking_id ?? message.bookingId ?? message.booking);
       if (!bid || !bookingId) return;
       if (bid === Number(bookingId)) {
         const action = (lastMessage.action || lastMessage.type || '').toString().toLowerCase();
@@ -1098,10 +1099,10 @@ export default function BookingDetailScreen() {
     const beforePrice = Number(beforeItem?.unit_price ?? 0) || 0;
     const beforeQty = Number(beforeItem?.quantity ?? 1) || 1;
     return (
-      <View key={key} style={[styles.quotationAccordionRow, isRemoved ? styles.removedItem : (changeLabel ? styles.pendingItem : styles.acceptedItem), isExpanded ? styles.quotationAccordionRowExpanded : null]}>
+      <View key={key} style={[styles.quotationAccordionRow, changeLabel ? styles.pendingItem : styles.acceptedItem, isExpanded ? styles.quotationAccordionRowExpanded : null]}>
         <TouchableOpacity style={styles.quotationAccordionHeader} onPress={() => toggleQuoteItem(key)} activeOpacity={0.8}>
           <View style={styles.quoteHeaderLeft}>
-            <ThemedText style={[styles.receiptItem, isRemoved ? styles.removedItemText : null]} numberOfLines={1}>{desc}</ThemedText>
+            <ThemedText style={styles.receiptItem} numberOfLines={1}>{desc}</ThemedText>
             {changeLabel ? (
               <View style={styles.pendingPill}>
                 <ThemedText style={styles.pendingPillText}>{changeLabel}</ThemedText>
@@ -1109,7 +1110,7 @@ export default function BookingDetailScreen() {
             ) : null}
           </View>
           <View style={styles.quotationAccordionRight}>
-            <ThemedText style={[styles.receiptAmount, isRemoved ? styles.removedItemAmount : null]}>₱{(price * qty).toFixed(2)}</ThemedText>
+            <ThemedText style={styles.receiptAmount}>₱{(price * qty).toFixed(2)}</ThemedText>
             <FontAwesome name={isExpanded ? 'chevron-up' : 'chevron-down'} size={12} color="#9CA3AF" />
           </View>
         </TouchableOpacity>
@@ -1793,11 +1794,11 @@ export default function BookingDetailScreen() {
                   <View style={styles.receiptDivider} />
                   <View style={styles.receiptRow}> 
                     <ThemedText style={styles.receiptTotalLabel}>Total</ThemedText>
-                    <ThemedText style={styles.receiptTotalValue}>₱{parseFloat(String(quotationEstimatedTotal || booking.amount_fee) || 0).toFixed(2)}</ThemedText>
+                    <ThemedText style={styles.receiptTotalValue}>₱{parseFloat(String(quotationEstimatedTotal || booking.amount_fee)).toFixed(2)}</ThemedText>
                   </View>
                   <View style={styles.receiptRow}> 
                     <ThemedText style={styles.receiptYouLabel}>You receive</ThemedText>
-                    <ThemedText style={styles.receiptYouValue}>₱{parseFloat(String(quotationEstimatedTotal || booking.amount_fee) || 0).toFixed(2)}</ThemedText>
+                    <ThemedText style={styles.receiptYouValue}>₱{parseFloat(String(quotationEstimatedTotal || booking.amount_fee)).toFixed(2)}</ThemedText>
                   </View>
                 </>
               ) : (

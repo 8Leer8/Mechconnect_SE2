@@ -85,6 +85,45 @@ interface BookingDetail {
   } | null;
 }
 
+interface PricingConfig {
+  base_distance_fee?: number;
+  price_per_km?: number;
+  free_distance_km?: number;
+  traffic_low_multiplier?: number;
+  traffic_medium_multiplier?: number;
+  traffic_high_multiplier?: number;
+  convenience_fee_percentage?: number;
+  convenience_fee_fixed?: number;
+}
+
+const LIVE_PRICING_STATUSES = new Set(['accepted', 'on_the_way', 'active', 'paused', 'finished']);
+
+const shouldUseLiveAdditivePricing = (statusValue?: string | null): boolean => {
+  const normalized = String(statusValue || '').toLowerCase();
+  return LIVE_PRICING_STATUSES.has(normalized);
+};
+
+const toPrice = (value: unknown) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+};
+
+const solveServiceSubtotalFromAmount = (
+  amountFee: number,
+  travelFee: number,
+  trafficFee: number,
+  conveniencePct: number,
+  convenienceFixed: number
+): number => {
+  const pct = Number.isFinite(conveniencePct) ? Math.max(0, conveniencePct) : 0;
+  const fixed = Number.isFinite(convenienceFixed) ? convenienceFixed : 0;
+  const denominator = 1 + pct;
+  if (!Number.isFinite(denominator) || denominator <= 0) return 0;
+
+  const subtotal = (amountFee - travelFee - trafficFee - fixed) / denominator;
+  return Number.isFinite(subtotal) ? Math.max(0, subtotal) : 0;
+};
+
 export default function ClientBookingDetailScreen() {
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
   const navigation = useNavigation();
@@ -101,7 +140,7 @@ export default function ClientBookingDetailScreen() {
   const [isPaying, setIsPaying] = useState(false);
   const [expandedQuoteItems, setExpandedQuoteItems] = useState<Record<string, boolean>>({});
   const [quotationListExpanded, setQuotationListExpanded] = useState(false);
-  const [pricingConfig, setPricingConfig] = useState<PricingConfig>(DEFAULT_PRICING_CONFIG);
+  const [pricingConfig, setPricingConfig] = useState<PricingConfig>({});
 
   useEffect(() => {
     let isMounted = true;
@@ -115,18 +154,23 @@ export default function ClientBookingDetailScreen() {
         if (!response.ok) return;
         const data = await response.json() as Partial<PricingConfig>;
         if (!isMounted) return;
+        const toConfigNumber = (value: unknown) => {
+          const parsed = Number(value);
+          return Number.isFinite(parsed) ? parsed : undefined;
+        };
+
         setPricingConfig({
-          base_distance_fee: Number(data.base_distance_fee ?? DEFAULT_PRICING_CONFIG.base_distance_fee),
-          price_per_km: Number(data.price_per_km ?? DEFAULT_PRICING_CONFIG.price_per_km),
-          free_distance_km: Number(data.free_distance_km ?? DEFAULT_PRICING_CONFIG.free_distance_km),
-          traffic_low_multiplier: Number(data.traffic_low_multiplier ?? DEFAULT_PRICING_CONFIG.traffic_low_multiplier),
-          traffic_medium_multiplier: Number(data.traffic_medium_multiplier ?? DEFAULT_PRICING_CONFIG.traffic_medium_multiplier),
-          traffic_high_multiplier: Number(data.traffic_high_multiplier ?? DEFAULT_PRICING_CONFIG.traffic_high_multiplier),
-          convenience_fee_percentage: Number(data.convenience_fee_percentage ?? DEFAULT_PRICING_CONFIG.convenience_fee_percentage),
-          convenience_fee_fixed: Number(data.convenience_fee_fixed ?? DEFAULT_PRICING_CONFIG.convenience_fee_fixed),
+          base_distance_fee: toConfigNumber(data.base_distance_fee),
+          price_per_km: toConfigNumber(data.price_per_km),
+          free_distance_km: toConfigNumber(data.free_distance_km),
+          traffic_low_multiplier: toConfigNumber(data.traffic_low_multiplier),
+          traffic_medium_multiplier: toConfigNumber(data.traffic_medium_multiplier),
+          traffic_high_multiplier: toConfigNumber(data.traffic_high_multiplier),
+          convenience_fee_percentage: toConfigNumber(data.convenience_fee_percentage),
+          convenience_fee_fixed: toConfigNumber(data.convenience_fee_fixed),
         });
       } catch {
-        // Keep defaults when pricing config is unavailable.
+        // Keep current pricing config when endpoint is unavailable.
       }
     };
 
@@ -358,34 +402,50 @@ export default function ClientBookingDetailScreen() {
   const convenienceBreakdown = useMemo(() => {
     if (!booking) return null;
 
-    const baseFee = 50;
-    const ratePerKm = 15;
+    const amountFee = toPrice((booking as any).amount_fee);
     const persistedConvenienceFee = Number((booking as any).convenience_fee || 0);
+    const hasPersistedConvenience = Number.isFinite(persistedConvenienceFee) && persistedConvenienceFee >= 0;
+    const persistedTrafficSurcharge = Number((booking as any).traffic_surcharge);
+    const hasPersistedTrafficSurcharge = Number.isFinite(persistedTrafficSurcharge) && persistedTrafficSurcharge >= 0;
+
     const persistedDistanceKm = Number((booking as any).distance_km || 0);
     const distanceKm = Number.isFinite(persistedDistanceKm) ? Math.max(0, persistedDistanceKm) : 0;
-    const distanceFee = distanceKm * ratePerKm;
+
+    const freeDistanceKm = Math.max(0, Number(pricingConfig.free_distance_km ?? 0));
+    const baseDistanceFee = Math.max(0, Number(pricingConfig.base_distance_fee ?? 0));
+    const ratePerKm = Math.max(0, Number(pricingConfig.price_per_km ?? 0));
+    const billableDistanceKm = Math.max(0, distanceKm - freeDistanceKm);
+    const baseFee = distanceKm > freeDistanceKm ? baseDistanceFee : 0;
+    const distanceFee = billableDistanceKm * ratePerKm;
+    const travelFee = baseFee + distanceFee;
+
+    const conveniencePct = Math.max(0, Number(pricingConfig.convenience_fee_percentage ?? 0)) / 100;
+    const convenienceFixed = Number(pricingConfig.convenience_fee_fixed ?? 0);
 
     const levelRaw = String((booking as any).traffic_level || 'moderate').toLowerCase();
-    const normalizedLevel = (['light', 'moderate', 'heavy', 'severe'] as const).includes(levelRaw as any)
-      ? (levelRaw as 'light' | 'moderate' | 'heavy' | 'severe')
-      : 'moderate';
-    const trafficConfig: Record<'light' | 'moderate' | 'heavy' | 'severe', { surcharge: number; speedKmh: number; label: string }> = {
-      light: { surcharge: 0, speedKmh: 40, label: 'Light' },
-      moderate: { surcharge: 0.1, speedKmh: 28, label: 'Moderate' },
-      heavy: { surcharge: 0.2, speedKmh: 20, label: 'Heavy' },
-      severe: { surcharge: 0.3, speedKmh: 12, label: 'Severe' },
+    const normalizedLevel = levelRaw === 'light' || levelRaw === 'low'
+      ? 'low'
+      : (levelRaw === 'moderate' || levelRaw === 'medium' ? 'medium' : 'high');
+    const trafficConfig: Record<'low' | 'medium' | 'high', { multiplier: number; speedKmh: number; label: string }> = {
+      low: { multiplier: Number(pricingConfig.traffic_low_multiplier ?? 1), speedKmh: 40, label: 'Low' },
+      medium: { multiplier: Number(pricingConfig.traffic_medium_multiplier ?? 1), speedKmh: 28, label: 'Medium' },
+      high: { multiplier: Number(pricingConfig.traffic_high_multiplier ?? 1), speedKmh: 20, label: 'High' },
     };
 
     const trafficMeta = trafficConfig[normalizedLevel];
-    const estimatedTrafficFee = distanceFee * trafficMeta.surcharge;
+    const estimatedTrafficFee = travelFee * Math.max(0, trafficMeta.multiplier - 1);
     const isOnTheWay = booking.status === 'on_the_way';
-    const hasPersistedConvenience = Number.isFinite(persistedConvenienceFee) && persistedConvenienceFee > 0;
-    const trafficFee = (isOnTheWay && hasPersistedConvenience)
-      ? Math.max(0, persistedConvenienceFee - baseFee - distanceFee)
-      : estimatedTrafficFee;
-    const totalConvenienceFee = (isOnTheWay && hasPersistedConvenience)
-      ? persistedConvenienceFee
-      : baseFee + distanceFee + trafficFee;
+    const trafficFee = hasPersistedTrafficSurcharge ? persistedTrafficSurcharge : estimatedTrafficFee;
+    const serviceSubtotal = quotationEstimatedTotal > 0
+      ? quotationEstimatedTotal
+      : (shouldUseLiveAdditivePricing(booking.status)
+        ? solveServiceSubtotalFromAmount(amountFee, travelFee, trafficFee, conveniencePct, convenienceFixed)
+        : Math.max(0, amountFee - travelFee - trafficFee - (hasPersistedConvenience ? persistedConvenienceFee : 0)));
+
+    const estimatedConvenienceFee = (serviceSubtotal * conveniencePct) + convenienceFixed;
+    const totalConvenienceFee = shouldUseLiveAdditivePricing(booking.status)
+      ? estimatedConvenienceFee
+      : (hasPersistedConvenience ? persistedConvenienceFee : estimatedConvenienceFee);
 
     const persistedEta = Number((booking as any).estimated_eta_minutes || 0);
     const derivedEta = Math.max(1, Math.ceil((distanceKm / Math.max(1, trafficMeta.speedKmh)) * 60));
@@ -394,6 +454,8 @@ export default function ClientBookingDetailScreen() {
       : derivedEta;
 
     return {
+      serviceSubtotal,
+      travelFee,
       baseFee,
       distanceKm,
       distanceFee,
@@ -403,7 +465,7 @@ export default function ClientBookingDetailScreen() {
       etaMinutes,
       estimated: !isOnTheWay,
     };
-  }, [booking]);
+  }, [booking, pricingConfig, quotationEstimatedTotal]);
 
   const fetchBookingDetail = useCallback(async (silent = false) => {
     if (!bookingId) return;

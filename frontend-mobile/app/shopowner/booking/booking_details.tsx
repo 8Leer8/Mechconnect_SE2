@@ -90,12 +90,12 @@ export default function ShopOwnerBookingDetailScreen() {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
       });
-      const data = await res.json();
+      const data = await res.json() as { booking?: BookingDetail; error?: string };
       if (!res.ok) throw new Error(data?.error || 'Failed to fetch booking details');
-      setBooking(data.booking || data);
+      setBooking(data.booking || (data as unknown as BookingDetail));
 
       // Initialize elapsed timer immediately for active status (view-only)
-      const bookingData = data.booking || data;
+      const bookingData = data.booking || (data as unknown as BookingDetail);
       if (
         bookingData?.status === 'active' &&
         bookingData?.active_details?.started_at
@@ -127,7 +127,8 @@ export default function ShopOwnerBookingDetailScreen() {
   useEffect(() => {
     try {
       if (!lastMessage) return;
-      const bid = Number(lastMessage.booking_id || lastMessage.bookingId || lastMessage.booking);
+      const message = lastMessage as unknown as Record<string, unknown>;
+      const bid = Number(message.booking_id ?? message.bookingId ?? message.booking);
       if (!bid || !bookingId) return;
       if (bid === Number(bookingId)) {
         const action = (lastMessage.action || lastMessage.type || '').toString().toLowerCase();
