@@ -72,12 +72,13 @@ export default function ShopDirectRequestScreen() {
 	const { showNotification } = useNotification();
 	const { selectedLocation, setSelectedLocation } = useLocation();
 	const params = useLocalSearchParams<{
+		id?: string | string[];
 		shopId?: string | string[];
 		providerId?: string | string[];
 		providerName?: string | string[];
 	}>();
 
-	const routeShopId = parseParamInt(params.shopId);
+	const routeShopId = parseParamInt(params.shopId) ?? parseParamInt(params.id);
 	const routeProviderId = parseParamInt(params.providerId);
 	const routeProviderName = Array.isArray(params.providerName)
 		? params.providerName[0]
@@ -141,7 +142,7 @@ export default function ShopDirectRequestScreen() {
 			try {
 				const response = await fetch(
 					`${API_URL}/bookings/direct/shops/${selectedProviderId}/services/`,
-					{ credentials: 'include', signal: controller.signal }
+					{ credentials: 'include', signal: controller.signal as any }
 				);
 				if (cancelled || !isMountedRef.current) return;
 
@@ -181,7 +182,7 @@ export default function ShopDirectRequestScreen() {
 			try {
 				const response = await fetch(
 					`${API_URL}/bookings/direct/services/${selectedServiceId}/addons/`,
-					{ credentials: 'include', signal: controller.signal }
+					{ credentials: 'include', signal: controller.signal as any }
 				);
 				if (cancelled || !isMountedRef.current) return;
 
@@ -498,11 +499,8 @@ export default function ShopDirectRequestScreen() {
 	const disabled = !selectedProviderId;
 
 	const handleBack = () => {
-		if (routeShopId) {
-			router.replace({
-				pathname: '/client/shop/shopprofile',
-				params: { shopId: String(routeShopId) },
-			});
+		if (router.canGoBack()) {
+			router.back();
 			return;
 		}
 

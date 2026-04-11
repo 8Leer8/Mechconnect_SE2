@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import {View, ScrollView, TouchableOpacity, RefreshControl, BackHandler } from 'react-native';
 import { Image } from 'expo-image';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -64,9 +64,12 @@ interface MechanicProfile {
 
 export default function MechanicProfileScreen() {
   const router = useRouter();
-  const { mechanicId } = useLocalSearchParams<{
-    mechanicId: string;
+  const pathname = usePathname();
+  const { mechanicId, id } = useLocalSearchParams<{
+    mechanicId?: string;
+    id?: string;
   }>();
+  const resolvedMechanicId = mechanicId || id;
   const isMountedRef = useRef(true);
   const [profile, setProfile] = useState<MechanicProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -84,7 +87,7 @@ export default function MechanicProfileScreen() {
       if (!silent && isMountedRef.current) setLoading(true);
       if (isMountedRef.current) setError(null);
 
-      const response = await fetch(`${API_URL}/users/mechanics/${mechanicId}/profile/`, {
+      const response = await fetch(`${API_URL}/users/mechanics/${resolvedMechanicId}/profile/`, {
         method: 'GET',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -109,8 +112,8 @@ export default function MechanicProfileScreen() {
   };
 
   useEffect(() => {
-    if (mechanicId) fetchMechanicProfile();
-  }, [mechanicId]);
+    if (resolvedMechanicId) fetchMechanicProfile();
+  }, [resolvedMechanicId]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -144,6 +147,41 @@ export default function MechanicProfileScreen() {
       return;
     }
     router.replace('/(clientTabs)/main/discover');
+  };
+
+  const showDirectRequest = !pathname.includes('/client/booking');
+
+  const handleDirectRequest = () => {
+    const providerAccountId = profile?.account_id || profile?.id;
+    const profileMechanicId = resolvedMechanicId || (profile ? String(profile.id) : '');
+    if (!profileMechanicId || !providerAccountId || !profile) return;
+
+    if (pathname.includes('main_request_form')) {
+      router.push({
+        pathname: '/client/request/main_request_form/mechanic-profile/_direct-request/[id]',
+        params: {
+          id: String(profileMechanicId),
+          mechanicId: String(profileMechanicId),
+          providerId: String(providerAccountId),
+          providerName: profile.full_name,
+        },
+      });
+      return;
+    }
+
+    if (pathname.includes('/client/booking')) {
+      return;
+    }
+
+    router.push({
+      pathname: '/client/mechanic/_direct-request/[id]',
+      params: {
+        id: String(profileMechanicId),
+        mechanicId: String(profileMechanicId),
+        providerId: String(providerAccountId),
+        providerName: profile.full_name,
+      },
+    });
   };
 
   useFocusEffect(
@@ -260,25 +298,16 @@ export default function MechanicProfileScreen() {
           </View>
 
           {/* Direct Request Button */}
-          <TouchableOpacity
-            style={styles.directRequestBtn}
-            activeOpacity={0.7}
-            onPress={() => {
-              const providerAccountId = profile.account_id || profile.id;
-              const profileMechanicId = mechanicId || String(profile.id);
-              router.push({
-                pathname: '/client/request/direct/mechanicdirectrequest',
-                params: {
-                  mechanicId: String(profileMechanicId),
-                  providerId: String(providerAccountId),
-                  providerName: profile.full_name,
-                },
-              });
-            }}
-          >
-            <FontAwesome name="paper-plane" size={16} color="#fff" />
-            <ThemedText style={styles.directRequestText}>Send Direct Request</ThemedText>
-          </TouchableOpacity>
+          {showDirectRequest && (
+            <TouchableOpacity
+              style={styles.directRequestBtn}
+              activeOpacity={0.7}
+              onPress={handleDirectRequest}
+            >
+              <FontAwesome name="paper-plane" size={16} color="#fff" />
+              <ThemedText style={styles.directRequestText}>Send Direct Request</ThemedText>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Info Section */}

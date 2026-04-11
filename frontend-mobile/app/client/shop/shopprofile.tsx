@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { View, ScrollView, TouchableOpacity, RefreshControl, BackHandler } from 'react-native';
 import { Image } from 'expo-image';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -65,20 +65,30 @@ interface ShopProfile {
 
 export default function ShopProfileScreen() {
   const router = useRouter();
-  const { shopId } = useLocalSearchParams<{
-    shopId: string;
+  const pathname = usePathname();
+  const { shopId, id } = useLocalSearchParams<{
+    shopId?: string;
+    id?: string;
   }>();
+  const resolvedShopId = shopId || id;
+  const isMountedRef = useRef(true);
   const [profile, setProfile] = useState<ShopProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   const fetchShopProfile = async (silent = false) => {
     try {
-      if (!silent) setLoading(true);
-      setError(null);
+      if (!silent && isMountedRef.current) setLoading(true);
+      if (isMountedRef.current) setError(null);
 
-      const response = await fetch(`${API_URL}/shops/${shopId}/profile/`, {
+      const response = await fetch(`${API_URL}/shops/${resolvedShopId}/profile/`, {
         method: 'GET',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -87,18 +97,24 @@ export default function ShopProfileScreen() {
       if (!response.ok) throw new Error('Failed to fetch shop profile');
 
       const data = await response.json() as { shop: ShopProfile };
-      setProfile(data.shop);
+      if (isMountedRef.current) {
+        setProfile(data.shop);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      if (isMountedRef.current) {
+        setError(err instanceof Error ? err.message : 'An error occurred');
+      }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   };
 
   useEffect(() => {
-    if (shopId) fetchShopProfile();
-  }, [shopId]);
+    if (resolvedShopId) fetchShopProfile();
+  }, [resolvedShopId]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -140,6 +156,41 @@ export default function ShopProfileScreen() {
       return;
     }
     router.replace('/(clientTabs)/main/discover');
+  };
+
+  const showDirectRequest = !pathname.includes('/client/booking');
+
+  const handleDirectRequest = () => {
+    if (!profile) return;
+
+    const profileShopId = resolvedShopId || String(profile.id);
+
+    if (pathname.includes('main_request_form')) {
+      router.push({
+        pathname: '/client/request/main_request_form/shop-profile/_direct-request/[id]',
+        params: {
+          id: String(profileShopId),
+          shopId: String(profile.id),
+          providerId: String(profile.owner.account_id),
+          providerName: profile.shop_name,
+        },
+      });
+      return;
+    }
+
+    if (pathname.includes('/client/booking')) {
+      return;
+    }
+
+    router.push({
+      pathname: '/client/shop/_direct-request/[id]',
+      params: {
+        id: String(profileShopId),
+        shopId: String(profile.id),
+        providerId: String(profile.owner.account_id),
+        providerName: profile.shop_name,
+      },
+    });
   };
 
   useFocusEffect(
@@ -265,23 +316,16 @@ export default function ShopProfileScreen() {
           </View>
 
           {/* Direct Request Button */}
-          <TouchableOpacity
-            style={styles.directRequestBtn}
-            activeOpacity={0.7}
-            onPress={() => {
-              router.push({
-                pathname: '/client/request/direct/shopdirectrequest',
-                params: {
-                  shopId: String(profile.id),
-                  providerId: String(profile.owner.account_id),
-                  providerName: profile.shop_name,
-                },
-              });
-            }}
-          >
-            <FontAwesome name="paper-plane" size={16} color="#fff" />
-            <ThemedText style={styles.directRequestText}>Request Service from Shop</ThemedText>
-          </TouchableOpacity>
+          {showDirectRequest && (
+            <TouchableOpacity
+              style={styles.directRequestBtn}
+              activeOpacity={0.7}
+              onPress={handleDirectRequest}
+            >
+              <FontAwesome name="paper-plane" size={16} color="#fff" />
+              <ThemedText style={styles.directRequestText}>Request Service from Shop</ThemedText>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Info Section */}

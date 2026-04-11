@@ -72,12 +72,13 @@ export default function MechanicDirectRequestScreen() {
 	const { showNotification } = useNotification();
 	const { selectedLocation, setSelectedLocation } = useLocation();
 	const params = useLocalSearchParams<{
+		id?: string | string[];
 		mechanicId?: string | string[];
 		providerId?: string | string[];
 		providerName?: string | string[];
 	}>();
 
-	const routeMechanicId = parseParamInt(params.mechanicId);
+	const routeMechanicId = parseParamInt(params.mechanicId) ?? parseParamInt(params.id);
 	const routeProviderId = parseParamInt(params.providerId) ?? routeMechanicId;
 	const routeProviderName = Array.isArray(params.providerName)
 		? params.providerName[0]
@@ -432,12 +433,8 @@ export default function MechanicDirectRequestScreen() {
 	const disabled = !selectedProviderId;
 
 	const handleBack = () => {
-		const targetMechanicId = routeMechanicId ?? selectedProviderId;
-		if (targetMechanicId) {
-			router.replace({
-				pathname: '/client/mechanic/mechanicprofile',
-				params: { mechanicId: String(targetMechanicId) },
-			});
+		if (router.canGoBack()) {
+			router.back();
 			return;
 		}
 
