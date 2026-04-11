@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { useWebSocketContext } from '@/context/WebSocketContext';
 export const screenOptions = { headerShown: false } as const;
 import { View, ScrollView, TouchableOpacity, RefreshControl } from 'react-native';
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
@@ -67,6 +68,8 @@ export default function ShopOwnerBookingDetailScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [timer, setTimer] = useState(0);
+  const [quotation, setQuotation] = useState<any | null>(null);
+  const { lastMessage } = useWebSocketContext();
 
   useEffect(() => {
     try {
@@ -115,6 +118,28 @@ export default function ShopOwnerBookingDetailScreen() {
   useEffect(() => {
     fetchBookingDetail();
   }, [fetchBookingDetail]);
+
+  useEffect(() => {
+    if (bookingId) fetchQuotation();
+  }, [bookingId]);
+
+  // Listen for websocket events and refresh when quotation accepted or booking update for this booking
+  useEffect(() => {
+    try {
+      if (!lastMessage) return;
+      const bid = Number(lastMessage.booking_id || lastMessage.bookingId || lastMessage.booking);
+      if (!bid || !bookingId) return;
+      if (bid === Number(bookingId)) {
+        const action = (lastMessage.action || lastMessage.type || '').toString().toLowerCase();
+        if (['quotation_accepted', 'quotationaccepted', 'booking_updated', 'booking_update', 'new_chat_message', 'new_chatmessage'].includes(action)) {
+          fetchBookingDetail();
+          fetchQuotation();
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, [lastMessage, bookingId]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -230,6 +255,8 @@ export default function ShopOwnerBookingDetailScreen() {
   };
 
   const getDisplayQuotation = () => {
+    // Prefer server-saved quotation if available
+    if (quotation && (quotation.items || []).length > 0) return quotation;
     if (!booking) return null;
     const details = (booking.request as any)?.request_details || null;
     if (!details) return null;
@@ -257,14 +284,91 @@ export default function ShopOwnerBookingDetailScreen() {
 
     if (items.length === 0) return null;
     const total_amount = items.reduce(
-      (s, it) =>
-        s + (Number(it.unit_price) || 0) * (Number(it.quantity) || 1),
+      (s, it) => s + (Number(it.unit_price) || 0) * (Number(it.quantity) || 1),
       0
     );
     return { items, total_amount };
   };
 
   const displayQuotation = getDisplayQuotation();
+  const isQuotationPending = Boolean((quotation && quotation.status === 'pending') || (displayQuotation && displayQuotation.status === 'pending'));
+
+  const normalizeText = (v: any) => String(v ?? '').trim().toLowerCase();
+  const normalizeNum = (v: any) => Number(v ?? 0);
+  const getAssocKey = (it: any) => {
+    const serviceId = Number(it?.service);
+    const addOnId = Number(it?.service_add_on);
+    if (Number.isFinite(serviceId) && serviceId > 0) return `service:${serviceId}`;
+    if (Number.isFinite(addOnId) && addOnId > 0) return `addon:${addOnId}`;
+    return null;
+  };
+
+  const inferChangeLabel = (it: any, acceptedByAssoc: Record<string, any>, acceptedRows: any[], removedRows: any[]) => {
+    const isLikelyRename = (aRaw: any, bRaw: any) => {
+      const a = normalizeText(aRaw);
+      const b = normalizeText(bRaw);
+      if (!a || !b) return false;
+      if (a === b || a.includes(b) || b.includes(a)) return true;
+      const aTokens = new Set(a.split(/\s+/).filter(Boolean));
+      const bTokens = new Set(b.split(/\s+/).filter(Boolean));
+      if (!aTokens.size || !bTokens.size) return false;
+      let overlap = 0;
+      aTokens.forEach(t => { if (bTokens.has(t)) overlap += 1; });
+      return (overlap / aTokens.size) >= 0.6 || (overlap / bTokens.size) >= 0.6;
+    };
+
+    const status = String(it?.status || displayQuotation?.status || quotation?.status || '').toLowerCase();
+    if (status === 'rejected') return 'Removed';
+    if (status !== 'pending') return null;
+
+    const raw = String(it?.change_type || it?.change || it?.modification_type || '').toLowerCase();
+    if (raw.includes('remove') || raw.includes('delete')) return 'Removed';
+    if (raw.includes('add')) {
+      const editedFromRemoved = (removedRows || []).find((row: any) => {
+        const sameQty = normalizeNum(row?.quantity) === normalizeNum(it?.quantity);
+        const samePrice = normalizeNum(row?.unit_price ?? row?.price) === normalizeNum(it?.unit_price ?? it?.price);
+        return sameQty && samePrice && isLikelyRename(row?.description, it?.description);
+      });
+      return editedFromRemoved ? 'Edited' : 'Added';
+    }
+    if (raw.includes('edit') || raw.includes('update') || raw.includes('modify')) return 'Edited';
+
+    if (it?.previous_description || it?.previous_quantity != null || it?.previous_unit_price != null) {
+      return 'Edited';
+    }
+
+    const editedFromRemoved = (removedRows || []).find((row: any) => {
+      const sameQty = normalizeNum(row?.quantity) === normalizeNum(it?.quantity);
+      const samePrice = normalizeNum(row?.unit_price ?? row?.price) === normalizeNum(it?.unit_price ?? it?.price);
+      return sameQty && samePrice && isLikelyRename(row?.description, it?.description);
+    });
+    if (editedFromRemoved) return 'Edited';
+
+    if (it?.is_removed === true || it?.is_deleted === true) return 'Removed';
+    if (it?.is_edited === true || it?.is_modified === true) return 'Edited';
+    if (it?.is_added === true) return 'Added';
+
+    return 'Added';
+  };
+
+  const fetchQuotation = async () => {
+    if (!bookingId) return;
+    try {
+      const res = await fetch(`${API_URL}/bookings/shopowner/bookings/${bookingId}/quotation/`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!res.ok) {
+        setQuotation(null);
+        return;
+      }
+      const data = await res.json();
+      setQuotation(data);
+    } catch (e) {
+      setQuotation(null);
+    }
+  };
 
   // Live timer for active status (view-only)
   useEffect(() => {
@@ -593,7 +697,7 @@ export default function ShopOwnerBookingDetailScreen() {
         {(booking.status === 'accepted' ||
           booking.status === 'on_the_way' ||
           booking.status === 'active') && (
-          <View style={styles.sectionCard}>
+          <View style={[styles.sectionCard]}>
             <View style={styles.sectionHeader}>
               <View style={[styles.sectionIcon, { backgroundColor: '#007AFF15' }]}>
                 <FontAwesome name="file-text-o" size={16} color="#007AFF" />
@@ -603,36 +707,90 @@ export default function ShopOwnerBookingDetailScreen() {
 
             {displayQuotation && (displayQuotation.items || []).length > 0 ? (
               <View style={{ paddingVertical: 8 }}>
-                {(displayQuotation.items || []).map((it: any, idx: number) => (
-                  <View
-                    key={idx}
-                    style={{
-                      flexDirection: 'row',
-                      justifyContent: 'space-between',
-                      paddingVertical: 6,
-                    }}
-                  >
-                    <ThemedText style={{ flex: 1 }}>
-                      {it.description ||
-                        (it.service ? `Service #${it.service}` : null) ||
-                        'Item'}
-                    </ThemedText>
-                    <ThemedText>
-                      ₱
-                      {((it.unit_price || 0) * (it.quantity || 1)).toFixed(2)}
-                    </ThemedText>
-                  </View>
-                ))}
+                {(() => {
+                  const acceptedByAssoc: Record<string, any> = {};
+                  const acceptedRows: any[] = [];
+                  const removedRows: any[] = [];
+                  (displayQuotation.items || []).forEach((row: any) => {
+                    const rowStatus = String(row?.status || displayQuotation?.status || quotation?.status || '').toLowerCase();
+                    const key = getAssocKey(row);
+                    if (rowStatus === 'accepted' && key && !acceptedByAssoc[key]) {
+                      acceptedByAssoc[key] = row;
+                    }
+                    if (rowStatus === 'accepted') acceptedRows.push(row);
+                    if (rowStatus === 'rejected') removedRows.push(row);
+                  });
 
-                <View style={{ height: 1, backgroundColor: '#eee', marginVertical: 8 }} />
+                  const quotationAcceptedTotal = (displayQuotation && Array.isArray(displayQuotation.items)) ? (displayQuotation.items || []).reduce((sum: number, it: any) => {
+                    const itemStatus = it?.status || displayQuotation?.status || quotation?.status;
+                    if (String(itemStatus).toLowerCase() === 'accepted') {
+                      return sum + ((Number(it.unit_price) || 0) * (Number(it.quantity) || 1));
+                    }
+                    return sum;
+                  }, 0) : 0;
+                  const renderQuotationRow = (it: any, idx: number) => {
+                    const itemStatus = it?.status || displayQuotation?.status || quotation?.status;
+                    const isPending = String(itemStatus).toLowerCase() === 'pending';
+                    const isRejected = String(itemStatus).toLowerCase() === 'rejected';
+                    const changeLabel = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
+                    const assocKey = getAssocKey(it);
+                    const beforeItem = it?.previous_description || it?.previous_quantity != null || it?.previous_unit_price != null
+                      ? {
+                          description: it?.previous_description,
+                          quantity: it?.previous_quantity,
+                          unit_price: it?.previous_unit_price,
+                        }
+                      : (changeLabel === 'Edited' && assocKey ? acceptedByAssoc[assocKey] : null);
 
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <ThemedText style={{ fontWeight: '600' }}>Estimated Total</ThemedText>
-                  <ThemedText style={{ fontWeight: '600' }}>
-                    ₱
-                    {parseFloat(String(displayQuotation.total_amount || 0)).toFixed(2)}
-                  </ThemedText>
-                </View>
+                    const beforeDescription = beforeItem?.description;
+                    const beforeQty = Number(beforeItem?.quantity ?? 1) || 1;
+                    const beforeUnitPrice = Number(beforeItem?.unit_price ?? 0) || 0;
+                    const beforeLineTotal = beforeUnitPrice * beforeQty;
+
+                    return (
+                      <View key={idx} style={{ paddingVertical: 6, opacity: isRejected ? 0.72 : 1 }}>
+                        {changeLabel === 'Edited' && beforeItem ? (
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 3 }}>
+                            <ThemedText style={{ flex: 1, textDecorationLine: 'line-through', color: '#8E8E93' }}>
+                              {beforeDescription || (it.service ? `Service #${it.service}` : null) || 'Item'}
+                            </ThemedText>
+                            <ThemedText style={{ textDecorationLine: 'line-through', color: '#8E8E93' }}>₱{beforeLineTotal.toFixed(2)}</ThemedText>
+                          </View>
+                        ) : null}
+
+                        {changeLabel === 'Edited' && beforeItem ? (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', paddingBottom: 3 }}>
+                            <FontAwesome name="long-arrow-down" size={12} color="#8E8E93" />
+                            <ThemedText style={{ marginLeft: 6, color: '#8E8E93', fontSize: 11, fontStyle: 'italic' }}>Updated to</ThemedText>
+                          </View>
+                        ) : null}
+
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <ThemedText style={{ flex: 1 }}>{it.description || (it.service ? `Service #${it.service}` : null) || 'Item'}</ThemedText>
+                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <ThemedText>₱{((it.unit_price || 0) * (it.quantity || 1)).toFixed(2)}</ThemedText>
+                            {changeLabel === 'Added' ? <ThemedText style={{ marginLeft: 8, color: '#1D3A24', fontWeight: '700', backgroundColor: '#8CE99A', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 }}>Added</ThemedText> : null}
+                            {changeLabel === 'Edited' ? <ThemedText style={{ marginLeft: 8, color: '#5A3D0A', fontWeight: '700', backgroundColor: '#FFD49A', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 }}>Edited</ThemedText> : null}
+                            {changeLabel === 'Removed' ? <ThemedText style={{ marginLeft: 8, color: '#631B21', fontWeight: '700', backgroundColor: '#FFB4B0', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 }}>Removed</ThemedText> : null}
+                          </View>
+                        </View>
+                      </View>
+                    );
+                  };
+
+                  return (
+                    <>
+                      {(displayQuotation.items || []).map(renderQuotationRow)}
+
+                      <View style={{ height: 1, backgroundColor: '#eee', marginVertical: 8 }} />
+
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                        <ThemedText style={{ fontWeight: '600' }}>Estimated Total</ThemedText>
+                        <ThemedText style={{ fontWeight: '600' }}>₱{parseFloat(String(quotationAcceptedTotal || 0)).toFixed(2)}</ThemedText>
+                      </View>
+                    </>
+                  );
+                })()}
               </View>
             ) : (
               <View style={{ paddingVertical: 8 }}>

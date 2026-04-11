@@ -27,10 +27,9 @@ from users.models import Account
 from services.models import MechanicService
 from ..client.client_booking_views import _serialize_bookings, _serialize_single_booking
 from ...serializers import QuotationSerializer
-from ...ws_utils import notify_booking_parties
+from ...ws_utils import notify_booking_parties, post_quotation_chat_message
 from chat.models import Conversation, Message
 from chat.serializers import MessageSerializer
-from services.pricing_utils import get_distance_fee, get_traffic_surcharge, get_convenience_fee, apply_min_job_price
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 import json
@@ -40,6 +39,8 @@ EMERGENCY_REQUEST_TTL_MINUTES = 5
 
 ORS_API_KEY = getattr(settings, 'EXPO_PUBLIC_ORS_API_KEY', '')
 TOMTOM_API_KEY = getattr(settings, 'EXPO_PUBLIC_TOMTOM_API_KEY', '')
+BASE_FEE = Decimal('50')
+RATE_PER_KM = Decimal('15')
 
 
 def _to_float(value):
@@ -49,39 +50,6 @@ def _to_float(value):
         return float(value)
     except (TypeError, ValueError):
         return None
-
-
-def _get_request_service_subtotal(base_request):
-    """Return service + add-ons subtotal from request details for additive pricing."""
-    if not base_request:
-        return 0.0
-
-    subtotal = 0.0
-    try:
-        request_type = str(getattr(base_request, 'request_type', '') or '').lower()
-
-        if request_type == 'direct' and hasattr(base_request, 'directrequest'):
-            direct = base_request.directrequest
-            if direct and direct.service is not None:
-                subtotal += float(direct.service.minimum_price or 0.0)
-
-            add_ons = DirectRequestAddOn.objects.filter(request=base_request).select_related('service_add_on')
-            for addon in add_ons:
-                if addon.service_add_on is not None:
-                    subtotal += float(addon.service_add_on.price or 0.0)
-
-        elif request_type == 'broadcast' and hasattr(base_request, 'broadcast_request'):
-            broadcast = base_request.broadcast_request
-            if broadcast is not None:
-                for service in broadcast.services.all():
-                    subtotal += float(service.minimum_price or 0.0)
-                for addon_relation in broadcast.add_ons.all():
-                    if addon_relation.service_add_on is not None:
-                        subtotal += float(addon_relation.service_add_on.price or 0.0)
-    except Exception:
-        return 0.0
-
-    return max(0.0, subtotal)
 
 
 def _get_traffic_from_tomtom(latitude: float, longitude: float):
@@ -105,12 +73,22 @@ def _get_traffic_from_tomtom(latitude: float, longitude: float):
 
     ratio = free_flow_speed / current_speed
     if ratio < 1.2:
-        return {'traffic_level': 'low'}
+        return {'traffic_level': 'light', 'surcharge_percent': Decimal('0.00')}
     if ratio < 1.5:
-        return {'traffic_level': 'medium'}
+        return {'traffic_level': 'moderate', 'surcharge_percent': Decimal('0.10')}
     if ratio < 2.0:
-        return {'traffic_level': 'high'}
-    return {'traffic_level': 'high'}
+        return {'traffic_level': 'heavy', 'surcharge_percent': Decimal('0.20')}
+    return {'traffic_level': 'severe', 'surcharge_percent': Decimal('0.30')}
+
+
+def _traffic_level_to_surcharge_percent(level: str):
+    level_map = {
+        'light': Decimal('0.00'),
+        'moderate': Decimal('0.10'),
+        'heavy': Decimal('0.20'),
+        'severe': Decimal('0.30'),
+    }
+    return level_map.get((level or '').lower(), Decimal('0.10'))
 
 
 def _get_realtime_traffic_snapshot(mechanic_lat, mechanic_lng, destination_lat, destination_lng):
@@ -240,19 +218,18 @@ def _refresh_on_the_way_metrics(booking, mechanic_lat=None, mechanic_lng=None):
 
     traffic_level = (traffic_snapshot or {}).get('traffic_level')
     if not traffic_level:
-        traffic_level = 'medium'
+        traffic_level = 'moderate'
+
+    surcharge_percent = (traffic_snapshot or {}).get('surcharge_percent')
+    if surcharge_percent is None:
+        surcharge_percent = _traffic_level_to_surcharge_percent(traffic_level)
 
     convenience_fee = None
     traffic_surcharge = None
     if effective_distance_km is not None:
-        distance_fee = get_distance_fee(effective_distance_km)
-        traffic_surcharge_value = get_traffic_surcharge(distance_fee, traffic_level)
-        service_subtotal = _get_request_service_subtotal(booking.request)
-        if service_subtotal <= 0:
-            service_subtotal = max(0.0, float(getattr(booking, 'amount_fee', 0.0) or 0.0))
-        convenience_fee_value = get_convenience_fee(service_subtotal)
-        traffic_surcharge = Decimal(str(traffic_surcharge_value)).quantize(Decimal('0.01'))
-        convenience_fee = Decimal(str(convenience_fee_value)).quantize(Decimal('0.01'))
+        distance_fee = (effective_distance_km * RATE_PER_KM).quantize(Decimal('0.01'))
+        traffic_surcharge = (distance_fee * surcharge_percent).quantize(Decimal('0.01'))
+        convenience_fee = (BASE_FEE + distance_fee + traffic_surcharge).quantize(Decimal('0.01'))
 
     booking.status = Booking.Status.ON_THE_WAY
     booking.distance_km = distance_km if distance_km is not None else booking.distance_km
@@ -693,6 +670,7 @@ def mechanic_booking_quotation(request, booking_id):
     if request.method == 'POST':
         data = request.data or {}
         ser = QuotationSerializer(data=data, context={'request': request, 'booking': booking, 'mechanic': account})
+        original_booking_status = booking.status
         try:
             # If quotation exists, update instead
             try:
@@ -700,10 +678,191 @@ def mechanic_booking_quotation(request, booking_id):
             except Quotation.DoesNotExist:
                 existing = None
 
-            if existing:
-                quotation = ser.update(existing, data)
-            else:
-                quotation = ser.create(data)
+            # Support mechanic retraction/deletion via action=delete
+            if data.get('action') == 'delete' and existing:
+                # post retraction system message (include items before they are removed), then delete
+                try:
+                    post_quotation_chat_message(account, booking, existing, action='retracted')
+                    try:
+                        notify_booking_parties(account.id, booking.request.client.account_id, booking.id, booking.status, 'Quotation retracted')
+                    except Exception:
+                        pass
+                    existing.delete()
+                except Exception:
+                    pass
+                return Response({'message': 'Quotation deleted'}, status=status.HTTP_200_OK)
+
+            # Perform quotation save and system chat message in a single DB transaction
+            try:
+                with transaction.atomic():
+                    if existing:
+                        quotation = ser.update(existing, data)
+                        print(f"DEBUG: Quotation {getattr(quotation, 'id', None)} updated. Attempting to create chat message...")
+                        try:
+                            from ...ws_utils import _ensure_conversation_for_booking
+                            from chat.models import Message as ChatMessage
+                            from chat.serializers import MessageSerializer as ChatMessageSerializer
+                            import json
+                            from channels.layers import get_channel_layer
+                            from asgiref.sync import async_to_sync
+
+                            conv = _ensure_conversation_for_booking(booking, account)
+                            if conv:
+                                payload = {
+                                    'type': 'quotation_request',
+                                    'action': 'updated',
+                                    'quotation_id': quotation.id,
+                                    'booking_id': booking.id,
+                                    'status': getattr(quotation, 'status', None),
+                                    'mechanic_id': getattr(account, 'id', None),
+                                    'mechanic_name': f"{getattr(account, 'firstname', '')} {getattr(account, 'lastname', '')}".strip(),
+                                    'notes': getattr(quotation, 'notes', ''),
+                                    'total_amount': float(quotation.total_amount) if getattr(quotation, 'total_amount', None) is not None else None,
+                                    'items': [],
+                                    'created_at': quotation.created_at.isoformat() if getattr(quotation, 'created_at', None) else None,
+                                }
+                                try:
+                                    for it in quotation.items.exclude(status='rejected'):
+                                        payload['items'].append({
+                                            'id': it.id,
+                                            'service': it.service_id,
+                                            'service_add_on': it.service_add_on_id,
+                                            'description': it.description,
+                                            'quantity': int(it.quantity),
+                                            'unit_price': float(it.unit_price),
+                                            'line_total': float(it.line_total),
+                                            'status': getattr(it, 'status', None),
+                                        })
+                                except Exception:
+                                    pass
+
+                                msg = ChatMessage.objects.create(conversation=conv, sender=None, content=json.dumps(payload))
+                                conv.save()
+                                print(f"DEBUG: Chat message created successfully for quotation {quotation.id}")
+
+                                try:
+                                    serializer = ChatMessageSerializer(msg, context={'request': request})
+                                    channel_layer = get_channel_layer()
+                                    payload_ws = {
+                                        'type': 'booking_update',
+                                        'action': 'new_chat_message',
+                                        'conversation_id': conv.id,
+                                        'booking_id': booking.id,
+                                        'message': serializer.data,
+                                    }
+                                    for participant in conv.participants.exclude(id=getattr(account, 'id', None)).all():
+                                        group_name = f'user_{participant.id}'
+                                        async_to_sync(channel_layer.group_send)(group_name, payload_ws)
+                                except Exception as e:
+                                    print(f"DEBUG: Failed to broadcast chat message for quotation {quotation.id}: {e}")
+                        except Exception as e:
+                            print(f"DEBUG: Failed to create chat message for quotation {getattr(quotation, 'id', None)}: {e}")
+                        try:
+                            notify_booking_parties(account.id, booking.request.client.account_id, booking.id, booking.status, 'Quotation updated')
+                        except Exception:
+                            pass
+                    else:
+                        quotation = ser.create(data)
+                        print(f"DEBUG: Quotation {getattr(quotation, 'id', None)} saved. Attempting to create chat message...")
+                        try:
+                            # Ensure conversation exists and create a system message record explicitly
+                            from ...ws_utils import _ensure_conversation_for_booking
+                            from chat.models import Message as ChatMessage
+                            from chat.serializers import MessageSerializer as ChatMessageSerializer
+                            import json
+                            from channels.layers import get_channel_layer
+                            from asgiref.sync import async_to_sync
+
+                            conv = _ensure_conversation_for_booking(booking, account)
+                            if conv:
+                                payload = {
+                                    'type': 'quotation_request',
+                                    'action': 'created',
+                                    'quotation_id': quotation.id,
+                                    'booking_id': booking.id,
+                                    'status': getattr(quotation, 'status', None),
+                                    'mechanic_id': getattr(account, 'id', None),
+                                    'mechanic_name': f"{getattr(account, 'firstname', '')} {getattr(account, 'lastname', '')}".strip(),
+                                    'notes': getattr(quotation, 'notes', ''),
+                                    'total_amount': float(quotation.total_amount) if getattr(quotation, 'total_amount', None) is not None else None,
+                                    'items': [],
+                                    'created_at': quotation.created_at.isoformat() if getattr(quotation, 'created_at', None) else None,
+                                }
+                                try:
+                                    for it in quotation.items.exclude(status='rejected'):
+                                        payload['items'].append({
+                                            'id': it.id,
+                                            'service': it.service_id,
+                                            'service_add_on': it.service_add_on_id,
+                                            'description': it.description,
+                                            'quantity': int(it.quantity),
+                                            'unit_price': float(it.unit_price),
+                                            'line_total': float(it.line_total),
+                                            'status': getattr(it, 'status', None),
+                                        })
+                                except Exception:
+                                    pass
+
+                                msg = ChatMessage.objects.create(conversation=conv, sender=None, content=json.dumps(payload))
+                                conv.save()
+                                print(f"DEBUG: Chat message created successfully for quotation {quotation.id}")
+
+                                # Broadcast to participants except sender
+                                try:
+                                    serializer = ChatMessageSerializer(msg, context={'request': request})
+                                    channel_layer = get_channel_layer()
+                                    payload_ws = {
+                                        'type': 'booking_update',
+                                        'action': 'new_chat_message',
+                                        'conversation_id': conv.id,
+                                        'booking_id': booking.id,
+                                        'message': serializer.data,
+                                    }
+                                    for participant in conv.participants.exclude(id=getattr(account, 'id', None)).all():
+                                        group_name = f'user_{participant.id}'
+                                        async_to_sync(channel_layer.group_send)(group_name, payload_ws)
+                                except Exception as e:
+                                    print(f"DEBUG: Failed to broadcast chat message for quotation {quotation.id}: {e}")
+                        except Exception as e:
+                            print(f"DEBUG: Failed to create chat message for quotation {getattr(quotation, 'id', None)}: {e}")
+                        try:
+                            notify_booking_parties(account.id, booking.request.client.account_id, booking.id, booking.status, 'Quotation created')
+                        except Exception:
+                            pass
+            except Exception as e:
+                logging.getLogger(__name__).exception('Failed to create/update quotation and post chat message: %s', e)
+                return Response({
+                    'error': 'Failed to save quotation or post chat message',
+                    'details': str(e)
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            # Safeguard: remove stale rejected quotation items only after a non-pending state.
+            # While pending, rejected rows may represent removal proposals awaiting client decision.
+            try:
+                if str(getattr(quotation, 'status', '')).lower() != Quotation.Status.PENDING:
+                    deleted_count, _ = QuotationItem.objects.filter(
+                        quotation=quotation,
+                        status=Quotation.Status.REJECTED,
+                    ).delete()
+                    if deleted_count:
+                        try:
+                            fresh_total = sum(float(it.line_total) for it in quotation.items.exclude(status=Quotation.Status.REJECTED))
+                        except Exception:
+                            fresh_total = 0
+                        quotation.total_amount = fresh_total
+                        quotation.save(update_fields=['total_amount', 'updated_at'])
+            except Exception:
+                pass
+
+            # Guardrail: quotation create/update must not auto-transition booking status
+            try:
+                booking.refresh_from_db(fields=['status'])
+                if booking.status != original_booking_status:
+                    print(f"DEBUG: Booking status changed during quotation save ({original_booking_status} -> {booking.status}); restoring original status.")
+                    booking.status = original_booking_status
+                    booking.save(update_fields=['status'])
+            except Exception:
+                pass
 
             return Response(QuotationSerializer(quotation, context={'request': request}).data, status=status.HTTP_200_OK)
         except Exception as e:
@@ -805,6 +964,9 @@ def _get_mechanic_account(request):
             status=status.HTTP_403_FORBIDDEN,
         )
     return account, None
+
+
+
 
 
 @api_view(["POST"])
@@ -1092,7 +1254,7 @@ def _serialize_pending_direct_requests(account):
         add_ons_total = 0.0
         for addon in req.directrequestaddon_set.all():
             add_ons_total += float(addon.service_add_on.price)
-        total_amount = apply_min_job_price(base_price + add_ons_total)
+        total_amount = base_price + add_ons_total
 
         loc = req.service_location
         service_location = None
@@ -1513,8 +1675,6 @@ def mechanic_accept_direct_request(request, request_id):
             total_amount = float(body_amount)
         except (TypeError, ValueError):
             pass
-
-    total_amount = apply_min_job_price(total_amount)
 
     direct.request_status = DirectRequest.Status.ACCEPTED
     direct.save(update_fields=["request_status"])

@@ -44,6 +44,8 @@ urlpatterns = [
     path('bookings/<int:booking_id>/', views.get_booking_detail, name='get-booking-detail'),
     # Client selects payment method when booking is in pending_payment
     path('bookings/<int:booking_id>/pay/', client_pay_booking, name='client-pay-booking'),
+    path('bookings/<int:booking_id>/quotation/accept/', views.client_accept_quotation, name='client-accept-quotation'),
+    path('bookings/<int:booking_id>/quotation/reject/', views.client_reject_quotation, name='client-reject-quotation'),
     # Live mechanic location (GET for client polling, POST for mechanic pushing GPS)
     path('bookings/<int:booking_id>/mechanic-location/', views.mechanic_location_view, name='mechanic-location'),
 
@@ -80,6 +82,7 @@ urlpatterns = [
     # Shop owner booking list/detail
     path('shopowner/bookings/', views.list_shopowner_bookings, name='list-shopowner-bookings'),
     path('shopowner/bookings/<int:booking_id>/', views.get_shopowner_booking_detail, name='get-shopowner-booking-detail'),
+    path('shopowner/bookings/<int:booking_id>/quotation/', views.get_shopowner_booking_quotation, name='get-shopowner-booking-quotation'),
 
     # Request assignment endpoints (shop owner assigns mechanics to jobs)
     path('requests/<int:request_id>/assignments/', views.list_request_assignments, name='list-request-assignments'),
