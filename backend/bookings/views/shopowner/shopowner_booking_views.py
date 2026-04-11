@@ -22,8 +22,10 @@ from ...models import (
     ReworkBooking,
     DisputeBooking,
     BroadcastRequest,
+    Quotation,
 )
 from ...serializers import RequestSerializer
+from ...serializers import QuotationSerializer
 from users.models import Account
 from services.models import ShopService
 from ..client.client_booking_views import _serialize_single_booking, _serialize_bookings
@@ -519,3 +521,32 @@ def get_shopowner_booking_detail(request, booking_id):
         )
 
     return Response({"booking": _serialize_single_booking(booking)})
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def get_shopowner_booking_quotation(request, booking_id):
+    """Return quotation payload for a shopowner-visible booking."""
+    account, err = _get_shopowner_account(request)
+    if err:
+        return err
+
+    try:
+        booking = _shopowner_bookings_queryset(account).get(id=booking_id)
+    except Booking.DoesNotExist:
+        return Response({"error": "Booking not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        quotation = booking.quotation
+    except Quotation.DoesNotExist:
+        return Response(
+            {
+                "has_quotation": False,
+                "booking_id": booking.id,
+                "detail": "No quotation exists yet for this booking",
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    ser = QuotationSerializer(quotation, context={"request": request})
+    return Response(ser.data, status=status.HTTP_200_OK)

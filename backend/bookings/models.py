@@ -206,6 +206,11 @@ class Quotation(models.Model):
     Acts like a receipt but editable while the mechanic is on-site."""
     booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name='quotation')
     mechanic = models.ForeignKey(Account, on_delete=models.CASCADE)
+    class Status(models.TextChoices):
+        PENDING = "pending"
+        ACCEPTED = "accepted"
+        REJECTED = "rejected"
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     notes = models.TextField(null=True, blank=True)
     total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     is_final = models.BooleanField(default=False)
@@ -221,6 +226,14 @@ class QuotationItem(models.Model):
     description = models.CharField(max_length=255, null=True, blank=True)
     quantity = models.PositiveIntegerField(default=1)
     unit_price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    # per-item status: defaults to pending so newly-added items are pending until client accepts
+    status = models.CharField(max_length=20, choices=Quotation.Status.choices, default=Quotation.Status.PENDING)
+    # Explicit change metadata allows clients to classify mixed pending deltas
+    # (add/edit/remove) without relying on brittle heuristics.
+    change_type = models.CharField(max_length=20, null=True, blank=True)
+    previous_description = models.CharField(max_length=255, null=True, blank=True)
+    previous_quantity = models.PositiveIntegerField(null=True, blank=True)
+    previous_unit_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
 
     @property
     def line_total(self):
