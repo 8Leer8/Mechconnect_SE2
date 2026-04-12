@@ -19,6 +19,7 @@ import { SkeletonProfile } from '@/components/skeletons/SkeletonLoaders';
 import { useConfirmation } from '@/hooks/useConfirmation';
 import { ConfirmationModal } from '@/components/ui/ConfirmationModal';
 import { styles as clientProfileStyles } from '@/style/client/profileStyles';
+import { ShopProductsPanel } from '@/components/shopowner/ShopProductsPanel';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -106,6 +107,7 @@ export default function ShopOwnerProfileScreen() {
   const [updatingId, setUpdatingId] = useState<number | null>(null);
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
   const [logoutLoading, setLogoutLoading] = useState(false);
+  const [shopProductsModalVisible, setShopProductsModalVisible] = useState(false);
 
   const fetchProfileData = useCallback(async () => {
     try {
@@ -540,6 +542,21 @@ export default function ShopOwnerProfileScreen() {
           ))}
         </View>
 
+        {/* Shop products — same settings card pattern as Add Shop Service */}
+        <View style={clientProfileStyles.settingsCard}>
+          <TouchableOpacity
+            style={clientProfileStyles.settingRow}
+            activeOpacity={0.7}
+            onPress={() => setShopProductsModalVisible(true)}
+          >
+            <View style={[clientProfileStyles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
+              <FontAwesome name="shopping-bag" size={16} color="#FF8C00" />
+            </View>
+            <ThemedText style={clientProfileStyles.settingText}>Shop products</ThemedText>
+            <FontAwesome name="chevron-right" size={14} color="#8E8E93" />
+          </TouchableOpacity>
+        </View>
+
         {/* Switch Role card */}
         <View style={clientProfileStyles.settingsCard}>
           <TouchableOpacity
@@ -691,6 +708,28 @@ export default function ShopOwnerProfileScreen() {
                 </TouchableOpacity>
               </View>
             )}
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={shopProductsModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShopProductsModalVisible(false)}
+      >
+        <View style={styles.shopProductsModalOverlay}>
+          <View style={styles.shopProductsModalBox}>
+            <View style={styles.modalHeader}>
+              <ThemedText style={styles.modalTitle}>Shop products</ThemedText>
+              <TouchableOpacity
+                onPress={() => setShopProductsModalVisible(false)}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              >
+                <FontAwesome name="times" size={22} color="#fff" />
+              </TouchableOpacity>
+            </View>
+            <ShopProductsPanel />
           </View>
         </View>
       </Modal>
@@ -1082,6 +1121,20 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: '#fff',
+  },
+  shopProductsModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'flex-end',
+  },
+  shopProductsModalBox: {
+    backgroundColor: '#1A1A1A',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    height: '90%',
+    paddingHorizontal: 20,
+    paddingTop: 4,
+    paddingBottom: 20,
   },
 });
 

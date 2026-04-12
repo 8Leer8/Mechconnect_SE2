@@ -1,304 +1,67 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import {
-  StyleSheet,
-  View,
-  ScrollView,
-  TextInput,
-  TouchableOpacity,
-  KeyboardAvoidingView,
-  Platform,
-} from 'react-native';
+import React from 'react';
+import { StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
-import { Picker } from '@react-native-picker/picker';
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL;
-
-interface Product {
-  id: number;
-  name: string;
-  price: string;
-  description: string;
-}
-
-export default function ShopOwnerShop() {
-  const [name, setName] = useState('');
-  const [price, setPrice] = useState('');
-  const [description, setDescription] = useState('');
-  const [selectedServiceId, setSelectedServiceId] = useState<number | null>(null);
-  const [availableServices, setAvailableServices] = useState<Array<{ service_id: number; name: string }>>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [error, setError] = useState<string | null>(null);
-
-  const fetchMyServices = useCallback(async () => {
-    try {
-      setError(null);
-      const res = await fetch(`${API_URL}/services/shop/my-services/`, {
-        method: 'GET',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      if (!res.ok) throw new Error('Failed to fetch your services');
-      const data = await res.json();
-      const servicesRaw = data?.services || [];
-      const services = servicesRaw.map((s: any) => ({
-        service_id: Number(s.id),
-        name: String(s.name || ''),
-      }));
-      setAvailableServices(services);
-      if (services.length > 0 && selectedServiceId === null) {
-        setSelectedServiceId(services[0].service_id);
-      }
-    } catch (e: any) {
-      setError(e?.message || 'Failed to load services');
-    }
-  }, [selectedServiceId]);
-
-  const fetchProducts = useCallback(async (serviceId: number) => {
-    try {
-      setError(null);
-      const res = await fetch(`${API_URL}/services/shop/addons/?service_id=${serviceId}`, {
-        method: 'GET',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      if (!res.ok) throw new Error('Failed to fetch products');
-      const data = await res.json();
-      const addOns = (data?.add_ons || []).map((a: any) => ({
-        id: a.id,
-        name: a.name,
-        price: String(a.price),
-        description: a.description || '',
-      }));
-      setProducts(addOns);
-    } catch (e: any) {
-      setError(e?.message || 'Failed to load products');
-      setProducts([]);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchMyServices();
-  }, [fetchMyServices]);
-
-  useEffect(() => {
-    if (selectedServiceId !== null) {
-      fetchProducts(selectedServiceId);
-    } else {
-      setProducts([]);
-    }
-  }, [selectedServiceId, fetchProducts]);
-
-  const handleAddProduct = async () => {
-    const trimmedName = name.trim();
-    const trimmedPrice = price.trim();
-
-    if (!selectedServiceId) {
-      setError('Please select a service first.');
-      return;
-    }
-
-    if (!trimmedName || !trimmedPrice) {
-      setError('Please enter a product name and price.');
-      return;
-    }
-
-    setError(null);
-    try {
-      const parsedPrice = Number(trimmedPrice);
-      if (Number.isNaN(parsedPrice)) {
-        setError('Price must be a valid number.');
-        return;
-      }
-
-      const res = await fetch(`${API_URL}/services/shop/addons/add/`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          service_id: selectedServiceId,
-          name: trimmedName,
-          description: description.trim(),
-          price: parsedPrice,
-        }),
-      });
-
-      const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.error || 'Failed to add product');
-
-      setName('');
-      setPrice('');
-      setDescription('');
-      fetchProducts(selectedServiceId);
-    } catch (e: any) {
-      setError(e?.message || 'Failed to add product');
-    }
-  };
-
-  const handleRemoveProduct = async (id: number) => {
-    if (!selectedServiceId) return;
-    setError(null);
-    try {
-      const res = await fetch(`${API_URL}/services/shop/addons/remove/`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ service_add_on_id: id }),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.error || 'Failed to remove product');
-      fetchProducts(selectedServiceId);
-    } catch (e: any) {
-      setError(e?.message || 'Failed to remove product');
-    }
-  };
+/** Tab route stays `main/shop`; label in tabs is Map. Placeholder until real map is wired. */
+export default function ShopOwnerMapPlaceholder() {
+  const insets = useSafeAreaInsets();
+  const topPad = Math.max(insets.top, 12) + 8;
 
   return (
     <ThemedView style={styles.container}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={80}
-      >
-        <ScrollView
-          contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={styles.header}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <View>
-                <ThemedText style={styles.title}>Shop</ThemedText>
-                <ThemedText style={styles.subtitle}>Add and manage your products</ThemedText>
-              </View>
-              <View style={{ width: 44, height: 44 }} />
+      <View style={[styles.header, { paddingTop: topPad }]}>
+        <ThemedText style={styles.title}>Map</ThemedText>
+        <ThemedText style={styles.subtitle}>Find shops and jobs on the map — coming soon</ThemedText>
+      </View>
+
+      <View style={styles.mapCard}>
+        <View style={styles.mapBadge}>
+          <ThemedText style={styles.mapBadgeText}>Preview</ThemedText>
+        </View>
+
+        {/* Fake map grid */}
+        <View style={styles.gridWrap}>
+          {Array.from({ length: 8 }).map((_, row) => (
+            <View key={`r${row}`} style={styles.gridRow}>
+              {Array.from({ length: 6 }).map((_, col) => (
+                <View key={`c${col}`} style={styles.gridCell} />
+              ))}
             </View>
+          ))}
+        </View>
+
+        <View style={styles.roads}>
+          <View style={styles.roadH} />
+          <View style={styles.roadV} />
+        </View>
+
+        <View style={styles.pinWrap} pointerEvents="none">
+          <View style={styles.pinCircle}>
+            <FontAwesome name="map-marker" size={28} color="#FF8C00" />
           </View>
+        </View>
 
-          {/* Add Product Form */}
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <View style={styles.iconCircle}>
-                <FontAwesome name="shopping-bag" size={18} color="#FF9500" />
-              </View>
-              <ThemedText style={styles.cardTitle}>Add Product</ThemedText>
-            </View>
-
-            {/* Service selector */}
-            <View style={styles.fieldGroup}>
-              <ThemedText style={styles.label}>Service *</ThemedText>
-              <View style={styles.pickerContainer}>
-                <Picker
-                  enabled={availableServices.length > 0}
-                  selectedValue={selectedServiceId ?? null}
-                  onValueChange={(value) => {
-                    if (value === null) setSelectedServiceId(null);
-                    else setSelectedServiceId(Number(value));
-                  }}
-                  dropdownIconColor={selectedServiceId ? '#FF8C00' : '#555'}
-                  style={styles.picker}
-                >
-                  <Picker.Item label="Choose a service..." value={null} />
-                  {availableServices.map((s) => (
-                    <Picker.Item key={s.service_id} label={s.name} value={s.service_id} />
-                  ))}
-                </Picker>
-              </View>
-            </View>
-
-            <View style={styles.fieldGroup}>
-              <ThemedText style={styles.label}>Product name</ThemedText>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. Engine Oil"
-                placeholderTextColor="#666"
-                value={name}
-                onChangeText={setName}
-              />
-            </View>
-
-            <View style={styles.row}>
-              <View style={[styles.fieldGroup, { flex: 1 }]}>
-                <ThemedText style={styles.label}>Price (₱)</ThemedText>
-                <TextInput
-                  style={styles.input}
-                  placeholder="0.00"
-                  placeholderTextColor="#666"
-                  keyboardType="numeric"
-                  value={price}
-                  onChangeText={setPrice}
-                />
-              </View>
-            </View>
-
-            <View style={styles.fieldGroup}>
-              <ThemedText style={styles.label}>Description</ThemedText>
-              <TextInput
-                style={[styles.input, styles.textArea]}
-                placeholder="Short description of the product"
-                placeholderTextColor="#666"
-                value={description}
-                onChangeText={setDescription}
-                multiline
-              />
-            </View>
-
-            {error && (
-              <ThemedText style={styles.errorText}>{error}</ThemedText>
-            )}
-
-            <TouchableOpacity
-              style={styles.primaryButton}
-              activeOpacity={0.8}
-              onPress={handleAddProduct}
-            >
-              <FontAwesome name="plus" size={14} color="#fff" />
-              <ThemedText style={styles.primaryButtonText}>Add Product</ThemedText>
-            </TouchableOpacity>
+        <View style={styles.mapFooter}>
+          <View style={styles.chip}>
+            <FontAwesome name="search" size={12} color="#8E8E93" />
+            <ThemedText style={styles.chipText}>Search area</ThemedText>
           </View>
-
-          {/* Local product list (temporary) */}
-          <View style={styles.section}>
-            <ThemedText style={styles.sectionTitle}>My Products</ThemedText>
-            {products.length === 0 ? (
-              <View style={styles.emptyState}>
-                <View style={styles.emptyIconCircle}>
-                  <FontAwesome name="archive" size={20} color="#FF9500" />
-                </View>
-                <ThemedText style={styles.emptyTitle}>No products yet</ThemedText>
-                <ThemedText style={styles.emptySubtitle}>
-                  Add products for the selected service above.
-                </ThemedText>
-              </View>
-            ) : (
-              products.map((product) => (
-                <View key={product.id} style={styles.productCard}>
-                  <View style={styles.productHeader}>
-                    <ThemedText style={styles.productName}>{product.name}</ThemedText>
-                    <View style={styles.productHeaderRight}>
-                      <ThemedText style={styles.productPrice}>₱{product.price}</ThemedText>
-                      <TouchableOpacity
-                        style={styles.removeButton}
-                        onPress={() => handleRemoveProduct(product.id)}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        activeOpacity={0.7}
-                      >
-                        <FontAwesome name="trash-o" size={16} color="#FF3B30" />
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                  {product.description ? (
-                    <ThemedText style={styles.productDescription} numberOfLines={2}>
-                      {product.description}
-                    </ThemedText>
-                  ) : null}
-                </View>
-              ))
-            )}
+          <View style={styles.chip}>
+            <FontAwesome name="location-arrow" size={12} color="#8E8E93" />
+            <ThemedText style={styles.chipText}>My location</ThemedText>
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+        </View>
+      </View>
+
+      <View style={styles.hintCard}>
+        <FontAwesome name="info-circle" size={16} color="#FF8C00" style={styles.hintIcon} />
+        <ThemedText style={styles.hintText}>
+          Live map, pins, and routing will appear here in a future update.
+        </ThemedText>
+      </View>
     </ThemedView>
   );
 }
@@ -307,11 +70,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0D0D0D',
-  },
-  content: {
     paddingHorizontal: 20,
-    paddingTop: 96,
-    paddingBottom: 32,
+  },
+  header: {
+    marginBottom: 16,
   },
   title: {
     fontSize: 26,
@@ -320,168 +82,141 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
   subtitle: {
-    marginTop: 4,
+    marginTop: 6,
     fontSize: 13,
-    color: '#888',
+    color: '#8E8E93',
+    lineHeight: 18,
   },
-  header: {
-    marginBottom: 18,
-  },
-  card: {
-    backgroundColor: '#151515',
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: '#252525',
-    padding: 16,
-    marginBottom: 20,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-    gap: 10,
-  },
-  iconCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#FF950018',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#fff',
-  },
-  fieldGroup: {
-    marginBottom: 12,
-  },
-  label: {
-    fontSize: 12,
-    color: '#999',
-    marginBottom: 4,
-  },
-  input: {
-    borderRadius: 12,
-    backgroundColor: '#1C1C1E',
-    borderWidth: 1,
-    borderColor: '#2C2C2E',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
-    color: '#fff',
-  },
-  pickerContainer: {
-    borderRadius: 12,
-    backgroundColor: '#1C1C1E',
-    borderWidth: 1,
-    borderColor: '#2C2C2E',
-  },
-  picker: {
-    color: '#fff',
-  },
-  textArea: {
-    minHeight: 72,
-    textAlignVertical: 'top',
-  },
-  row: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  errorText: {
-    marginTop: 4,
-    fontSize: 12,
-    color: '#FF3B30',
-  },
-  primaryButton: {
-    marginTop: 12,
-    backgroundColor: '#FF9500',
-    borderRadius: 12,
-    paddingVertical: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  primaryButtonText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  section: {
-    marginTop: 4,
-  },
-  sectionTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#fff',
-    marginBottom: 10,
-  },
-  emptyState: {
-    borderRadius: 16,
-    backgroundColor: '#151515',
-    borderWidth: 1,
-    borderColor: '#252525',
-    padding: 20,
-    alignItems: 'center',
-    gap: 8,
-  },
-  emptyIconCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#FF950018',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  emptyTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  emptySubtitle: {
-    fontSize: 12,
-    color: '#888',
-    textAlign: 'center',
-  },
-  productCard: {
-    backgroundColor: '#151515',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#252525',
-    padding: 14,
-    marginTop: 8,
-  },
-  productHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  productHeaderRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  productName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#fff',
+  mapCard: {
     flex: 1,
-    marginRight: 8,
+    minHeight: 320,
+    maxHeight: 440,
+    borderRadius: 20,
+    backgroundColor: '#121212',
+    borderWidth: 1,
+    borderColor: '#252525',
+    overflow: 'hidden',
+    position: 'relative',
   },
-  productPrice: {
-    fontSize: 14,
+  mapBadge: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    zIndex: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: '#FF8C0020',
+    borderWidth: 1,
+    borderColor: '#FF8C0040',
+  },
+  mapBadgeText: {
+    fontSize: 11,
     fontWeight: '700',
-    color: '#FF9500',
+    color: '#FF8C00',
+    letterSpacing: 0.5,
   },
-  removeButton: {
-    padding: 6,
+  gridWrap: {
+    ...StyleSheet.absoluteFillObject,
+    padding: 12,
+    opacity: 0.35,
   },
-  productDescription: {
+  gridRow: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  gridCell: {
+    flex: 1,
+    margin: 1,
+    borderRadius: 2,
+    backgroundColor: '#1E1E1E',
+  },
+  roads: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 1,
+  },
+  roadH: {
+    position: 'absolute',
+    top: '48%',
+    left: 0,
+    right: 0,
+    height: 3,
+    backgroundColor: '#2A2A2A',
+  },
+  roadV: {
+    position: 'absolute',
+    left: '42%',
+    top: 0,
+    bottom: 0,
+    width: 3,
+    backgroundColor: '#2A2A2A',
+  },
+  pinWrap: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pinCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#FF8C0018',
+    borderWidth: 2,
+    borderColor: '#FF8C0044',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 28,
+  },
+  mapFooter: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    zIndex: 3,
+    flexDirection: 'row',
+    gap: 8,
+    padding: 12,
+    backgroundColor: 'rgba(13,13,13,0.92)',
+    borderTopWidth: 1,
+    borderTopColor: '#252525',
+  },
+  chip: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: '#1C1C1E',
+    borderWidth: 1,
+    borderColor: '#2C2C2E',
+  },
+  chipText: {
     fontSize: 12,
-    color: '#ccc',
+    fontWeight: '600',
+    color: '#8E8E93',
+  },
+  hintCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    marginTop: 20,
+    marginBottom: 24,
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: '#151515',
+    borderWidth: 1,
+    borderColor: '#252525',
+  },
+  hintIcon: {
+    marginTop: 2,
+  },
+  hintText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#AEAEB2',
+    lineHeight: 19,
   },
 });

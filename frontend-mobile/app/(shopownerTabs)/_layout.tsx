@@ -59,8 +59,8 @@ export default function ShopOwnerTabLayout() {
       <Tabs.Screen
         name="main/shop"
         options={{
-          title: 'Shop',
-          tabBarIcon: ({ color }) => <FontAwesome size={20} name="building" color={color} />,
+          title: 'Map',
+          tabBarIcon: ({ color }) => <FontAwesome size={20} name="map" color={color} />,
         }}
       />
       <Tabs.Screen
