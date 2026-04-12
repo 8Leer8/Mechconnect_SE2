@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
 	ActivityIndicator,
 	Modal,
@@ -11,7 +11,7 @@ import {
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Picker } from '@react-native-picker/picker';
 import { FontAwesome } from '@expo/vector-icons';
-import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams, usePathname } from 'expo-router';
 import * as Location from 'expo-location';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -71,6 +71,7 @@ function toNumberOrNull(value: unknown): number | null {
 export default function MechanicDirectRequestScreen() {
 	const { showNotification } = useNotification();
 	const { selectedLocation, setSelectedLocation } = useLocation();
+	const pathname = usePathname();
 	const params = useLocalSearchParams<{
 		id?: string | string[];
 		mechanicId?: string | string[];
@@ -114,6 +115,7 @@ export default function MechanicDirectRequestScreen() {
 	const [locationMode, setLocationMode] = useState<'current' | 'map'>('current');
 	const [confirmVisible, setConfirmVisible] = useState(false);
 	const [hasFetchedCurrentLocation, setHasFetchedCurrentLocation] = useState(false);
+	const isNavigatingToMapRef = useRef(false);
 
 	const selectedProviderId = routeProviderId;
 
@@ -193,6 +195,8 @@ export default function MechanicDirectRequestScreen() {
 
 	useFocusEffect(
 		React.useCallback(() => {
+			isNavigatingToMapRef.current = false;
+
 			if (!selectedLocation) return;
 
 			setCurrentLatitude(selectedLocation.latitude);
@@ -206,6 +210,18 @@ export default function MechanicDirectRequestScreen() {
 			setSelectedLocation(null);
 		}, [selectedLocation, setSelectedLocation])
 	);
+
+	const getMapRoutePath = () => {
+		if (pathname.includes('main_request_form/mechanic-profile/_direct-request')) {
+			return '/client/request/main_request_form/mechanic-profile/_direct-request/map';
+		}
+
+		if (pathname.includes('/client/mechanic/_direct-request')) {
+			return '/client/mechanic/_direct-request/map';
+		}
+
+		return '/client/request/direct/map';
+	};
 
 	const fetchCurrentLocation = async () => {
 		if (!selectedProviderId) return;
@@ -271,9 +287,14 @@ export default function MechanicDirectRequestScreen() {
 	}, [selectedServiceId, selectedAddOnIds, availableServices, availableAddOns]);
 
 	const handleSelectLocation = () => {
+		if (isNavigatingToMapRef.current) return;
+		isNavigatingToMapRef.current = true;
+
+		const mapPath = getMapRoutePath();
+
 		if (currentLatitude !== null && currentLongitude !== null) {
 			router.push({
-				pathname: '/client/request/direct/map',
+				pathname: mapPath,
 				params: {
 					latitude: currentLatitude.toString(),
 					longitude: currentLongitude.toString(),
@@ -282,7 +303,7 @@ export default function MechanicDirectRequestScreen() {
 			return;
 		}
 
-		router.push('/client/request/direct/map');
+		router.push(mapPath);
 	};
 
 	const onDateChange = (_event: any, date?: Date) => {

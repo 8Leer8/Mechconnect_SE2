@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, TouchableOpacity, View } from 'react-native';
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import { ActivityIndicator, Platform, TouchableOpacity, View } from 'react-native';
+import MapView, { PROVIDER_GOOGLE, Region } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { FontAwesome } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -11,22 +11,11 @@ import { reverseGeocodeAddress } from '@/lib/locationAddress';
 import { styles } from '@/style/client/directRequestMapStyles';
 import { useLocation } from '../main_request_form/LocationContext';
 
-interface MapRegion {
-  latitude: number;
-  longitude: number;
-  latitudeDelta: number;
-  longitudeDelta: number;
-}
-
-interface PinLocation {
-  latitude: number;
-  longitude: number;
-}
-
 export default function DirectRequestMapScreen() {
   const { showNotification } = useNotification();
   const { setSelectedLocation } = useLocation();
   const mapRef = useRef<MapView>(null);
+  const geocodeDebounceRef = useRef<number | null>(null);
   const params = useLocalSearchParams();
 
   const initialLat = params.latitude ? parseFloat(params.latitude as string) : null;
@@ -35,9 +24,10 @@ export default function DirectRequestMapScreen() {
   const [loading, setLoading] = useState(true);
   const [confirming, setConfirming] = useState(false);
   const [locating, setLocating] = useState(false);
+  const [isGeocoding, setIsGeocoding] = useState(false);
   const [address, setAddress] = useState('');
-  const [region, setRegion] = useState<MapRegion | null>(null);
-  const [markerLocation, setMarkerLocation] = useState<PinLocation | null>(null);
+  const [region, setRegion] = useState<Region | null>(null);
+  const [pinCenter, setPinCenter] = useState<{ latitude: number; longitude: number } | null>(null);
 
   const defaultRegion = useMemo(
     () => ({
@@ -51,24 +41,39 @@ export default function DirectRequestMapScreen() {
 
   useEffect(() => {
     initializeMap();
+    return () => {
+      if (geocodeDebounceRef.current !== null) {
+        clearTimeout(geocodeDebounceRef.current);
+      }
+    };
   }, []);
 
   const reverseGeocodePoint = async (latitude: number, longitude: number) => {
+    setIsGeocoding(true);
     const parsed = await reverseGeocodeAddress(latitude, longitude);
     setAddress(parsed.address);
+    setIsGeocoding(false);
     return parsed;
+  };
+
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace('/(clientTabs)/main/discover');
   };
 
   const initializeMap = async () => {
     if (initialLat !== null && initialLng !== null && !Number.isNaN(initialLat) && !Number.isNaN(initialLng)) {
-      const initialRegion: MapRegion = {
+      const initialRegion: Region = {
         latitude: initialLat,
         longitude: initialLng,
         latitudeDelta: 0.018,
         longitudeDelta: 0.018,
       };
       setRegion(initialRegion);
-      setMarkerLocation({ latitude: initialLat, longitude: initialLng });
+      setPinCenter({ latitude: initialLat, longitude: initialLng });
       await reverseGeocodePoint(initialLat, initialLng);
       setLoading(false);
       return;
@@ -101,7 +106,7 @@ export default function DirectRequestMapScreen() {
         accuracy: Location.Accuracy.High,
       });
 
-      const targetRegion: MapRegion = {
+      const targetRegion: Region = {
         latitude: current.coords.latitude,
         longitude: current.coords.longitude,
         latitudeDelta: 0.018,
@@ -109,18 +114,15 @@ export default function DirectRequestMapScreen() {
       };
 
       setRegion(targetRegion);
+      setPinCenter({ latitude: current.coords.latitude, longitude: current.coords.longitude });
 
       if (animate) {
         mapRef.current?.animateToRegion(targetRegion, 450);
       }
 
       if (setAsSelected) {
-        setMarkerLocation({
-          latitude: current.coords.latitude,
-          longitude: current.coords.longitude,
-        });
         await reverseGeocodePoint(current.coords.latitude, current.coords.longitude);
-      } else if (!markerLocation) {
+      } else if (!pinCenter) {
         setAddress('');
       }
     } catch {
@@ -131,41 +133,62 @@ export default function DirectRequestMapScreen() {
     }
   };
 
-  const handleMapPress = async (event: any) => {
-    const { latitude, longitude } = event.nativeEvent.coordinate;
-    setMarkerLocation({ latitude, longitude });
-    await reverseGeocodePoint(latitude, longitude);
+  const handleRegionChange = (nextRegion: Region) => {
+    setPinCenter({
+      latitude: nextRegion.latitude,
+      longitude: nextRegion.longitude,
+    });
+  };
+
+  const handleRegionChangeComplete = (nextRegion: Region) => {
+    setRegion(nextRegion);
+    setPinCenter({
+      latitude: nextRegion.latitude,
+      longitude: nextRegion.longitude,
+    });
+
+    if (geocodeDebounceRef.current !== null) {
+      clearTimeout(geocodeDebounceRef.current);
+    }
+
+    geocodeDebounceRef.current = setTimeout(async () => {
+      try {
+        await reverseGeocodePoint(nextRegion.latitude, nextRegion.longitude);
+      } catch {
+        // Keep the last successful address while dragging.
+      }
+    }, 450) as unknown as number;
   };
 
   const handleLocateMe = async () => {
     if (locating) return;
     setLocating(true);
     try {
-      await centerToCurrentLocation({ animate: true, setAsSelected: false });
-      showNotification({ type: 'info', message: 'Centered to your current location. Tap map to select pin.' });
+      await centerToCurrentLocation({ animate: true, setAsSelected: true });
+      showNotification({ type: 'info', message: 'Centered to your current location.' });
     } finally {
       setLocating(false);
     }
   };
 
   const handleConfirm = async () => {
-    if (!markerLocation) {
-      showNotification({ type: 'error', message: 'Please select a location on the map' });
+    if (!pinCenter) {
+      showNotification({ type: 'error', message: 'Please wait for map location to settle.' });
       return;
     }
 
     setConfirming(true);
     try {
-      const parsed = await reverseGeocodePoint(markerLocation.latitude, markerLocation.longitude);
+      const parsed = await reverseGeocodePoint(pinCenter.latitude, pinCenter.longitude);
       setSelectedLocation({
-        latitude: markerLocation.latitude,
-        longitude: markerLocation.longitude,
+        latitude: pinCenter.latitude,
+        longitude: pinCenter.longitude,
         address: parsed.address,
         streetName: parsed.streetName,
         city: parsed.city,
         barangay: parsed.region || parsed.barangay,
       });
-      router.back();
+      handleBack();
     } catch {
       showNotification({ type: 'error', message: 'Failed to confirm location' });
     } finally {
@@ -184,27 +207,38 @@ export default function DirectRequestMapScreen() {
 
   return (
     <View style={styles.container}>
+      <View style={styles.topBar}>
+        <View style={styles.topRow}>
+          <TouchableOpacity
+            style={styles.closeButton}
+            onPress={handleBack}
+            activeOpacity={0.8}
+          >
+            <FontAwesome name="times" size={18} color="#FFFFFF" />
+          </TouchableOpacity>
+          <ThemedText style={styles.title}>Map</ThemedText>
+          <View style={styles.spacer} />
+        </View>
+        <ThemedText style={styles.addressText} numberOfLines={2}>
+          {isGeocoding ? 'Locating...' : (address || 'Move the map to choose your service location.')}
+        </ThemedText>
+      </View>
+
       <MapView
         ref={mapRef}
         style={styles.map}
         provider={PROVIDER_GOOGLE}
         initialRegion={region}
-        onPress={handleMapPress}
+        onRegionChange={handleRegionChange}
+        onRegionChangeComplete={handleRegionChangeComplete}
         showsUserLocation
         showsMyLocationButton={false}
-      >
-        {markerLocation && (
-          <Marker
-            coordinate={markerLocation}
-            title="Selected Location"
-            description={address}
-            pinColor="#FF8C00"
-          />
-        )}
-      </MapView>
+      />
 
-      <View style={styles.addressContainer}>
-        <ThemedText style={styles.addressText}>{address || 'Tap map to pick location'}</ThemedText>
+      <View style={styles.centerPinWrap} pointerEvents="none">
+        <View style={styles.centerPinDot}>
+          <View style={styles.centerPinInner} />
+        </View>
       </View>
 
       <TouchableOpacity
@@ -221,25 +255,18 @@ export default function DirectRequestMapScreen() {
       </TouchableOpacity>
 
       <View style={styles.bottomContainer}>
-        <ThemedText style={styles.instructionText}>Tap on the map to select your location</ThemedText>
-
-        <View style={styles.buttonContainer}>
-          <TouchableOpacity style={styles.cancelButton} onPress={() => router.back()}>
-            <ThemedText style={styles.cancelButtonText}>Cancel</ThemedText>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.confirmButton, !markerLocation && styles.confirmButtonDisabled]}
-            onPress={handleConfirm}
-            disabled={!markerLocation || confirming}
-          >
-            {confirming ? (
-              <ActivityIndicator color="#FFF" />
-            ) : (
-              <ThemedText style={styles.confirmButtonText}>Confirm Location</ThemedText>
-            )}
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity
+          style={[styles.confirmButton, !pinCenter && styles.confirmButtonDisabled]}
+          onPress={handleConfirm}
+          disabled={!pinCenter || confirming}
+          activeOpacity={0.85}
+        >
+          {confirming ? (
+            <ActivityIndicator color="#FFF" />
+          ) : (
+            <ThemedText style={styles.confirmButtonText}>Confirm Location</ThemedText>
+          )}
+        </TouchableOpacity>
       </View>
     </View>
   );

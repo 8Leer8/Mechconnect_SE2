@@ -11,7 +11,7 @@ import {
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Picker } from '@react-native-picker/picker';
 import { FontAwesome } from '@expo/vector-icons';
-import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams, usePathname } from 'expo-router';
 import * as Location from 'expo-location';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -71,6 +71,7 @@ function toNumberOrNull(value: unknown): number | null {
 export default function ShopDirectRequestScreen() {
 	const { showNotification } = useNotification();
 	const { selectedLocation, setSelectedLocation } = useLocation();
+	const pathname = usePathname();
 	const params = useLocalSearchParams<{
 		id?: string | string[];
 		shopId?: string | string[];
@@ -229,6 +230,18 @@ export default function ShopDirectRequestScreen() {
 		}, [selectedLocation, setSelectedLocation])
 	);
 
+	const getMapRoutePath = () => {
+		if (pathname.includes('main_request_form/shop-profile/_direct-request')) {
+			return '/client/request/main_request_form/shop-profile/_direct-request/map';
+		}
+
+		if (pathname.includes('/client/shop/_direct-request')) {
+			return '/client/shop/_direct-request/map';
+		}
+
+		return '/client/request/direct/map';
+	};
+
 	const fetchCurrentLocation = async () => {
 		if (!selectedProviderId) return;
 		if (isFetchingCurrentLocation) return;
@@ -306,13 +319,14 @@ export default function ShopDirectRequestScreen() {
 	const handleSelectLocation = () => {
 		if (isNavigatingToMapRef.current) return;
 		isNavigatingToMapRef.current = true;
+		const mapPath = getMapRoutePath();
 
 		setShowDatePicker(false);
 		setShowTimePicker(false);
 
 		if (currentLatitude !== null && currentLongitude !== null) {
 			router.push({
-				pathname: '/client/request/direct/map',
+				pathname: mapPath,
 				params: {
 					latitude: currentLatitude.toString(),
 					longitude: currentLongitude.toString(),
@@ -321,7 +335,7 @@ export default function ShopDirectRequestScreen() {
 			return;
 		}
 
-		router.push('/client/request/direct/map');
+		router.push(mapPath);
 	};
 
 	const onDateChange = (event: any, date?: Date) => {
