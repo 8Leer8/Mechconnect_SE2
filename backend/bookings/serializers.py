@@ -253,11 +253,15 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
     required_tokens = serializers.SerializerMethodField()
     latitude = serializers.FloatField()
     longitude = serializers.FloatField()
+    vehicle_type = serializers.CharField(source='request.vehicle_type', read_only=True, allow_null=True)
+    vehicle_brand = serializers.CharField(source='request.vehicle_brand', read_only=True, allow_null=True)
+    vehicle_model = serializers.CharField(source='request.vehicle_model', read_only=True, allow_null=True)
     
     class Meta:
         model = BroadcastRequest
         fields = [
             'id', 'description', 'latitude', 'longitude', 
+            'vehicle_type', 'vehicle_brand', 'vehicle_model',
             'services', 'add_ons', 'created_at', 'expires_at', 'accepted_at',
             'status', 'concern_picture', 'required_tokens'
         ]

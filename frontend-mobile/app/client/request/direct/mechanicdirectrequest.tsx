@@ -1047,7 +1047,7 @@ export default function MechanicDirectRequestScreen() {
 					mechanicName={routeProviderName || undefined}
 					distanceKm={computedDistanceKm}
 					distanceResolved={distanceResolved}
-					showDistanceInDetails={false}
+					showDistanceInDetails
 					feeBreakdown={feeBreakdown}
 					pricingConfig={pricing}
 				/>

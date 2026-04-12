@@ -71,6 +71,34 @@ export default function PriceSummarySheet({
     }),
     [serviceLines]
   );
+  const structuredServiceTypeItems = useMemo(
+    () => (serviceTypeItems || []).map((line) => {
+      const match = line.match(/^(.*)\((\u20b1?[\d,]+(?:\.\d{1,2})?)\)$/);
+      if (!match) {
+        return { name: line, priceText: null };
+      }
+      const [, rawName, rawPrice] = match;
+      return {
+        name: rawName.trim(),
+        priceText: rawPrice.startsWith('\u20b1') ? rawPrice : `\u20b1${rawPrice}`,
+      };
+    }),
+    [serviceTypeItems]
+  );
+  const structuredAddOnItems = useMemo(
+    () => (addOnItems || []).map((line) => {
+      const match = line.match(/^(.*)\((\u20b1?[\d,]+(?:\.\d{1,2})?)\)$/);
+      if (!match) {
+        return { name: line, priceText: null };
+      }
+      const [, rawName, rawPrice] = match;
+      return {
+        name: rawName.trim(),
+        priceText: rawPrice.startsWith('\u20b1') ? rawPrice : `\u20b1${rawPrice}`,
+      };
+    }),
+    [addOnItems]
+  );
 
   const feeView = useMemo(() => {
     const effectiveDistance = typeof distanceKm === 'number'
@@ -134,8 +162,11 @@ export default function PriceSummarySheet({
                 <View style={styles.detailBlock}>
                   <ThemedText style={styles.detailLabel}>Service Type</ThemedText>
                   <View style={styles.serviceListWrap}>
-                    {serviceTypeItems.map((item, index) => (
-                      <ThemedText key={`service-type-item-${index}`} style={styles.detailValue}>{item}</ThemedText>
+                    {structuredServiceTypeItems.map((item, index) => (
+                      <View key={`service-type-item-${index}`} style={styles.serviceItemRow}>
+                        <ThemedText style={styles.serviceItemName}>{item.name}</ThemedText>
+                        {!!item.priceText && <ThemedText style={styles.serviceItemPrice}>{item.priceText}</ThemedText>}
+                      </View>
                     ))}
                   </View>
                 </View>
@@ -144,8 +175,11 @@ export default function PriceSummarySheet({
                 <View style={styles.detailBlock}>
                   <ThemedText style={styles.detailLabel}>Add-ons</ThemedText>
                   <View style={styles.serviceListWrap}>
-                    {addOnItems.map((item, index) => (
-                      <ThemedText key={`addon-item-${index}`} style={styles.detailValue}>{item}</ThemedText>
+                    {structuredAddOnItems.map((item, index) => (
+                      <View key={`addon-item-${index}`} style={styles.serviceItemRow}>
+                        <ThemedText style={styles.serviceItemName}>{item.name}</ThemedText>
+                        {!!item.priceText && <ThemedText style={styles.serviceItemPrice}>{item.priceText}</ThemedText>}
+                      </View>
                     ))}
                   </View>
                 </View>
@@ -192,7 +226,9 @@ export default function PriceSummarySheet({
               {showDistanceInDetails && typeof distanceKm === 'number' && (
                 <View style={styles.detailBlock}>
                   <ThemedText style={styles.detailLabel}>Distance</ThemedText>
-                  <ThemedText style={styles.detailValue}>{distanceKm.toFixed(2)} km</ThemedText>
+                  <ThemedText style={styles.detailValue}>
+                    {providerName ? `${distanceKm.toFixed(2)} km away` : `${distanceKm.toFixed(2)} km`}
+                  </ThemedText>
                 </View>
               )}
             </View>

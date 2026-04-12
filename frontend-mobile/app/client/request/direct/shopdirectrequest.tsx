@@ -1096,7 +1096,7 @@ export default function ShopDirectRequestScreen() {
 					shopName={routeProviderName || undefined}
 					distanceKm={computedDistanceKm}
 					distanceResolved={distanceResolved}
-					showDistanceInDetails={false}
+					showDistanceInDetails
 					feeBreakdown={feeBreakdown}
 					pricingConfig={pricing}
 				/>

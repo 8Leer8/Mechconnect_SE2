@@ -819,6 +819,21 @@ export default function MapScreen() {
     await fetchRouteAndTraffic(broadcast);
   };
 
+  const handleViewAndAccept = (broadcast: BroadcastRequest) => {
+    setSelectedBroadcast(broadcast);
+
+    if (lastFetchedBroadcastId.current === broadcast.id && cachedRouteData.current) {
+      setRouteCoords(cachedRouteData.current.routeCoords);
+      setTrafficData(cachedRouteData.current.trafficData);
+      setFeeData(cachedRouteData.current.feeData);
+      setRouteError(null);
+      setRouteLoading(false);
+    }
+
+    setModalVisible(true);
+    void fetchTokensBalance();
+  };
+
   const handleBroadcastMarkerPress = (broadcast: BroadcastRequest) => {
     const now = Date.now();
     const lastTap = markerTapRef.current[broadcast.id] ?? 0;
@@ -839,6 +854,9 @@ export default function MapScreen() {
     setRouteError(null);
     setTrafficData(null);
     setFeeData(null);
+    setSelectedBroadcast(null);
+    cachedRouteData.current = null;
+    lastFetchedBroadcastId.current = null;
 
     if (userLocation && mapRef.current) {
       mapRef.current.animateToRegion(
@@ -1123,7 +1141,7 @@ export default function MapScreen() {
                     </View>
                     <TouchableOpacity
                       style={styles.acceptButton}
-                      onPress={() => handleBroadcastPress(broadcast)}
+                      onPress={() => handleViewAndAccept(broadcast)}
                     >
                       <ThemedText style={styles.acceptText}>View & Accept</ThemedText>
                       <FontAwesome name="arrow-right" size={12} color="#fff" />
