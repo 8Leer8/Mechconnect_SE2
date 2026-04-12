@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
 	ActivityIndicator,
+	Alert,
 	Modal,
 	Platform,
 	ScrollView,
@@ -16,10 +17,14 @@ import * as Location from 'expo-location';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import VehicleTypeModal from '@/components/VehicleTypeModal';
+import PriceSummarySheet from '@/components/PriceSummarySheet';
 import { useNotification } from '@/hooks/useNotification';
+import { usePricing } from '@/hooks/usePricing';
 import { reverseGeocodeAddress } from '@/lib/locationAddress';
 import { useLocation } from '../main_request_form/LocationContext';
 import { styles } from '@/style/client/mechanicDirectRequestStyles';
+import { calculateBroadcastFee, FeeBreakdown } from '@/utils/trafficutils';
+import { AddressFields, geocodeAddressFields, haversineDistance } from '@/utils/geocodeAddress';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -68,15 +73,43 @@ function toNumberOrNull(value: unknown): number | null {
 	return null;
 }
 
+function parseParamFloat(value: string | string[] | undefined): number | null {
+	if (!value) return null;
+	const raw = Array.isArray(value) ? value[0] : value;
+	const parsed = Number.parseFloat(raw);
+	return Number.isNaN(parsed) ? null : parsed;
+}
+
+function parseParamString(value: string | string[] | undefined): string | null {
+	if (!value) return null;
+	const raw = Array.isArray(value) ? value[0] : value;
+	const clean = raw.trim();
+	return clean.length ? clean : null;
+}
+
 export default function ShopDirectRequestScreen() {
 	const { showNotification } = useNotification();
 	const { selectedLocation, setSelectedLocation } = useLocation();
+	const { pricing, loading: pricingLoading } = usePricing();
 	const pathname = usePathname();
 	const params = useLocalSearchParams<{
 		id?: string | string[];
 		shopId?: string | string[];
 		providerId?: string | string[];
 		providerName?: string | string[];
+		distance_km?: string | string[];
+		street_name?: string | string[];
+		subdivision_village?: string | string[];
+		barangay?: string | string[];
+		city_municipality?: string | string[];
+		province?: string | string[];
+		region?: string | string[];
+		providerStreet?: string | string[];
+		providerSubdivision?: string | string[];
+		providerBarangay?: string | string[];
+		providerCity?: string | string[];
+		providerProvince?: string | string[];
+		providerRegion?: string | string[];
 	}>();
 
 	const routeShopId = parseParamInt(params.shopId) ?? parseParamInt(params.id);
@@ -84,6 +117,15 @@ export default function ShopDirectRequestScreen() {
 	const routeProviderName = Array.isArray(params.providerName)
 		? params.providerName[0]
 		: params.providerName;
+	const routeDistanceKm = parseParamFloat(params.distance_km);
+	const providerAddress: AddressFields = {
+		street_name: parseParamString(params.street_name) ?? parseParamString(params.providerStreet),
+		subdivision_village: parseParamString(params.subdivision_village) ?? parseParamString(params.providerSubdivision),
+		barangay: parseParamString(params.barangay) ?? parseParamString(params.providerBarangay),
+		city_municipality: parseParamString(params.city_municipality) ?? parseParamString(params.providerCity),
+		province: parseParamString(params.province) ?? parseParamString(params.providerProvince),
+		region: parseParamString(params.region) ?? parseParamString(params.providerRegion),
+	};
 
 	const [selectedServiceId, setSelectedServiceId] = useState<number | null>(null);
 	const [selectedAddOnIds, setSelectedAddOnIds] = useState<number[]>([]);
@@ -95,6 +137,7 @@ export default function ShopDirectRequestScreen() {
 	const [availableAddOns, setAvailableAddOns] = useState<AddOn[]>([]);
 
 	const [loading, setLoading] = useState(false);
+	const [calculatingFee, setCalculatingFee] = useState(false);
 
 	const [useCurrentTime, setUseCurrentTime] = useState(true);
 	const [selectedDate, setSelectedDate] = useState(new Date());
@@ -118,8 +161,25 @@ export default function ShopDirectRequestScreen() {
 	const isNavigatingToMapRef = useRef(false);
 	const isMountedRef = useRef(true);
 	const locationFetchSeqRef = useRef(0);
+	const [showSummary, setShowSummary] = useState(false);
+	const [feeBreakdown, setFeeBreakdown] = useState<FeeBreakdown | null>(null);
+	const [computedDistanceKm, setComputedDistanceKm] = useState<number | undefined>(undefined);
+	const [distanceResolved, setDistanceResolved] = useState(true);
+  const providerCoordsRef = useRef<{ latitude: number; longitude: number } | null>(null);
+	const isFetchingLocationRef = useRef(false);
 
 	const selectedProviderId = routeProviderId;
+
+	useEffect(() => {
+		providerCoordsRef.current = null;
+	}, [
+		providerAddress.street_name,
+		providerAddress.subdivision_village,
+		providerAddress.barangay,
+		providerAddress.city_municipality,
+		providerAddress.province,
+		providerAddress.region,
+	]);
 
 	useEffect(() => {
 		isMountedRef.current = true;
@@ -244,7 +304,8 @@ export default function ShopDirectRequestScreen() {
 
 	const fetchCurrentLocation = async () => {
 		if (!selectedProviderId) return;
-		if (isFetchingCurrentLocation) return;
+		if (isFetchingCurrentLocation || isFetchingLocationRef.current) return;
+		isFetchingLocationRef.current = true;
 
 		const fetchSeq = ++locationFetchSeqRef.current;
 
@@ -259,17 +320,30 @@ export default function ShopDirectRequestScreen() {
 			if (!isMountedRef.current || fetchSeq !== locationFetchSeqRef.current) return;
 			if (permission.status !== 'granted') {
 				setCurrentLocationError('Location permission denied');
-				showNotification({
-					type: 'warning',
-					message: 'Please allow location permission to use current location.',
-				});
+				Alert.alert(
+					'Permission Denied',
+					'Location permission is required to fetch your current location. Please enable it in Settings.'
+				);
 				return;
 			}
 
-			const position = await Location.getCurrentPositionAsync({
-				accuracy: Location.Accuracy.High,
+			const locationPromise = Location.getCurrentPositionAsync({
+				accuracy: Location.Accuracy.Balanced,
 			});
+			const timeoutPromise = new Promise<never>((_, reject) => {
+				setTimeout(() => reject(new Error('Location timeout')), 15000);
+			});
+
+			const position = await Promise.race([locationPromise, timeoutPromise]);
 			if (!isMountedRef.current || fetchSeq !== locationFetchSeqRef.current) return;
+			if (
+				!position ||
+				!position.coords ||
+				typeof position.coords.latitude !== 'number' ||
+				typeof position.coords.longitude !== 'number'
+			) {
+				throw new Error('Invalid location data received');
+			}
 
 			const { latitude, longitude } = position.coords;
 			setCurrentLatitude(latitude);
@@ -284,13 +358,22 @@ export default function ShopDirectRequestScreen() {
 			setCurrentCity(parsed.city || '');
 			setCurrentAddress(parsed.address || 'Current location');
 			setCurrentLocationError(null);
-		} catch {
+		} catch (error: any) {
 			if (!isMountedRef.current || fetchSeq !== locationFetchSeqRef.current) return;
+			const isTimeout = error?.message === 'Location timeout';
 			setCurrentLocationError('Unable to fetch current location');
-			showNotification({ type: 'error', message: 'Unable to fetch current location. Please try again.' });
+			Alert.alert(
+				'Location Error',
+				isTimeout
+					? 'Location is taking too long. Please try again or select location manually.'
+					: 'Could not fetch your location. Please try again or select location on map.'
+			);
+			console.error('Fetch location error:', error);
 		} finally {
-			if (!isMountedRef.current || fetchSeq !== locationFetchSeqRef.current) return;
-			setIsFetchingCurrentLocation(false);
+			if (isMountedRef.current && fetchSeq === locationFetchSeqRef.current) {
+				setIsFetchingCurrentLocation(false);
+			}
+			isFetchingLocationRef.current = false;
 		}
 	};
 
@@ -457,7 +540,7 @@ export default function ShopDirectRequestScreen() {
 		}
 	};
 
-	const handleOpenConfirm = () => {
+	const handleOpenConfirm = async () => {
 		setShowDatePicker(false);
 		setShowTimePicker(false);
 
@@ -501,13 +584,68 @@ export default function ShopDirectRequestScreen() {
 			return;
 		}
 
-		setConfirmVisible(true);
+		if (!pricing || pricingLoading) {
+			showNotification({ type: 'warning', message: 'Pricing configuration is still loading. Please try again.' });
+			return;
+		}
+
+		console.log('=== FEE DEBUG (SHOP) ===');
+		console.log('Service coords:', { lat: currentLatitude, lng: currentLongitude });
+		console.log('Provider address params:', {
+			street_name: providerAddress.street_name,
+			subdivision_village: providerAddress.subdivision_village,
+			barangay: providerAddress.barangay,
+			city_municipality: providerAddress.city_municipality,
+			province: providerAddress.province,
+			region: providerAddress.region,
+		});
+
+		setCalculatingFee(true);
+		try {
+			let distanceKm = 0;
+			let resolved = false;
+
+			if (currentLatitude !== null && currentLongitude !== null) {
+				if (!providerCoordsRef.current) {
+					providerCoordsRef.current = await geocodeAddressFields(providerAddress);
+				}
+
+				const providerCoords = providerCoordsRef.current;
+				if (providerCoords) {
+					distanceKm = haversineDistance(
+						currentLatitude,
+						currentLongitude,
+						providerCoords.latitude,
+						providerCoords.longitude
+					);
+					resolved = true;
+				}
+			}
+
+			if (!resolved && routeDistanceKm !== null) {
+				distanceKm = Math.max(0, routeDistanceKm);
+			}
+
+			setComputedDistanceKm(distanceKm);
+			setDistanceResolved(resolved);
+			setFeeBreakdown(calculateBroadcastFee(distanceKm));
+			setShowSummary(true);
+		} catch {
+			setComputedDistanceKm(0);
+			setDistanceResolved(false);
+			setFeeBreakdown(calculateBroadcastFee(0));
+			setShowSummary(true);
+		} finally {
+			setCalculatingFee(false);
+		}
 	};
 
 	const selectedService = availableServices.find((service) => service.id === selectedServiceId);
 	const selectedAddOns = selectedAddOnIds
 		.map((addOnId) => availableAddOns.find((item) => item.id === addOnId))
 		.filter((item): item is AddOn => Boolean(item));
+	const serviceTypeItems = selectedService ? [`${selectedService.name} (₱${selectedService.price.toFixed(2)})`] : [];
+	const addOnItems = selectedAddOns.map((item) => `${item.name} (₱${item.price.toFixed(2)})`);
 	const locationActionLabel = hasFetchedCurrentLocation ? 'Try Again' : 'Fetch Current Location';
 	const locationActionIcon = hasFetchedCurrentLocation ? 'refresh' : 'location-arrow';
 	const disabled = !selectedProviderId;
@@ -853,12 +991,12 @@ export default function ShopDirectRequestScreen() {
 				</View>
 
 				<TouchableOpacity
-					style={[styles.sendBtn, (disabled || loading) && styles.sendBtnDisabled]}
+					style={[styles.sendBtn, (disabled || loading || calculatingFee) && styles.sendBtnDisabled]}
 					onPress={handleOpenConfirm}
-					disabled={disabled || loading}
+					disabled={disabled || loading || calculatingFee}
 					activeOpacity={0.7}
 				>
-					{loading ? (
+					{loading || calculatingFee ? (
 						<ActivityIndicator color="#fff" />
 					) : (
 						<>
@@ -939,6 +1077,30 @@ export default function ShopDirectRequestScreen() {
 					</View>
 				</View>
 			</Modal>
+
+			{showSummary && feeBreakdown && pricing ? (
+				<PriceSummarySheet
+					visible={showSummary}
+					onClose={() => setShowSummary(false)}
+					onConfirm={async () => {
+						setShowSummary(false);
+						await handleSend();
+					}}
+					confirming={loading}
+					serviceTypeItems={serviceTypeItems}
+					addOnItems={addOnItems}
+					serviceAmount={totalPrice}
+					vehicleModel={vehicleModel}
+					description={selectedService?.description || ''}
+					locationAddress={currentAddress || 'Selected map location'}
+					shopName={routeProviderName || undefined}
+					distanceKm={computedDistanceKm}
+					distanceResolved={distanceResolved}
+					showDistanceInDetails={false}
+					feeBreakdown={feeBreakdown}
+					pricingConfig={pricing}
+				/>
+			) : null}
 		</ThemedView>
 	);
 }

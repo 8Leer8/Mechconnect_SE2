@@ -11,6 +11,8 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { SkeletonProfile } from '@/components/skeletons/SkeletonLoaders';
+import { useNotification } from '@/hooks/useNotification';
+import { ConfirmationModal } from '@/components/ui/ConfirmationModal';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -36,10 +38,13 @@ interface ShopInfo {
 }
 
 export default function MechanicShopProfileScreen() {
+  const { showNotification } = useNotification();
   const [profileData, setProfileData] = useState<ProfileData | null>(null);
   const [shopInfo, setShopInfo] = useState<ShopInfo>({ shop_id: null, shop_name: null });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [logoutModalVisible, setLogoutModalVisible] = useState(false);
+  const [logoutLoading, setLogoutLoading] = useState(false);
 
   const fetchProfileData = useCallback(async () => {
     try {
@@ -80,16 +85,29 @@ export default function MechanicShopProfileScreen() {
     fetchProfileData();
   };
 
-  const handleLogout = async () => {
+  const handleLogout = () => {
+    setLogoutModalVisible(true);
+  };
+
+  const performLogout = async () => {
+    setLogoutLoading(true);
     try {
-      await fetch(`${API_URL}/users/logout/`, { 
-        method: 'POST', 
-        credentials: 'include' 
+      const response = await fetch(`${API_URL}/users/logout/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
       });
-      router.replace('/(auth)/login');
-    } catch (error) {
-      console.error('Logout error:', error);
-      router.replace('/(auth)/login');
+
+      if (response.ok) {
+        router.replace('/(auth)/login');
+      } else {
+        throw new Error('Logout failed');
+      }
+    } catch (err) {
+      showNotification({ type: 'error', message: err instanceof Error ? err.message : 'Logout failed' });
+    } finally {
+      setLogoutLoading(false);
+      setLogoutModalVisible(false);
     }
   };
 
@@ -223,6 +241,20 @@ export default function MechanicShopProfileScreen() {
 
         <View style={{ height: 32 }} />
       </ScrollView>
+
+        <ConfirmationModal
+          visible={logoutModalVisible}
+          type="danger"
+          title="Logout"
+          message="Are you sure you want to logout?"
+          confirmText="Logout"
+          cancelText="Cancel"
+          loading={logoutLoading}
+          onCancel={() => {
+            if (!logoutLoading) setLogoutModalVisible(false);
+          }}
+          onConfirm={performLogout}
+        />
     </ThemedView>
   );
 }

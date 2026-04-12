@@ -6,6 +6,7 @@ import {
   StyleSheet,
   Animated,
   Dimensions,
+  ActivityIndicator,
 } from 'react-native';
 import { FontAwesome } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
@@ -19,6 +20,7 @@ export interface ConfirmationModalProps {
   message: string;
   confirmText?: string;
   cancelText?: string;
+  loading?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -39,6 +41,7 @@ export function ConfirmationModal({
   message,
   confirmText = 'Confirm',
   cancelText = 'Cancel',
+  loading = false,
   onConfirm,
   onCancel,
 }: ConfirmationModalProps) {
@@ -76,11 +79,20 @@ export function ConfirmationModal({
       visible
       animationType="none"
       statusBarTranslucent
-      onRequestClose={onCancel}
+      onRequestClose={() => {
+        if (!loading) onCancel();
+      }}
     >
       {/* Backdrop */}
       <Animated.View style={[styles.backdrop, { opacity: backdropOpacity }]}>
-        <TouchableOpacity style={StyleSheet.absoluteFill} onPress={onCancel} activeOpacity={1} />
+        <TouchableOpacity
+          style={StyleSheet.absoluteFill}
+          onPress={() => {
+            if (!loading) onCancel();
+          }}
+          activeOpacity={1}
+          disabled={loading}
+        />
       </Animated.View>
 
       {/* Card */}
@@ -109,8 +121,11 @@ export function ConfirmationModal({
           <View style={styles.buttonRow}>
             <TouchableOpacity
               style={styles.cancelButton}
-              onPress={onCancel}
+              onPress={() => {
+                if (!loading) onCancel();
+              }}
               activeOpacity={0.5}
+              disabled={loading}
             >
               <ThemedText style={styles.cancelText}>{cancelText}</ThemedText>
             </TouchableOpacity>
@@ -121,8 +136,13 @@ export function ConfirmationModal({
               style={styles.confirmButton}
               onPress={onConfirm}
               activeOpacity={0.5}
+              disabled={loading}
             >
-              <ThemedText style={[styles.confirmText, { color }]}>{confirmText}</ThemedText>
+              {loading ? (
+                <ActivityIndicator size="small" color={color} />
+              ) : (
+                <ThemedText style={[styles.confirmText, { color }]}>{confirmText}</ThemedText>
+              )}
             </TouchableOpacity>
           </View>
         </Animated.View>

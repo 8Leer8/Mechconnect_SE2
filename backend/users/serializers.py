@@ -494,6 +494,7 @@ class MechanicProfileSerializer(serializers.ModelSerializer):
     shop_id = serializers.IntegerField(source='shop.id', read_only=True, allow_null=True)
     # Expose account id so clients can reference provider Account id
     account_id = serializers.IntegerField(source='account.id', read_only=True)
+    address = AccountAddressSerializer(source='account.accountaddress', read_only=True)
     
     # Specialties
     specialties = serializers.SerializerMethodField()
@@ -514,6 +515,7 @@ class MechanicProfileSerializer(serializers.ModelSerializer):
             'average_rating', 'total_reviews', 'reviews',
             'years_active', 'account_created',
             'is_part_of_shop', 'shop_name', 'shop_id',
+            'address',
             'specialties', 'services',
             'contact_number', 'status'
         ]

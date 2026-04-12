@@ -37,6 +37,15 @@ interface Specialty {
   description: string;
 }
 
+interface Address {
+  street_name?: string | null;
+  subdivision_village?: string | null;
+  barangay?: string | null;
+  city_municipality?: string | null;
+  province?: string | null;
+  region?: string | null;
+}
+
 interface MechanicProfile {
   id: number;
   account_id: number;
@@ -60,14 +69,16 @@ interface MechanicProfile {
   services: Service[];
   contact_number: string | null;
   status: string;
+  address?: Address | null;
 }
 
 export default function MechanicProfileScreen() {
   const router = useRouter();
   const pathname = usePathname();
-  const { mechanicId, id } = useLocalSearchParams<{
+  const { mechanicId, id, distance_km } = useLocalSearchParams<{
     mechanicId?: string;
     id?: string;
+    distance_km?: string;
   }>();
   const resolvedMechanicId = mechanicId || id;
   const isMountedRef = useRef(true);
@@ -156,6 +167,12 @@ export default function MechanicProfileScreen() {
     const profileMechanicId = resolvedMechanicId || (profile ? String(profile.id) : '');
     if (!profileMechanicId || !providerAccountId || !profile) return;
 
+    console.log('Passing mechanic address to direct request:', {
+      barangay: profile.address?.barangay,
+      city_municipality: profile.address?.city_municipality,
+      province: profile.address?.province,
+    });
+
     if (pathname.includes('main_request_form')) {
       router.push({
         pathname: '/client/request/main_request_form/mechanic-profile/_direct-request/[id]',
@@ -164,6 +181,19 @@ export default function MechanicProfileScreen() {
           mechanicId: String(profileMechanicId),
           providerId: String(providerAccountId),
           providerName: profile.full_name,
+          street_name: profile.address?.street_name || undefined,
+          subdivision_village: profile.address?.subdivision_village || undefined,
+          barangay: profile.address?.barangay || undefined,
+          city_municipality: profile.address?.city_municipality || undefined,
+          province: profile.address?.province || undefined,
+          region: profile.address?.region || undefined,
+          providerStreet: profile.address?.street_name || undefined,
+          providerSubdivision: profile.address?.subdivision_village || undefined,
+          providerBarangay: profile.address?.barangay || undefined,
+          providerCity: profile.address?.city_municipality || undefined,
+          providerProvince: profile.address?.province || undefined,
+          providerRegion: profile.address?.region || undefined,
+          distance_km: typeof distance_km === 'string' ? distance_km : undefined,
         },
       });
       return;
@@ -180,6 +210,19 @@ export default function MechanicProfileScreen() {
         mechanicId: String(profileMechanicId),
         providerId: String(providerAccountId),
         providerName: profile.full_name,
+        street_name: profile.address?.street_name || undefined,
+        subdivision_village: profile.address?.subdivision_village || undefined,
+        barangay: profile.address?.barangay || undefined,
+        city_municipality: profile.address?.city_municipality || undefined,
+        province: profile.address?.province || undefined,
+        region: profile.address?.region || undefined,
+        providerStreet: profile.address?.street_name || undefined,
+        providerSubdivision: profile.address?.subdivision_village || undefined,
+        providerBarangay: profile.address?.barangay || undefined,
+        providerCity: profile.address?.city_municipality || undefined,
+        providerProvince: profile.address?.province || undefined,
+        providerRegion: profile.address?.region || undefined,
+        distance_km: typeof distance_km === 'string' ? distance_km : undefined,
       },
     });
   };

@@ -31,6 +31,7 @@ def get_shop_profile(request, shop_id):
         # Get shop owner info
         owner = shop.shop_owner
         owner_account = owner.account
+        owner_address = getattr(owner_account, 'accountaddress', None)
         
         # Get mechanics working at this shop
         shop_mechanics = ShopMechanic.objects.filter(
@@ -104,6 +105,14 @@ def get_shop_profile(request, shop_id):
             'status': shop.status,
             'created_at': shop.created_at.isoformat() if shop.created_at else None,
             'years_active': years_active,
+            'address': {
+                'street_name': owner_address.street_name if owner_address else None,
+                'subdivision_village': owner_address.subdivision_village if owner_address else None,
+                'barangay': owner_address.barangay if owner_address else None,
+                'city_municipality': owner_address.city_municipality if owner_address else None,
+                'province': owner_address.province if owner_address else None,
+                'region': owner_address.region if owner_address else None,
+            },
             
             # Owner info
             'owner': {

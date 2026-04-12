@@ -17,6 +17,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { useNotification } from '@/hooks/useNotification';
 import { SkeletonProfile } from '@/components/skeletons/SkeletonLoaders';
 import { useConfirmation } from '@/hooks/useConfirmation';
+import { ConfirmationModal } from '@/components/ui/ConfirmationModal';
 import { styles as clientProfileStyles } from '@/style/client/profileStyles';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -103,6 +104,8 @@ export default function ShopOwnerProfileScreen() {
   const [editingService, setEditingService] = useState<MyShopService | null>(null);
   const [editPrice, setEditPrice] = useState<string>('');
   const [updatingId, setUpdatingId] = useState<number | null>(null);
+  const [logoutModalVisible, setLogoutModalVisible] = useState(false);
+  const [logoutLoading, setLogoutLoading] = useState(false);
 
   const fetchProfileData = useCallback(async () => {
     try {
@@ -312,18 +315,12 @@ export default function ShopOwnerProfileScreen() {
     router.push('/(auth)/switchAccount/switchPage');
   };
 
-  const handleLogout = async () => {
-    const ok = await confirm({
-      type: 'danger',
-      title: 'Logout',
-      message: 'Are you sure you want to logout?',
-      confirmText: 'Logout',
-      cancelText: 'Cancel',
-    });
-    if (ok) performLogout();
+  const handleLogout = () => {
+    setLogoutModalVisible(true);
   };
 
   const performLogout = async () => {
+    setLogoutLoading(true);
     try {
       const response = await fetch(`${API_URL}/users/logout/`, {
         method: 'POST',
@@ -338,6 +335,9 @@ export default function ShopOwnerProfileScreen() {
       }
     } catch (err) {
       showNotification({ type: 'error', message: err instanceof Error ? err.message : 'Logout failed' });
+    } finally {
+      setLogoutLoading(false);
+      setLogoutModalVisible(false);
     }
   };
 
@@ -694,6 +694,20 @@ export default function ShopOwnerProfileScreen() {
           </View>
         </View>
       </Modal>
+
+      <ConfirmationModal
+        visible={logoutModalVisible}
+        type="danger"
+        title="Logout"
+        message="Are you sure you want to logout?"
+        confirmText="Logout"
+        cancelText="Cancel"
+        loading={logoutLoading}
+        onCancel={() => {
+          if (!logoutLoading) setLogoutModalVisible(false);
+        }}
+        onConfirm={performLogout}
+      />
     </ThemedView>
   );
 }

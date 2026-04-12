@@ -55,6 +55,14 @@ interface ShopProfile {
   status: string;
   created_at: string;
   years_active: number;
+  address?: {
+    street_name?: string | null;
+    subdivision_village?: string | null;
+    barangay?: string | null;
+    city_municipality?: string | null;
+    province?: string | null;
+    region?: string | null;
+  };
   owner: Owner;
   average_rating: number;
   total_mechanics: number;
@@ -66,9 +74,10 @@ interface ShopProfile {
 export default function ShopProfileScreen() {
   const router = useRouter();
   const pathname = usePathname();
-  const { shopId, id } = useLocalSearchParams<{
+  const { shopId, id, distance_km } = useLocalSearchParams<{
     shopId?: string;
     id?: string;
+    distance_km?: string;
   }>();
   const resolvedShopId = shopId || id;
   const isMountedRef = useRef(true);
@@ -165,6 +174,12 @@ export default function ShopProfileScreen() {
 
     const profileShopId = resolvedShopId || String(profile.id);
 
+    console.log('Passing shop address to direct request:', {
+      barangay: profile.address?.barangay,
+      city_municipality: profile.address?.city_municipality,
+      province: profile.address?.province,
+    });
+
     if (pathname.includes('main_request_form')) {
       router.push({
         pathname: '/client/request/main_request_form/shop-profile/_direct-request/[id]',
@@ -173,6 +188,19 @@ export default function ShopProfileScreen() {
           shopId: String(profile.id),
           providerId: String(profile.owner.account_id),
           providerName: profile.shop_name,
+          street_name: profile.address?.street_name || undefined,
+          subdivision_village: profile.address?.subdivision_village || undefined,
+          barangay: profile.address?.barangay || undefined,
+          city_municipality: profile.address?.city_municipality || undefined,
+          province: profile.address?.province || undefined,
+          region: profile.address?.region || undefined,
+          providerStreet: profile.address?.street_name || undefined,
+          providerSubdivision: profile.address?.subdivision_village || undefined,
+          providerBarangay: profile.address?.barangay || undefined,
+          providerCity: profile.address?.city_municipality || undefined,
+          providerProvince: profile.address?.province || undefined,
+          providerRegion: profile.address?.region || undefined,
+          distance_km: typeof distance_km === 'string' ? distance_km : undefined,
         },
       });
       return;
@@ -189,6 +217,19 @@ export default function ShopProfileScreen() {
         shopId: String(profile.id),
         providerId: String(profile.owner.account_id),
         providerName: profile.shop_name,
+        street_name: profile.address?.street_name || undefined,
+        subdivision_village: profile.address?.subdivision_village || undefined,
+        barangay: profile.address?.barangay || undefined,
+        city_municipality: profile.address?.city_municipality || undefined,
+        province: profile.address?.province || undefined,
+        region: profile.address?.region || undefined,
+        providerStreet: profile.address?.street_name || undefined,
+        providerSubdivision: profile.address?.subdivision_village || undefined,
+        providerBarangay: profile.address?.barangay || undefined,
+        providerCity: profile.address?.city_municipality || undefined,
+        providerProvince: profile.address?.province || undefined,
+        providerRegion: profile.address?.region || undefined,
+        distance_km: typeof distance_km === 'string' ? distance_km : undefined,
       },
     });
   };

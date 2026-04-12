@@ -7,7 +7,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/client/profileStyles';
 import { getImageUrl } from '@/lib/imageUtils';
 import { useNotification } from '@/hooks/useNotification';
-import { useConfirmation } from '@/hooks/useConfirmation';
+import { ConfirmationModal } from '@/components/ui/ConfirmationModal';
 import { SkeletonProfile } from '@/components/skeletons/SkeletonLoaders';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -59,12 +59,13 @@ interface ActiveRoleResponse {
 
 export default function ProfileScreen() {
   const { showNotification } = useNotification();
-  const { confirm } = useConfirmation();
   const [profileData, setProfileData] = useState<ProfileData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeRole, setActiveRole] = useState<string>('client');
+  const [logoutModalVisible, setLogoutModalVisible] = useState(false);
+  const [logoutLoading, setLogoutLoading] = useState(false);
 
   const fetchProfileData = useCallback(async () => {
     try {
@@ -119,18 +120,12 @@ export default function ProfileScreen() {
     router.push('/(auth)/switchAccount/switchPage');
   };
 
-  const handleLogout = async () => {
-    const ok = await confirm({
-      type: 'danger',
-      title: 'Logout',
-      message: 'Are you sure you want to logout?',
-      confirmText: 'Logout',
-      cancelText: 'Cancel',
-    });
-    if (ok) performLogout();
+  const handleLogout = () => {
+    setLogoutModalVisible(true);
   };
 
   const performLogout = async () => {
+    setLogoutLoading(true);
     try {
       const response = await fetch(`${API_URL}/users/logout/`, {
         method: 'POST',
@@ -145,6 +140,9 @@ export default function ProfileScreen() {
       }
     } catch (err) {
       showNotification({ type: 'error', message: err instanceof Error ? err.message : 'Logout failed' });
+    } finally {
+      setLogoutLoading(false);
+      setLogoutModalVisible(false);
     }
   };
 
@@ -323,6 +321,20 @@ export default function ProfileScreen() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      <ConfirmationModal
+        visible={logoutModalVisible}
+        type="danger"
+        title="Logout"
+        message="Are you sure you want to logout?"
+        confirmText="Logout"
+        cancelText="Cancel"
+        loading={logoutLoading}
+        onCancel={() => {
+          if (!logoutLoading) setLogoutModalVisible(false);
+        }}
+        onConfirm={performLogout}
+      />
     </ThemedView>
   );
 }

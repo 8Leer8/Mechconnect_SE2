@@ -10,6 +10,9 @@ import { useLocation } from './LocationContext';
 import { styles } from '@/style/client/broadcastRequestStyles';
 import { useNotification } from '@/hooks/useNotification';
 import VehicleTypeModal from '@/components/VehicleTypeModal';
+import PriceSummarySheet from '@/components/PriceSummarySheet';
+import { usePricing } from '@/hooks/usePricing';
+import { calculateBroadcastFee, FeeBreakdown } from '@/utils/trafficutils';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -54,31 +57,10 @@ interface NearbyProvidersResponse {
   count: number;
 }
 
-interface PricingConfig {
-  base_distance_fee: number;
-  price_per_km: number;
-  free_distance_km: number;
-  traffic_low_multiplier: number;
-  traffic_medium_multiplier: number;
-  traffic_high_multiplier: number;
-  convenience_fee_percentage: number;
-  convenience_fee_fixed: number;
-}
-
-const DEFAULT_PRICING_CONFIG: PricingConfig = {
-  base_distance_fee: 50,
-  price_per_km: 15,
-  free_distance_km: 2,
-  traffic_low_multiplier: 1,
-  traffic_medium_multiplier: 1.25,
-  traffic_high_multiplier: 1.5,
-  convenience_fee_percentage: 5,
-  convenience_fee_fixed: 0,
-};
-
 export default function MainRequestFormScreen() {
   const { showNotification } = useNotification();
   const { selectedLocation, setSelectedLocation } = useLocation();
+  const { pricing, loading: pricingLoading } = usePricing();
 
   // Mode state
   const [isCustomMode, setIsCustomMode] = useState(false);
@@ -107,45 +89,11 @@ export default function MainRequestFormScreen() {
   const [landmark, setLandmark] = useState('');
   const [latitude, setLatitude] = useState<number | null>(null);
   const [longitude, setLongitude] = useState<number | null>(null);
-  const [pricingConfig, setPricingConfig] = useState<PricingConfig>(DEFAULT_PRICING_CONFIG);
   const [nearbyProviders, setNearbyProviders] = useState<NearbyProvider[]>([]);
   const [loadingNearby, setLoadingNearby] = useState(false);
   const [showNearbySection, setShowNearbySection] = useState(false);
-
-  useEffect(() => {
-    let isMounted = true;
-    const fetchPricingConfig = async () => {
-      try {
-        const response = await fetch(`${API_URL}/pricing/config/`, {
-          method: 'GET',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        });
-        if (!response.ok) return;
-
-        const data = await response.json() as Partial<PricingConfig>;
-        if (!isMounted) return;
-
-        setPricingConfig({
-          base_distance_fee: Number(data.base_distance_fee ?? DEFAULT_PRICING_CONFIG.base_distance_fee),
-          price_per_km: Number(data.price_per_km ?? DEFAULT_PRICING_CONFIG.price_per_km),
-          free_distance_km: Number(data.free_distance_km ?? DEFAULT_PRICING_CONFIG.free_distance_km),
-          traffic_low_multiplier: Number(data.traffic_low_multiplier ?? DEFAULT_PRICING_CONFIG.traffic_low_multiplier),
-          traffic_medium_multiplier: Number(data.traffic_medium_multiplier ?? DEFAULT_PRICING_CONFIG.traffic_medium_multiplier),
-          traffic_high_multiplier: Number(data.traffic_high_multiplier ?? DEFAULT_PRICING_CONFIG.traffic_high_multiplier),
-          convenience_fee_percentage: Number(data.convenience_fee_percentage ?? DEFAULT_PRICING_CONFIG.convenience_fee_percentage),
-          convenience_fee_fixed: Number(data.convenience_fee_fixed ?? DEFAULT_PRICING_CONFIG.convenience_fee_fixed),
-        });
-      } catch {
-        // Keep defaults when config endpoint is unavailable.
-      }
-    };
-
-    fetchPricingConfig();
-    return () => {
-      isMounted = false;
-    };
-  }, []);
+  const [showSummary, setShowSummary] = useState(false);
+  const [feeBreakdown, setFeeBreakdown] = useState<FeeBreakdown | null>(null);
 
   // ─── Fetch Services (only for Broadcast mode) ─────────────
   useEffect(() => {
@@ -449,25 +397,38 @@ export default function MainRequestFormScreen() {
   );
 
   // ─── Submit Broadcast Request ──────────────────────────────
-  const sendBroadcastRequest = async () => {
+  const validateBroadcastForm = () => {
     if (selectedServiceIds.length === 0) {
       showNotification({ type: 'error', message: 'Please select at least one service' });
-      return;
+      return false;
     }
     if (!description.trim()) {
       showNotification({ type: 'error', message: 'Please provide a description' });
-      return;
+      return false;
     }
     if (!selectedAddress) {
       showNotification({ type: 'error', message: 'Please select a location from the map' });
-      return;
+      return false;
     }
     if (!latitude || !longitude) {
       showNotification({ type: 'error', message: 'Please select a location from the map' });
-      return;
+      return false;
     }
     if (!vehicleType || !vehicleBrand || !vehicleModel) {
       showNotification({ type: 'error', message: 'Please select your vehicle type, brand, and model' });
+      return false;
+    }
+
+    return true;
+  };
+
+  const sendBroadcastRequest = async () => {
+    if (!validateBroadcastForm()) return;
+
+    const latValue = latitude;
+    const lngValue = longitude;
+    if (latValue === null || lngValue === null) {
+      showNotification({ type: 'error', message: 'Please select a location from the map' });
       return;
     }
 
@@ -481,8 +442,8 @@ export default function MainRequestFormScreen() {
       formData.append('vehicle_type', vehicleType);
       formData.append('vehicle_brand', vehicleBrand);
       formData.append('vehicle_model', vehicleModel);
-      formData.append('latitude', latitude.toString());
-      formData.append('longitude', longitude.toString());
+      formData.append('latitude', latValue.toString());
+      formData.append('longitude', lngValue.toString());
       formData.append('service_location', JSON.stringify({
         street_name: streetName,
         barangay,
@@ -576,11 +537,24 @@ export default function MainRequestFormScreen() {
   };
 
   // ─── Handle Submit ─────────────────────────────────────────
+  const handleBroadcastSummary = () => {
+    if (!validateBroadcastForm()) return;
+    if (!pricing || pricingLoading) {
+      showNotification({ type: 'warning', message: 'Pricing configuration is still loading. Please try again.' });
+      return;
+    }
+
+    const medianDistance = Math.max(0, searchRadiusKm / 2);
+    const breakdown = calculateBroadcastFee(medianDistance);
+    setFeeBreakdown(breakdown);
+    setShowSummary(true);
+  };
+
   const handleSubmit = async () => {
     if (isCustomMode) {
       await sendCustomRequest();
     } else {
-      await sendBroadcastRequest();
+      handleBroadcastSummary();
     }
   };
 
@@ -659,7 +633,7 @@ export default function MainRequestFormScreen() {
             {selectedServiceIds.length > 0 && (
               <View style={styles.priceBreakdown}>
                 <ThemedText style={styles.priceNote}>
-                  + Distance pricing: ₱{pricingConfig.base_distance_fee.toFixed(2)} base + ₱{pricingConfig.price_per_km.toFixed(2)}/km after {pricingConfig.free_distance_km.toFixed(2)} km free distance. Traffic and convenience fees apply.
+                  + Distance pricing: ₱{(pricing?.base_distance_fee ?? 0).toFixed(2)} base + ₱{(pricing?.price_per_km ?? 0).toFixed(2)}/km after {(pricing?.free_distance_km ?? 0).toFixed(2)} km free distance. Traffic and convenience fees apply.
                 </ThemedText>
               </View>
             )}
@@ -773,6 +747,31 @@ export default function MainRequestFormScreen() {
           </TouchableOpacity>
         </View>
       </ScrollView>
+
+      {showSummary && feeBreakdown && pricing ? (
+        <PriceSummarySheet
+          visible={showSummary}
+          onClose={() => setShowSummary(false)}
+          onConfirm={async () => {
+            setShowSummary(false);
+            await sendBroadcastRequest();
+          }}
+          confirming={loading}
+          serviceType={services
+            .filter((s) => selectedServiceIds.includes(s.id))
+            .map((s) => `${s.name} (₱${s.minimum_price.toFixed(2)})`)
+            .join(', ')}
+          serviceAmount={services
+            .filter((s) => selectedServiceIds.includes(s.id))
+            .reduce((sum, s) => sum + s.minimum_price, 0)}
+          vehicleModel={vehicleModel}
+          description={description}
+          locationAddress={selectedAddress}
+          radiusKm={searchRadiusKm}
+          feeBreakdown={feeBreakdown}
+          pricingConfig={pricing}
+        />
+      ) : null}
     </ThemedView>
   );
 }
