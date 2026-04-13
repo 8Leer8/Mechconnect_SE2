@@ -17,6 +17,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { useNotification } from '@/hooks/useNotification';
+import VehicleTypeModal from '@/components/VehicleTypeModal';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const { height } = Dimensions.get('window');
@@ -38,6 +39,37 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
     address?: string;
   } | null>(null);
   const [fetchingLocation, setFetchingLocation] = useState(false);
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
+  const [vehicleType, setVehicleType] = useState('');
+  const [vehicleBrand, setVehicleBrand] = useState('');
+  const [vehicleModel, setVehicleModel] = useState('');
+
+  const formatCooldown = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const fetchEmergencyCooldown = async () => {
+    try {
+      const response = await fetch(`${API_URL}/bookings/requests/emergency/cooldown/`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (!response.ok) return;
+
+      const data = await response.json() as {
+        can_request?: boolean;
+        remaining_seconds?: number;
+      };
+
+      setCooldownSeconds(data.can_request ? 0 : (data.remaining_seconds || 0));
+    } catch (_error) {
+      // Non-blocking for modal experience; backend will still enforce cooldown on submit.
+    }
+  };
 
   useEffect(() => {
     if (visible) {
@@ -45,10 +77,22 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
       setDescription('');
       setConcernPicture(null);
       setLocation(null);
+      setVehicleType('');
+      setVehicleBrand('');
+      setVehicleModel('');
       // Automatically get location when modal opens
       getCurrentLocation();
+      fetchEmergencyCooldown();
     }
   }, [visible]);
+
+  useEffect(() => {
+    if (cooldownSeconds <= 0) return;
+    const timer = setInterval(() => {
+      setCooldownSeconds((prev) => (prev <= 1 ? 0 : prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [cooldownSeconds]);
 
   const getCurrentLocation = async () => {
     try {
@@ -109,8 +153,22 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
   };
 
   const handleSubmit = async () => {
+    if (cooldownSeconds > 0) {
+      showNotification({
+        type: 'warning',
+        title: 'Emergency Cooldown Active',
+        message: `Please wait ${formatCooldown(cooldownSeconds)} before sending another emergency request.`,
+      });
+      return;
+    }
+
     if (!location) {
       showNotification({ type: 'error', message: 'Location is required for emergency requests. Please enable location services.' });
+      return;
+    }
+
+    if (!vehicleType || !vehicleBrand || !vehicleModel) {
+      showNotification({ type: 'error', message: 'Please select your vehicle type, brand, and model.' });
       return;
     }
 
@@ -132,6 +190,9 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
         longitude: location.longitude,
       };
       formData.append('service_location', JSON.stringify(serviceLocationData));
+      formData.append('vehicle_type', vehicleType);
+      formData.append('vehicle_brand', vehicleBrand);
+      formData.append('vehicle_model', vehicleModel);
 
       // Add picture (optional)
       if (concernPicture) {
@@ -154,10 +215,15 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
       const data = await response.json();
 
       if (response.ok) {
+        setCooldownSeconds(5 * 60);
         showNotification({ type: 'success', title: 'Emergency Request Sent', message: 'Your emergency request has been sent to nearby mechanics. Help is on the way!' });
         onClose();
         onSuccess?.();
       } else {
+        const dataAny = data as any;
+        if (response.status === 429 && typeof dataAny?.remaining_seconds === 'number') {
+          setCooldownSeconds(dataAny.remaining_seconds);
+        }
         showNotification({ type: 'error', message: (data as any).error || 'Failed to send emergency request' });
       }
     } catch (error) {
@@ -195,6 +261,16 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
             <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
               <View style={styles.modalContent}>
             {/* Location Status */}
+            {cooldownSeconds > 0 && (
+              <View style={styles.cooldownCard}>
+                <FontAwesome name="clock-o" size={18} color="#FF3B30" />
+                <View style={styles.statusInfo}>
+                  <ThemedText style={styles.cooldownLabel}>Emergency Cooldown</ThemedText>
+                  <ThemedText style={styles.cooldownValue}>You can send another SOS in {formatCooldown(cooldownSeconds)}</ThemedText>
+                </View>
+              </View>
+            )}
+
             {fetchingLocation ? (
               <View style={styles.statusCard}>
                 <ActivityIndicator size="small" color="#FF3B30" />
@@ -239,6 +315,22 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
                 value={description}
                 onChangeText={setDescription}
                 editable={!loading}
+              />
+            </View>
+
+            <View style={styles.inputSection}>
+              <View style={styles.sectionHeader}>
+                <FontAwesome name="car" size={14} color="#8E8E93" />
+                <ThemedText style={styles.sectionTitle}>Vehicle Information *</ThemedText>
+              </View>
+              <VehicleTypeModal
+                vehicleType={vehicleType}
+                vehicleBrand={vehicleBrand}
+                vehicleModel={vehicleModel}
+                onVehicleTypeChange={setVehicleType}
+                onVehicleBrandChange={setVehicleBrand}
+                onVehicleModelChange={setVehicleModel}
+                disabled={loading}
               />
             </View>
 
@@ -290,9 +382,9 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
               <ThemedText style={styles.cancelBtnText}>Cancel</ThemedText>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.sendBtn, (!location || loading) && styles.sendBtnDisabled]}
+              style={[styles.sendBtn, (!location || loading || cooldownSeconds > 0) && styles.sendBtnDisabled]}
               onPress={handleSubmit}
-              disabled={!location || loading}
+              disabled={!location || loading || cooldownSeconds > 0}
             >
               {loading ? (
                 <ActivityIndicator size="small" color="#FFFFFF" />
@@ -360,6 +452,27 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 16,
   },
+  cooldownCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    backgroundColor: '#FF3B3015',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#FF3B3040',
+  },
+  cooldownLabel: {
+    fontSize: 12,
+    color: '#FF3B30',
+    marginBottom: 4,
+    fontWeight: '600',
+  },
+  cooldownValue: {
+    fontSize: 14,
+    color: '#FFB3AE',
+  },
   statusInfo: {
     flex: 1,
   },
@@ -411,6 +524,17 @@ const styles = StyleSheet.create({
     color: '#ECEDEE',
     minHeight: 90,
     textAlignVertical: 'top',
+  },
+  pickerContainer: {
+    backgroundColor: '#2C2C2E',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#3A3A3C',
+    overflow: 'hidden',
+  },
+  picker: {
+    color: '#ECEDEE',
+    backgroundColor: 'transparent',
   },
   imagePreviewContainer: {
     position: 'relative',

@@ -8,6 +8,7 @@ import {
   Modal,
 } from 'react-native';
 import { router } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -268,6 +269,15 @@ export default function SwitchRolePage() {
       }
 
       const data = await response.json() as SwitchRoleResponse;
+
+      try {
+        await AsyncStorage.multiSet([
+          ['user_role', newRole],
+          ['last_active_role', newRole],
+        ]);
+      } catch {
+        // Non-fatal cache write issue.
+      }
       
       // For mechanic role, check if they're working for a shop
       let mechanicRoute = '/(mechanicTabs)/main/home';

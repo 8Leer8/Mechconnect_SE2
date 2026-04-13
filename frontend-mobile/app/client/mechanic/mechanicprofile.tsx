@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import {View, ScrollView, TouchableOpacity, RefreshControl, } from 'react-native';
+import React, { useRef, useState, useEffect } from 'react';
+import {View, ScrollView, TouchableOpacity, RefreshControl, BackHandler } from 'react-native';
 import { Image } from 'expo-image';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, usePathname, useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -36,6 +37,15 @@ interface Specialty {
   description: string;
 }
 
+interface Address {
+  street_name?: string | null;
+  subdivision_village?: string | null;
+  barangay?: string | null;
+  city_municipality?: string | null;
+  province?: string | null;
+  region?: string | null;
+}
+
 interface MechanicProfile {
   id: number;
   account_id: number;
@@ -59,22 +69,36 @@ interface MechanicProfile {
   services: Service[];
   contact_number: string | null;
   status: string;
+  address?: Address | null;
 }
 
 export default function MechanicProfileScreen() {
   const router = useRouter();
-  const { mechanicId } = useLocalSearchParams<{ mechanicId: string }>();
+  const pathname = usePathname();
+  const { mechanicId, id, distance_km } = useLocalSearchParams<{
+    mechanicId?: string;
+    id?: string;
+    distance_km?: string;
+  }>();
+  const resolvedMechanicId = mechanicId || id;
+  const isMountedRef = useRef(true);
   const [profile, setProfile] = useState<MechanicProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   const fetchMechanicProfile = async (silent = false) => {
     try {
-      if (!silent) setLoading(true);
-      setError(null);
+      if (!silent && isMountedRef.current) setLoading(true);
+      if (isMountedRef.current) setError(null);
 
-      const response = await fetch(`${API_URL}/users/mechanics/${mechanicId}/profile/`, {
+      const response = await fetch(`${API_URL}/users/mechanics/${resolvedMechanicId}/profile/`, {
         method: 'GET',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -83,18 +107,24 @@ export default function MechanicProfileScreen() {
       if (!response.ok) throw new Error('Failed to fetch mechanic profile');
 
       const data = await response.json() as { mechanic: MechanicProfile };
-      setProfile(data.mechanic);
+      if (isMountedRef.current) {
+        setProfile(data.mechanic);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      if (isMountedRef.current) {
+        setError(err instanceof Error ? err.message : 'An error occurred');
+      }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   };
 
   useEffect(() => {
-    if (mechanicId) fetchMechanicProfile();
-  }, [mechanicId]);
+    if (resolvedMechanicId) fetchMechanicProfile();
+  }, [resolvedMechanicId]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -122,6 +152,92 @@ export default function MechanicProfileScreen() {
     }
   };
 
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace('/(clientTabs)/main/discover');
+  };
+
+  const showDirectRequest = !pathname.includes('/client/booking');
+
+  const handleDirectRequest = () => {
+    const providerAccountId = profile?.account_id || profile?.id;
+    const profileMechanicId = resolvedMechanicId || (profile ? String(profile.id) : '');
+    if (!profileMechanicId || !providerAccountId || !profile) return;
+
+    console.log('Passing mechanic address to direct request:', {
+      barangay: profile.address?.barangay,
+      city_municipality: profile.address?.city_municipality,
+      province: profile.address?.province,
+    });
+
+    if (pathname.includes('main_request_form')) {
+      router.push({
+        pathname: '/client/request/main_request_form/mechanic-profile/_direct-request/[id]',
+        params: {
+          id: String(profileMechanicId),
+          mechanicId: String(profileMechanicId),
+          providerId: String(providerAccountId),
+          providerName: profile.full_name,
+          street_name: profile.address?.street_name || undefined,
+          subdivision_village: profile.address?.subdivision_village || undefined,
+          barangay: profile.address?.barangay || undefined,
+          city_municipality: profile.address?.city_municipality || undefined,
+          province: profile.address?.province || undefined,
+          region: profile.address?.region || undefined,
+          providerStreet: profile.address?.street_name || undefined,
+          providerSubdivision: profile.address?.subdivision_village || undefined,
+          providerBarangay: profile.address?.barangay || undefined,
+          providerCity: profile.address?.city_municipality || undefined,
+          providerProvince: profile.address?.province || undefined,
+          providerRegion: profile.address?.region || undefined,
+          distance_km: typeof distance_km === 'string' ? distance_km : undefined,
+        },
+      });
+      return;
+    }
+
+    if (pathname.includes('/client/booking')) {
+      return;
+    }
+
+    router.push({
+      pathname: '/client/mechanic/_direct-request/[id]',
+      params: {
+        id: String(profileMechanicId),
+        mechanicId: String(profileMechanicId),
+        providerId: String(providerAccountId),
+        providerName: profile.full_name,
+        street_name: profile.address?.street_name || undefined,
+        subdivision_village: profile.address?.subdivision_village || undefined,
+        barangay: profile.address?.barangay || undefined,
+        city_municipality: profile.address?.city_municipality || undefined,
+        province: profile.address?.province || undefined,
+        region: profile.address?.region || undefined,
+        providerStreet: profile.address?.street_name || undefined,
+        providerSubdivision: profile.address?.subdivision_village || undefined,
+        providerBarangay: profile.address?.barangay || undefined,
+        providerCity: profile.address?.city_municipality || undefined,
+        providerProvince: profile.address?.province || undefined,
+        providerRegion: profile.address?.region || undefined,
+        distance_km: typeof distance_km === 'string' ? distance_km : undefined,
+      },
+    });
+  };
+
+  useFocusEffect(
+    React.useCallback(() => {
+      const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+        handleBack();
+        return true;
+      });
+
+      return () => subscription.remove();
+    }, [router])
+  );
+
   if (loading) {
     return (
       <ThemedView style={styles.container}>
@@ -138,7 +254,7 @@ export default function MechanicProfileScreen() {
         <View style={styles.errorContainer}>
           <FontAwesome name="exclamation-circle" size={48} color="#FF3B30" />
           <ThemedText style={styles.errorText}>{error || 'Profile not found'}</ThemedText>
-          <TouchableOpacity style={styles.retryBtn} onPress={() => router.back()}>
+          <TouchableOpacity style={styles.retryBtn} onPress={handleBack}>
             <ThemedText style={styles.retryBtnText}>Go Back</ThemedText>
           </TouchableOpacity>
         </View>
@@ -152,7 +268,7 @@ export default function MechanicProfileScreen() {
     <ThemedView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+        <TouchableOpacity onPress={handleBack} style={styles.backBtn}>
           <FontAwesome name="chevron-left" size={18} color="#FF8C00" />
         </TouchableOpacity>
         <ThemedText style={styles.headerTitle}>Mechanic Profile</ThemedText>
@@ -225,20 +341,16 @@ export default function MechanicProfileScreen() {
           </View>
 
           {/* Direct Request Button */}
-          <TouchableOpacity
-            style={styles.directRequestBtn}
-            activeOpacity={0.7}
-            onPress={() => {
-              const providerAccountId = profile.account_id || profile.id;
-              router.push({
-                pathname: '/client/request/direct/mechanicdirectrequest',
-                params: { mechanicId: String(providerAccountId) },
-              });
-            }}
-          >
-            <FontAwesome name="paper-plane" size={16} color="#fff" />
-            <ThemedText style={styles.directRequestText}>Send Direct Request</ThemedText>
-          </TouchableOpacity>
+          {showDirectRequest && (
+            <TouchableOpacity
+              style={styles.directRequestBtn}
+              activeOpacity={0.7}
+              onPress={handleDirectRequest}
+            >
+              <FontAwesome name="paper-plane" size={16} color="#fff" />
+              <ThemedText style={styles.directRequestText}>Send Direct Request</ThemedText>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Info Section */}

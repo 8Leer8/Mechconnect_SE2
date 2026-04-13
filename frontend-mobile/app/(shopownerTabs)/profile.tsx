@@ -17,6 +17,9 @@ import { FontAwesome } from '@expo/vector-icons';
 import { useNotification } from '@/hooks/useNotification';
 import { SkeletonProfile } from '@/components/skeletons/SkeletonLoaders';
 import { useConfirmation } from '@/hooks/useConfirmation';
+import { ConfirmationModal } from '@/components/ui/ConfirmationModal';
+import { styles as clientProfileStyles } from '@/style/client/profileStyles';
+import { ShopProductsPanel } from '@/components/shopowner/ShopProductsPanel';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -102,6 +105,9 @@ export default function ShopOwnerProfileScreen() {
   const [editingService, setEditingService] = useState<MyShopService | null>(null);
   const [editPrice, setEditPrice] = useState<string>('');
   const [updatingId, setUpdatingId] = useState<number | null>(null);
+  const [logoutModalVisible, setLogoutModalVisible] = useState(false);
+  const [logoutLoading, setLogoutLoading] = useState(false);
+  const [shopProductsModalVisible, setShopProductsModalVisible] = useState(false);
 
   const fetchProfileData = useCallback(async () => {
     try {
@@ -311,18 +317,12 @@ export default function ShopOwnerProfileScreen() {
     router.push('/(auth)/switchAccount/switchPage');
   };
 
-  const handleLogout = async () => {
-    const ok = await confirm({
-      type: 'danger',
-      title: 'Logout',
-      message: 'Are you sure you want to logout?',
-      confirmText: 'Logout',
-      cancelText: 'Cancel',
-    });
-    if (ok) performLogout();
+  const handleLogout = () => {
+    setLogoutModalVisible(true);
   };
 
   const performLogout = async () => {
+    setLogoutLoading(true);
     try {
       const response = await fetch(`${API_URL}/users/logout/`, {
         method: 'POST',
@@ -337,6 +337,9 @@ export default function ShopOwnerProfileScreen() {
       }
     } catch (err) {
       showNotification({ type: 'error', message: err instanceof Error ? err.message : 'Logout failed' });
+    } finally {
+      setLogoutLoading(false);
+      setLogoutModalVisible(false);
     }
   };
 
@@ -373,12 +376,14 @@ export default function ShopOwnerProfileScreen() {
 
   if (loading) {
     return (
-      <ThemedView style={styles.container}>
-        <View style={styles.header}>
-          <ThemedText style={styles.headerTitle}>Profile</ThemedText>
-          <ThemedText style={styles.headerSubtitle}>Manage your shop owner account</ThemedText>
+      <ThemedView style={clientProfileStyles.container}>
+        <View style={clientProfileStyles.header}>
+          <ThemedText style={clientProfileStyles.headerTitle}>Profile</ThemedText>
         </View>
-        <ScrollView contentContainerStyle={{ padding: 16 }}>
+        <ScrollView
+          style={clientProfileStyles.scrollView}
+          contentContainerStyle={clientProfileStyles.scrollContent}
+        >
           <SkeletonProfile />
         </ScrollView>
       </ThemedView>
@@ -387,17 +392,16 @@ export default function ShopOwnerProfileScreen() {
 
   if (error || !profileData) {
     return (
-      <ThemedView style={styles.container}>
-        <View style={styles.header}>
-          <ThemedText style={styles.headerTitle}>Profile</ThemedText>
-          <ThemedText style={styles.headerSubtitle}>Manage your shop owner account</ThemedText>
+      <ThemedView style={clientProfileStyles.container}>
+        <View style={clientProfileStyles.header}>
+          <ThemedText style={clientProfileStyles.headerTitle}>Profile</ThemedText>
         </View>
-        <View style={styles.errorContainer}>
+        <View style={clientProfileStyles.errorContainer}>
           <FontAwesome name="exclamation-circle" size={48} color="#FF3B30" />
-          <ThemedText style={styles.errorText}>{error || 'Failed to load profile'}</ThemedText>
+          <ThemedText style={clientProfileStyles.errorText}>{error || 'Failed to load profile'}</ThemedText>
           {error === 'Please login to view your profile' ? (
             <TouchableOpacity
-              style={styles.actionButton}
+              style={clientProfileStyles.retryBtn}
               onPress={() => router.replace('/(auth)/login')}
               activeOpacity={0.8}
             >
@@ -418,177 +422,167 @@ export default function ShopOwnerProfileScreen() {
   }
 
   const currentProfile = getCurrentProfile();
+  const currentRoleLabel =
+    profileData.available_roles.find((r) => r.value === activeRole)?.label || 'Shop Owner';
 
   return (
-    <ThemedView style={styles.container}>
+    <ThemedView style={clientProfileStyles.container}>
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF9500" />
-        }
+        style={clientProfileStyles.scrollView}
+        contentContainerStyle={clientProfileStyles.scrollContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF8C00" />
+        }
       >
-        {/* Header */}
-        <View style={styles.header}>
-          <ThemedText style={styles.headerTitle}>Profile</ThemedText>
-          <ThemedText style={styles.headerSubtitle}>Shop Owner</ThemedText>
-        </View>
+        {/* Profile Card copied from client profile, with shop-owner data */}
+        <View style={clientProfileStyles.profileCard}>
+          {currentProfile?.profile_photo ? (
+            <Image source={{ uri: currentProfile.profile_photo }} style={clientProfileStyles.profilePhoto} />
+          ) : (
+            <View style={clientProfileStyles.profilePhotoPlaceholder}>
+              <FontAwesome name="user" size={36} color="#FF8C00" />
+            </View>
+          )}
 
-        {/* Top Card */}
-        <View style={styles.topCard}>
-          <View style={styles.avatarWrapper}>
-            {currentProfile?.profile_photo ? (
-              <Image source={{ uri: currentProfile.profile_photo }} style={styles.avatar} />
-            ) : (
-              <View style={styles.avatarPlaceholder}>
-                <FontAwesome name="user" size={32} color="#999" />
+          <ThemedText style={clientProfileStyles.userName}>
+            {profileData.full_name || `${profileData.firstname} ${profileData.lastname}`}
+          </ThemedText>
+          <ThemedText style={clientProfileStyles.userEmail}>{profileData.email}</ThemedText>
+
+          {/* Info chips */}
+          <View style={clientProfileStyles.infoChips}>
+            {currentProfile?.contact_number && (
+              <View style={clientProfileStyles.chip}>
+                <FontAwesome name="phone" size={12} color="#FF8C00" />
+                <ThemedText style={clientProfileStyles.chipText}>
+                  {currentProfile.contact_number}
+                </ThemedText>
               </View>
             )}
+            <View style={clientProfileStyles.chip}>
+              <FontAwesome name="id-badge" size={12} color="#FF8C00" />
+              <ThemedText style={clientProfileStyles.chipText}>{currentRoleLabel}</ThemedText>
+            </View>
             {profileData.is_verified && (
-              <View style={styles.verifiedBadge}>
-                <FontAwesome name="check" size={10} color="#fff" />
+              <View style={[clientProfileStyles.chip, { backgroundColor: '#34C75915' }]}>
+                <FontAwesome name="check-circle" size={12} color="#34C759" />
+                <ThemedText style={[clientProfileStyles.chipText, { color: '#34C759' }]}>
+                  Verified
+                </ThemedText>
               </View>
             )}
           </View>
-          <View style={styles.topCardText}>
-            <ThemedText style={styles.name}>{profileData.full_name || `${profileData.firstname} ${profileData.lastname}`}</ThemedText>
-            <ThemedText style={styles.username}>@{profileData.username}</ThemedText>
-            <ThemedText style={styles.email}>{profileData.email}</ThemedText>
-            <View style={styles.rolePill}>
-              <FontAwesome name="briefcase" size={12} color="#FF9500" />
-              <ThemedText style={styles.rolePillText}>{roleLabel(activeRole)}</ThemedText>
-            </View>
+
+          {/* Address */}
+          <View style={clientProfileStyles.addressRow}>
+            <FontAwesome name="map-marker" size={14} color="#8E8E93" />
+            <ThemedText style={clientProfileStyles.addressText} numberOfLines={2}>
+              {formatAddress(profileData.address)}
+            </ThemedText>
           </View>
+
+          {/* Edit profile (placeholder for shop owner) */}
+          <TouchableOpacity
+            style={clientProfileStyles.editBtn}
+            activeOpacity={0.7}
+            onPress={() =>
+              showNotification({
+                type: 'info',
+                title: 'Coming Soon',
+                message: 'Profile editing for shop owners is coming soon.',
+              })
+            }
+          >
+            <FontAwesome name="pencil" size={14} color="#FF8C00" />
+            <ThemedText style={clientProfileStyles.editBtnText}>Edit Profile</ThemedText>
+          </TouchableOpacity>
         </View>
 
-        {/* Info Sections */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <ThemedText style={styles.sectionTitle}>Contact</ThemedText>
-          </View>
-          <View style={styles.sectionBody}>
-            <View style={styles.row}>
-              <FontAwesome name="phone" size={14} color="#888" />
-              <ThemedText style={styles.rowText}>
-                {currentProfile?.contact_number || 'No contact number set'}
-              </ThemedText>
+        {/* Shop services displayed like a settings card */}
+        <View style={clientProfileStyles.settingsCard}>
+          <TouchableOpacity
+            style={clientProfileStyles.settingRow}
+            activeOpacity={0.7}
+            onPress={openAddModal}
+          >
+            <View style={[clientProfileStyles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
+              <FontAwesome name="plus" size={16} color="#FF8C00" />
             </View>
-            <View style={styles.row}>
-              <FontAwesome name="envelope" size={14} color="#888" />
-              <ThemedText style={styles.rowText}>{profileData.email}</ThemedText>
-            </View>
-          </View>
-        </View>
+            <ThemedText style={clientProfileStyles.settingText}>Add Shop Service</ThemedText>
+            <FontAwesome name="chevron-right" size={14} color="#8E8E93" />
+          </TouchableOpacity>
 
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <ThemedText style={styles.sectionTitle}>Address</ThemedText>
-          </View>
-          <View style={styles.sectionBody}>
-            <View style={styles.row}>
-              <FontAwesome name="map-marker" size={16} color="#888" />
-              <ThemedText style={styles.rowText}>{formatAddress(profileData.address)}</ThemedText>
-            </View>
-          </View>
-        </View>
-
-        {currentProfile?.bio ? (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <ThemedText style={styles.sectionTitle}>About</ThemedText>
-            </View>
-            <View style={styles.sectionBody}>
-              <ThemedText style={styles.bioText}>{currentProfile.bio}</ThemedText>
-            </View>
-          </View>
-        ) : null}
-
-        {/* Shop Services Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <ThemedText style={styles.sectionTitle}>Shop Services</ThemedText>
-            <TouchableOpacity style={styles.addBtn} onPress={openAddModal}>
-              <FontAwesome name="plus" size={12} color="#FF9500" />
-              <ThemedText style={styles.addBtnText}>Add</ThemedText>
-            </TouchableOpacity>
-          </View>
-          <View style={styles.sectionBody}>
-            {myServices.length === 0 ? (
-              <View style={styles.emptyServices}>
-                <FontAwesome name="wrench" size={28} color="#555" />
-                <ThemedText style={styles.emptyServicesText}>No services yet</ThemedText>
-                <ThemedText style={styles.emptyServicesSubtext}>Tap Add to offer services</ThemedText>
-              </View>
-            ) : (
-              myServices.map((svc) => (
-                <View key={svc.shop_service_id} style={styles.serviceCard}>
-                  <View style={styles.serviceInfo}>
-                    <ThemedText style={styles.serviceName}>{svc.name}</ThemedText>
-                    <ThemedText style={styles.servicePrice}>₱{svc.price}</ThemedText>
-                  </View>
-                  <View style={styles.serviceActions}>
-                    <TouchableOpacity onPress={() => openEditModal(svc)} style={styles.serviceActionBtn}>
-                      <FontAwesome name="edit" size={18} color="#FF9500" />
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => removeService(svc)} style={styles.serviceActionBtn}>
-                      <FontAwesome name="times-circle" size={18} color="#FF3B30" />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ))
-            )}
-          </View>
-        </View>
-
-        {/* Actions */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <ThemedText style={styles.sectionTitle}>Account</ThemedText>
-          </View>
-          <View style={styles.sectionBody}>
-            <TouchableOpacity
-              style={styles.menuItem}
-              onPress={handleSwitchRole}
-              activeOpacity={0.8}
+          {myServices.map((svc) => (
+            <View
+              key={svc.shop_service_id}
+              style={[clientProfileStyles.settingRow, { paddingVertical: 10 }]}
             >
-              <View style={styles.menuLeft}>
-                <View style={[styles.menuIcon, { backgroundColor: '#FF950018' }]}>
-                  <FontAwesome name="exchange" size={16} color="#FF9500" />
-                </View>
-                <View>
-                  <ThemedText style={styles.menuTitle}>Switch Role</ThemedText>
-                  <ThemedText style={styles.menuSubtitle}>
-                    Change between client, mechanic, and shop owner
-                  </ThemedText>
-                </View>
+              <View style={[clientProfileStyles.sectionIcon, { backgroundColor: '#1E1E1E' }]}>
+                <FontAwesome name="wrench" size={16} color="#FF8C00" />
               </View>
-              <FontAwesome name="chevron-right" size={14} color="#555" />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.menuItem, styles.logoutItem]}
-              onPress={handleLogout}
-              activeOpacity={0.8}
-            >
-              <View style={styles.menuLeft}>
-                <View style={[styles.menuIcon, { backgroundColor: '#FF3B3018' }]}>
-                  <FontAwesome name="sign-out" size={16} color="#FF3B30" />
-                </View>
-                <View>
-                  <ThemedText style={[styles.menuTitle, { color: '#FF3B30' }]}>
-                    Logout
-                  </ThemedText>
-                  <ThemedText style={styles.menuSubtitle}>
-                    Sign out from this account
-                  </ThemedText>
-                </View>
+              <View style={{ flex: 1 }}>
+                <ThemedText style={clientProfileStyles.settingText}>{svc.name}</ThemedText>
+                <ThemedText style={{ fontSize: 12, color: '#8E8E93' }} numberOfLines={1}>
+                  {svc.description || 'No description'}
+                </ThemedText>
               </View>
-              <FontAwesome name="chevron-right" size={14} color="#555" />
-            </TouchableOpacity>
-          </View>
+              <View style={{ alignItems: 'flex-end' }}>
+                <ThemedText style={{ color: '#FF8C00', fontWeight: '600', fontSize: 13 }}>
+                  ₱{svc.price.toFixed(2)}
+                </ThemedText>
+                <TouchableOpacity
+                  style={{ marginTop: 4, padding: 4 }}
+                  onPress={() => openEditModal(svc)}
+                >
+                  <FontAwesome name="pencil" size={12} color="#FF8C00" />
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
         </View>
 
-        <View style={{ height: 32 }} />
+        {/* Shop products — same settings card pattern as Add Shop Service */}
+        <View style={clientProfileStyles.settingsCard}>
+          <TouchableOpacity
+            style={clientProfileStyles.settingRow}
+            activeOpacity={0.7}
+            onPress={() => setShopProductsModalVisible(true)}
+          >
+            <View style={[clientProfileStyles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
+              <FontAwesome name="shopping-bag" size={16} color="#FF8C00" />
+            </View>
+            <ThemedText style={clientProfileStyles.settingText}>Shop products</ThemedText>
+            <FontAwesome name="chevron-right" size={14} color="#8E8E93" />
+          </TouchableOpacity>
+        </View>
+
+        {/* Switch Role card */}
+        <View style={clientProfileStyles.settingsCard}>
+          <TouchableOpacity
+            style={clientProfileStyles.settingRow}
+            activeOpacity={0.7}
+            onPress={handleSwitchRole}
+          >
+            <View style={[clientProfileStyles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
+              <FontAwesome name="exchange" size={16} color="#FF8C00" />
+            </View>
+            <ThemedText style={clientProfileStyles.settingText}>Switch Role</ThemedText>
+            <FontAwesome name="chevron-right" size={14} color="#8E8E93" />
+          </TouchableOpacity>
+        </View>
+
+        {/* Logout button, separated */}
+        <TouchableOpacity
+          style={[clientProfileStyles.logoutBtn, { marginTop: 16 }]}
+          onPress={handleLogout}
+          activeOpacity={0.7}
+        >
+          <FontAwesome name="sign-out" size={16} color="#FF3B30" />
+          <ThemedText style={clientProfileStyles.logoutText}>Log Out</ThemedText>
+        </TouchableOpacity>
+
+        <View style={{ height: 40 }} />
       </ScrollView>
 
       {/* Add service modal - Step 1: Select service */}
@@ -717,6 +711,42 @@ export default function ShopOwnerProfileScreen() {
           </View>
         </View>
       </Modal>
+
+      <Modal
+        visible={shopProductsModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShopProductsModalVisible(false)}
+      >
+        <View style={styles.shopProductsModalOverlay}>
+          <View style={styles.shopProductsModalBox}>
+            <View style={styles.modalHeader}>
+              <ThemedText style={styles.modalTitle}>Shop products</ThemedText>
+              <TouchableOpacity
+                onPress={() => setShopProductsModalVisible(false)}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              >
+                <FontAwesome name="times" size={22} color="#fff" />
+              </TouchableOpacity>
+            </View>
+            <ShopProductsPanel />
+          </View>
+        </View>
+      </Modal>
+
+      <ConfirmationModal
+        visible={logoutModalVisible}
+        type="danger"
+        title="Logout"
+        message="Are you sure you want to logout?"
+        confirmText="Logout"
+        cancelText="Cancel"
+        loading={logoutLoading}
+        onCancel={() => {
+          if (!logoutLoading) setLogoutModalVisible(false);
+        }}
+        onConfirm={performLogout}
+      />
     </ThemedView>
   );
 }
@@ -1091,6 +1121,20 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: '#fff',
+  },
+  shopProductsModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'flex-end',
+  },
+  shopProductsModalBox: {
+    backgroundColor: '#1A1A1A',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    height: '90%',
+    paddingHorizontal: 20,
+    paddingTop: 4,
+    paddingBottom: 20,
   },
 });
 

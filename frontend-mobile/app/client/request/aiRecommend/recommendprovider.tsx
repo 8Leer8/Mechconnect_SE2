@@ -1,8 +1,5 @@
 import React, { useState } from 'react';
-import {
-  View, ScrollView, TouchableOpacity, Modal,
-  ActivityIndicator, TextInput, Image,
-} from 'react-native';
+import { View, ScrollView, TouchableOpacity, Modal, ActivityIndicator, Image } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -12,87 +9,76 @@ import { StyleSheet } from 'react-native';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
-// ─── Types ────────────────────────────────────────────────────
-interface AIRecommendation {
-  specialty: string;
-  confidence: number;
-}
-
+interface AIRecommendation { specialty: string; confidence: number; }
 interface MatchedShop {
-  id: number;
-  shop_name: string;
-  service_banner: string | null;
-  is_verified: boolean;
-  status: string;
-  matched_specialties: string[];
+  id: number; shop_name: string; service_banner: string | null;
+  is_verified: boolean; status: string; matched_specialties: string[];
 }
-
 interface MatchedMechanic {
-  id: number;
-  full_name: string;
-  profile_photo: string | null;
-  average_rating: number;
-  status: string;
-  matched_specialties: string[];
+  id: number; full_name: string; profile_photo: string | null;
+  average_rating: number; status: string; matched_specialties: string[];
 }
 
-// ─── Main Component ───────────────────────────────────────────
+interface CreateCustomRequestResponse {
+  message?: string;
+  error?: string;
+}
+
 export default function RecommendProviderScreen() {
   const { showNotification } = useNotification();
   const params = useLocalSearchParams();
 
+  // ─── Params ───────────────────────────────────────────────
   const description = params.description as string || '';
   const concern_picture = params.concern_picture as string || '';
+  const street_name = params.street_name as string || '';
+  const barangay = params.barangay as string || '';
+  const city_municipality = params.city_municipality as string || '';
+  const landmark = params.landmark as string || '';
   const ai_recommendations: AIRecommendation[] = JSON.parse(params.ai_recommendations as string || '[]');
   const matched_shops: MatchedShop[] = JSON.parse(params.matched_shops as string || '[]');
   const matched_mechanics: MatchedMechanic[] = JSON.parse(params.matched_mechanics as string || '[]');
+  const vehicle_type = params.vehicle_type as string || '';
+  const vehicle_brand = params.vehicle_brand as string || '';
+  const vehicle_model = params.vehicle_model as string || '';
 
-  // ─── Location Modal State ──────────────────────────────────
-  const [locationModalVisible, setLocationModalVisible] = useState(false);
-  const [selectedProvider, setSelectedProvider] = useState<{ type: 'shop' | 'mechanic'; id: number; name: string } | null>(null);
-  const [streetName, setStreetName] = useState('');
-  const [barangay, setBarangay] = useState('');
-  const [cityMunicipality, setCityMunicipality] = useState('');
-  const [landmark, setLandmark] = useState('');
-  const [sending, setSending] = useState(false);
+  // ─── State ────────────────────────────────────────────────
+  const [sentIds, setSentIds] = useState<Set<string>>(new Set());
+  const [sending, setSending] = useState<string | null>(null);
+  const [successModalVisible, setSuccessModalVisible] = useState(false);
+  const [lastSentName, setLastSentName] = useState('');
 
-  // ─── Send Request ──────────────────────────────────────────
-  const handleSend = (type: 'shop' | 'mechanic', id: number, name: string) => {
-    setSelectedProvider({ type, id, name });
-    setLocationModalVisible(true);
-  };
+  // ─── Send Request ─────────────────────────────────────────
+  const handleSend = async (type: 'shop' | 'mechanic', id: number, name: string) => {
+    const key = `${type}-${id}`;
+    if (sentIds.has(key)) return;
 
-  const handleConfirmSend = async () => {
-    if (!streetName.trim() || !barangay.trim() || !cityMunicipality.trim()) {
-      showNotification({ type: 'error', message: 'Please fill in all required location fields' });
-      return;
-    }
-
-    if (!selectedProvider) return;
-
-    setSending(true);
+    setSending(key);
     try {
       const formData = new FormData();
       formData.append('description', description);
+      formData.append('vehicle_type', vehicle_type);
+      formData.append('vehicle_brand', vehicle_brand);
+      formData.append('vehicle_model', vehicle_model);
 
-      if (selectedProvider.type === 'shop') {
-        formData.append('shop_id', selectedProvider.id.toString());
+      if (type === 'shop') {
+        formData.append('shop_id', id.toString());
       } else {
-        formData.append('provider_id', selectedProvider.id.toString());
+        formData.append('provider_id', id.toString());
       }
 
       formData.append('service_location', JSON.stringify({
-        street_name: streetName,
+        street_name,
         barangay,
-        city_municipality: cityMunicipality,
+        city_municipality,
         landmark: landmark || undefined,
       }));
 
       if (concern_picture) {
         const filename = concern_picture.split('/').pop() || 'image.jpg';
         const match = /\.(\w+)$/.exec(filename);
-        const type = match ? `image/${match[1]}` : 'image/jpeg';
-        formData.append('concern_picture', { uri: concern_picture, name: filename, type } as any);
+        const mimeType = match ? `image/${match[1]}` : 'image/jpeg';
+        formData.append('concern_picture', { uri: concern_picture, name: filename, type: mimeType } as any);
       }
 
       const response = await fetch(`${API_URL}/bookings/requests/custom/create/`, {
@@ -101,23 +87,27 @@ export default function RecommendProviderScreen() {
         body: formData as any,
       });
 
-      const data = await response.json();
+      const data = await response.json() as CreateCustomRequestResponse;
 
       if (response.ok) {
-        setLocationModalVisible(false);
-        showNotification({ type: 'success', message: `Request sent to ${selectedProvider.name}!` });
-        router.push('/client/request' as any);
+        setSentIds(prev => new Set(prev).add(key));
+        setLastSentName(name);
+        setSuccessModalVisible(true);
       } else {
         showNotification({ type: 'error', message: data.error || 'Failed to send request' });
       }
     } catch (error) {
       showNotification({ type: 'error', message: 'An error occurred while sending the request' });
     } finally {
-      setSending(false);
+      setSending(null);
     }
   };
 
-  // ─── Render ────────────────────────────────────────────────
+  const handleDone = () => {
+    router.push('/(clientTabs)/main/request' as any);
+  };
+
+  // ─── Render ───────────────────────────────────────────────
   return (
     <ThemedView style={styles.container}>
       {/* Header */}
@@ -159,63 +149,70 @@ export default function RecommendProviderScreen() {
             <FontAwesome name="building" size={14} color="#FF8C00" />
             <ThemedText style={styles.sectionTitle}>Matched Shops ({matched_shops.length})</ThemedText>
           </View>
-
           {matched_shops.length === 0 ? (
             <View style={styles.emptyCard}>
               <FontAwesome name="inbox" size={28} color="#555" />
               <ThemedText style={styles.emptyText}>No shops found for these specialties</ThemedText>
             </View>
           ) : (
-            matched_shops.map((shop) => (
-              <View key={shop.id} style={styles.card}>
-                {/* Banner */}
-                {shop.service_banner ? (
-                  <Image source={{ uri: shop.service_banner }} style={styles.banner} resizeMode="cover" />
-                ) : (
-                  <View style={styles.bannerPlaceholder}>
-                    <FontAwesome name="building" size={28} color="#555" />
+            matched_shops.map((shop) => {
+              const key = `shop-${shop.id}`;
+              const isSent = sentIds.has(key);
+              const isSending = sending === key;
+              return (
+                <View key={shop.id} style={[styles.card, isSent && styles.cardSent]}>
+                  {shop.service_banner ? (
+                    <Image source={{ uri: shop.service_banner }} style={styles.banner} resizeMode="cover" />
+                  ) : (
+                    <View style={styles.bannerPlaceholder}>
+                      <FontAwesome name="building" size={28} color="#555" />
+                    </View>
+                  )}
+                  <View style={styles.cardBody}>
+                    <View style={styles.cardTitleRow}>
+                      <ThemedText style={styles.cardTitle}>{shop.shop_name}</ThemedText>
+                      {shop.is_verified && (
+                        <View style={styles.verifiedBadge}>
+                          <FontAwesome name="check-circle" size={12} color="#34C759" />
+                          <ThemedText style={styles.verifiedText}>Verified</ThemedText>
+                        </View>
+                      )}
+                    </View>
+                    <View style={styles.detailRow}>
+                      <View style={[styles.statusDot, { backgroundColor: shop.status === 'active' ? '#34C759' : '#8E8E93' }]} />
+                      <ThemedText style={styles.detailText}>{shop.status.charAt(0).toUpperCase() + shop.status.slice(1)}</ThemedText>
+                    </View>
+                    <View style={styles.specialtiesRow}>
+                      {shop.matched_specialties.map((s, i) => (
+                        <View key={i} style={styles.matchedChip}>
+                          <ThemedText style={styles.matchedChipText}>{s}</ThemedText>
+                        </View>
+                      ))}
+                    </View>
+                    <TouchableOpacity
+                      style={[styles.sendBtn, isSent && styles.sentBtn]}
+                      onPress={() => handleSend('shop', shop.id, shop.shop_name)}
+                      disabled={isSent || !!sending}
+                      activeOpacity={0.7}
+                    >
+                      {isSending ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : isSent ? (
+                        <>
+                          <FontAwesome name="check" size={13} color="#fff" />
+                          <ThemedText style={styles.sendBtnText}>Request Sent</ThemedText>
+                        </>
+                      ) : (
+                        <>
+                          <FontAwesome name="paper-plane" size={13} color="#fff" />
+                          <ThemedText style={styles.sendBtnText}>Send Request</ThemedText>
+                        </>
+                      )}
+                    </TouchableOpacity>
                   </View>
-                )}
-
-                <View style={styles.cardBody}>
-                  {/* Name + Verified */}
-                  <View style={styles.cardTitleRow}>
-                    <ThemedText style={styles.cardTitle}>{shop.shop_name}</ThemedText>
-                    {shop.is_verified && (
-                      <View style={styles.verifiedBadge}>
-                        <FontAwesome name="check-circle" size={12} color="#34C759" />
-                        <ThemedText style={styles.verifiedText}>Verified</ThemedText>
-                      </View>
-                    )}
-                  </View>
-
-                  {/* Status */}
-                  <View style={styles.detailRow}>
-                    <View style={[styles.statusDot, { backgroundColor: shop.status === 'active' ? '#34C759' : '#8E8E93' }]} />
-                    <ThemedText style={styles.detailText}>{shop.status.charAt(0).toUpperCase() + shop.status.slice(1)}</ThemedText>
-                  </View>
-
-                  {/* Matched Specialties */}
-                  <View style={styles.specialtiesRow}>
-                    {shop.matched_specialties.map((s, i) => (
-                      <View key={i} style={styles.matchedChip}>
-                        <ThemedText style={styles.matchedChipText}>{s}</ThemedText>
-                      </View>
-                    ))}
-                  </View>
-
-                  {/* Send Button */}
-                  <TouchableOpacity
-                    style={styles.sendBtn}
-                    onPress={() => handleSend('shop', shop.id, shop.shop_name)}
-                    activeOpacity={0.7}
-                  >
-                    <FontAwesome name="paper-plane" size={13} color="#fff" />
-                    <ThemedText style={styles.sendBtnText}>Send Request</ThemedText>
-                  </TouchableOpacity>
                 </View>
-              </View>
-            ))
+              );
+            })
           )}
         </View>
 
@@ -225,126 +222,103 @@ export default function RecommendProviderScreen() {
             <FontAwesome name="wrench" size={14} color="#FF8C00" />
             <ThemedText style={styles.sectionTitle}>Matched Mechanics ({matched_mechanics.length})</ThemedText>
           </View>
-
           {matched_mechanics.length === 0 ? (
             <View style={styles.emptyCard}>
               <FontAwesome name="inbox" size={28} color="#555" />
               <ThemedText style={styles.emptyText}>No mechanics found for these specialties</ThemedText>
             </View>
           ) : (
-            matched_mechanics.map((mechanic) => (
-              <View key={mechanic.id} style={styles.card}>
-                <View style={styles.cardBody}>
-                  <View style={styles.mechanicRow}>
-                    {/* Profile Photo */}
-                    {mechanic.profile_photo ? (
-                      <Image source={{ uri: mechanic.profile_photo }} style={styles.profilePhoto} />
-                    ) : (
-                      <View style={styles.profilePhotoPlaceholder}>
-                        <FontAwesome name="user" size={22} color="#555" />
-                      </View>
-                    )}
-
-                    <View style={{ flex: 1 }}>
-                      {/* Name */}
-                      <ThemedText style={styles.cardTitle}>{mechanic.full_name}</ThemedText>
-
-                      {/* Rating + Status */}
-                      <View style={styles.ratingRow}>
-                        <FontAwesome name="star" size={12} color="#FF8C00" />
-                        <ThemedText style={styles.ratingText}>{mechanic.average_rating.toFixed(1)}</ThemedText>
-                        <View style={[styles.statusDot, { backgroundColor: mechanic.status === 'available' ? '#34C759' : '#8E8E93' }]} />
-                        <ThemedText style={styles.detailText}>{mechanic.status.charAt(0).toUpperCase() + mechanic.status.slice(1)}</ThemedText>
+            matched_mechanics.map((mechanic) => {
+              const key = `mechanic-${mechanic.id}`;
+              const isSent = sentIds.has(key);
+              const isSending = sending === key;
+              return (
+                <View key={mechanic.id} style={[styles.card, isSent && styles.cardSent]}>
+                  <View style={styles.cardBody}>
+                    <View style={styles.mechanicRow}>
+                      {mechanic.profile_photo ? (
+                        <Image source={{ uri: mechanic.profile_photo }} style={styles.profilePhoto} />
+                      ) : (
+                        <View style={styles.profilePhotoPlaceholder}>
+                          <FontAwesome name="user" size={22} color="#555" />
+                        </View>
+                      )}
+                      <View style={{ flex: 1 }}>
+                        <ThemedText style={styles.cardTitle}>{mechanic.full_name}</ThemedText>
+                        <View style={styles.ratingRow}>
+                          <FontAwesome name="star" size={12} color="#FF8C00" />
+                          <ThemedText style={styles.ratingText}>{mechanic.average_rating.toFixed(1)}</ThemedText>
+                          <View style={[styles.statusDot, { backgroundColor: mechanic.status === 'available' ? '#34C759' : '#8E8E93' }]} />
+                          <ThemedText style={styles.detailText}>{mechanic.status.charAt(0).toUpperCase() + mechanic.status.slice(1)}</ThemedText>
+                        </View>
                       </View>
                     </View>
+                    <View style={[styles.specialtiesRow, { marginTop: 10 }]}>
+                      {mechanic.matched_specialties.map((s, i) => (
+                        <View key={i} style={styles.matchedChip}>
+                          <ThemedText style={styles.matchedChipText}>{s}</ThemedText>
+                        </View>
+                      ))}
+                    </View>
+                    <TouchableOpacity
+                      style={[styles.sendBtn, isSent && styles.sentBtn]}
+                      onPress={() => handleSend('mechanic', mechanic.id, mechanic.full_name)}
+                      disabled={isSent || !!sending}
+                      activeOpacity={0.7}
+                    >
+                      {isSending ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : isSent ? (
+                        <>
+                          <FontAwesome name="check" size={13} color="#fff" />
+                          <ThemedText style={styles.sendBtnText}>Request Sent</ThemedText>
+                        </>
+                      ) : (
+                        <>
+                          <FontAwesome name="paper-plane" size={13} color="#fff" />
+                          <ThemedText style={styles.sendBtnText}>Send Request</ThemedText>
+                        </>
+                      )}
+                    </TouchableOpacity>
                   </View>
-
-                  {/* Matched Specialties */}
-                  <View style={[styles.specialtiesRow, { marginTop: 10 }]}>
-                    {mechanic.matched_specialties.map((s, i) => (
-                      <View key={i} style={styles.matchedChip}>
-                        <ThemedText style={styles.matchedChipText}>{s}</ThemedText>
-                      </View>
-                    ))}
-                  </View>
-
-                  {/* Send Button */}
-                  <TouchableOpacity
-                    style={styles.sendBtn}
-                    onPress={() => handleSend('mechanic', mechanic.id, mechanic.full_name)}
-                    activeOpacity={0.7}
-                  >
-                    <FontAwesome name="paper-plane" size={13} color="#fff" />
-                    <ThemedText style={styles.sendBtnText}>Send Request</ThemedText>
-                  </TouchableOpacity>
                 </View>
-              </View>
-            ))
+              );
+            })
           )}
         </View>
+
+        {/* Done Button */}
+        <TouchableOpacity style={styles.doneBtn} onPress={handleDone} activeOpacity={0.7}>
+          <FontAwesome name="check-circle" size={16} color="#fff" />
+          <ThemedText style={styles.doneBtnText}>Done</ThemedText>
+        </TouchableOpacity>
 
         <View style={{ height: 40 }} />
       </ScrollView>
 
-      {/* Location Modal */}
-      <Modal visible={locationModalVisible} transparent animationType="slide" onRequestClose={() => setLocationModalVisible(false)}>
+      {/* Success Modal */}
+      <Modal visible={successModalVisible} transparent animationType="fade" onRequestClose={() => setSuccessModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <ThemedText style={styles.modalTitle}>Where are you?</ThemedText>
-              <TouchableOpacity onPress={() => setLocationModalVisible(false)}>
-                <FontAwesome name="times" size={18} color="#8E8E93" />
-              </TouchableOpacity>
+            <View style={styles.successIconCircle}>
+              <FontAwesome name="check" size={32} color="#34C759" />
             </View>
-
+            <ThemedText style={styles.modalTitle}>Request Sent!</ThemedText>
             <ThemedText style={styles.modalSubtitle}>
-              Sending to <ThemedText style={{ color: '#FF8C00', fontWeight: '700' }}>{selectedProvider?.name}</ThemedText>
+              Your request has been successfully sent to{' '}
+              <ThemedText style={{ color: '#FF8C00', fontWeight: '700' }}>{lastSentName}</ThemedText>.
+              {'\n'}They will review and respond shortly.
             </ThemedText>
-
-            <TextInput
-              style={styles.input}
-              placeholder="Street Name *"
-              placeholderTextColor="#555"
-              value={streetName}
-              onChangeText={setStreetName}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Barangay *"
-              placeholderTextColor="#555"
-              value={barangay}
-              onChangeText={setBarangay}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="City / Municipality *"
-              placeholderTextColor="#555"
-              value={cityMunicipality}
-              onChangeText={setCityMunicipality}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Landmark (Optional)"
-              placeholderTextColor="#555"
-              value={landmark}
-              onChangeText={setLandmark}
-            />
-
-            <View style={styles.modalButtons}>
-              <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setLocationModalVisible(false)} activeOpacity={0.7}>
-                <ThemedText style={styles.modalCancelText}>Cancel</ThemedText>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.modalConfirmBtn} onPress={handleConfirmSend} disabled={sending} activeOpacity={0.7}>
-                {sending ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <>
-                    <FontAwesome name="paper-plane" size={13} color="#fff" />
-                    <ThemedText style={styles.modalConfirmText}>Send</ThemedText>
-                  </>
-                )}
-              </TouchableOpacity>
-            </View>
+            <ThemedText style={styles.modalHint}>
+              You can still send to other mechanics or shops.
+            </ThemedText>
+            <TouchableOpacity
+              style={styles.modalOkBtn}
+              onPress={() => setSuccessModalVisible(false)}
+              activeOpacity={0.7}
+            >
+              <ThemedText style={styles.modalOkText}>OK</ThemedText>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -352,7 +326,6 @@ export default function RecommendProviderScreen() {
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#111214' },
   header: {
@@ -366,21 +339,15 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 18, fontWeight: 'bold', color: '#fff' },
   scrollView: { flex: 1 },
   scrollContent: { padding: 16 },
-
-  // Description
   descriptionBox: {
     flexDirection: 'row', alignItems: 'flex-start', gap: 10,
     backgroundColor: '#1A1C1E', borderRadius: 12, padding: 14,
     borderWidth: 1, borderColor: '#2A2C2E', marginBottom: 16,
   },
   descriptionText: { flex: 1, fontSize: 13, color: '#ccc', lineHeight: 20 },
-
-  // Section
   section: { marginBottom: 24 },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
   sectionTitle: { fontSize: 15, fontWeight: '700', color: '#fff' },
-
-  // Specialties
   specialtiesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   specialtyChip: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
@@ -390,12 +357,11 @@ const styles = StyleSheet.create({
   },
   specialtyName: { fontSize: 12, fontWeight: '600', color: '#FF8C00' },
   specialtyConfidence: { fontSize: 11, color: '#FF8C00', opacity: 0.8 },
-
-  // Card
   card: {
     backgroundColor: '#1A1C1E', borderRadius: 16, marginBottom: 12,
     borderWidth: 1, borderColor: '#2A2C2E', overflow: 'hidden',
   },
+  cardSent: { borderColor: '#34C75940', opacity: 0.85 },
   banner: { width: '100%', height: 120 },
   bannerPlaceholder: {
     width: '100%', height: 120, backgroundColor: '#222426',
@@ -409,8 +375,6 @@ const styles = StyleSheet.create({
   detailRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
   statusDot: { width: 8, height: 8, borderRadius: 4 },
   detailText: { fontSize: 13, color: '#8E8E93' },
-
-  // Mechanic
   mechanicRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 4 },
   profilePhoto: { width: 52, height: 52, borderRadius: 26 },
   profilePhotoPlaceholder: {
@@ -419,51 +383,49 @@ const styles = StyleSheet.create({
   },
   ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
   ratingText: { fontSize: 13, fontWeight: '600', color: '#FF8C00' },
-
-  // Matched chips
   matchedChip: {
     backgroundColor: '#007AFF20', borderRadius: 20,
     paddingHorizontal: 10, paddingVertical: 4,
     borderWidth: 1, borderColor: '#007AFF40',
   },
   matchedChipText: { fontSize: 11, color: '#007AFF', fontWeight: '600' },
-
-  // Send button
   sendBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
     backgroundColor: '#FF8C00', borderRadius: 12, paddingVertical: 12, marginTop: 12,
   },
+  sentBtn: { backgroundColor: '#34C759' },
   sendBtnText: { fontSize: 14, fontWeight: '700', color: '#fff' },
-
-  // Empty
   emptyCard: { alignItems: 'center', paddingVertical: 32, gap: 10 },
   emptyText: { fontSize: 13, color: '#555' },
 
-  // Modal
+  // Done Button
+  doneBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: '#222426', borderRadius: 12, paddingVertical: 14,
+    borderWidth: 1, borderColor: '#2A2C2E', marginTop: 8,
+  },
+  doneBtnText: { fontSize: 15, fontWeight: '700', color: '#fff' },
+
+  // Success Modal
   modalOverlay: {
     flex: 1, backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'flex-end',
+    justifyContent: 'center', alignItems: 'center', padding: 24,
   },
   modalCard: {
-    backgroundColor: '#1A1C1E', borderTopLeftRadius: 24, borderTopRightRadius: 24,
-    padding: 24, borderWidth: 1, borderColor: '#2A2C2E',
+    width: '100%', backgroundColor: '#1A1C1E', borderRadius: 20,
+    padding: 24, alignItems: 'center', borderWidth: 1, borderColor: '#2A2C2E',
   },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  modalTitle: { fontSize: 18, fontWeight: 'bold', color: '#fff' },
-  modalSubtitle: { fontSize: 13, color: '#8E8E93', marginBottom: 16 },
-  input: {
-    backgroundColor: '#222426', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12,
-    fontSize: 14, color: '#fff', marginBottom: 10, borderWidth: 1, borderColor: '#2A2C2E',
+  successIconCircle: {
+    width: 64, height: 64, borderRadius: 32,
+    backgroundColor: '#34C75920', justifyContent: 'center',
+    alignItems: 'center', marginBottom: 16,
   },
-  modalButtons: { flexDirection: 'row', gap: 12, marginTop: 8 },
-  modalCancelBtn: {
-    flex: 1, alignItems: 'center', paddingVertical: 14,
-    borderRadius: 12, backgroundColor: '#222426',
+  modalTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff', marginBottom: 8 },
+  modalSubtitle: { fontSize: 14, color: '#ccc', textAlign: 'center', lineHeight: 22, marginBottom: 8 },
+  modalHint: { fontSize: 12, color: '#8E8E93', textAlign: 'center', marginBottom: 24 },
+  modalOkBtn: {
+    width: '100%', backgroundColor: '#FF8C00',
+    borderRadius: 12, paddingVertical: 14, alignItems: 'center',
   },
-  modalCancelText: { fontSize: 15, fontWeight: '600', color: '#fff' },
-  modalConfirmBtn: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 8, paddingVertical: 14, borderRadius: 12, backgroundColor: '#FF8C00',
-  },
-  modalConfirmText: { fontSize: 15, fontWeight: '700', color: '#fff' },
+  modalOkText: { fontSize: 15, fontWeight: '700', color: '#fff' },
 });

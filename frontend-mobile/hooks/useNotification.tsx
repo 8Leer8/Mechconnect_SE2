@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { NotificationDropdown, NotificationType } from '@/components/ui/NotificationDropdown';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -29,6 +29,16 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     type: 'info',
     message: '',
   });
+  const showTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (showTimerRef.current) {
+        clearTimeout(showTimerRef.current);
+        showTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const showNotification = useCallback((config: NotificationConfig) => {
     // If one is already showing, briefly hide first so the animation re-triggers
@@ -37,9 +47,16 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         ? { ...prev, visible: false }
         : prev
     );
+
+    if (showTimerRef.current) {
+      clearTimeout(showTimerRef.current);
+      showTimerRef.current = null;
+    }
+
     // Small delay ensures state flush if we're replacing an active notification
-    setTimeout(() => {
+    showTimerRef.current = setTimeout(() => {
       setState({ ...config, visible: true });
+      showTimerRef.current = null;
     }, state.visible ? 80 : 0);
   }, [state.visible]);
 

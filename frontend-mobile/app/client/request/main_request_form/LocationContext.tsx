@@ -7,6 +7,7 @@ interface LocationData {
   streetName: string;
   city: string;
   barangay: string;
+  radiusKm?: number;
 }
 
 interface MechanicLocation {

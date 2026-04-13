@@ -1,5 +1,7 @@
 from django.urls import path
 from . import views
+from .views.client.client_request_list_views import get_request_detail
+from .views.client.client_booking_views import client_pay_booking
 from .views.admin import (
     admin_booking_overview,
     admin_list_disputes,
@@ -12,9 +14,10 @@ urlpatterns = [
 
     # Client request endpoints
     path('requests/', views.list_requests, name='list-requests'),
+    path('requests/<int:request_id>/', get_request_detail, name='get-request-detail'),
     path('requests/custom/create/', views.create_custom_request, name='create-custom-request'),
-    path('requests/direct/create/', views.create_direct_request, name='create-direct-request'),
     path('requests/emergency/create/', views.create_emergency_request, name='create-emergency-request'),
+    path('requests/emergency/cooldown/', views.get_emergency_cooldown, name='get-emergency-cooldown'),
     path('requests/broadcast/create/', views.create_broadcast_request, name='create-broadcast-request'),
     path('requests/<int:request_id>/cancel/', views.cancel_request, name='cancel-request'),
     
@@ -39,6 +42,12 @@ urlpatterns = [
     # Client booking endpoints
     path('bookings/', views.list_client_bookings, name='list-client-bookings'),
     path('bookings/<int:booking_id>/', views.get_booking_detail, name='get-booking-detail'),
+    # Client selects payment method when booking is in pending_payment
+    path('bookings/<int:booking_id>/pay/', client_pay_booking, name='client-pay-booking'),
+    path('bookings/<int:booking_id>/quotation/accept/', views.client_accept_quotation, name='client-accept-quotation'),
+    path('bookings/<int:booking_id>/quotation/reject/', views.client_reject_quotation, name='client-reject-quotation'),
+    # Live mechanic location (GET for client polling, POST for mechanic pushing GPS)
+    path('bookings/<int:booking_id>/mechanic-location/', views.mechanic_location_view, name='mechanic-location'),
 
     # Mechanic booking endpoints (provider side)
     path('mechanic/bookings/', views.list_mechanic_bookings, name='list-mechanic-bookings'),
@@ -73,6 +82,7 @@ urlpatterns = [
     # Shop owner booking list/detail
     path('shopowner/bookings/', views.list_shopowner_bookings, name='list-shopowner-bookings'),
     path('shopowner/bookings/<int:booking_id>/', views.get_shopowner_booking_detail, name='get-shopowner-booking-detail'),
+    path('shopowner/bookings/<int:booking_id>/quotation/', views.get_shopowner_booking_quotation, name='get-shopowner-booking-quotation'),
 
     # Request assignment endpoints (shop owner assigns mechanics to jobs)
     path('requests/<int:request_id>/assignments/', views.list_request_assignments, name='list-request-assignments'),

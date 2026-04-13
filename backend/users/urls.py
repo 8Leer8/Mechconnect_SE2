@@ -43,6 +43,7 @@ urlpatterns = [
     
     # Discovery endpoints
     path('mechanics/', views.list_mechanics, name='list_mechanics'),
+    path('mechanics/nearby/', views.list_nearby_mechanics, name='list_nearby_mechanics'),
     path('mechanics/<int:mechanic_id>/profile/', views.get_mechanic_profile, name='get_mechanic_profile'),
     
     # Role registration
@@ -51,6 +52,7 @@ urlpatterns = [
     # Mechanic wallet endpoints
     path('mechanic/wallet/', views.mechanic_wallet, name='mechanic_wallet'),
     path('mechanic/wallet/topup/', views.mechanic_wallet_topup, name='mechanic_wallet_topup'),
+    path('mechanic/wallet/token-pricing/', views.get_token_pricing_view, name='mechanic-wallet-token-pricing'),
 ]
 
 #Admin Urls

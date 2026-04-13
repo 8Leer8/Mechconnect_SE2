@@ -38,4 +38,5 @@ __all__ = [
     'get_mechanic_profile',
     'mechanic_wallet',
     'mechanic_wallet_topup',
+    'get_token_pricing_view',
 ]

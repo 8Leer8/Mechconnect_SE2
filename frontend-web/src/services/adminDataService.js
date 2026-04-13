@@ -82,3 +82,14 @@ export function fetchAdminWalletOverview() {
 export function fetchAdminWalletTransactions(params = {}) {
   return request(withQuery("/admin/users/wallet/transactions/", params));
 }
+
+export function fetchAdminPricingConfig() {
+  return request("/admin/pricing/config/");
+}
+
+export function updateAdminPricingConfig(payload) {
+  return request("/admin/pricing/config/update/", {
+    method: "PATCH",
+    body: payload,
+  });
+}

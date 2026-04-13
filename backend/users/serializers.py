@@ -8,6 +8,7 @@ from django.utils import timezone
 from django.db.models import Avg
 from MainBackend.storage_utils import get_media_url
 import re
+import logging
 
 
 class AccountAddressSerializer(serializers.ModelSerializer):
@@ -221,7 +222,7 @@ class RegisterSerializer(serializers.Serializer):
 
     def validate_email(self, value):
         if Account.objects.filter(email=value).exists():
-            raise serializers.ValidationError("Email already exists")
+            raise serializers.ValidationError("Email is already registered")
         return value
 
     def validate_username(self, value):
@@ -294,6 +295,8 @@ class RegisterSerializer(serializers.Serializer):
 class LoginSerializer(serializers.Serializer):
     username = serializers.CharField()
     password = serializers.CharField(write_only=True)
+    
+    logger = logging.getLogger(__name__)
 
     def validate(self, data):
         username = data.get('username')
@@ -302,10 +305,19 @@ class LoginSerializer(serializers.Serializer):
         try:
             account = Account.objects.get(username=username)
         except Account.DoesNotExist:
-            raise serializers.ValidationError({"username": "Invalid credentials"})
+            raise serializers.ValidationError({"username": "User not found"})
+        except Exception as e:
+            self.logger.exception('Error fetching account for username=%s: %s', username, str(e))
+            raise serializers.ValidationError({"non_field_errors": "Server error during authentication"})
 
-        if not check_password(password, account.password):
-            raise serializers.ValidationError({"password": "Invalid credentials"})
+        try:
+            if not check_password(password, account.password):
+                raise serializers.ValidationError({"password": "Incorrect password"})
+        except serializers.ValidationError:
+            raise
+        except Exception as e:
+            self.logger.exception('Error checking password for username=%s: %s', username, str(e))
+            raise serializers.ValidationError({"non_field_errors": "Server error during authentication"})
 
         if not account.is_active:
             raise serializers.ValidationError({"account": "Account is deactivated"})
@@ -482,6 +494,7 @@ class MechanicProfileSerializer(serializers.ModelSerializer):
     shop_id = serializers.IntegerField(source='shop.id', read_only=True, allow_null=True)
     # Expose account id so clients can reference provider Account id
     account_id = serializers.IntegerField(source='account.id', read_only=True)
+    address = AccountAddressSerializer(source='account.accountaddress', read_only=True)
     
     # Specialties
     specialties = serializers.SerializerMethodField()
@@ -502,6 +515,7 @@ class MechanicProfileSerializer(serializers.ModelSerializer):
             'average_rating', 'total_reviews', 'reviews',
             'years_active', 'account_created',
             'is_part_of_shop', 'shop_name', 'shop_id',
+            'address',
             'specialties', 'services',
             'contact_number', 'status'
         ]

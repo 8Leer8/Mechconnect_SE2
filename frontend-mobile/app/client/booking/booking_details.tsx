@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 // Ensure the router header is hidden for this route so only the in-page header shows
 export const screenOptions = { headerShown: false } as const;
 import {View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Linking, Platform, Modal, TextInput, KeyboardAvoidingView } from 'react-native';
@@ -11,6 +11,7 @@ import { SkeletonDetailPage } from '@/components/skeletons/SkeletonLoaders';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useWebSocketContext } from '@/context/WebSocketContext';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -21,6 +22,10 @@ interface BookingDetail {
   booked_at: string;
   updated_at: string;
   completed_at: string | null;
+  convenience_fee?: number | null;
+  distance_km?: number | null;
+  traffic_level?: string | null;
+  estimated_eta_minutes?: number | null;
   request: {
     id: number;
     type: string;
@@ -80,6 +85,45 @@ interface BookingDetail {
   } | null;
 }
 
+interface PricingConfig {
+  base_distance_fee?: number;
+  price_per_km?: number;
+  free_distance_km?: number;
+  traffic_low_multiplier?: number;
+  traffic_medium_multiplier?: number;
+  traffic_high_multiplier?: number;
+  convenience_fee_percentage?: number;
+  convenience_fee_fixed?: number;
+}
+
+const LIVE_PRICING_STATUSES = new Set(['accepted', 'on_the_way', 'active', 'paused', 'finished']);
+
+const shouldUseLiveAdditivePricing = (statusValue?: string | null): boolean => {
+  const normalized = String(statusValue || '').toLowerCase();
+  return LIVE_PRICING_STATUSES.has(normalized);
+};
+
+const toPrice = (value: unknown) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+};
+
+const solveServiceSubtotalFromAmount = (
+  amountFee: number,
+  travelFee: number,
+  trafficFee: number,
+  conveniencePct: number,
+  convenienceFixed: number
+): number => {
+  const pct = Number.isFinite(conveniencePct) ? Math.max(0, conveniencePct) : 0;
+  const fixed = Number.isFinite(convenienceFixed) ? convenienceFixed : 0;
+  const denominator = 1 + pct;
+  if (!Number.isFinite(denominator) || denominator <= 0) return 0;
+
+  const subtotal = (amountFee - travelFee - trafficFee - fixed) / denominator;
+  return Number.isFinite(subtotal) ? Math.max(0, subtotal) : 0;
+};
+
 export default function ClientBookingDetailScreen() {
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
   const navigation = useNavigation();
@@ -92,6 +136,49 @@ export default function ClientBookingDetailScreen() {
   const [backjobModalVisible, setBackjobModalVisible] = useState(false);
   const [backjobReason, setBackjobReason] = useState('');
   const [backjobImage, setBackjobImage] = useState<string | null>(null);
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string | null>(null);
+  const [isPaying, setIsPaying] = useState(false);
+  const [expandedQuoteItems, setExpandedQuoteItems] = useState<Record<string, boolean>>({});
+  const [quotationListExpanded, setQuotationListExpanded] = useState(false);
+  const [pricingConfig, setPricingConfig] = useState<PricingConfig>({});
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchPricingConfig = async () => {
+      try {
+        const response = await fetch(`${API_URL}/pricing/config/`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (!response.ok) return;
+        const data = await response.json() as Partial<PricingConfig>;
+        if (!isMounted) return;
+        const toConfigNumber = (value: unknown) => {
+          const parsed = Number(value);
+          return Number.isFinite(parsed) ? parsed : undefined;
+        };
+
+        setPricingConfig({
+          base_distance_fee: toConfigNumber(data.base_distance_fee),
+          price_per_km: toConfigNumber(data.price_per_km),
+          free_distance_km: toConfigNumber(data.free_distance_km),
+          traffic_low_multiplier: toConfigNumber(data.traffic_low_multiplier),
+          traffic_medium_multiplier: toConfigNumber(data.traffic_medium_multiplier),
+          traffic_high_multiplier: toConfigNumber(data.traffic_high_multiplier),
+          convenience_fee_percentage: toConfigNumber(data.convenience_fee_percentage),
+          convenience_fee_fixed: toConfigNumber(data.convenience_fee_fixed),
+        });
+      } catch {
+        // Keep current pricing config when endpoint is unavailable.
+      }
+    };
+
+    fetchPricingConfig();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Derive display quotation: prefer booking.quotation (from API) otherwise build from request.request_details
   const getDisplayQuotation = () => {
@@ -101,21 +188,284 @@ export default function ClientBookingDetailScreen() {
     const details = (booking as any).request?.request_details || null;
     if (!details) return null;
     const items: any[] = [];
-    if (details.service) {
-      const svc: any = details.service;
-      const unit = Number(svc.minimum_price ?? booking?.amount_fee ?? 0) || 0;
-      items.push({ description: svc.name || 'Service', quantity: 1, unit_price: unit, service: svc.id });
-    } else if (Array.isArray(details.services) && details.services.length > 0) {
-      const primary: any = details.services[0];
-      const unit = Number(primary.minimum_price ?? booking?.amount_fee ?? 0) || 0;
-      items.push({ description: primary.name || 'Service', quantity: 1, unit_price: unit, service: primary.id });
+
+    if (details) {
+      if (details.service) {
+        const svc: any = details.service;
+        const unit = toPrice(svc.minimum_price ?? svc.price);
+        items.push({ description: svc.name || 'Service', quantity: 1, unit_price: unit, service: svc.id });
+      }
+
+      if (Array.isArray(details.services) && details.services.length > 0) {
+        details.services.forEach((svc: any) => {
+          const unit = toPrice(svc?.minimum_price ?? svc?.price);
+          items.push({ description: svc?.name || 'Service', quantity: 1, unit_price: unit, service: svc?.id });
+        });
+      }
+
+      if (Array.isArray(details.add_ons) && details.add_ons.length > 0) {
+        details.add_ons.forEach((addOn: any) => {
+          const unit = toPrice(addOn?.price);
+          items.push({ description: addOn?.name || 'Add-on', quantity: 1, unit_price: unit, service_add_on: addOn?.id });
+        });
+      }
     }
+
+    let total_amount = items.reduce((s, it) => s + ((Number(it.unit_price) || 0) * (Number(it.quantity) || 1)), 0);
+
+    // Fallback when request details don't include service prices.
+    if (total_amount <= 0) {
+      const amountFee = toPrice((booking as any).amount_fee);
+      const convenienceFee = toPrice((booking as any).convenience_fee);
+      const useLiveAdditivePricing = shouldUseLiveAdditivePricing((booking as any).status);
+      const persistedDistanceKm = Number((booking as any).distance_km || 0);
+      const safeDistanceKm = Number.isFinite(persistedDistanceKm) ? Math.max(0, persistedDistanceKm) : 0;
+      const freeDistanceKm = Math.max(0, Number(pricingConfig.free_distance_km || 0));
+      const baseDistanceFee = Number(pricingConfig.base_distance_fee || 0);
+      const ratePerKm = Number(pricingConfig.price_per_km || 0);
+      const conveniencePct = Number(pricingConfig.convenience_fee_percentage || 0) / 100;
+      const convenienceFixed = Number(pricingConfig.convenience_fee_fixed || 0);
+      const billableDistanceKm = Math.max(0, safeDistanceKm - freeDistanceKm);
+      const baseTravelFee = safeDistanceKm > freeDistanceKm ? baseDistanceFee : 0;
+      const distanceFee = billableDistanceKm * ratePerKm;
+      const travelFee = baseTravelFee + distanceFee;
+
+      const persistedTrafficSurcharge = Number((booking as any).traffic_surcharge);
+      const hasPersistedTrafficSurcharge = Number.isFinite(persistedTrafficSurcharge) && persistedTrafficSurcharge >= 0;
+
+      const levelRaw = String((booking as any).traffic_level || 'moderate').toLowerCase();
+      const normalizedLevel = levelRaw === 'light' || levelRaw === 'low'
+        ? 'low'
+        : (levelRaw === 'moderate' || levelRaw === 'medium' ? 'medium' : 'high');
+      const trafficMultiplier = normalizedLevel === 'low'
+        ? Number(pricingConfig.traffic_low_multiplier || 1)
+        : normalizedLevel === 'medium'
+          ? Number(pricingConfig.traffic_medium_multiplier || 1)
+          : Number(pricingConfig.traffic_high_multiplier || 1);
+      const estimatedTrafficFee = travelFee * Math.max(0, trafficMultiplier - 1);
+      const trafficFee = hasPersistedTrafficSurcharge ? persistedTrafficSurcharge : estimatedTrafficFee;
+      const estimatedBase = useLiveAdditivePricing
+        ? solveServiceSubtotalFromAmount(amountFee, travelFee, trafficFee, conveniencePct, convenienceFixed)
+        : Math.max(0, amountFee - convenienceFee - travelFee - trafficFee);
+
+      if (estimatedBase > 0) {
+        items.length = 0;
+        items.push({ description: 'Service', quantity: 1, unit_price: estimatedBase });
+        total_amount = estimatedBase;
+      }
+    }
+
     if (items.length === 0) return null;
-    const total_amount = items.reduce((s, it) => s + ((Number(it.unit_price) || 0) * (Number(it.quantity) || 1)), 0);
     return { items, total_amount };
   };
 
   const displayQuotation = getDisplayQuotation();
+  const isQuotationPending = Boolean(
+    ((displayQuotation && Array.isArray(displayQuotation.items)) ? displayQuotation.items : []).some(
+      (it: any) => String(it?.status || it?.quotation_status || it?.state || '').toLowerCase() === 'pending'
+    ) || ((booking as any)?.quotation && (booking as any).quotation.status === 'pending')
+  );
+
+  const getItemStatus = (it: any, parentQuotation: any) => {
+    if (!it) return 'accepted';
+    return it.status || it.quotation_status || it.state || (parentQuotation && parentQuotation.status) || 'accepted';
+  };
+
+  const getQuoteItemKey = (it: any, idx: number) => String(it?.id ?? `quote-${idx}`);
+
+  const toggleQuoteItem = (key: string) => {
+    setExpandedQuoteItems(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const serviceItemIds = useMemo(() => {
+    const details = (booking as any)?.request?.request_details;
+    const ids = new Set<number>();
+    const single = Number(details?.service?.id);
+    if (Number.isFinite(single) && single > 0) ids.add(single);
+    const list = Array.isArray(details?.services) ? details.services : [];
+    list.forEach((svc: any) => {
+      const parsed = Number(svc?.id);
+      if (Number.isFinite(parsed) && parsed > 0) ids.add(parsed);
+    });
+    return ids;
+  }, [booking]);
+
+  const sortedQuotationItems = useMemo(() => {
+    const items = (displayQuotation && Array.isArray(displayQuotation.items)) ? displayQuotation.items : [];
+    if (!items.length) return [];
+
+    const withIndex = items.map((it: any, index: number) => ({ ...it, __index: index }));
+    const serviceTop: any[] = [];
+    const regular: any[] = [];
+
+    withIndex.forEach((it: any) => {
+      const sid = Number(it?.service);
+      if (Number.isFinite(sid) && sid > 0 && serviceItemIds.has(sid)) {
+        serviceTop.push(it);
+      } else {
+        regular.push(it);
+      }
+    });
+
+    const getTime = (it: any) => {
+      const raw = it?.updated_at || it?.modified_at || it?.created_at || null;
+      if (!raw) return 0;
+      const t = new Date(raw).getTime();
+      return Number.isFinite(t) ? t : 0;
+    };
+
+    regular.sort((a: any, b: any) => {
+      const ta = getTime(a);
+      const tb = getTime(b);
+      if (ta !== tb) return ta - tb;
+      const ia = Number(a?.id);
+      const ib = Number(b?.id);
+      if (Number.isFinite(ia) && Number.isFinite(ib) && ia !== ib) return ia - ib;
+      return (a.__index || 0) - (b.__index || 0);
+    });
+
+    return [...serviceTop, ...regular].map(({ __index, ...rest }: any) => rest);
+  }, [displayQuotation, serviceItemIds]);
+
+  const getAssocKey = (it: any) => {
+    const serviceId = Number(it?.service);
+    const addOnId = Number(it?.service_add_on);
+    if (Number.isFinite(serviceId) && serviceId > 0) return `service:${serviceId}`;
+    if (Number.isFinite(addOnId) && addOnId > 0) return `addon:${addOnId}`;
+    return null;
+  };
+
+  const inferChangeLabel = (it: any, acceptedByAssoc: Record<string, any>, acceptedRows: any[], removedRows: any[]) => {
+    const normalizeText = (v: any) => String(v ?? '').trim().toLowerCase();
+    const normalizeNum = (v: any) => Number(v ?? 0);
+    const isLikelyRename = (aRaw: any, bRaw: any) => {
+      const a = normalizeText(aRaw);
+      const b = normalizeText(bRaw);
+      if (!a || !b) return false;
+      if (a === b || a.includes(b) || b.includes(a)) return true;
+      const aTokens = new Set(a.split(/\s+/).filter(Boolean));
+      const bTokens = new Set(b.split(/\s+/).filter(Boolean));
+      if (!aTokens.size || !bTokens.size) return false;
+      let overlap = 0;
+      aTokens.forEach(t => { if (bTokens.has(t)) overlap += 1; });
+      return (overlap / aTokens.size) >= 0.6 || (overlap / bTokens.size) >= 0.6;
+    };
+
+    const statusRaw = String(it?.status || it?.quotation_status || it?.state || '').toLowerCase();
+    if (statusRaw === 'rejected') return 'Removed';
+    if (statusRaw !== 'pending') return null;
+
+    const raw = String(it?.change_type || it?.change || it?.modification_type || '').toLowerCase();
+    if (raw.includes('remove') || raw.includes('delete')) return 'Removed';
+    if (raw.includes('add')) {
+      const editedFromRemoved = (removedRows || []).find((row: any) => {
+        const sameQty = normalizeNum(row?.quantity) === normalizeNum(it?.quantity);
+        const samePrice = normalizeNum(row?.unit_price ?? row?.price) === normalizeNum(it?.unit_price ?? it?.price);
+        return sameQty && samePrice && isLikelyRename(row?.description, it?.description);
+      });
+      return editedFromRemoved ? 'Edited' : 'Added';
+    }
+    if (raw.includes('edit') || raw.includes('update') || raw.includes('modify')) return 'Edited';
+
+    if (it?.previous_description || it?.previous_quantity != null || it?.previous_unit_price != null) {
+      return 'Edited';
+    }
+
+    if (it?.is_removed === true || it?.is_deleted === true) return 'Removed';
+    if (it?.is_edited === true || it?.is_modified === true) return 'Edited';
+    if (it?.is_added === true) return 'Added';
+
+    const editedFromRemoved = (removedRows || []).find((row: any) => {
+      const sameQty = normalizeNum(row?.quantity) === normalizeNum(it?.quantity);
+      const samePrice = normalizeNum(row?.unit_price ?? row?.price) === normalizeNum(it?.unit_price ?? it?.price);
+      return sameQty && samePrice && isLikelyRename(row?.description, it?.description);
+    });
+    if (editedFromRemoved) return 'Edited';
+
+    return 'Added';
+  };
+
+  // Quotation estimated total: sum only accepted items
+  const quotationEstimatedTotal = useMemo(() => {
+    const items = (displayQuotation && Array.isArray(displayQuotation.items)) ? displayQuotation.items : [];
+    return items.reduce((sum: number, it: any) => {
+      const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
+      const qty = Number(it?.quantity ?? 1) || 1;
+      const status = String(getItemStatus(it, (booking as any)?.quotation || displayQuotation) || '').toLowerCase();
+      if (status === 'accepted') {
+        return sum + price * qty;
+      }
+      return sum;
+    }, 0);
+  }, [displayQuotation, booking]);
+
+  const convenienceBreakdown = useMemo(() => {
+    if (!booking) return null;
+
+    const amountFee = toPrice((booking as any).amount_fee);
+    const persistedConvenienceFee = Number((booking as any).convenience_fee || 0);
+    const hasPersistedConvenience = Number.isFinite(persistedConvenienceFee) && persistedConvenienceFee >= 0;
+    const persistedTrafficSurcharge = Number((booking as any).traffic_surcharge);
+    const hasPersistedTrafficSurcharge = Number.isFinite(persistedTrafficSurcharge) && persistedTrafficSurcharge >= 0;
+
+    const persistedDistanceKm = Number((booking as any).distance_km || 0);
+    const distanceKm = Number.isFinite(persistedDistanceKm) ? Math.max(0, persistedDistanceKm) : 0;
+
+    const freeDistanceKm = Math.max(0, Number(pricingConfig.free_distance_km ?? 0));
+    const baseDistanceFee = Math.max(0, Number(pricingConfig.base_distance_fee ?? 0));
+    const ratePerKm = Math.max(0, Number(pricingConfig.price_per_km ?? 0));
+    const billableDistanceKm = Math.max(0, distanceKm - freeDistanceKm);
+    const baseFee = distanceKm > freeDistanceKm ? baseDistanceFee : 0;
+    const distanceFee = billableDistanceKm * ratePerKm;
+    const travelFee = baseFee + distanceFee;
+
+    const conveniencePct = Math.max(0, Number(pricingConfig.convenience_fee_percentage ?? 0)) / 100;
+    const convenienceFixed = Number(pricingConfig.convenience_fee_fixed ?? 0);
+
+    const levelRaw = String((booking as any).traffic_level || 'moderate').toLowerCase();
+    const normalizedLevel = levelRaw === 'light' || levelRaw === 'low'
+      ? 'low'
+      : (levelRaw === 'moderate' || levelRaw === 'medium' ? 'medium' : 'high');
+    const trafficConfig: Record<'low' | 'medium' | 'high', { multiplier: number; speedKmh: number; label: string }> = {
+      low: { multiplier: Number(pricingConfig.traffic_low_multiplier ?? 1), speedKmh: 40, label: 'Low' },
+      medium: { multiplier: Number(pricingConfig.traffic_medium_multiplier ?? 1), speedKmh: 28, label: 'Medium' },
+      high: { multiplier: Number(pricingConfig.traffic_high_multiplier ?? 1), speedKmh: 20, label: 'High' },
+    };
+
+    const trafficMeta = trafficConfig[normalizedLevel];
+    const estimatedTrafficFee = travelFee * Math.max(0, trafficMeta.multiplier - 1);
+    const isOnTheWay = booking.status === 'on_the_way';
+    const trafficFee = hasPersistedTrafficSurcharge ? persistedTrafficSurcharge : estimatedTrafficFee;
+    const serviceSubtotal = quotationEstimatedTotal > 0
+      ? quotationEstimatedTotal
+      : (shouldUseLiveAdditivePricing(booking.status)
+        ? solveServiceSubtotalFromAmount(amountFee, travelFee, trafficFee, conveniencePct, convenienceFixed)
+        : Math.max(0, amountFee - travelFee - trafficFee - (hasPersistedConvenience ? persistedConvenienceFee : 0)));
+
+    const estimatedConvenienceFee = (serviceSubtotal * conveniencePct) + convenienceFixed;
+    const totalConvenienceFee = shouldUseLiveAdditivePricing(booking.status)
+      ? estimatedConvenienceFee
+      : (hasPersistedConvenience ? persistedConvenienceFee : estimatedConvenienceFee);
+
+    const persistedEta = Number((booking as any).estimated_eta_minutes || 0);
+    const derivedEta = Math.max(1, Math.ceil((distanceKm / Math.max(1, trafficMeta.speedKmh)) * 60));
+    const etaMinutes = isOnTheWay && Number.isFinite(persistedEta) && persistedEta > 0
+      ? Math.round(persistedEta)
+      : derivedEta;
+
+    return {
+      serviceSubtotal,
+      travelFee,
+      baseFee,
+      distanceKm,
+      distanceFee,
+      trafficFee,
+      totalConvenienceFee,
+      trafficLabel: trafficMeta.label,
+      etaMinutes,
+      estimated: !isOnTheWay,
+    };
+  }, [booking, pricingConfig, quotationEstimatedTotal]);
 
   const fetchBookingDetail = useCallback(async (silent = false) => {
     if (!bookingId) return;
@@ -136,6 +486,7 @@ export default function ClientBookingDetailScreen() {
       }
       if (!response.ok) throw new Error('Failed to fetch booking details');
       const data = await response.json();
+      console.log('FULL BOOKING DATA:', JSON.stringify(data, null, 2));
       setBooking((data as any).booking || data);
       const bookingData = (data as any).booking || data;
       const currentStatus = bookingData.status;
@@ -217,6 +568,22 @@ export default function ClientBookingDetailScreen() {
     return () => clearInterval(interval);
   }, [fetchBookingDetail]);
 
+  // Refresh when websocket reports an update for this booking (quotation accepted/rejected or booking update)
+  const { lastMessage } = useWebSocketContext();
+  useEffect(() => {
+    try {
+      if (!lastMessage) return;
+      const bid = Number(lastMessage.booking_id);
+      if (!bid || !bookingId) return;
+      if (bid === Number(bookingId)) {
+        // lightweight refresh
+        fetchBookingDetail(true);
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, [lastMessage, bookingId, fetchBookingDetail]);
+
   const onRefresh = () => {
     setRefreshing(true);
     fetchBookingDetail();
@@ -284,19 +651,14 @@ export default function ClientBookingDetailScreen() {
   };
 
   const handleNavigateToLocation = () => {
-    if (!booking?.service_location) return;
-    const loc = booking.service_location;
-    const address = [loc.street_name, loc.subdivision_village, loc.barangay, loc.city_municipality]
-      .filter(Boolean)
-      .join(', ');
-    const encoded = encodeURIComponent(address);
-    const url = Platform.select({
-      ios: `comgooglemaps://?q=${encoded}`,
-      android: `geo:0,0?q=${encoded}`,
-      default: `https://www.google.com/maps/search/?api=1&query=${encoded}`,
+    if (!booking) return;
+    router.push({
+      pathname: '/client/booking/booking_location_map',
+      params: {
+        bookingId: String(booking.id),
+        role: 'client',
+      },
     });
-    const fallback = `https://www.google.com/maps/search/?api=1&query=${encoded}`;
-    Linking.canOpenURL(url).then((ok) => Linking.openURL(ok ? url : fallback));
   };
 
   const pickBackjobImage = async () => {
@@ -356,6 +718,13 @@ export default function ClientBookingDetailScreen() {
     );
   }
 
+  const serviceSubtotalTotal = convenienceBreakdown ? convenienceBreakdown.serviceSubtotal : quotationEstimatedTotal;
+  const travelFeeTotal = convenienceBreakdown ? convenienceBreakdown.travelFee : 0;
+  const trafficFeeTotal = convenienceBreakdown ? convenienceBreakdown.trafficFee : 0;
+  const convenienceFeeTotal = convenienceBreakdown ? convenienceBreakdown.totalConvenienceFee : 0;
+  const totalFee = convenienceFeeTotal + quotationEstimatedTotal;
+  const showPricingQuotationCard = !!(convenienceBreakdown || displayQuotation);
+
   return (
     <ThemedView style={styles.container}>
       {/* Header */}
@@ -412,6 +781,8 @@ export default function ClientBookingDetailScreen() {
           </View>
           <ThemedText style={styles.amountLarge}>₱{parseFloat(String(booking.amount_fee || '0')).toFixed(2)}</ThemedText>
         </View>
+
+
 
         {/* Provider Information */}
         {booking.provider && (
@@ -503,27 +874,83 @@ export default function ClientBookingDetailScreen() {
           </TouchableOpacity>
         )}
 
-        {/* Quotation (read-only for clients) - show for several statuses */}
-        {(booking.status === 'accepted' || booking.status === 'on_the_way' || booking.status === 'active' || booking.status === 'pending_payment' || booking.status === 'completed') && displayQuotation && (
+
+
+        {/* Payment: show options only when booking is pending_payment and no payment recorded.
+            If the booking already includes a payment (from the server), show a confirmation message.
+            This derives visibility from server data (`booking.payment`) so it persists after refresh. */}
+        {booking.status === 'pending_payment' && !(booking as any).payment?.payment_method && (
           <View style={styles.sectionCard}>
             <View style={styles.sectionHeader}>
-              <View style={[styles.sectionIcon, { backgroundColor: '#007AFF15' }]}>
-                <FontAwesome name="file-text-o" size={16} color="#007AFF" />
+              <View style={[styles.sectionIcon, { backgroundColor: '#FFD60A15' }]}> 
+                <FontAwesome name="money" size={16} color="#FFD60A" />
               </View>
-              <ThemedText style={styles.sectionTitle}>Quotation</ThemedText>
+              <ThemedText style={styles.sectionTitle}>Payment</ThemedText>
             </View>
             <View style={{ paddingVertical: 8 }}>
-              {(displayQuotation.items || []).map((it: any, idx: number) => (
-                <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 }}>
-                  <ThemedText style={{ flex: 1 }}>{it.description || (it.service && `Service #${it.service}`) || 'Item'}</ThemedText>
-                  <ThemedText>₱{((it.unit_price || 0) * (it.quantity || 1)).toFixed(2)}</ThemedText>
-                </View>
-              ))}
-              <View style={{ height: 1, backgroundColor: '#eee', marginVertical: 8 }} />
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                <ThemedText style={{ fontWeight: '600' }}>Estimated Total</ThemedText>
-                <ThemedText style={{ fontWeight: '600' }}>₱{parseFloat(String(displayQuotation.total_amount || 0)).toFixed(2)}</ThemedText>
+              <ThemedText style={{ color: '#666', marginBottom: 8 }}>Choose how you'd like to pay for this booking.</ThemedText>
+              <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
+                <TouchableOpacity
+                  onPress={() => setSelectedPaymentMethod('cash')}
+                  style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#111214', borderWidth: 1, borderColor: selectedPaymentMethod === 'cash' ? '#FF8C00' : '#2A2C2E', alignItems: 'flex-start' }}
+                >
+                  <ThemedText style={{ fontWeight: '700' }}>Cash</ThemedText>
+                  <ThemedText style={{ color: '#666' }}>Pay the mechanic in person</ThemedText>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => setSelectedPaymentMethod('online')}
+                  style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#111214', borderWidth: 1, borderColor: selectedPaymentMethod === 'online' ? '#FF8C00' : '#2A2C2E', alignItems: 'flex-start' }}
+                >
+                  <ThemedText style={{ fontWeight: '700' }}>Online Payment</ThemedText>
+                  <ThemedText style={{ color: '#666' }}>Pay now with card or e-wallet</ThemedText>
+                </TouchableOpacity>
               </View>
+
+              <TouchableOpacity
+                style={[styles.sendBtn, { opacity: selectedPaymentMethod ? 1 : 0.5 }]}
+                disabled={!selectedPaymentMethod || isPaying}
+                onPress={async () => {
+                  if (!selectedPaymentMethod) return;
+                  try {
+                    setIsPaying(true);
+                    await fetch(`${API_URL}/bookings/bookings/${booking.id}/pay/`, {
+                      method: 'PATCH',
+                      credentials: 'include',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ payment_method: selectedPaymentMethod }),
+                    });
+                    // Refresh booking detail to reflect status change (server returns payment state)
+                    await fetchBookingDetail();
+                  } catch (e) {
+                    // ignore UI-only errors for now
+                  } finally {
+                    setIsPaying(false);
+                  }
+                }}
+              >
+                {isPaying ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <ThemedText style={styles.sendBtnText}>Confirm Payment Method</ThemedText>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {/* If a payment method has already been recorded on the booking, show a read-only confirmation message. */}
+        {((booking as any).payment && (booking as any).payment.payment_method) && (
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#FFD60A15' }]}> 
+                <FontAwesome name="money" size={16} color="#FFD60A" />
+              </View>
+              <ThemedText style={styles.sectionTitle}>Payment</ThemedText>
+            </View>
+            <View style={{ paddingVertical: 8 }}>
+              <ThemedText style={{ color: '#666', marginBottom: 8 }}>Payment method confirmed:</ThemedText>
+              <ThemedText style={{ fontWeight: '700' }}>{((booking as any).payment.payment_method || '').toString().toUpperCase()}</ThemedText>
             </View>
           </View>
         )}
@@ -567,16 +994,18 @@ export default function ClientBookingDetailScreen() {
                 )}
               </View>
 
-              <TouchableOpacity style={styles.navigateButton} onPress={handleNavigateToLocation} activeOpacity={0.7}>
-                <View style={styles.navigateIconCircle}>
-                  <FontAwesome name="location-arrow" size={18} color="#fff" />
-                </View>
-                <View style={styles.navigateTextContainer}>
-                  <ThemedText style={styles.navigateTitle}>Navigate to Location</ThemedText>
-                  <ThemedText style={styles.navigateSubtitle}>Open in Google Maps</ThemedText>
-                </View>
-                <FontAwesome name="external-link" size={14} color="#FF8C00" />
-              </TouchableOpacity>
+              {booking.status === 'on_the_way' && (
+                <TouchableOpacity style={styles.navigateButton} onPress={handleNavigateToLocation} activeOpacity={0.7}>
+                  <View style={styles.navigateIconCircle}>
+                    <FontAwesome name="location-arrow" size={18} color="#fff" />
+                  </View>
+                  <View style={styles.navigateTextContainer}>
+                    <ThemedText style={styles.navigateTitle}>Open Live Location Map</ThemedText>
+                    <ThemedText style={styles.navigateSubtitle}>Track mechanic and booking location</ThemedText>
+                  </View>
+                  <FontAwesome name="map" size={14} color="#FF8C00" />
+                </TouchableOpacity>
+              )}
             </>
           ) : (
             <View style={styles.noLocationCard}>
@@ -585,6 +1014,199 @@ export default function ClientBookingDetailScreen() {
             </View>
           )}
         </View>
+
+        {showPricingQuotationCard && (
+          <View style={[styles.sectionCard, isQuotationPending ? styles.pendingSectionCard : null]}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
+                <FontAwesome name="calculator" size={16} color="#FF8C00" />
+              </View>
+              <ThemedText style={styles.sectionTitle}>Pricing & Quotation</ThemedText>
+            </View>
+
+            {isQuotationPending ? (
+              <View style={styles.pendingHintBanner}>
+                <View style={styles.pendingHintContent}>
+                  <FontAwesome name="clock-o" size={12} color="#C89B55" />
+                  <ThemedText style={styles.pendingHintText}>Pending quotation changes are waiting for your response.</ThemedText>
+                </View>
+                <TouchableOpacity style={styles.pendingHintActionButton} onPress={openChatWithMechanic}>
+                  <FontAwesome name="comments" size={12} color="#111214" />
+                  <ThemedText style={styles.pendingHintActionText}>Review in Chat</ThemedText>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+
+            <View style={styles.receiptList}>
+              <ThemedText style={[styles.noteLabel, { marginBottom: 8 }]}>Convenience Fee</ThemedText>
+
+              {convenienceBreakdown ? (
+                <>
+                  <View style={styles.receiptRow}>
+                    <ThemedText style={styles.receiptItem}>Base Fee</ThemedText>
+                    <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.baseFee.toFixed(2)}</ThemedText>
+                  </View>
+                  <View style={styles.receiptRow}>
+                    <ThemedText style={styles.receiptItem}>Distance Fee ({convenienceBreakdown.distanceKm.toFixed(2)} km)</ThemedText>
+                    <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.distanceFee.toFixed(2)}</ThemedText>
+                  </View>
+                  <View style={styles.receiptRow}>
+                    <ThemedText style={styles.receiptItem}>
+                      {convenienceBreakdown.estimated ? 'Estimated Traffic Fee' : 'Traffic Fee'} ({convenienceBreakdown.trafficLabel})
+                    </ThemedText>
+                    <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.trafficFee.toFixed(2)}</ThemedText>
+                  </View>
+                  {typeof convenienceBreakdown.etaMinutes === 'number' && convenienceBreakdown.etaMinutes > 0 && (
+                    <View style={styles.receiptRow}>
+                      <ThemedText style={styles.receiptItem}>Estimated ETA</ThemedText>
+                      <ThemedText style={styles.receiptAmount}>{convenienceBreakdown.etaMinutes} min</ThemedText>
+                    </View>
+                  )}
+                </>
+              ) : (
+                <View style={styles.noteBox}>
+                  <ThemedText style={styles.noteText}>
+                    Convenience fee will appear after mechanic starts travel.
+                  </ThemedText>
+                </View>
+              )}
+
+              <View style={styles.receiptDivider} />
+              <ThemedText style={[styles.noteLabel, { marginBottom: 8 }]}>Quotation</ThemedText>
+
+              {displayQuotation && sortedQuotationItems.length > 0 ? (
+                <>
+                  <TouchableOpacity
+                    style={[styles.quotationListAccordionHeader, quotationListExpanded ? styles.quotationListAccordionHeaderExpanded : null]}
+                    onPress={() => setQuotationListExpanded(prev => !prev)}
+                    activeOpacity={0.8}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <FontAwesome name="list" size={12} color="#A6ABB2" />
+                      <ThemedText style={styles.quotationListAccordionTitle}>Quotation Items ({sortedQuotationItems.length})</ThemedText>
+                    </View>
+                    <FontAwesome name={quotationListExpanded ? 'chevron-up' : 'chevron-down'} size={12} color="#A6ABB2" />
+                  </TouchableOpacity>
+
+                  {quotationListExpanded ? (() => {
+                    const acceptedByAssoc: Record<string, any> = {};
+                    const acceptedRows: any[] = [];
+                    const removedRows: any[] = [];
+                    sortedQuotationItems.forEach((row: any) => {
+                      const rowStatus = String(row?.status || row?.quotation_status || row?.state || ((booking as any)?.quotation?.status) || '').toLowerCase();
+                      const key = getAssocKey(row);
+                      if (rowStatus === 'accepted' && key && !acceptedByAssoc[key]) {
+                        acceptedByAssoc[key] = row;
+                      }
+                      if (rowStatus === 'accepted') acceptedRows.push(row);
+                      if (rowStatus === 'rejected') removedRows.push(row);
+                    });
+
+                    return sortedQuotationItems.map((it: any, idx: number) => {
+                      const itemStatus = it && (it.status || it.quotation_status || it.state) ? (it.status || it.quotation_status || it.state) : ((booking as any)?.quotation && (booking as any).quotation.status) || 'pending';
+                      const statusRaw = String(itemStatus || '').toLowerCase();
+                      const isPending = statusRaw === 'pending';
+                      const changeLabel = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
+                      const isRemoved = changeLabel === 'Removed';
+                      const desc = it?.description || it?.name || (it.service && `Service #${it.service}`) || 'Item';
+                      const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
+                      const qty = Number(it?.quantity ?? 1) || 1;
+                      const key = getQuoteItemKey(it, idx);
+                      const isExpanded = expandedQuoteItems[key] ?? false;
+                      const assocKey = getAssocKey(it);
+                      const beforeItem = it?.previous_description || it?.previous_quantity != null || it?.previous_unit_price != null
+                        ? {
+                            description: it?.previous_description,
+                            quantity: it?.previous_quantity,
+                            unit_price: it?.previous_unit_price,
+                          }
+                        : (changeLabel === 'Edited' && assocKey ? acceptedByAssoc[assocKey] : null);
+                      const beforeDesc = beforeItem?.description || (it?.service && `Service #${it.service}`) || 'Item';
+                      const beforePrice = Number(beforeItem?.unit_price ?? 0) || 0;
+                      const beforeQty = Number(beforeItem?.quantity ?? 1) || 1;
+
+                      return (
+                        <View key={key} style={[styles.quotationAccordionRow, isRemoved ? styles.removedItem : (changeLabel ? styles.pendingItem : styles.acceptedItem), isExpanded ? styles.quotationAccordionRowExpanded : null]}>
+                          <TouchableOpacity style={styles.quotationAccordionHeader} onPress={() => toggleQuoteItem(key)} activeOpacity={0.8}>
+                            <View style={styles.quoteHeaderLeft}>
+                              <ThemedText style={[styles.receiptItem, isRemoved ? styles.removedItemText : null]} numberOfLines={1}>{desc}</ThemedText>
+                              {changeLabel ? (
+                                <View style={styles.pendingPill}>
+                                  <ThemedText style={styles.pendingPillText}>{changeLabel}</ThemedText>
+                                </View>
+                              ) : null}
+                            </View>
+                            <View style={styles.quotationAccordionRight}>
+                              <ThemedText style={[styles.receiptAmount, isRemoved ? styles.removedItemAmount : null]}>₱{(price * qty).toFixed(2)}</ThemedText>
+                              <FontAwesome name={isExpanded ? 'chevron-up' : 'chevron-down'} size={12} color="#9CA3AF" />
+                            </View>
+                          </TouchableOpacity>
+                          {isExpanded ? (
+                            <View style={styles.quotationAccordionBody}>
+                              <View style={styles.quotationDetailTopRow}>
+                                <ThemedText style={styles.quotationDetailStatusText}>{changeLabel || (isPending ? 'Pending' : 'Accepted')}</ThemedText>
+                              </View>
+                              {changeLabel ? (
+                                <View style={styles.receiptRow}>
+                                  <ThemedText style={styles.quotationDetailLabel}>Change</ThemedText>
+                                  <ThemedText style={styles.quotationDetailValue}>{changeLabel}</ThemedText>
+                                </View>
+                              ) : null}
+                              {changeLabel === 'Edited' && beforeItem ? (
+                                <>
+                                  <View style={styles.receiptRow}>
+                                    <ThemedText style={styles.quotationDetailLabel}>Before</ThemedText>
+                                    <ThemedText style={[styles.quotationDetailValue, { textDecorationLine: 'line-through', color: '#8E8E93' }]}>
+                                      {beforeDesc}
+                                    </ThemedText>
+                                  </View>
+                                  <View style={styles.receiptRow}>
+                                    <ThemedText style={styles.quotationDetailLabel}>Before Price</ThemedText>
+                                    <ThemedText style={[styles.quotationDetailValue, { textDecorationLine: 'line-through', color: '#8E8E93' }]}>₱{(beforePrice * beforeQty).toFixed(2)}</ThemedText>
+                                  </View>
+                                  <View style={styles.receiptRow}>
+                                    <ThemedText style={styles.quotationDetailLabel}>Now</ThemedText>
+                                    <ThemedText style={styles.quotationDetailValue}>{desc}</ThemedText>
+                                  </View>
+                                </>
+                              ) : null}
+                              <View style={styles.receiptRow}>
+                                <ThemedText style={styles.quotationDetailLabel}>Unit Price</ThemedText>
+                                <ThemedText style={styles.quotationDetailValue}>₱{price.toFixed(2)}</ThemedText>
+                              </View>
+                              <View style={styles.receiptRow}>
+                                <ThemedText style={styles.quotationDetailLabel}>Quantity</ThemedText>
+                                <ThemedText style={styles.quotationDetailValue}>{qty}</ThemedText>
+                              </View>
+                            </View>
+                          ) : null}
+                        </View>
+                      );
+                    });
+                  })() : null}
+                </>
+              ) : (
+                <View style={styles.noteBox}>
+                  <ThemedText style={styles.noteText}>No quotation available yet.</ThemedText>
+                </View>
+              )}
+
+              <View style={styles.receiptDivider} />
+              <View style={styles.receiptRow}>
+                <ThemedText style={styles.receiptTotalLabel}>Convenience Fee Total</ThemedText>
+                <ThemedText style={styles.receiptTotalValue}>₱{convenienceFeeTotal.toFixed(2)}</ThemedText>
+              </View>
+              <View style={styles.receiptRow}>
+                <ThemedText style={styles.receiptTotalLabel}>Quotation Estimated Total</ThemedText>
+                <ThemedText style={styles.receiptTotalValue}>₱{quotationEstimatedTotal.toFixed(2)}</ThemedText>
+              </View>
+              <View style={styles.receiptRow}>
+                <ThemedText style={styles.receiptTotalLabel}>Total Fee</ThemedText>
+                <ThemedText style={styles.receiptTotalValue}>₱{totalFee.toFixed(2)}</ThemedText>
+              </View>
+            </View>
+          </View>
+        )}
 
         {/* Booking Timeline */}
         <View style={styles.sectionCard}>
@@ -861,7 +1483,6 @@ export default function ClientBookingDetailScreen() {
           </View>
         </Modal>
 
-        <View style={{ height: 40 }} />
       </ScrollView>
     </ThemedView>
   );

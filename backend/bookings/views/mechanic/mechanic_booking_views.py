@@ -2,11 +2,15 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
+from django.conf import settings
 from django.utils import timezone
+from datetime import timedelta
 from django.db.models import Prefetch, Sum, Q
 from django.db import transaction
+from decimal import Decimal
 import logging
 import traceback
+import requests
 from ...models import (
     Booking,
     Request,
@@ -16,18 +20,251 @@ from ...models import (
     CompleteBooking,
     Receipt,
     CancelBooking,
+    MechanicLocation,
 )
 from ...models import Quotation, QuotationItem
 from users.models import Account
 from services.models import MechanicService
 from ..client.client_booking_views import _serialize_bookings, _serialize_single_booking
 from ...serializers import QuotationSerializer
-from ...ws_utils import notify_booking_parties
+from ...ws_utils import notify_booking_parties, post_quotation_chat_message
 from chat.models import Conversation, Message
 from chat.serializers import MessageSerializer
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 import json
+
+
+EMERGENCY_REQUEST_TTL_MINUTES = 5
+
+ORS_API_KEY = getattr(settings, 'EXPO_PUBLIC_ORS_API_KEY', '')
+TOMTOM_API_KEY = getattr(settings, 'EXPO_PUBLIC_TOMTOM_API_KEY', '')
+BASE_FEE = Decimal('50')
+RATE_PER_KM = Decimal('15')
+
+
+def _to_float(value):
+    if value is None or value == '':
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _get_traffic_from_tomtom(latitude: float, longitude: float):
+    if not TOMTOM_API_KEY:
+        return None
+
+    url = (
+        "https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json"
+        f"?point={latitude},{longitude}&key={TOMTOM_API_KEY}"
+    )
+    response = requests.get(url, timeout=12)
+    if not response.ok:
+        return None
+
+    payload = response.json() or {}
+    flow = payload.get('flowSegmentData') or {}
+    current_speed = float(flow.get('currentSpeed') or 0)
+    free_flow_speed = float(flow.get('freeFlowSpeed') or 0)
+    if current_speed <= 0 or free_flow_speed <= 0:
+        return None
+
+    ratio = free_flow_speed / current_speed
+    if ratio < 1.2:
+        return {'traffic_level': 'light', 'surcharge_percent': Decimal('0.00')}
+    if ratio < 1.5:
+        return {'traffic_level': 'moderate', 'surcharge_percent': Decimal('0.10')}
+    if ratio < 2.0:
+        return {'traffic_level': 'heavy', 'surcharge_percent': Decimal('0.20')}
+    return {'traffic_level': 'severe', 'surcharge_percent': Decimal('0.30')}
+
+
+def _traffic_level_to_surcharge_percent(level: str):
+    level_map = {
+        'light': Decimal('0.00'),
+        'moderate': Decimal('0.10'),
+        'heavy': Decimal('0.20'),
+        'severe': Decimal('0.30'),
+    }
+    return level_map.get((level or '').lower(), Decimal('0.10'))
+
+
+def _get_realtime_traffic_snapshot(mechanic_lat, mechanic_lng, destination_lat, destination_lng):
+    """
+    Try multiple nearby points for TomTom flow data to improve success rate.
+    Some coordinates can return no segment; midpoint/start/end probes are more reliable.
+    """
+    candidates = []
+    if mechanic_lat is not None and mechanic_lng is not None and destination_lat is not None and destination_lng is not None:
+        mid_lat = (mechanic_lat + destination_lat) / 2.0
+        mid_lng = (mechanic_lng + destination_lng) / 2.0
+        candidates.append((mid_lat, mid_lng))
+    if mechanic_lat is not None and mechanic_lng is not None:
+        candidates.append((mechanic_lat, mechanic_lng))
+    if destination_lat is not None and destination_lng is not None:
+        candidates.append((destination_lat, destination_lng))
+
+    for lat, lng in candidates:
+        try:
+            snapshot = _get_traffic_from_tomtom(lat, lng)
+            if snapshot:
+                return snapshot
+        except Exception:
+            continue
+    return None
+
+
+def _get_route_from_ors(start_lng: float, start_lat: float, end_lng: float, end_lat: float):
+    if not ORS_API_KEY:
+        return None
+
+    url = (
+        "https://api.openrouteservice.org/v2/directions/driving-car"
+        f"?api_key={ORS_API_KEY}&start={start_lng},{start_lat}&end={end_lng},{end_lat}"
+    )
+    response = requests.get(url, timeout=15)
+    if not response.ok:
+        return None
+
+    payload = response.json() or {}
+    feature = (payload.get('features') or [{}])[0]
+    segment = ((feature.get('properties') or {}).get('segments') or [{}])[0]
+    distance_m = float(segment.get('distance') or 0)
+    duration_s = float(segment.get('duration') or 0)
+    if distance_m <= 0 or duration_s <= 0:
+        return None
+
+    return {
+        'distance_km': Decimal(str(distance_m / 1000)).quantize(Decimal('0.01')),
+        'eta_minutes': max(1, int(round(duration_s / 60))),
+    }
+
+
+def _get_booking_destination_coordinates(booking):
+    destination_lat = None
+    destination_lng = None
+
+    service_location = getattr(booking.request, 'service_location', None)
+    if service_location is not None:
+        try:
+            if service_location.latitude is not None and service_location.longitude is not None:
+                destination_lat = float(service_location.latitude)
+                destination_lng = float(service_location.longitude)
+        except (TypeError, ValueError):
+            destination_lat = None
+            destination_lng = None
+
+    if (destination_lat is None or destination_lng is None) and hasattr(booking.request, 'broadcast_request'):
+        br = booking.request.broadcast_request
+        try:
+            destination_lat = float(br.latitude)
+            destination_lng = float(br.longitude)
+        except (TypeError, ValueError):
+            destination_lat = None
+            destination_lng = None
+
+    return destination_lat, destination_lng
+
+
+def _get_accepted_offer_for_booking(booking):
+    if not hasattr(booking.request, 'broadcast_request'):
+        return None
+
+    from ...models import BroadcastOffer
+
+    return BroadcastOffer.objects.filter(
+        broadcast_request=booking.request.broadcast_request,
+        status=BroadcastOffer.Status.ACCEPTED,
+    ).order_by('-responded_at', '-id').first()
+
+
+def _refresh_on_the_way_metrics(booking, mechanic_lat=None, mechanic_lng=None):
+    accepted_offer = _get_accepted_offer_for_booking(booking)
+    destination_lat, destination_lng = _get_booking_destination_coordinates(booking)
+
+    # Reuse latest known mechanic coordinates when request payload is missing.
+    if (mechanic_lat is None or mechanic_lng is None) and accepted_offer:
+        try:
+            if mechanic_lat is None and accepted_offer.mechanic_latitude is not None:
+                mechanic_lat = float(accepted_offer.mechanic_latitude)
+            if mechanic_lng is None and accepted_offer.mechanic_longitude is not None:
+                mechanic_lng = float(accepted_offer.mechanic_longitude)
+        except (TypeError, ValueError):
+            mechanic_lat = mechanic_lat if mechanic_lat is not None else None
+            mechanic_lng = mechanic_lng if mechanic_lng is not None else None
+
+    route_data = None
+    if (
+        mechanic_lat is not None and mechanic_lng is not None and
+        destination_lat is not None and destination_lng is not None
+    ):
+        try:
+            route_data = _get_route_from_ors(mechanic_lng, mechanic_lat, destination_lng, destination_lat)
+        except Exception:
+            route_data = None
+
+    distance_km = route_data['distance_km'] if route_data else None
+    effective_distance_km = distance_km if distance_km is not None else booking.distance_km
+    eta_minutes = route_data['eta_minutes'] if route_data else None
+
+    traffic_snapshot = _get_realtime_traffic_snapshot(
+        mechanic_lat,
+        mechanic_lng,
+        destination_lat,
+        destination_lng,
+    )
+
+    traffic_level = (traffic_snapshot or {}).get('traffic_level')
+    if not traffic_level:
+        traffic_level = 'moderate'
+
+    surcharge_percent = (traffic_snapshot or {}).get('surcharge_percent')
+    if surcharge_percent is None:
+        surcharge_percent = _traffic_level_to_surcharge_percent(traffic_level)
+
+    convenience_fee = None
+    traffic_surcharge = None
+    if effective_distance_km is not None:
+        distance_fee = (effective_distance_km * RATE_PER_KM).quantize(Decimal('0.01'))
+        traffic_surcharge = (distance_fee * surcharge_percent).quantize(Decimal('0.01'))
+        convenience_fee = (BASE_FEE + distance_fee + traffic_surcharge).quantize(Decimal('0.01'))
+
+    booking.status = Booking.Status.ON_THE_WAY
+    booking.distance_km = distance_km if distance_km is not None else booking.distance_km
+    booking.eta_minutes = eta_minutes if eta_minutes is not None else booking.eta_minutes
+    booking.convenience_fee = convenience_fee if convenience_fee is not None else booking.convenience_fee
+    booking.traffic_surcharge = traffic_surcharge if traffic_surcharge is not None else booking.traffic_surcharge
+    booking.fee_locked_at = timezone.now()
+    booking.save(update_fields=[
+        "status",
+        "distance_km",
+        "eta_minutes",
+        "convenience_fee",
+        "traffic_surcharge",
+        "fee_locked_at",
+    ])
+
+    if accepted_offer:
+        if mechanic_lat is not None:
+            accepted_offer.mechanic_latitude = Decimal(str(mechanic_lat)).quantize(Decimal('0.000001'))
+        if mechanic_lng is not None:
+            accepted_offer.mechanic_longitude = Decimal(str(mechanic_lng)).quantize(Decimal('0.000001'))
+        if distance_km is not None:
+            accepted_offer.distance_km = distance_km
+        if convenience_fee is not None:
+            accepted_offer.convenience_fee = convenience_fee
+        accepted_offer.traffic_level = traffic_level
+        if eta_minutes is not None:
+            accepted_offer.estimated_eta_minutes = eta_minutes
+        accepted_offer.responded_at = timezone.now()
+        accepted_offer.save()
+
+    return {
+        "traffic_level": traffic_level,
+        "accepted_offer": accepted_offer,
+    }
 
 
 
@@ -49,15 +286,17 @@ def mechanic_start_travel(request, booking_id):
     except Booking.DoesNotExist:
         return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
 
-    # Allow idempotent start: if already on_the_way, return success; otherwise require ACCEPTED
+    # Allow refresh when already on_the_way: recompute metrics and relock fee values.
     if booking.status not in [Booking.Status.ACCEPTED, Booking.Status.ON_THE_WAY]:
         return Response({"error": "Booking must be in 'accepted' or 'on_the_way' status to start travel."}, status=status.HTTP_400_BAD_REQUEST)
 
-    if booking.status == Booking.Status.ON_THE_WAY:
-        return Response({"message": "Travel already started.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
+    previous_status = booking.status
 
-    booking.status = Booking.Status.ON_THE_WAY
-    booking.save(update_fields=["status"])
+    mechanic_lat = _to_float(request.data.get('mechanic_latitude'))
+    mechanic_lng = _to_float(request.data.get('mechanic_longitude'))
+
+    refresh_result = _refresh_on_the_way_metrics(booking, mechanic_lat, mechanic_lng)
+    traffic_level = refresh_result["traffic_level"]
 
     notify_booking_parties(
         account.id,
@@ -67,7 +306,20 @@ def mechanic_start_travel(request, booking_id):
         "Mechanic is now on the way",
     )
 
-    return Response({"message": "Travel started.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
+    return Response(
+        {
+            "message": "Travel refreshed. Real-time fee and ETA locked." if previous_status == Booking.Status.ON_THE_WAY else "Travel started. Real-time fee and ETA locked.",
+            "booking_id": booking.id,
+            "status": booking.status,
+            "distance_km": float(booking.distance_km) if booking.distance_km is not None else None,
+            "estimated_eta_minutes": int(booking.eta_minutes) if booking.eta_minutes is not None else None,
+            "convenience_fee": float(booking.convenience_fee) if booking.convenience_fee is not None else None,
+            "traffic_surcharge": float(booking.traffic_surcharge) if booking.traffic_surcharge is not None else None,
+            "traffic_level": traffic_level,
+            "fee_locked_at": booking.fee_locked_at.isoformat() if booking.fee_locked_at else None,
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 @api_view(["POST"])
@@ -167,8 +419,9 @@ def mechanic_cancel_job(request, booking_id):
     if booking.status != Booking.Status.ACTIVE:
         return Response({"error": "Booking must be in 'active' status to cancel job."}, status=status.HTTP_400_BAD_REQUEST)
 
-    booking.status = Booking.Status.ON_THE_WAY
-    booking.save(update_fields=["status"])
+    mechanic_lat = _to_float(request.data.get('mechanic_latitude'))
+    mechanic_lng = _to_float(request.data.get('mechanic_longitude'))
+    refresh_result = _refresh_on_the_way_metrics(booking, mechanic_lat, mechanic_lng)
 
     notify_booking_parties(
         account.id,
@@ -178,7 +431,20 @@ def mechanic_cancel_job(request, booking_id):
         "Job was cancelled and booking moved back to on_the_way",
     )
 
-    return Response({"message": "Job cancelled, status reverted to on_the_way.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
+    return Response(
+        {
+            "message": "Job cancelled, status reverted to on_the_way.",
+            "booking_id": booking.id,
+            "status": booking.status,
+            "distance_km": float(booking.distance_km) if booking.distance_km is not None else None,
+            "estimated_eta_minutes": int(booking.eta_minutes) if booking.eta_minutes is not None else None,
+            "convenience_fee": float(booking.convenience_fee) if booking.convenience_fee is not None else None,
+            "traffic_surcharge": float(booking.traffic_surcharge) if booking.traffic_surcharge is not None else None,
+            "traffic_level": refresh_result["traffic_level"],
+            "fee_locked_at": booking.fee_locked_at.isoformat() if booking.fee_locked_at else None,
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 @api_view(["POST"]) 
@@ -404,6 +670,7 @@ def mechanic_booking_quotation(request, booking_id):
     if request.method == 'POST':
         data = request.data or {}
         ser = QuotationSerializer(data=data, context={'request': request, 'booking': booking, 'mechanic': account})
+        original_booking_status = booking.status
         try:
             # If quotation exists, update instead
             try:
@@ -411,10 +678,191 @@ def mechanic_booking_quotation(request, booking_id):
             except Quotation.DoesNotExist:
                 existing = None
 
-            if existing:
-                quotation = ser.update(existing, data)
-            else:
-                quotation = ser.create(data)
+            # Support mechanic retraction/deletion via action=delete
+            if data.get('action') == 'delete' and existing:
+                # post retraction system message (include items before they are removed), then delete
+                try:
+                    post_quotation_chat_message(account, booking, existing, action='retracted')
+                    try:
+                        notify_booking_parties(account.id, booking.request.client.account_id, booking.id, booking.status, 'Quotation retracted')
+                    except Exception:
+                        pass
+                    existing.delete()
+                except Exception:
+                    pass
+                return Response({'message': 'Quotation deleted'}, status=status.HTTP_200_OK)
+
+            # Perform quotation save and system chat message in a single DB transaction
+            try:
+                with transaction.atomic():
+                    if existing:
+                        quotation = ser.update(existing, data)
+                        print(f"DEBUG: Quotation {getattr(quotation, 'id', None)} updated. Attempting to create chat message...")
+                        try:
+                            from ...ws_utils import _ensure_conversation_for_booking
+                            from chat.models import Message as ChatMessage
+                            from chat.serializers import MessageSerializer as ChatMessageSerializer
+                            import json
+                            from channels.layers import get_channel_layer
+                            from asgiref.sync import async_to_sync
+
+                            conv = _ensure_conversation_for_booking(booking, account)
+                            if conv:
+                                payload = {
+                                    'type': 'quotation_request',
+                                    'action': 'updated',
+                                    'quotation_id': quotation.id,
+                                    'booking_id': booking.id,
+                                    'status': getattr(quotation, 'status', None),
+                                    'mechanic_id': getattr(account, 'id', None),
+                                    'mechanic_name': f"{getattr(account, 'firstname', '')} {getattr(account, 'lastname', '')}".strip(),
+                                    'notes': getattr(quotation, 'notes', ''),
+                                    'total_amount': float(quotation.total_amount) if getattr(quotation, 'total_amount', None) is not None else None,
+                                    'items': [],
+                                    'created_at': quotation.created_at.isoformat() if getattr(quotation, 'created_at', None) else None,
+                                }
+                                try:
+                                    for it in quotation.items.exclude(status='rejected'):
+                                        payload['items'].append({
+                                            'id': it.id,
+                                            'service': it.service_id,
+                                            'service_add_on': it.service_add_on_id,
+                                            'description': it.description,
+                                            'quantity': int(it.quantity),
+                                            'unit_price': float(it.unit_price),
+                                            'line_total': float(it.line_total),
+                                            'status': getattr(it, 'status', None),
+                                        })
+                                except Exception:
+                                    pass
+
+                                msg = ChatMessage.objects.create(conversation=conv, sender=None, content=json.dumps(payload))
+                                conv.save()
+                                print(f"DEBUG: Chat message created successfully for quotation {quotation.id}")
+
+                                try:
+                                    serializer = ChatMessageSerializer(msg, context={'request': request})
+                                    channel_layer = get_channel_layer()
+                                    payload_ws = {
+                                        'type': 'booking_update',
+                                        'action': 'new_chat_message',
+                                        'conversation_id': conv.id,
+                                        'booking_id': booking.id,
+                                        'message': serializer.data,
+                                    }
+                                    for participant in conv.participants.exclude(id=getattr(account, 'id', None)).all():
+                                        group_name = f'user_{participant.id}'
+                                        async_to_sync(channel_layer.group_send)(group_name, payload_ws)
+                                except Exception as e:
+                                    print(f"DEBUG: Failed to broadcast chat message for quotation {quotation.id}: {e}")
+                        except Exception as e:
+                            print(f"DEBUG: Failed to create chat message for quotation {getattr(quotation, 'id', None)}: {e}")
+                        try:
+                            notify_booking_parties(account.id, booking.request.client.account_id, booking.id, booking.status, 'Quotation updated')
+                        except Exception:
+                            pass
+                    else:
+                        quotation = ser.create(data)
+                        print(f"DEBUG: Quotation {getattr(quotation, 'id', None)} saved. Attempting to create chat message...")
+                        try:
+                            # Ensure conversation exists and create a system message record explicitly
+                            from ...ws_utils import _ensure_conversation_for_booking
+                            from chat.models import Message as ChatMessage
+                            from chat.serializers import MessageSerializer as ChatMessageSerializer
+                            import json
+                            from channels.layers import get_channel_layer
+                            from asgiref.sync import async_to_sync
+
+                            conv = _ensure_conversation_for_booking(booking, account)
+                            if conv:
+                                payload = {
+                                    'type': 'quotation_request',
+                                    'action': 'created',
+                                    'quotation_id': quotation.id,
+                                    'booking_id': booking.id,
+                                    'status': getattr(quotation, 'status', None),
+                                    'mechanic_id': getattr(account, 'id', None),
+                                    'mechanic_name': f"{getattr(account, 'firstname', '')} {getattr(account, 'lastname', '')}".strip(),
+                                    'notes': getattr(quotation, 'notes', ''),
+                                    'total_amount': float(quotation.total_amount) if getattr(quotation, 'total_amount', None) is not None else None,
+                                    'items': [],
+                                    'created_at': quotation.created_at.isoformat() if getattr(quotation, 'created_at', None) else None,
+                                }
+                                try:
+                                    for it in quotation.items.exclude(status='rejected'):
+                                        payload['items'].append({
+                                            'id': it.id,
+                                            'service': it.service_id,
+                                            'service_add_on': it.service_add_on_id,
+                                            'description': it.description,
+                                            'quantity': int(it.quantity),
+                                            'unit_price': float(it.unit_price),
+                                            'line_total': float(it.line_total),
+                                            'status': getattr(it, 'status', None),
+                                        })
+                                except Exception:
+                                    pass
+
+                                msg = ChatMessage.objects.create(conversation=conv, sender=None, content=json.dumps(payload))
+                                conv.save()
+                                print(f"DEBUG: Chat message created successfully for quotation {quotation.id}")
+
+                                # Broadcast to participants except sender
+                                try:
+                                    serializer = ChatMessageSerializer(msg, context={'request': request})
+                                    channel_layer = get_channel_layer()
+                                    payload_ws = {
+                                        'type': 'booking_update',
+                                        'action': 'new_chat_message',
+                                        'conversation_id': conv.id,
+                                        'booking_id': booking.id,
+                                        'message': serializer.data,
+                                    }
+                                    for participant in conv.participants.exclude(id=getattr(account, 'id', None)).all():
+                                        group_name = f'user_{participant.id}'
+                                        async_to_sync(channel_layer.group_send)(group_name, payload_ws)
+                                except Exception as e:
+                                    print(f"DEBUG: Failed to broadcast chat message for quotation {quotation.id}: {e}")
+                        except Exception as e:
+                            print(f"DEBUG: Failed to create chat message for quotation {getattr(quotation, 'id', None)}: {e}")
+                        try:
+                            notify_booking_parties(account.id, booking.request.client.account_id, booking.id, booking.status, 'Quotation created')
+                        except Exception:
+                            pass
+            except Exception as e:
+                logging.getLogger(__name__).exception('Failed to create/update quotation and post chat message: %s', e)
+                return Response({
+                    'error': 'Failed to save quotation or post chat message',
+                    'details': str(e)
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            # Safeguard: remove stale rejected quotation items only after a non-pending state.
+            # While pending, rejected rows may represent removal proposals awaiting client decision.
+            try:
+                if str(getattr(quotation, 'status', '')).lower() != Quotation.Status.PENDING:
+                    deleted_count, _ = QuotationItem.objects.filter(
+                        quotation=quotation,
+                        status=Quotation.Status.REJECTED,
+                    ).delete()
+                    if deleted_count:
+                        try:
+                            fresh_total = sum(float(it.line_total) for it in quotation.items.exclude(status=Quotation.Status.REJECTED))
+                        except Exception:
+                            fresh_total = 0
+                        quotation.total_amount = fresh_total
+                        quotation.save(update_fields=['total_amount', 'updated_at'])
+            except Exception:
+                pass
+
+            # Guardrail: quotation create/update must not auto-transition booking status
+            try:
+                booking.refresh_from_db(fields=['status'])
+                if booking.status != original_booking_status:
+                    print(f"DEBUG: Booking status changed during quotation save ({original_booking_status} -> {booking.status}); restoring original status.")
+                    booking.status = original_booking_status
+                    booking.save(update_fields=['status'])
+            except Exception:
+                pass
 
             return Response(QuotationSerializer(quotation, context={'request': request}).data, status=status.HTTP_200_OK)
         except Exception as e:
@@ -472,8 +920,13 @@ def mechanic_revert_stage(request, booking_id):
             # ignore failures to set started_at; still proceed with status change
             pass
 
-    booking.status = new_status
-    booking.save(update_fields=["status"])
+    if new_status == Booking.Status.ON_THE_WAY:
+        mechanic_lat = _to_float(request.data.get('mechanic_latitude'))
+        mechanic_lng = _to_float(request.data.get('mechanic_longitude'))
+        _refresh_on_the_way_metrics(booking, mechanic_lat, mechanic_lng)
+    else:
+        booking.status = new_status
+        booking.save(update_fields=["status"])
 
     notify_booking_parties(
         account.id,
@@ -511,6 +964,9 @@ def _get_mechanic_account(request):
             status=status.HTTP_403_FORBIDDEN,
         )
     return account, None
+
+
+
 
 
 @api_view(["POST"])
@@ -645,6 +1101,74 @@ def mechanic_accept_backjob(request, booking_id):
         pass
 
     return Response({"message": "Backjob accepted", "backjob_id": backjob.id, "status": backjob.status}, status=status.HTTP_200_OK)
+
+
+@api_view(["GET", "POST"])
+@permission_classes([AllowAny])
+def mechanic_location_view(request, booking_id):
+    """
+    GET  — Returns the latest mechanic GPS coordinates for a booking.
+           Used by the client-side app to poll mechanic location every 5 seconds.
+    POST — Upserts the MechanicLocation row for a booking.
+           Used by the mechanic-side app to push GPS coordinates every 5 seconds.
+    Only works when booking status is 'on_the_way'.
+    """
+    account_id = request.session.get("account_id")
+    if not account_id:
+        return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        account = Account.objects.get(id=account_id)
+    except Account.DoesNotExist:
+        return Response({"error": "Account not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    # Try to find the booking — accessible by either the mechanic (provider) or the client
+    try:
+        booking = Booking.objects.get(id=booking_id)
+    except Booking.DoesNotExist:
+        return Response({"error": "Booking not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    # Verify access: must be the booking's provider OR the booking's client
+    is_provider = booking.request.provider_id == account.id
+    is_client = booking.request.client.account_id == account.id
+    if not is_provider and not is_client:
+        return Response({"error": "You do not have permission to access this booking"}, status=status.HTTP_403_FORBIDDEN)
+
+    if request.method == "GET":
+        try:
+            loc = MechanicLocation.objects.get(booking=booking)
+            return Response({
+                "latitude": float(loc.latitude),
+                "longitude": float(loc.longitude),
+                "updated_at": loc.updated_at.isoformat(),
+            }, status=status.HTTP_200_OK)
+        except MechanicLocation.DoesNotExist:
+            return Response({"error": "Mechanic location not available yet"}, status=status.HTTP_404_NOT_FOUND)
+
+    # POST — only the mechanic (provider) can update location
+    if not is_provider:
+        return Response({"error": "Only the assigned mechanic can update location"}, status=status.HTTP_403_FORBIDDEN)
+
+    if booking.status != Booking.Status.ON_THE_WAY:
+        return Response({"error": "Location updates are only accepted when booking is on_the_way"}, status=status.HTTP_400_BAD_REQUEST)
+
+    latitude = _to_float(request.data.get("latitude"))
+    longitude = _to_float(request.data.get("longitude"))
+
+    if latitude is None or longitude is None:
+        return Response({"error": "latitude and longitude are required"}, status=status.HTTP_400_BAD_REQUEST)
+
+    loc, created = MechanicLocation.objects.update_or_create(
+        booking=booking,
+        defaults={"latitude": Decimal(str(latitude)).quantize(Decimal('0.000001')),
+                   "longitude": Decimal(str(longitude)).quantize(Decimal('0.000001'))},
+    )
+
+    return Response({
+        "latitude": float(loc.latitude),
+        "longitude": float(loc.longitude),
+        "updated_at": loc.updated_at.isoformat(),
+    }, status=status.HTTP_200_OK)
 
 
 def _count_pending_direct_requests(account):
@@ -1253,6 +1777,14 @@ def mechanic_accept_emergency_request(request, request_id):
         req = Request.objects.get(id=request_id, request_type="emergency")
     except Request.DoesNotExist:
         return Response({"error": "Emergency request not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    if (
+        req.provider_id is None
+        and not hasattr(req, "booking")
+        and req.created_at < timezone.now() - timedelta(minutes=EMERGENCY_REQUEST_TTL_MINUTES)
+    ):
+        req.delete()
+        return Response({"error": "Emergency request expired"}, status=status.HTTP_400_BAD_REQUEST)
 
     # If already assigned to another provider, reject
     if req.provider and req.provider != account:

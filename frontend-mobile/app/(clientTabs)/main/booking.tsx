@@ -137,6 +137,27 @@ export default function BookingScreen() {
     ) {
       fetchData();
     }
+    // Also react to new chat messages that carry quotation payloads for this booking
+    try {
+      if (lastMessage?.type === 'booking_update' && lastMessage?.action === 'new_chat_message') {
+        const msg = lastMessage?.message as any;
+        const bookingIdMsg = Number(lastMessage?.booking_id);
+        if (bookingIdMsg && bookings.some(b => b.id === bookingIdMsg)) {
+          // message may be an object with nested 'message' or 'message' may be the serialized message
+          let contentStr = null;
+          if (msg && typeof msg === 'object') contentStr = msg.content || (msg.message && msg.message.content) || null;
+          else if (typeof msg === 'string') contentStr = msg;
+          if (contentStr) {
+            try {
+              const parsed = JSON.parse(contentStr);
+              if (parsed && parsed.type === 'quotation_request') {
+                fetchData();
+              }
+            } catch (e) {}
+          }
+        }
+      }
+    } catch (e) {}
   }, [lastMessage, fetchData]);
 
   const onRefresh = () => {

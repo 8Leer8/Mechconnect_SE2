@@ -25,6 +25,9 @@ class Request(models.Model):
     shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name="shop_requests", null=True, blank=True)
     request_type = models.CharField(max_length=20, choices=Type.choices)
     service_location = models.ForeignKey(ServiceLocation, on_delete=models.CASCADE, null=True, blank=True)
+    vehicle_type = models.CharField(max_length=80, null=True, blank=True)
+    vehicle_brand = models.CharField(max_length=80, null=True, blank=True)
+    vehicle_model = models.CharField(max_length=120, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
 class CustomRequest(models.Model):
@@ -76,6 +79,29 @@ class Booking(models.Model):
     request = models.OneToOneField(Request, on_delete=models.CASCADE)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
     amount_fee = models.DecimalField(max_digits=10, decimal_places=2)
+    distance_km = models.DecimalField(
+        max_digits=6, decimal_places=2,
+        null=True, blank=True,
+        help_text="Road distance in km from ORS when mechanic accepted the booking"
+    )
+    convenience_fee = models.DecimalField(
+        max_digits=10, decimal_places=2,
+        null=True, blank=True,
+        help_text="Locked convenience fee when mechanic pressed On The Way"
+    )
+    eta_minutes = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text="Estimated travel time in minutes from ORS when fee was locked"
+    )
+    fee_locked_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Timestamp when mechanic pressed On The Way and fee was locked"
+    )
+    traffic_surcharge = models.DecimalField(
+    max_digits=10, decimal_places=2,
+    null=True, blank=True,
+    help_text="Real traffic surcharge added when mechanic went OTW"
+    )
     booked_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     completed_at = models.DateTimeField(null=True, blank=True)
@@ -139,7 +165,15 @@ class CompleteBooking(models.Model):
 
 class Receipt(models.Model):
     booking = models.OneToOneField(Booking, on_delete=models.CASCADE)
+    # Record payment method and any external transaction id for online payments
+    PAYMENT_METHOD_CHOICES = (
+        ('cash', 'cash'),
+        ('online', 'online'),
+    )
+
     payment_received = models.BooleanField(default=False)
+    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default='cash')
+    transaction_id = models.CharField(max_length=255, null=True, blank=True)
     receipt_image = models.ImageField(upload_to='bookings/receipts/', null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -172,6 +206,11 @@ class Quotation(models.Model):
     Acts like a receipt but editable while the mechanic is on-site."""
     booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name='quotation')
     mechanic = models.ForeignKey(Account, on_delete=models.CASCADE)
+    class Status(models.TextChoices):
+        PENDING = "pending"
+        ACCEPTED = "accepted"
+        REJECTED = "rejected"
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     notes = models.TextField(null=True, blank=True)
     total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     is_final = models.BooleanField(default=False)
@@ -187,6 +226,14 @@ class QuotationItem(models.Model):
     description = models.CharField(max_length=255, null=True, blank=True)
     quantity = models.PositiveIntegerField(default=1)
     unit_price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    # per-item status: defaults to pending so newly-added items are pending until client accepts
+    status = models.CharField(max_length=20, choices=Quotation.Status.choices, default=Quotation.Status.PENDING)
+    # Explicit change metadata allows clients to classify mixed pending deltas
+    # (add/edit/remove) without relying on brittle heuristics.
+    change_type = models.CharField(max_length=20, null=True, blank=True)
+    previous_description = models.CharField(max_length=255, null=True, blank=True)
+    previous_quantity = models.PositiveIntegerField(null=True, blank=True)
+    previous_unit_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
 
     @property
     def line_total(self):
@@ -214,6 +261,7 @@ class BroadcastRequest(models.Model):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.SEARCHING)
     latitude = models.DecimalField(max_digits=9, decimal_places=6)  # -90 to 90
     longitude = models.DecimalField(max_digits=9, decimal_places=6)  # -180 to 180
+    search_radius_km = models.PositiveIntegerField(default=5)
     expires_at = models.DateTimeField()
     
     # Timestamps
@@ -296,7 +344,7 @@ class BroadcastOffer(models.Model):
         decimal_places=2, 
         null=True, 
         blank=True,
-        help_text="Distance from mechanic to service location in kilometers"
+        help_text="Distance from mechanic to service location in kilometers when accepted"
     )
     estimated_price = models.DecimalField(
         max_digits=10, 
@@ -305,7 +353,20 @@ class BroadcastOffer(models.Model):
         blank=True,
         help_text="Estimated total price: service minimum prices + distance charge (₱10/km, min 5km)"
     )
-    
+    convenience_fee = models.DecimalField(
+        max_digits=10, decimal_places=2,
+        null=True, blank=True,
+        help_text="Estimated convenience fee (base + distance + traffic surcharge)"
+    )
+    traffic_level = models.CharField(
+        max_length=20,
+        null=True, blank=True,
+        help_text="Traffic level when mechanic viewed: light/moderate/heavy/severe"
+    )
+    estimated_eta_minutes = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text="Estimated travel time in minutes from ORS when mechanic viewed"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     responded_at = models.DateTimeField(null=True, blank=True)
 
@@ -341,3 +402,38 @@ class RequestAssignment(models.Model):
 
     def __str__(self):
         return f"Assignment: {self.mechanic} -> Request {self.request_id} ({self.role})"
+class MechanicLocation(models.Model):
+    """
+    Stores live mechanic GPS location
+    while booking status is on_the_way.
+    Updated every 5 seconds from mechanic phone.
+    Uses OneToOne so only ONE location record
+    exists per booking at any time.
+    Automatically overwritten on each update
+    so database doesn't grow infinitely.
+    """
+    booking = models.OneToOneField(
+        Booking,
+        on_delete=models.CASCADE,
+        related_name='mechanic_location'
+    )
+    latitude = models.DecimalField(
+        max_digits=9,
+        decimal_places=6,
+        help_text="Mechanic current latitude"
+    )
+    longitude = models.DecimalField(
+        max_digits=9,
+        decimal_places=6,
+        help_text="Mechanic current longitude"
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        help_text="Last time location was updated"
+    )
+
+    class Meta:
+        db_table = 'bookings_mechaniclocation'
+
+    def __str__(self):
+        return f"Location for Booking {self.booking_id} — ({self.latitude}, {self.longitude})"

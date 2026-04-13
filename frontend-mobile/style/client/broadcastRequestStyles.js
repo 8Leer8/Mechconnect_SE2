@@ -53,6 +53,50 @@ export const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#fff',
   },
+  pickerContainer: {
+    backgroundColor: '#1A1C1E',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+    overflow: 'hidden',
+  },
+  picker: {
+    color: '#fff',
+    backgroundColor: 'transparent',
+  },
+  radiusRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    justifyContent: 'space-between',
+  },
+  radiusChip: {
+    width: '31%',
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#1A1C1E',
+    alignItems: 'center',
+  },
+  radiusChipSelected: {
+    backgroundColor: '#FF8C00',
+    borderColor: '#FF8C00',
+  },
+  radiusChipText: {
+    color: '#A8ADB8',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  radiusChipTextSelected: {
+    color: '#fff',
+  },
+  radiusHint: {
+    marginTop: 10,
+    fontSize: 12,
+    color: '#8E8E93',
+  },
   // Services grid
   servicesGrid: {
     flexDirection: 'row',
@@ -254,6 +298,107 @@ export const styles = StyleSheet.create({
     color: '#fff',
     borderWidth: 1,
     borderColor: '#2A2C2E',
+  },
+  nearbySection: {
+    marginTop: 12,
+  },
+  nearbySubtitle: {
+    fontSize: 12,
+    color: '#8E8E93',
+    marginTop: -2,
+    marginBottom: 10,
+  },
+  nearbyScrollContent: {
+    paddingRight: 2,
+  },
+  nearbyChip: {
+    width: 170,
+    backgroundColor: '#1A1C1E',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginRight: 8,
+  },
+  nearbyChipSkeleton: {
+    borderColor: '#2A2C2E',
+  },
+  nearbyHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  nearbyTypeIconWrap: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    marginRight: 8,
+    backgroundColor: '#FF8C0015',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#FF8C0030',
+  },
+  nearbyName: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#fff',
+    marginBottom: 4,
+  },
+  nearbyMeta: {
+    fontSize: 11,
+    color: '#8E8E93',
+    marginBottom: 7,
+  },
+  nearbyStatRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 3,
+  },
+  nearbyStatText: {
+    fontSize: 11,
+    color: '#D6D6D8',
+  },
+  nearbyEmptyWrap: {
+    backgroundColor: '#1A1C1E',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+  },
+  nearbyEmptyText: {
+    fontSize: 12,
+    color: '#8E8E93',
+  },
+  nearbyIconSkeleton: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    marginBottom: 8,
+    backgroundColor: '#2A2C2E',
+  },
+  nearbyLineLg: {
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#2A2C2E',
+    marginBottom: 6,
+    width: '82%',
+  },
+  nearbyLineMd: {
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: '#2A2C2E',
+    marginBottom: 8,
+    width: '72%',
+  },
+  nearbyLineSm: {
+    height: 8,
+    borderRadius: 5,
+    backgroundColor: '#2A2C2E',
+    width: '64%',
   },
   // Submit
   sendBtn: {

@@ -2,7 +2,7 @@ from rest_framework import serializers
 from .models import (
     Booking, Request, CustomRequest, DirectRequest, EmergencyRequest,
     ActiveBooking, ServiceLocation, DirectRequestAddOn, BroadcastRequest, BroadcastOffer,
-    RequestAssignment
+    RequestAssignment, Receipt
 )
 from services.models import Service, ServiceAddOn
 from users.models import Account, Client
@@ -119,6 +119,8 @@ class RequestAssignmentSerializer(serializers.ModelSerializer):
 
 
 class RequestSerializer(serializers.ModelSerializer):
+    type = serializers.CharField(source='request_type', read_only=True)
+    broadcast_request = serializers.SerializerMethodField()
     client = AccountBasicSerializer(source='client.account', read_only=True)
     provider = AccountBasicSerializer(read_only=True)
     shop = ShopBasicSerializer(read_only=True)
@@ -128,7 +130,16 @@ class RequestSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Request
-        fields = ['id', 'client', 'provider', 'shop', 'request_type', 'service_location', 'created_at', 'request_details', 'assigned_mechanics']
+        fields = ['id', 'type', 'request_type', 'broadcast_request', 'client', 'provider', 'shop', 'service_location', 'created_at', 'request_details', 'assigned_mechanics']
+
+    def get_broadcast_request(self, obj):
+        if not hasattr(obj, 'broadcast_request') or obj.broadcast_request is None:
+            return None
+        br = obj.broadcast_request
+        return {
+            'latitude': float(br.latitude) if br.latitude is not None else None,
+            'longitude': float(br.longitude) if br.longitude is not None else None,
+        }
     
     def get_request_details(self, obj):
         if obj.request_type == 'custom':
@@ -176,11 +187,13 @@ class ActiveBookingSerializer(serializers.ModelSerializer):
 class BookingSerializer(serializers.ModelSerializer):
     request = RequestSerializer(read_only=True)
     active_details = serializers.SerializerMethodField()
+    estimated_eta_minutes = serializers.IntegerField(source='eta_minutes', read_only=True)
+    traffic_level = serializers.SerializerMethodField()
 
     class Meta:
         model = Booking
         fields = [
-            'id', 'request', 'status', 'amount_fee', 'booked_at',
+            'id', 'request', 'status', 'amount_fee', 'convenience_fee', 'distance_km', 'estimated_eta_minutes', 'traffic_level', 'booked_at',
             'updated_at', 'completed_at', 'active_details'
         ]
         read_only_fields = ['id', 'request', 'amount_fee', 'booked_at', 'updated_at', 'completed_at', 'active_details']
@@ -195,6 +208,15 @@ class BookingSerializer(serializers.ModelSerializer):
                 return None
         return None
 
+    def get_traffic_level(self, obj):
+        if not hasattr(obj, 'request') or not hasattr(obj.request, 'broadcast_request'):
+            return None
+        offer = BroadcastOffer.objects.filter(
+            broadcast_request=obj.request.broadcast_request,
+            status=BroadcastOffer.Status.ACCEPTED,
+        ).order_by('-responded_at', '-id').first()
+        return offer.traffic_level if offer and offer.traffic_level else None
+
     def update(self, instance, validated_data):
         # Allow status update via PATCH
         status = validated_data.get('status', None)
@@ -202,6 +224,20 @@ class BookingSerializer(serializers.ModelSerializer):
             instance.status = status
             instance.save()
         return instance
+
+
+class BookingPaymentSerializer(serializers.Serializer):
+    """Serializer for client payment selection (cash | online).
+    This endpoint only records the chosen method and performs the simple
+    status transition logic implemented in the view.
+    """
+    payment_method = serializers.ChoiceField(choices=['cash', 'online'])
+    receipt_image = serializers.ImageField(required=False, allow_null=True)
+
+    def validate_payment_method(self, value):
+        if value not in ('cash', 'online'):
+            raise serializers.ValidationError('Invalid payment method')
+        return value
 
 
 class HomePageSerializer(serializers.Serializer):
@@ -217,11 +253,15 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
     required_tokens = serializers.SerializerMethodField()
     latitude = serializers.FloatField()
     longitude = serializers.FloatField()
+    vehicle_type = serializers.CharField(source='request.vehicle_type', read_only=True, allow_null=True)
+    vehicle_brand = serializers.CharField(source='request.vehicle_brand', read_only=True, allow_null=True)
+    vehicle_model = serializers.CharField(source='request.vehicle_model', read_only=True, allow_null=True)
     
     class Meta:
         model = BroadcastRequest
         fields = [
             'id', 'description', 'latitude', 'longitude', 
+            'vehicle_type', 'vehicle_brand', 'vehicle_model',
             'services', 'add_ons', 'created_at', 'expires_at', 'accepted_at',
             'status', 'concern_picture', 'required_tokens'
         ]
@@ -270,11 +310,26 @@ from . import models as booking_models
 
 
 class QuotationItemSerializer(serializers.ModelSerializer):
+    id = serializers.IntegerField(required=False)
     line_total = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()
 
     class Meta:
         model = booking_models.QuotationItem
-        fields = ['id', 'service', 'service_add_on', 'description', 'quantity', 'unit_price', 'line_total']
+        fields = [
+            'id',
+            'service',
+            'service_add_on',
+            'description',
+            'quantity',
+            'unit_price',
+            'line_total',
+            'status',
+            'change_type',
+            'previous_description',
+            'previous_quantity',
+            'previous_unit_price',
+        ]
 
     def get_line_total(self, obj):
         try:
@@ -282,11 +337,21 @@ class QuotationItemSerializer(serializers.ModelSerializer):
         except Exception:
             return 0.0
 
+    def get_status(self, obj):
+        try:
+            # Prefer per-item status if present, otherwise fall back to parent quotation
+            if hasattr(obj, 'status') and obj.status is not None:
+                return obj.status
+            return obj.quotation.status if hasattr(obj, 'quotation') and obj.quotation is not None else None
+        except Exception:
+            return None
+
 
 class QuotationSerializer(serializers.Serializer):
     id = serializers.IntegerField(read_only=True)
     booking = serializers.IntegerField(read_only=True)
     mechanic = AccountBasicSerializer(read_only=True)
+    status = serializers.CharField(read_only=True)
     notes = serializers.CharField(allow_blank=True, allow_null=True, required=False)
     total_amount = serializers.FloatField(read_only=True)
     is_final = serializers.BooleanField(required=False)
@@ -295,16 +360,21 @@ class QuotationSerializer(serializers.Serializer):
     def to_representation(self, instance):
         # instance is a Quotation model
         from .models import Quotation, QuotationItem
+        if str(getattr(instance, 'status', '')).lower() == Quotation.Status.PENDING:
+            visible_items_qs = QuotationItem.objects.filter(quotation=instance)
+        else:
+            visible_items_qs = QuotationItem.objects.filter(quotation=instance).exclude(status='rejected')
         data = {
             'id': instance.id,
             'booking': instance.booking.id,
             'mechanic': AccountBasicSerializer(instance.mechanic).data,
             'notes': instance.notes,
+            'status': instance.status,
             'total_amount': float(instance.total_amount),
             'is_final': instance.is_final,
             'created_at': instance.created_at,
             'updated_at': instance.updated_at,
-            'items': QuotationItemSerializer(QuotationItem.objects.filter(quotation=instance), many=True).data,
+            'items': QuotationItemSerializer(visible_items_qs, many=True).data,
         }
         return data
 
@@ -314,58 +384,286 @@ class QuotationSerializer(serializers.Serializer):
         booking = self.context.get('booking')
         mechanic = self.context.get('mechanic')
 
+        def get_requested_service_ids(bk):
+            ids = set()
+            try:
+                req = getattr(bk, 'request', None)
+                if req is None:
+                    return ids
+                if hasattr(req, 'directrequest') and req.directrequest and req.directrequest.service_id:
+                    ids.add(int(req.directrequest.service_id))
+                if hasattr(req, 'broadcast_request') and req.broadcast_request:
+                    for svc in req.broadcast_request.services.all():
+                        try:
+                            ids.add(int(svc.id))
+                        except Exception:
+                            continue
+            except Exception:
+                pass
+            return ids
+
         items = validated_data.pop('items', []) if isinstance(validated_data, dict) else []
 
         quotation, _ = Quotation.objects.get_or_create(booking=booking, defaults={
             'mechanic': mechanic,
             'notes': validated_data.get('notes', ''),
             'is_final': validated_data.get('is_final', False),
+            'status': Quotation.Status.PENDING,
         })
-
-        # clear existing items and recreate
-        QuotationItem.objects.filter(quotation=quotation).delete()
+        requested_service_ids = get_requested_service_ids(booking)
+        # If quotation is newly created, create provided items; if it already exists, append/update items without deleting existing ones
         total = 0
+        existing_items = {it.id: it for it in QuotationItem.objects.filter(quotation=quotation)}
         for it in items:
-            qitem = QuotationItem.objects.create(
-                quotation=quotation,
-                service_id=it.get('service') if it.get('service') else None,
-                service_add_on_id=it.get('service_add_on') if it.get('service_add_on') else None,
-                description=it.get('description', ''),
-                quantity=it.get('quantity', 1),
-                unit_price=it.get('unit_price', 0),
-            )
+            if it.get('id') and int(it.get('id')) in existing_items:
+                # update existing item (preserve status unless explicitly provided)
+                qitem = existing_items[int(it.get('id'))]
+                qitem.service_id = it.get('service') if it.get('service') is not None else qitem.service_id
+                qitem.service_add_on_id = it.get('service_add_on') if it.get('service_add_on') is not None else qitem.service_add_on_id
+                if 'description' in it: qitem.description = it.get('description', qitem.description)
+                if 'quantity' in it: qitem.quantity = it.get('quantity', qitem.quantity)
+                if 'unit_price' in it: qitem.unit_price = it.get('unit_price', qitem.unit_price)
+                if 'status' in it:
+                    qitem.status = it.get('status') or qitem.status
+                if qitem.status != Quotation.Status.PENDING:
+                    qitem.change_type = None
+                    qitem.previous_description = None
+                    qitem.previous_quantity = None
+                    qitem.previous_unit_price = None
+                qitem.save()
+            else:
+                # create new item (defaults to pending)
+                service_id = it.get('service') if it.get('service') else None
+                default_status = Quotation.Status.ACCEPTED if service_id and int(service_id) in requested_service_ids else Quotation.Status.PENDING
+                qitem = QuotationItem.objects.create(
+                    quotation=quotation,
+                    service_id=service_id,
+                    service_add_on_id=it.get('service_add_on') if it.get('service_add_on') else None,
+                    description=it.get('description', ''),
+                    quantity=it.get('quantity', 1),
+                    unit_price=it.get('unit_price', 0),
+                    status=default_status,
+                    change_type='added' if default_status == Quotation.Status.PENDING else None,
+                )
+            # Post a system chat message for this new item so chat shows each addition
+            try:
+                mechanic = self.context.get('mechanic')
+                booking = self.context.get('booking')
+                if mechanic and booking:
+                    from .ws_utils import post_quotation_chat_message
+                    try:
+                        post_quotation_chat_message(mechanic, booking, quotation, action='item_created')
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             try:
                 total += float(qitem.line_total)
             except Exception:
                 pass
 
+        try:
+            total = sum([float(it.line_total) for it in QuotationItem.objects.filter(quotation=quotation)])
+        except Exception:
+            total = 0
         quotation.total_amount = total
         quotation.notes = validated_data.get('notes', quotation.notes)
         quotation.is_final = validated_data.get('is_final', quotation.is_final)
+        try:
+            has_pending_like = quotation.items.filter(status__in=[Quotation.Status.PENDING, Quotation.Status.REJECTED]).exists()
+            quotation.status = Quotation.Status.PENDING if has_pending_like else Quotation.Status.ACCEPTED
+        except Exception:
+            pass
         quotation.save()
         return quotation
 
     def update(self, instance, validated_data):
-        from .models import QuotationItem
-        items = validated_data.pop('items', []) if isinstance(validated_data, dict) else []
-        QuotationItem.objects.filter(quotation=instance).delete()
-        total = 0
-        for it in items:
-            qitem = QuotationItem.objects.create(
-                quotation=instance,
-                service_id=it.get('service') if it.get('service') else None,
-                service_add_on_id=it.get('service_add_on') if it.get('service_add_on') else None,
-                description=it.get('description', ''),
-                quantity=it.get('quantity', 1),
-                unit_price=it.get('unit_price', 0),
-            )
+        from .models import Quotation, QuotationItem
+
+        def get_requested_service_ids(bk):
+            ids = set()
             try:
-                total += float(qitem.line_total)
+                req = getattr(bk, 'request', None)
+                if req is None:
+                    return ids
+                if hasattr(req, 'directrequest') and req.directrequest and req.directrequest.service_id:
+                    ids.add(int(req.directrequest.service_id))
+                if hasattr(req, 'broadcast_request') and req.broadcast_request:
+                    for svc in req.broadcast_request.services.all():
+                        try:
+                            ids.add(int(svc.id))
+                        except Exception:
+                            continue
             except Exception:
                 pass
+            return ids
 
+        requested_service_ids = get_requested_service_ids(instance.booking)
+        items_data = validated_data.pop('items', []) if isinstance(validated_data, dict) else []
+
+        # load existing items mapping
+        existing_items_qs = QuotationItem.objects.filter(quotation=instance)
+        existing_items = {it.id: it for it in existing_items_qs}
+        print(f"DEBUG: Updating Quotation {instance.id}. Mapping {len(existing_items)} existing items.")
+
+        incoming_ids = set()
+
+        for raw in items_data:
+            try:
+                item_id = int(raw.get('id')) if raw.get('id') is not None else None
+            except Exception:
+                item_id = None
+
+            desc = raw.get('description') or raw.get('name') or 'Item'
+            if item_id and item_id in existing_items:
+                item_instance = existing_items[item_id]
+                print(f"DEBUG: Processing item {item_id}. Incoming status: {raw.get('status')}, Existing status: {item_instance.status}")
+                print(f"DEBUG: Item {desc} has ID {item_id}. Updating...")
+                qitem = existing_items[item_id]
+                existing_status = str(qitem.status or '').lower()
+                existing_desc = qitem.description or ''
+                existing_qty = int(qitem.quantity or 0)
+                existing_price = float(qitem.unit_price or 0)
+                existing_service = qitem.service_id
+                existing_add_on = qitem.service_add_on_id
+
+                qitem.service_id = raw.get('service') if raw.get('service') is not None else qitem.service_id
+                qitem.service_add_on_id = raw.get('service_add_on') if raw.get('service_add_on') is not None else qitem.service_add_on_id
+                if 'description' in raw:
+                    qitem.description = raw.get('description', qitem.description)
+                if 'quantity' in raw:
+                    qitem.quantity = raw.get('quantity', qitem.quantity)
+                if 'unit_price' in raw:
+                    qitem.unit_price = raw.get('unit_price', qitem.unit_price)
+                changed = (
+                    (qitem.description or '') != existing_desc or
+                    int(qitem.quantity or 0) != existing_qty or
+                    float(qitem.unit_price or 0) != existing_price or
+                    qitem.service_id != existing_service or
+                    qitem.service_add_on_id != existing_add_on
+                )
+                # Preserve existing status unless payload explicitly provides a non-null value
+                if 'status' in raw:
+                    incoming_status = raw.get('status', qitem.status)
+                    qitem.status = incoming_status if incoming_status is not None else qitem.status
+                    if existing_status == 'accepted' and changed and str(qitem.status or '').lower() == Quotation.Status.PENDING:
+                        qitem.previous_description = existing_desc
+                        qitem.previous_quantity = existing_qty
+                        qitem.previous_unit_price = existing_price
+                        qitem.change_type = 'edited'
+                    elif existing_status == 'rejected' and str(qitem.status or '').lower() == Quotation.Status.PENDING:
+                        qitem.change_type = 'added'
+                        qitem.previous_description = None
+                        qitem.previous_quantity = None
+                        qitem.previous_unit_price = None
+                    elif existing_status == 'pending' and changed and str(qitem.change_type or '').lower() != 'added':
+                        qitem.change_type = 'edited'
+                else:
+                    # If an already accepted item is edited, turn it into a pending proposal.
+                    if existing_status == 'accepted' and changed:
+                        qitem.previous_description = existing_desc
+                        qitem.previous_quantity = existing_qty
+                        qitem.previous_unit_price = existing_price
+                        qitem.change_type = 'edited'
+                        qitem.status = Quotation.Status.PENDING
+                    elif existing_status == 'rejected':
+                        # Re-including a previously removed row means mechanic is proposing
+                        # to restore/edit it in this pending request.
+                        qitem.change_type = 'added'
+                        qitem.previous_description = None
+                        qitem.previous_quantity = None
+                        qitem.previous_unit_price = None
+                        qitem.status = Quotation.Status.PENDING
+                    elif existing_status == 'pending' and changed and str(qitem.change_type or '').lower() != 'added':
+                        qitem.change_type = 'edited'
+
+                if str(qitem.status or '').lower() != Quotation.Status.PENDING:
+                    qitem.change_type = None
+                    qitem.previous_description = None
+                    qitem.previous_quantity = None
+                    qitem.previous_unit_price = None
+                qitem.save()
+                incoming_ids.add(item_id)
+            else:
+                print(f"DEBUG: Processing item NEW. Incoming status: {raw.get('status')}, Existing status: NEW")
+                print(f"DEBUG: Item {desc} has no ID. Creating new QuotationItem for '{desc}'.")
+                service_id = raw.get('service') if raw.get('service') else None
+                default_status = Quotation.Status.ACCEPTED if service_id and int(service_id) in requested_service_ids else Quotation.Status.PENDING
+                qitem = QuotationItem.objects.create(
+                    quotation=instance,
+                    service_id=service_id,
+                    service_add_on_id=raw.get('service_add_on') if raw.get('service_add_on') else None,
+                    description=raw.get('description', ''),
+                    quantity=raw.get('quantity', 1),
+                    unit_price=raw.get('unit_price', 0),
+                    status=default_status,
+                    change_type='added' if default_status == Quotation.Status.PENDING else None,
+                )
+                # if payload included a status explicitly, set it
+                if 'status' in raw and raw.get('status') is not None:
+                    qitem.status = raw.get('status')
+                    if str(qitem.status or '').lower() != Quotation.Status.PENDING:
+                        qitem.change_type = None
+                        qitem.previous_description = None
+                        qitem.previous_quantity = None
+                        qitem.previous_unit_price = None
+                    qitem.save()
+                incoming_ids.add(qitem.id)
+
+        # Handle existing items that are missing from payload:
+        # - accepted rows: treat as a removal proposal (mark rejected), not hard delete
+        # - non-accepted rows: safe to hard delete
+        try:
+            missing_ids = [eid for eid in existing_items.keys() if eid not in incoming_ids]
+            if missing_ids:
+                to_mark_removed = []
+                to_delete = []
+                for mid in missing_ids:
+                    ex = existing_items.get(mid)
+                    if str(getattr(ex, 'status', '') or '').lower() == Quotation.Status.ACCEPTED:
+                        to_mark_removed.append(mid)
+                    else:
+                        to_delete.append(mid)
+
+                if to_mark_removed:
+                    QuotationItem.objects.filter(id__in=to_mark_removed).update(
+                        status=Quotation.Status.REJECTED,
+                        change_type='removed',
+                    )
+                    print(f"DEBUG: Marked {len(to_mark_removed)} accepted items as removed proposals.")
+
+                if to_delete:
+                    QuotationItem.objects.filter(id__in=to_delete).delete()
+                    print(f"DEBUG: Deleted {len(to_delete)} non-accepted removed items.")
+        except Exception as e:
+            print(f"DEBUG: Error while deleting missing items: {e}")
+
+        # Recalculate total
+        try:
+            total = sum([float(i.line_total) for i in QuotationItem.objects.filter(quotation=instance).exclude(status='rejected')])
+        except Exception:
+            total = 0
+
+        print(f"DEBUG: Root Quotation status before save: {instance.status}")
         instance.total_amount = total
         instance.notes = validated_data.get('notes', instance.notes)
         instance.is_final = validated_data.get('is_final', instance.is_final)
+        # If status is explicitly provided, honor it.
+        # Otherwise derive from item-level statuses.
+        if 'status' in validated_data:
+            try:
+                instance.status = validated_data.get('status')
+            except Exception:
+                pass
+        elif items_data:
+            try:
+                has_pending_like = QuotationItem.objects.filter(
+                    quotation=instance,
+                    status__in=[Quotation.Status.PENDING, Quotation.Status.REJECTED],
+                ).exists()
+                instance.status = Quotation.Status.PENDING if has_pending_like else Quotation.Status.ACCEPTED
+            except Exception:
+                instance.status = Quotation.Status.PENDING
         instance.save()
+        print(f"DEBUG: Update complete for Quotation {instance.id}. Total items now: {QuotationItem.objects.filter(quotation=instance).count()}")
         return instance

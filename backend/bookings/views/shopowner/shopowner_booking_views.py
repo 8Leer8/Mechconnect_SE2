@@ -22,8 +22,10 @@ from ...models import (
     ReworkBooking,
     DisputeBooking,
     BroadcastRequest,
+    Quotation,
 )
 from ...serializers import RequestSerializer
+from ...serializers import QuotationSerializer
 from users.models import Account
 from services.models import ShopService
 from ..client.client_booking_views import _serialize_single_booking, _serialize_bookings
@@ -107,7 +109,7 @@ def list_shopowner_requests(request):
     for req in all_requests:
         try:
             if req.request_type == "custom" and hasattr(req, "customrequest"):
-                if req.customrequest.request_status in ["pending", "quoted"]:
+                if req.customrequest.request_status == CustomRequest.Status.PENDING:
                     filtered_pending_requests.append(req)
             elif req.request_type == "direct" and hasattr(req, "directrequest"):
                 if req.directrequest.request_status == "pending":
@@ -374,11 +376,30 @@ def shopowner_accept_custom_request(request, request_id):
     if providers_note is not None:
         custom.providers_note = providers_note
 
+    # Mark custom request as quoted and create an accepted booking for this request
     custom.request_status = CustomRequest.Status.QUOTED
     custom.save()
 
+    # Use quoted price if available, otherwise 0
+    amount = float(custom.quoted_price or 0)
+
+    if hasattr(req, "booking"):
+        booking = req.booking
+        booking.status = Booking.Status.ACCEPTED
+        booking.amount_fee = amount
+        booking.save(update_fields=["status", "amount_fee", "updated_at"])
+    else:
+        booking = Booking.objects.create(
+            request=req,
+            status=Booking.Status.ACCEPTED,
+            amount_fee=amount,
+        )
+        ActiveBooking.objects.get_or_create(booking=booking)
+
+    data = _serialize_single_booking(booking)
+
     return Response(
-        {"message": "Custom request quoted", "request_id": req.id},
+        {"message": "Custom request accepted and booking created", "booking": data},
         status=status.HTTP_200_OK,
     )
 
@@ -500,3 +521,32 @@ def get_shopowner_booking_detail(request, booking_id):
         )
 
     return Response({"booking": _serialize_single_booking(booking)})
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def get_shopowner_booking_quotation(request, booking_id):
+    """Return quotation payload for a shopowner-visible booking."""
+    account, err = _get_shopowner_account(request)
+    if err:
+        return err
+
+    try:
+        booking = _shopowner_bookings_queryset(account).get(id=booking_id)
+    except Booking.DoesNotExist:
+        return Response({"error": "Booking not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        quotation = booking.quotation
+    except Quotation.DoesNotExist:
+        return Response(
+            {
+                "has_quotation": False,
+                "booking_id": booking.id,
+                "detail": "No quotation exists yet for this booking",
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    ser = QuotationSerializer(quotation, context={"request": request})
+    return Response(ser.data, status=status.HTTP_200_OK)

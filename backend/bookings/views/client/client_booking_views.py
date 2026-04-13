@@ -3,13 +3,19 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django.db.models import Prefetch, Q
+from django.utils import timezone
+import logging
 
 from ...models import (
-    Booking, Request, ActiveBooking, CancelBooking, 
-    ReworkBooking, DisputeBooking, CompleteBooking
+    Booking, Request, ActiveBooking, CancelBooking,
+    ReworkBooking, DisputeBooking, CompleteBooking, Receipt, BroadcastOffer
 )
-from ...serializers import BookingSerializer
+from ...serializers import BookingSerializer, BookingPaymentSerializer
 from users.models import Account
+from notification.models import Notification
+
+
+logger = logging.getLogger(__name__)
 
 
 @api_view(['GET'])
@@ -244,17 +250,51 @@ def _serialize_bookings(bookings_queryset):
 
 def _serialize_single_booking(booking):
     """Helper function to serialize a single booking with all details"""
+    broadcast_request_payload = None
+    accepted_offer = None
+    if hasattr(booking.request, 'broadcast_request') and booking.request.broadcast_request is not None:
+        br = booking.request.broadcast_request
+        broadcast_request_payload = {
+            'latitude': float(br.latitude) if br.latitude is not None else None,
+            'longitude': float(br.longitude) if br.longitude is not None else None,
+        }
+        accepted_offer = BroadcastOffer.objects.filter(
+            broadcast_request=br,
+            status=BroadcastOffer.Status.ACCEPTED,
+        ).order_by('-responded_at', '-id').first()
+
+    distance_value = getattr(booking, 'distance_km', None)
+    if distance_value is None and accepted_offer and accepted_offer.distance_km is not None:
+        distance_value = accepted_offer.distance_km
+
+    eta_value = getattr(booking, 'eta_minutes', None)
+    if eta_value is None and accepted_offer and accepted_offer.estimated_eta_minutes is not None:
+        eta_value = accepted_offer.estimated_eta_minutes
+
+    traffic_level_value = None
+    if accepted_offer and accepted_offer.traffic_level:
+        traffic_level_value = accepted_offer.traffic_level
+
     booking_data = {
         'id': booking.id,
         'status': booking.status,
         'amount_fee': float(booking.amount_fee),
+        'convenience_fee': float(booking.convenience_fee) if getattr(booking, 'convenience_fee', None) is not None else None,
+        'traffic_surcharge': float(booking.traffic_surcharge) if getattr(booking, 'traffic_surcharge', None) is not None else None,
+        'distance_km': float(distance_value) if distance_value is not None else None,
+        'estimated_eta_minutes': int(eta_value) if eta_value is not None else None,
+        'traffic_level': traffic_level_value,
         'booked_at': booking.booked_at.isoformat(),
         'updated_at': booking.updated_at.isoformat(),
         'completed_at': booking.completed_at.isoformat() if booking.completed_at else None,
         'request': {
             'id': booking.request.id,
             'type': booking.request.request_type,
+            'vehicle_type': booking.request.vehicle_type,
+            'vehicle_brand': booking.request.vehicle_brand,
+            'vehicle_model': booking.request.vehicle_model,
             'created_at': booking.request.created_at.isoformat(),
+            'broadcast_request': broadcast_request_payload,
         },
         'provider': {
             'id': booking.request.provider.id,
@@ -361,7 +401,7 @@ def _serialize_single_booking(booking):
                     }
                 # collect add-ons for direct requests
                 addons = []
-                from ..models import DirectRequestAddOn
+                from ...models import DirectRequestAddOn
                 for a in DirectRequestAddOn.objects.filter(request=req).select_related('service_add_on'):
                     sao = a.service_add_on
                     if sao:
@@ -380,7 +420,7 @@ def _serialize_single_booking(booking):
                     rd['services'].append({'id': s.id, 'name': s.name, 'minimum_price': float(s.minimum_price) if getattr(s, 'minimum_price', None) is not None else None})
                 # broadcast add-ons
                 addons = []
-                from ..models import BroadcastRequestAddOn
+                from ...models import BroadcastRequestAddOn
                 for a in BroadcastRequestAddOn.objects.filter(broadcast_request=br).select_related('service_add_on'):
                     sao = a.service_add_on
                     if sao:
@@ -420,6 +460,7 @@ def _serialize_single_booking(booking):
             qd = {
                 'id': q.id,
                 'mechanic_id': q.mechanic.id if q.mechanic else None,
+                'status': q.status,
                 'notes': q.notes,
                 'total_amount': float(q.total_amount) if q.total_amount is not None else None,
                 'is_final': bool(q.is_final),
@@ -427,7 +468,10 @@ def _serialize_single_booking(booking):
                 'updated_at': q.updated_at.isoformat() if q.updated_at else None,
                 'items': []
             }
-            for it in q.items.all():
+            # While quotation is pending, keep rejected item rows visible so clients can
+            # review pending removal proposals in pricing/quotation sections.
+            items_qs = q.items.all() if str(q.status).lower() == 'pending' else q.items.exclude(status='rejected')
+            for it in items_qs:
                 qd['items'].append({
                     'id': it.id,
                     'service': it.service.id if it.service else None,
@@ -436,6 +480,11 @@ def _serialize_single_booking(booking):
                     'quantity': it.quantity,
                     'unit_price': float(it.unit_price),
                     'line_total': float(it.line_total) if hasattr(it, 'line_total') else float(it.quantity * it.unit_price),
+                    'status': it.status if hasattr(it, 'status') and it.status is not None else q.status,
+                    'change_type': getattr(it, 'change_type', None),
+                    'previous_description': getattr(it, 'previous_description', None),
+                    'previous_quantity': getattr(it, 'previous_quantity', None),
+                    'previous_unit_price': float(it.previous_unit_price) if getattr(it, 'previous_unit_price', None) is not None else None,
                 })
             booking_data['quotation'] = qd
         except Exception:
@@ -466,5 +515,555 @@ def _serialize_single_booking(booking):
     except Exception:
         booking_data['has_backjob'] = False
 
+    # Attach payment/receipt information so clients and mechanics can see chosen method
+    try:
+        if hasattr(booking, 'receipt') and booking.receipt is not None:
+            receipt = booking.receipt
+            booking_data['payment'] = {
+                'payment_method': receipt.payment_method,
+                'payment_received': bool(receipt.payment_received),
+                'transaction_id': receipt.transaction_id,
+            }
+        else:
+            booking_data['payment'] = None
+    except Exception:
+        booking_data['payment'] = None
+
     return booking_data
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def client_accept_quotation(request, booking_id):
+    account_id = request.session.get('account_id')
+    if not account_id:
+        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+    try:
+        account = Account.objects.get(id=account_id)
+        if not hasattr(account, 'client'):
+            return Response({'error': 'Only clients can accept quotations'}, status=status.HTTP_403_FORBIDDEN)
+
+        booking = Booking.objects.select_related('quotation', 'request__client').get(id=booking_id)
+        if booking.request.client.account.id != account.id:
+            return Response({'error': 'Not permitted'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            quotation = booking.quotation
+        except Exception:
+            return Response({'error': 'No quotation found'}, status=status.HTTP_404_NOT_FOUND)
+
+        from ...models import Quotation
+        quotation.status = Quotation.Status.ACCEPTED
+        quotation.save(update_fields=['status'])
+
+        # Only promote pending proposal rows to accepted.
+        # Rejected rows are pending removal proposals and should be removed on accept.
+        try:
+            quotation.items.filter(status=Quotation.Status.PENDING).update(status=Quotation.Status.ACCEPTED)
+            quotation.items.filter(status=Quotation.Status.ACCEPTED).update(
+                change_type=None,
+                previous_description=None,
+                previous_quantity=None,
+                previous_unit_price=None,
+            )
+            quotation.items.filter(status=Quotation.Status.REJECTED).delete()
+        except Exception as e:
+            print(f"DEBUG: Failed to update QuotationItem statuses for Quotation {quotation.id}: {e}")
+
+        # Verify persistence immediately and print DB value for debugging
+        try:
+            fresh = Quotation.objects.get(id=quotation.id)
+            print(f"DEBUG: Quotation {quotation.id} after save status in DB is: {fresh.status}")
+            # print a sample of item statuses
+            item_statuses = list(fresh.items.values_list('id', 'status'))
+            print(f"DEBUG: Quotation {quotation.id} item statuses: {item_statuses}")
+        except Exception as e:
+            print(f"DEBUG: Failed to re-load Quotation {quotation.id} after save: {e}")
+
+        print(f"DEBUG: Acceptance triggered for Quotation {quotation.id}")
+
+        # Find and update only the latest pending quotation request message for this quotation.
+        # Do not rewrite historical rejected/accepted snapshots.
+        try:
+            from chat.models import Message as ChatMessage
+            import json
+
+            messages = ChatMessage.objects.filter(
+                conversation__booking_id=booking.id,
+                content__contains='"quotation_id"'
+            ).order_by('-created_at')
+
+            latest_pending_message_id = None
+            for m in messages:
+                try:
+                    payload = json.loads(m.content) if isinstance(m.content, str) else m.content
+                except Exception:
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+                if payload.get('type') != 'quotation_request':
+                    continue
+                if str(payload.get('quotation_id')) != str(quotation.id):
+                    continue
+                if str(payload.get('status', '')).lower() == 'pending':
+                    latest_pending_message_id = m.id
+                    break
+
+            updated = 0
+            for m in messages:
+                try:
+                    payload = json.loads(m.content) if isinstance(m.content, str) else m.content
+                except Exception:
+                    # skip non-json content
+                    continue
+
+                try:
+                    # Ensure payload is a dict and matches the quotation id (compare as strings to be robust)
+                    if isinstance(payload, dict) and payload.get('type') == 'quotation_request' and str(payload.get('quotation_id')) == str(quotation.id):
+                        if str(payload.get('status', '')).lower() != 'pending':
+                            continue
+                        if latest_pending_message_id is not None and m.id != latest_pending_message_id:
+                            continue
+
+                        payload['status'] = 'accepted'
+                        # keep accepted message items aligned with DB accepted rows only
+                        payload['items'] = []
+                        try:
+                            for it in quotation.items.filter(status=Quotation.Status.ACCEPTED):
+                                payload['items'].append({
+                                    'id': it.id,
+                                    'service': it.service_id,
+                                    'service_add_on': it.service_add_on_id,
+                                    'description': it.description,
+                                    'quantity': int(it.quantity),
+                                    'unit_price': float(it.unit_price),
+                                    'line_total': float(it.line_total),
+                                    'status': 'accepted',
+                                })
+                        except Exception:
+                            pass
+                        # overwrite content with updated payload and save normally so auto timestamps update
+                        m.content = json.dumps(payload)
+                        m.save()
+                        updated += 1
+                except Exception:
+                    continue
+
+            print(f"DEBUG: Updated {updated} messages for quotation {quotation.id}")
+            # Explicit success trace required for debugging acceptance propagation
+            print(f"DEBUG: Successfully updated message payload to ACCEPTED. Broadcasting now...")
+        except Exception as e:
+            print(f"DEBUG: Error while updating chat messages for quotation {quotation.id}: {e}")
+
+        # Recalculate totals from accepted rows only.
+        accepted_total = 0
+        try:
+            accepted_total = sum(float(it.line_total) for it in quotation.items.filter(status=Quotation.Status.ACCEPTED))
+        except Exception:
+            accepted_total = 0
+
+        quotation.total_amount = accepted_total
+        quotation.save(update_fields=['total_amount', 'updated_at'])
+
+        # Update booking amount and complete/receipt if present
+        booking.amount_fee = accepted_total
+        booking.save(update_fields=['amount_fee', 'updated_at'])
+
+        # Update CompleteBooking if exists
+        try:
+            complete = CompleteBooking.objects.filter(booking=booking).first()
+            if complete:
+                complete.total_amount = accepted_total
+                complete.save(update_fields=['total_amount'])
+        except Exception:
+            pass
+
+        # post system chat message about acceptance
+        try:
+            from ...ws_utils import post_quotation_chat_message
+            post_quotation_chat_message(account, booking, quotation, action='accepted')
+        except Exception:
+            pass
+
+        # notify parties via websocket booking events
+        try:
+            from ...ws_utils import notify_booking_parties
+            mechanic_id = getattr(booking.request.provider, 'id', None)
+            notify_booking_parties(mechanic_id, account.id, booking.id, booking.status, 'Quotation accepted')
+        except Exception:
+            pass
+
+        # Explicitly broadcast a quotation_accepted event to mechanic personal group
+        try:
+            from channels.layers import get_channel_layer
+            channel_layer = get_channel_layer()
+            mechanic_id = getattr(booking.request.provider, 'id', None)
+            if channel_layer and mechanic_id:
+                payload = {
+                    'type': 'booking_update',
+                    'action': 'quotation_accepted',
+                    'booking_id': booking.id,
+                    'quotation_id': quotation.id,
+                    'status': 'accepted',
+                    'message': 'Quotation accepted by client',
+                }
+                from asgiref.sync import async_to_sync
+                async_to_sync(channel_layer.group_send)(f'user_{mechanic_id}', payload)
+        except Exception:
+            pass
+
+        # Also broadcast to booking-specific group so viewers listening to booking channels update
+        try:
+            from channels.layers import get_channel_layer
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                booking_payload = {
+                    'type': 'booking_update',
+                    'action': 'quotation_accepted',
+                    'booking_id': booking.id,
+                    'quotation_id': quotation.id,
+                    'status': 'accepted',
+                    'message': 'Quotation accepted by client',
+                }
+                from asgiref.sync import async_to_sync
+                async_to_sync(channel_layer.group_send)(f'booking_{booking.id}', booking_payload)
+                print(f"DEBUG: Broadcasted quotation_accepted for booking_{booking.id}")
+        except Exception as e:
+            print(f"DEBUG: Failed to broadcast to booking group for quotation {quotation.id}: {e}")
+
+        return Response({'message': 'Quotation accepted', 'quotation_id': quotation.id}, status=status.HTTP_200_OK)
+    except Account.DoesNotExist:
+        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Booking.DoesNotExist:
+        return Response({'error': 'Booking not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def client_reject_quotation(request, booking_id):
+    account_id = request.session.get('account_id')
+    if not account_id:
+        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+    try:
+        account = Account.objects.get(id=account_id)
+        if not hasattr(account, 'client'):
+            return Response({'error': 'Only clients can reject quotations'}, status=status.HTTP_403_FORBIDDEN)
+
+        booking = Booking.objects.select_related('quotation', 'request__client').get(id=booking_id)
+        if booking.request.client.account.id != account.id:
+            return Response({'error': 'Not permitted'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            quotation = booking.quotation
+        except Exception:
+            return Response({'error': 'No quotation found'}, status=status.HTTP_404_NOT_FOUND)
+
+        from ...models import Quotation
+        # Reject only pending proposal items. If a pending item was an edit of an
+        # accepted item, restore it from the latest accepted chat snapshot.
+        latest_accepted_snapshot = {}
+        latest_baseline_snapshot = {}
+        latest_pending_message_id = None
+        try:
+            from chat.models import Message as ChatMessage
+            import json
+
+            snapshot_messages = ChatMessage.objects.filter(
+                conversation__booking_id=booking.id,
+                content__contains='"quotation_id"'
+            ).order_by('-created_at')
+
+            pending_seen = False
+            for sm in snapshot_messages:
+                try:
+                    sp = json.loads(sm.content) if isinstance(sm.content, str) else sm.content
+                except Exception:
+                    continue
+                if not isinstance(sp, dict):
+                    continue
+                if sp.get('type') != 'quotation_request':
+                    continue
+                if str(sp.get('quotation_id')) != str(quotation.id):
+                    continue
+                msg_status = str(sp.get('status', '')).lower()
+
+                if not pending_seen and msg_status == 'pending':
+                    pending_seen = True
+                    latest_pending_message_id = sm.id
+                    continue
+
+                if pending_seen and msg_status == 'accepted' and not latest_accepted_snapshot:
+                    for idx, sit in enumerate((sp.get('items') or [])):
+                        try:
+                            sid = int(sit.get('id')) if sit.get('id') is not None else None
+                        except Exception:
+                            sid = None
+                        if sid is None:
+                            sid = -(idx + 1)
+                        latest_accepted_snapshot[sid] = sit
+
+                if pending_seen and msg_status != 'rejected' and not latest_baseline_snapshot:
+                    for idx, sit in enumerate((sp.get('items') or [])):
+                        try:
+                            sid = int(sit.get('id')) if sit.get('id') is not None else None
+                        except Exception:
+                            sid = None
+                        if sid is None:
+                            sid = -(idx + 1)
+                        latest_baseline_snapshot[sid] = sit
+
+                if latest_accepted_snapshot and latest_baseline_snapshot:
+                    break
+        except Exception:
+            latest_accepted_snapshot = {}
+            latest_baseline_snapshot = {}
+            latest_pending_message_id = None
+
+        snapshot_to_restore = latest_accepted_snapshot or latest_baseline_snapshot
+
+        pending_exists = quotation.items.filter(status=Quotation.Status.PENDING).exists()
+        pending_request_exists = pending_exists or (latest_pending_message_id is not None) or (str(getattr(quotation, 'status', '')).lower() == 'pending')
+
+        # Strong revert guarantee: when rejecting pending edits, rebuild current quotation items
+        # from the latest accepted snapshot so no edited value can push through.
+        if pending_request_exists and snapshot_to_restore:
+            try:
+                quotation.items.all().delete()
+            except Exception:
+                pass
+
+            for _sid, snap in snapshot_to_restore.items():
+                try:
+                    # Reject means rollback to baseline state, so restored rows must be accepted.
+                    item_status = Quotation.Status.ACCEPTED
+                    quotation.items.create(
+                        service_id=snap.get('service') if snap.get('service') is not None else None,
+                        service_add_on_id=snap.get('service_add_on') if snap.get('service_add_on') is not None else None,
+                        description=snap.get('description', ''),
+                        quantity=snap.get('quantity', 1),
+                        unit_price=snap.get('unit_price', 0),
+                        status=item_status,
+                        change_type=None,
+                        previous_description=None,
+                        previous_quantity=None,
+                        previous_unit_price=None,
+                    )
+                except Exception:
+                    continue
+        else:
+            # Fallback behavior when snapshot is unavailable.
+            pending_items = list(quotation.items.filter(status=Quotation.Status.PENDING))
+            for pit in pending_items:
+                snap = latest_accepted_snapshot.get(pit.id)
+                if snap:
+                    pit.description = snap.get('description', pit.description)
+                    pit.quantity = snap.get('quantity', pit.quantity)
+                    pit.unit_price = snap.get('unit_price', pit.unit_price)
+                    pit.service_id = snap.get('service') if snap.get('service') is not None else None
+                    pit.service_add_on_id = snap.get('service_add_on') if snap.get('service_add_on') is not None else None
+                    pit.status = Quotation.Status.ACCEPTED
+                    pit.change_type = None
+                    pit.previous_description = None
+                    pit.previous_quantity = None
+                    pit.previous_unit_price = None
+                    pit.save()
+                else:
+                    # Safety fallback: don't drop data when snapshot is unavailable.
+                    # Revert proposal state so edited accepted rows do not disappear.
+                    pit.status = Quotation.Status.ACCEPTED
+                    pit.change_type = None
+                    pit.previous_description = None
+                    pit.previous_quantity = None
+                    pit.previous_unit_price = None
+                    pit.save()
+
+            # If snapshot is unavailable, also revert pending removal proposals.
+            try:
+                quotation.items.filter(status=Quotation.Status.REJECTED).update(
+                    status=Quotation.Status.ACCEPTED,
+                    change_type=None,
+                    previous_description=None,
+                    previous_quantity=None,
+                    previous_unit_price=None,
+                )
+            except Exception:
+                pass
+
+        # Hard guard: after reject rollback there must be no lingering pending rows.
+        try:
+            quotation.items.filter(status=Quotation.Status.PENDING).update(
+                status=Quotation.Status.ACCEPTED,
+                change_type=None,
+                previous_description=None,
+                previous_quantity=None,
+                previous_unit_price=None,
+            )
+        except Exception:
+            pass
+
+        accepted_items_qs = quotation.items.filter(status=Quotation.Status.ACCEPTED)
+        accepted_total = 0
+        try:
+            accepted_total = sum(float(it.line_total) for it in accepted_items_qs)
+        except Exception:
+            accepted_total = 0
+
+        quotation.status = Quotation.Status.ACCEPTED if accepted_items_qs.exists() else Quotation.Status.REJECTED
+        quotation.total_amount = accepted_total
+        quotation.save(update_fields=['status', 'total_amount', 'updated_at'])
+
+        # Rejected pending deltas must not affect the booking amount.
+        try:
+            booking.amount_fee = accepted_total
+            booking.save(update_fields=['amount_fee', 'updated_at'])
+        except Exception:
+            pass
+
+        # Update any existing quotation_request chat messages for this quotation so
+        # clients/mechanics see the rejected status on that exact request card.
+        try:
+            from chat.models import Message as ChatMessage
+            import json
+
+            messages = ChatMessage.objects.filter(conversation__booking_id=booking.id, content__contains='"quotation_id"')
+            for m in messages:
+                try:
+                    payload = json.loads(m.content) if isinstance(m.content, str) else m.content
+                except Exception:
+                    continue
+
+                if isinstance(payload, dict) and payload.get('type') == 'quotation_request' and str(payload.get('quotation_id')) == str(quotation.id):
+                    # Preserve historical accepted snapshots. Only stamp currently-pending
+                    # quotation requests as rejected.
+                    if str(payload.get('status', '')).lower() != 'pending':
+                        continue
+                    if latest_pending_message_id is not None and m.id != latest_pending_message_id:
+                        continue
+                    payload['status'] = 'rejected'
+                    for pit in payload.get('items', []) or []:
+                        try:
+                            pstatus = str((pit or {}).get('status', '')).lower()
+                            if pstatus == 'pending':
+                                pit['status'] = 'rejected'
+                        except Exception:
+                            continue
+                    m.content = json.dumps(payload)
+                    m.save()
+        except Exception:
+            pass
+
+        # post system chat message about rejection
+        try:
+            from ...ws_utils import post_quotation_chat_message
+            post_quotation_chat_message(account, booking, quotation, action='rejected')
+        except Exception:
+            pass
+
+        try:
+            from ...ws_utils import notify_booking_parties
+            mechanic_id = getattr(booking.request.provider, 'id', None)
+            notify_booking_parties(mechanic_id, account.id, booking.id, booking.status, 'Quotation rejected')
+        except Exception:
+            pass
+
+        return Response({'message': 'Quotation rejected', 'quotation_id': quotation.id}, status=status.HTTP_200_OK)
+    except Account.DoesNotExist:
+        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Booking.DoesNotExist:
+        return Response({'error': 'Booking not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+@api_view(['PATCH'])
+@permission_classes([AllowAny])
+def client_pay_booking(request, booking_id):
+    """Client selects payment method for a booking in pending_payment.
+
+    Payload: { payment_method: 'cash' | 'online' }
+    """
+    account_id = request.session.get('account_id')
+    if not account_id:
+        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        account = Account.objects.get(id=account_id)
+        if not hasattr(account, 'client'):
+            return Response({'error': 'Only clients may perform this action'}, status=status.HTTP_403_FORBIDDEN)
+        client = account.client
+
+        booking = Booking.objects.select_related('request', 'request__provider').get(id=booking_id, request__client=client)
+
+        if booking.status != Booking.Status.PENDING_PAYMENT:
+            return Response({'error': 'Booking not in pending_payment state'}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = BookingPaymentSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        payment_method = serializer.validated_data['payment_method']
+
+        receipt, created = Receipt.objects.get_or_create(
+            booking=booking,
+            defaults={
+                'payment_received': True if payment_method == 'cash' else False,
+                'payment_method': payment_method,
+            },
+        )
+        if not created:
+            receipt.payment_method = payment_method
+            receipt.payment_received = True if payment_method == 'cash' else False
+            receipt.save(update_fields=['payment_method', 'payment_received'])
+
+        if payment_method == 'cash':
+            booking.status = Booking.Status.COMPLETED
+            booking.completed_at = timezone.now()
+            booking.save(update_fields=['status', 'completed_at'])
+            try:
+                CompleteBooking.objects.get_or_create(
+                    booking=booking,
+                    defaults={'total_amount': booking.amount_fee},
+                )
+            except Exception:
+                logger.exception('Failed to create CompleteBooking for booking %s', booking.id)
+
+            try:
+                provider_account = booking.request.provider
+                if provider_account:
+                    Notification.objects.create(
+                        receiver=provider_account,
+                        title='Payment received (cash)',
+                        message=f'Client confirmed cash payment for Booking #{booking.id}',
+                    )
+            except Exception:
+                logger.exception('Failed to create payment notification for booking %s', booking.id)
+
+            try:
+                booking_data = _serialize_single_booking(booking)
+            except Exception:
+                booking_data = BookingSerializer(booking).data
+
+            return Response({'message': 'cash_confirmed', 'booking': booking_data}, status=status.HTTP_200_OK)
+
+        try:
+            provider_account = booking.request.provider
+            if provider_account:
+                Notification.objects.create(
+                    receiver=provider_account,
+                    title='Payment method selected',
+                    message=f'Client selected online payment for Booking #{booking.id}',
+                )
+        except Exception:
+            logger.exception('Failed to create payment method notification for booking %s', booking.id)
+
+        try:
+            booking_data = _serialize_single_booking(booking)
+        except Exception:
+            booking_data = BookingSerializer(booking).data
+
+        return Response({'message': 'online_initiated', 'booking': booking_data}, status=status.HTTP_200_OK)
+
+    except Account.DoesNotExist:
+        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Booking.DoesNotExist:
+        return Response({'error': 'Booking not found or not owned by client'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception:
+        logger.exception('Unhandled error in client_pay_booking')
+        return Response({'error': 'Internal server error'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 

@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     'chat',
     'storages',
     'mechconnect_ai',
+    'pricing',
 ]
 
 MIDDLEWARE = [
@@ -220,7 +221,10 @@ CORS_ALLOW_HEADERS = [
 BREVO_API_KEY = os.getenv('BREVO_API_KEY', '')
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', '')
 EMAIL_TIMEOUT = 10
-EMAIL_TIMEOUT = 10
+
+# External routing/traffic API keys
+ORS_API_KEY = os.getenv('ORS_API_KEY', os.getenv('EXPO_PUBLIC_ORS_API_KEY', ''))
+TOMTOM_API_KEY = os.getenv('TOMTOM_API_KEY', os.getenv('EXPO_PUBLIC_TOMTOM_API_KEY', ''))
 
 # Supabase Storage Configuration
 USE_S3 = os.environ.get("USE_S3", "False") == "True"

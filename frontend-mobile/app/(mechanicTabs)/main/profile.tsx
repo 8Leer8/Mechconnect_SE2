@@ -18,6 +18,7 @@ import { styles } from '@/style/mechanic/profileStyles';
 import WalletSection from '@/components/wallet-section';
 import { useNotification } from '@/hooks/useNotification';
 import { useConfirmation } from '@/hooks/useConfirmation';
+import { ConfirmationModal } from '@/components/ui/ConfirmationModal';
 import { SkeletonProfile } from '@/components/skeletons/SkeletonLoaders';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -99,6 +100,8 @@ export default function ProfileScreen() {
   const [editingService, setEditingService] = useState<MyService | null>(null);
   const [editPrice, setEditPrice] = useState<string>('');
   const [updatingId, setUpdatingId] = useState<number | null>(null);
+  const [logoutModalVisible, setLogoutModalVisible] = useState(false);
+  const [logoutLoading, setLogoutLoading] = useState(false);
 
   const fetchProfile = useCallback(async () => {
     try {
@@ -513,12 +516,29 @@ export default function ProfileScreen() {
     }
   };
 
-  const handleLogout = async () => {
+  const handleLogout = () => {
+    setLogoutModalVisible(true);
+  };
+
+  const performLogout = async () => {
+    setLogoutLoading(true);
     try {
-      await fetch(`${API_URL}/users/logout/`, { method: 'POST', credentials: 'include' });
-      router.replace('/(auth)/login');
-    } catch (e) {
-      console.error(e);
+      const response = await fetch(`${API_URL}/users/logout/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (response.ok) {
+        router.replace('/(auth)/login');
+      } else {
+        throw new Error('Logout failed');
+      }
+    } catch (err) {
+      showNotification({ type: 'error', message: err instanceof Error ? err.message : 'Logout failed' });
+    } finally {
+      setLogoutLoading(false);
+      setLogoutModalVisible(false);
     }
   };
 
@@ -652,6 +672,20 @@ export default function ProfileScreen() {
 
         <View style={{ height: 32 }} />
       </ScrollView>
+
+      <ConfirmationModal
+        visible={logoutModalVisible}
+        type="danger"
+        title="Logout"
+        message="Are you sure you want to logout?"
+        confirmText="Logout"
+        cancelText="Cancel"
+        loading={logoutLoading}
+        onCancel={() => {
+          if (!logoutLoading) setLogoutModalVisible(false);
+        }}
+        onConfirm={performLogout}
+      />
 
       {/* Add specialty modal */}
       <Modal

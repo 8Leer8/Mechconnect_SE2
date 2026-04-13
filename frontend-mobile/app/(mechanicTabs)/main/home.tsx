@@ -370,54 +370,6 @@ export default function HomeScreen() {
               )}
             </View>
 
-            {/* Quick Actions */}
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <View style={styles.sectionTitleRow}>
-                  <View style={[styles.sectionDot, { backgroundColor: '#34C759' }]} />
-                  <ThemedText style={styles.sectionTitle}>Quick Actions</ThemedText>
-                </View>
-              </View>
-              <View style={styles.quickActionsGrid}>
-                <TouchableOpacity
-                  style={styles.quickActionCard}
-                  onPress={() => router.push('/(mechanicTabs)/main/bookings')}
-                >
-                  <View style={[styles.quickActionIcon, { backgroundColor: '#FF8C0015' }]}>
-                    <FontAwesome name="calendar-check-o" size={22} color="#FF8C00" />
-                  </View>
-                  <ThemedText style={styles.quickActionLabel}>My Bookings</ThemedText>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.quickActionCard}
-                  onPress={() => router.push('/(mechanicTabs)/main/emergency')}
-                >
-                  <View style={[styles.quickActionIcon, { backgroundColor: '#FF3B3015' }]}>
-                    <FontAwesome name="exclamation-triangle" size={22} color="#FF3B30" />
-                  </View>
-                  <ThemedText style={styles.quickActionLabel}>Emergencies</ThemedText>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.quickActionCard}
-                  onPress={() => router.push('/(mechanicTabs)/main/map')}
-                >
-                  <View style={[styles.quickActionIcon, { backgroundColor: '#007AFF15' }]}>
-                    <FontAwesome name="map" size={22} color="#007AFF" />
-                  </View>
-                  <ThemedText style={styles.quickActionLabel}>Job Map</ThemedText>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.quickActionCard}
-                  onPress={() => router.push('/(mechanicTabs)/main/profile')}
-                >
-                  <View style={[styles.quickActionIcon, { backgroundColor: '#34C75915' }]}>
-                    <FontAwesome name="user-circle" size={22} color="#34C759" />
-                  </View>
-                  <ThemedText style={styles.quickActionLabel}>My Profile</ThemedText>
-                </TouchableOpacity>
-              </View>
-            </View>
-
             <View style={{ height: 30 }} />
           </>
         )}

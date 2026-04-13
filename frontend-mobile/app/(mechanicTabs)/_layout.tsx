@@ -2,14 +2,15 @@ import { Tabs } from 'expo-router';
 import React from 'react';
 import { FontAwesome } from '@expo/vector-icons';
 import { useTabsBackToHome } from '@/hooks/use-tabs-back-to-home';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function MechanicTabLayout() {
+  const insets = useSafeAreaInsets();
   useTabsBackToHome('/(mechanicTabs)/main/home');
 
   return (
     <Tabs
       screenOptions={{
-        unmountOnBlur: true,
         tabBarActiveTintColor: '#FF8C00',
         tabBarInactiveTintColor: '#999',
         headerShown: false,
@@ -17,8 +18,8 @@ export default function MechanicTabLayout() {
           backgroundColor: '#1E1E1E',
           borderTopColor: '#333',
           borderTopWidth: 1,
-          height: 60,
-          paddingBottom: 5,
+          height: 55 + Math.max(insets.bottom, 6),
+          paddingBottom: Math.max(insets.bottom, 6),
           elevation: 8,
           shadowColor: '#000',
           shadowOffset: { width: 0, height: -2 },

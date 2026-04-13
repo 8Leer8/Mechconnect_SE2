@@ -1,4 +1,5 @@
 # Re-export all views from submodules for backward compatibility
+from .client import client_request_create_views as _client_request_create_views
 from .client.client_home_views import *
 from .client.client_request_create_views import *
 from .client.client_request_list_views import *
@@ -7,9 +8,17 @@ from .client.broadcast_request_views import *
 from .mechanic.mechanic_broadcast_request_views import *
 from .mechanic.mechanic_booking_views import *
 from .mechanic.mechanic_emergency_views import *
-from .client.directrequest import *
 from .shopowner.request_assignment_views import *
 from .shopowner.shopowner_booking_views import *
+
+# Ensure the direct mechanic create endpoint resolves to the canonical create view.
+get_mechanics = _client_request_create_views.get_mechanics
+get_mechanic_services = _client_request_create_views.get_mechanic_services
+get_service_addons = _client_request_create_views.get_service_addons
+get_shops = _client_request_create_views.get_shops
+get_shop_services = _client_request_create_views.get_shop_services
+create_shop_direct_request = _client_request_create_views.create_shop_direct_request
+create_mechanic_direct_request = _client_request_create_views.create_mechanic_direct_request
 
 __all__ = [
     # Home views
@@ -52,6 +61,7 @@ __all__ = [
     'mechanic_accept_emergency_request',
     'mechanic_decline_direct_request',
     'mechanic_complete_booking',
+    'mechanic_location_view',
     
     # Mechanic emergency views
     'get_emergency_requests',

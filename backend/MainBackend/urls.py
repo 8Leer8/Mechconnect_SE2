@@ -23,6 +23,7 @@ from bookings.urls import admin_urlpatterns as bookings_admin_urlpatterns
 from shops.urls import admin_urlpatterns as shops_admin_urlpatterns
 from services.urls import admin_urlpatterns as services_admin_urlpatterns
 from notification.urls import admin_urlpatterns as notification_admin_urlpatterns
+from pricing.urls import admin_urlpatterns as pricing_admin_urlpatterns
 
 
 urlpatterns = [
@@ -34,12 +35,14 @@ urlpatterns = [
     path('api/notification/', include('notification.urls')),
     path('api/chat/', include('chat.urls')),
     path('api/ai/', include('mechconnect_ai.urls')),  # added
+    path('api/pricing/', include('pricing.urls')),
     # Admin Urls
     path('api/admin/users/', include(users_admin_urlpatterns)),
     path('api/admin/bookings/', include(bookings_admin_urlpatterns)),
     path('api/admin/shops/', include(shops_admin_urlpatterns)),
     path('api/admin/services/', include(services_admin_urlpatterns)),
     path('api/admin/notification/', include(notification_admin_urlpatterns)),
+    path('api/admin/pricing/', include(pricing_admin_urlpatterns)),
 ]
 
 # Serve media files during development

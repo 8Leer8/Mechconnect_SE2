@@ -5,6 +5,9 @@ export default function BookingLayout() {
   return (
     <Stack>
       <Stack.Screen name="index" options={{ headerShown: false }} />
+      <Stack.Screen name="quotation_edit" options={{ headerShown: false }} />
+      <Stack.Screen name="booking_location_map" options={{ headerShown: false }} />
+      <Stack.Screen name="booking_tracking_map" options={{ headerShown: false }} />
     </Stack>
   );
 }
