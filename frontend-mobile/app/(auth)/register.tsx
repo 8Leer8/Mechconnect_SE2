@@ -1,986 +1,670 @@
 import React, { useState, useEffect } from 'react';
 import {
-  View,
-  TextInput,
-  TouchableOpacity,
-  Text,
-  Image,
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
+  View, TextInput, TouchableOpacity, Text, Image,
+  ActivityIndicator, KeyboardAvoidingView, Platform,
+  ScrollView, StyleSheet, Modal, FlatList,
 } from 'react-native';
-import DateTimePicker from '@react-native-community/datetimepicker';
-import { FontAwesome } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import ThemedSelectModal from '@/components/ThemedSelectModal';
-import { styles } from '../../style/auth/registerStyles';
-import { useNotification } from '@/hooks/useNotification';
+import { Feather } from '@expo/vector-icons';
+import Toast from '@/components/gen/Toast';
 
-// For Android Emulator use: http://10.0.2.2:8000/api/users
-// For iOS Simulator use: http://localhost:8000/api/users
-// For Real Device: Get your IP with 'ipconfig' (Windows) or 'ifconfig' (Mac/Linux)
-const API_URL = process.env.EXPO_PUBLIC_API_URL;
+const API_URL       = process.env.EXPO_PUBLIC_API_URL;
 const PSGC_API_BASE = 'https://psgc.gitlab.io/api';
 
-interface PSGCLocation {
-  code: string;
-  name: string;
-  [key: string]: any;
+// ─── Theme ────────────────────────────────────────────────────────────────────
+const ORANGE  = '#F97316';
+const BG      = '#121212';
+const SURFACE = '#1E1E1E';
+const BORDER  = '#2C2C2C';
+const TEXT    = '#F5F5F5';
+const MUTED   = '#9A9A9A';
+
+// ─── Static data ─────────────────────────────────────────────────────────────
+const MONTH_ITEMS = [
+  'January','February','March','April','May','June',
+  'July','August','September','October','November','December',
+].map((name, i) => ({ label: name, value: String(i + 1).padStart(2, '0') }));
+
+const DAY_ITEMS  = Array.from({ length: 31 }, (_, i) => {
+  const d = String(i + 1).padStart(2, '0');
+  return { label: d, value: d };
+});
+
+const YEAR_ITEMS = Array.from({ length: 2026 - 1940 + 1 }, (_, i) => {
+  const y = String(2026 - i);
+  return { label: y, value: y };
+});
+
+const GENDER_ITEMS = ['Male', 'Female', 'Others'].map(g => ({ label: g, value: g }));
+
+const STAGE_LABELS: Record<number, string> = {
+  1: '1/5 Personal', 2: '2/5 Verify', 3: '3/5 Security',
+  4: '4/5 Demographics', 5: '5/5 Location',
+};
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+interface PSGCLocation    { code: string; name: string; [key: string]: any }
+interface RegisterResponse { [key: string]: string | string[] }
+
+const validateEmail    = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+const validatePassword = (pw: string): string | null => {
+  if (pw.length < 8)            return 'Password must be at least 8 characters.';
+  if (!/[A-Z]/.test(pw))        return 'Password needs at least 1 uppercase letter.';
+  if (!/[!@#$%^&*()\-_=+\[\]{};:\'",.<>/?\\|`~]/.test(pw))
+    return 'Password needs at least 1 special character.';
+  return null;
+};
+const isAtLeast18 = (dob: string): boolean => {
+  const birth = new Date(dob);
+  const now   = new Date();
+  let age     = now.getFullYear() - birth.getFullYear();
+  const m     = now.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < birth.getDate())) age--;
+  return age >= 18;
+};
+
+// ─── Bottom Sheet Picker ──────────────────────────────────────────────────────
+interface BSPickerProps {
+  visible: boolean;
+  title: string;
+  items: { label: string; value: string }[];
+  selectedValue: string;
+  loading?: boolean;
+  emptyMessage?: string;
+  onClose: () => void;
+  onSelect: (item: { label: string; value: string }) => void;
+}
+function BottomSheetPicker({ visible, title, items, selectedValue, loading, emptyMessage, onClose, onSelect }: BSPickerProps) {
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={bs.overlay}>
+        <TouchableOpacity style={bs.backdrop} activeOpacity={1} onPress={onClose} />
+        <View style={bs.sheet}>
+          <View style={bs.handle} />
+          <Text style={bs.title}>{title}</Text>
+          {loading ? (
+            <View style={bs.loader}><ActivityIndicator color={ORANGE} size="large" /></View>
+          ) : (
+            <FlatList
+              data={items}
+              keyExtractor={(item, index) => `${item.value}-${index}`}
+              style={{ maxHeight: 380 }}
+              showsVerticalScrollIndicator={false}
+              ListEmptyComponent={<Text style={bs.empty}>{emptyMessage || 'No items found'}</Text>}
+              renderItem={({ item }) => {
+                const active = item.value === selectedValue;
+                return (
+                  <TouchableOpacity
+                    style={[bs.item, { borderBottomColor: BORDER }]}
+                    onPress={() => { onSelect(item); onClose(); }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[bs.itemText, active && { color: ORANGE, fontWeight: '600' }]}>
+                      {item.label}
+                    </Text>
+                    {active && <Feather name="check" size={14} color={ORANGE} />}
+                  </TouchableOpacity>
+                );
+              }}
+            />
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
 }
 
-interface RegisterResponse {
-  [key: string]: string | string[];
-}
+const bs = StyleSheet.create({
+  overlay:  { flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'flex-end' },
+  backdrop: { flex: 1 },
+  sheet: {
+    backgroundColor: '#1A1C1E',
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    borderTopWidth: 1, borderTopColor: '#2A2C2E',
+    paddingBottom: 32,
+  },
+  handle: {
+    width: 44, height: 4, borderRadius: 2, backgroundColor: '#4A4D50',
+    alignSelf: 'center', marginTop: 10, marginBottom: 12,
+  },
+  title:    { fontSize: 17, fontWeight: '700', color: TEXT, textAlign: 'center', paddingBottom: 12, paddingHorizontal: 16 },
+  loader:   { paddingVertical: 40, alignItems: 'center' },
+  empty:    { textAlign: 'center', color: MUTED, fontSize: 14, paddingVertical: 32 },
+  item: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingVertical: 14, paddingHorizontal: 20, borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  itemText: { fontSize: 14, fontWeight: '400', color: TEXT, flex: 1 },
+});
 
-const RESEND_COOLDOWN_SECONDS = 60;
+// ─── Main Component ───────────────────────────────────────────────────────────
+const RESEND_COOLDOWN = 60;
 
 export default function RegisterScreen() {
   const router = useRouter();
-  const { showNotification } = useNotification();
+
+  const [toast, setToast] = useState({ visible: false, message: '' });
+  const showToast = (msg: string) => setToast({ visible: true, message: msg });
+  const hideToast = () => setToast(t => ({ ...t, visible: false }));
+
   const [formData, setFormData] = useState({
-    firstname: '',
-    lastname: '',
-    middlename: '',
-    email: '',
-    username: '',
-    password: '',
-    confirm_password: '',
-    date_of_birth: '',
-    gender: '',
-    role: 'client',
-    street_name: '',
-    barangay: '',
-    city_municipality: '',
-    province: '',
-    region: '',
-    contact_number: '',
+    firstname: '', lastname: '', middlename: '',
+    email: '', username: '', password: '', confirm_password: '',
+    date_of_birth: '', gender: '', role: 'client',
+    street_name: '', barangay: '', city_municipality: '',
+    province: '', region: '', contact_number: '',
   });
-  const [loading, setLoading] = useState(false);
-  const [showDatePicker, setShowDatePicker] = useState(false);
-  const [selectedDate, setSelectedDate] = useState(new Date());
-  const [progressTrackWidth, setProgressTrackWidth] = useState(0);
-  const [currentStage, setCurrentStage] = useState(1);
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [phoneLocal, setPhoneLocal] = useState('');
+  const [loading, setLoading]             = useState(false);
+  const [currentStage, setCurrentStage]   = useState(1);
+
   const totalStages = 5;
-  
-  // Email verification states
-  const [emailVerified, setEmailVerified] = useState(false);
-  const [verifiedEmail, setVerifiedEmail] = useState(''); // Track which email was verified
+
+  // Email verification
+  const [emailVerified, setEmailVerified]       = useState(false);
+  const [verifiedEmail, setVerifiedEmail]       = useState('');
   const [verificationCode, setVerificationCode] = useState('');
-  const [sendingCode, setSendingCode] = useState(false);
+  const [sendingCode, setSendingCode]     = useState(false);
   const [verifyingCode, setVerifyingCode] = useState(false);
   const [resendCountdown, setResendCountdown] = useState(0);
 
-  const [showGenderModal, setShowGenderModal] = useState(false);
-  const [showRegionModal, setShowRegionModal] = useState(false);
-  const [showProvinceModal, setShowProvinceModal] = useState(false);
-  const [showCityModal, setShowCityModal] = useState(false);
-  const [showBarangayModal, setShowBarangayModal] = useState(false);
-  
-  // Location data from PSGC API
-  const [regions, setRegions] = useState<any[]>([]);
-  const [provinces, setProvinces] = useState<any[]>([]);
-  const [cities, setCities] = useState<any[]>([]);
-  const [barangays, setBarangays] = useState<any[]>([]);
-  
-  // Selected codes for cascading
-  const [selectedRegionCode, setSelectedRegionCode] = useState('');
-  const [selectedProvinceCode, setSelectedProvinceCode] = useState('');
-  const [selectedCityCode, setSelectedCityCode] = useState('');
+  // Date picker — separate month / day / year sheets
+  const [dobMonth, setDobMonth] = useState('');
+  const [dobDay, setDobDay]     = useState('');
+  const [dobYear, setDobYear]   = useState('');
+  const [showMonthSheet, setShowMonthSheet] = useState(false);
+  const [showDaySheet, setShowDaySheet]     = useState(false);
+  const [showYearSheet, setShowYearSheet]   = useState(false);
 
-  // Loading states for cascading location pickers
-  const [loadingRegions, setLoadingRegions] = useState(false);
+  // Gender sheet
+  const [showGenderSheet, setShowGenderSheet] = useState(false);
+
+  // Location sheets
+  const [showRegionSheet, setShowRegionSheet]     = useState(false);
+  const [showProvinceSheet, setShowProvinceSheet] = useState(false);
+  const [showCitySheet, setShowCitySheet]         = useState(false);
+  const [showBarangaySheet, setShowBarangaySheet] = useState(false);
+
+  // Location data
+  const [regions, setRegions]     = useState<any[]>([]);
+  const [provinces, setProvinces] = useState<any[]>([]);
+  const [cities, setCities]       = useState<any[]>([]);
+  const [barangays, setBarangays] = useState<any[]>([]);
+  const [selectedRegionCode, setSelectedRegionCode]     = useState('');
+  const [selectedProvinceCode, setSelectedProvinceCode] = useState('');
+  const [selectedCityCode, setSelectedCityCode]         = useState('');
+  const [loadingRegions, setLoadingRegions]     = useState(false);
   const [loadingProvinces, setLoadingProvinces] = useState(false);
-  const [loadingCities, setLoadingCities] = useState(false);
+  const [loadingCities, setLoadingCities]       = useState(false);
   const [loadingBarangays, setLoadingBarangays] = useState(false);
 
-  // Fetch regions on component mount
+  // Sync dob string whenever month/day/year change
   useEffect(() => {
-    fetchRegions();
-  }, []);
+    if (dobMonth && dobDay && dobYear) {
+      updateField('date_of_birth', `${dobYear}-${dobMonth}-${dobDay}`);
+    }
+  }, [dobMonth, dobDay, dobYear]);
+
+  useEffect(() => { fetchRegions(); }, []);
 
   useEffect(() => {
     if (resendCountdown <= 0) return;
-    const timer = setInterval(() => {
-      setResendCountdown((prev) => (prev > 0 ? prev - 1 : 0));
-    }, 1000);
-    return () => clearInterval(timer);
+    const t = setInterval(() => setResendCountdown(p => p > 0 ? p - 1 : 0), 1000);
+    return () => clearInterval(t);
   }, [resendCountdown]);
 
-  // Fetch provinces when region is selected
   useEffect(() => {
-    if (selectedRegionCode) {
-      // Reset dependent selections — arrays are replaced inside fetch functions
-      setSelectedProvinceCode('');
-      setSelectedCityCode('');
-      updateField('province', '');
-      updateField('city_municipality', '');
-      updateField('barangay', '');
-      fetchProvinces(selectedRegionCode);
-    }
+    if (!selectedRegionCode) return;
+    setSelectedProvinceCode(''); setSelectedCityCode('');
+    updateField('province', ''); updateField('city_municipality', ''); updateField('barangay', '');
+    fetchProvinces(selectedRegionCode);
   }, [selectedRegionCode]);
 
-  // Fetch cities when province is selected
   useEffect(() => {
-    if (selectedProvinceCode) {
-      setSelectedCityCode('');
-      updateField('city_municipality', '');
-      updateField('barangay', '');
-      fetchCities(selectedProvinceCode);
-    }
+    if (!selectedProvinceCode) return;
+    setSelectedCityCode('');
+    updateField('city_municipality', ''); updateField('barangay', '');
+    fetchCities(selectedProvinceCode);
   }, [selectedProvinceCode]);
 
-  // Fetch barangays when city is selected
   useEffect(() => {
-    if (selectedCityCode) {
-      updateField('barangay', '');
-      fetchBarangays(selectedCityCode);
-    }
+    if (!selectedCityCode) return;
+    updateField('barangay', '');
+    fetchBarangays(selectedCityCode);
   }, [selectedCityCode]);
 
+  // ── Fetch ─────────────────────────────────────────────────────────────────
   const fetchRegions = async () => {
     setLoadingRegions(true);
     try {
-      const response = await fetch(`${PSGC_API_BASE}/regions`);
-      const data = await response.json() as PSGCLocation[];
-      const sorted = data.sort((a: any, b: any) => a.name.localeCompare(b.name));
-      setRegions(sorted);
-    } catch (error) {
-      console.error('Error fetching regions:', error);
-      showNotification({ type: 'error', message: 'Failed to load regions' });
-    } finally {
-      setLoadingRegions(false);
-    }
+      const res  = await fetch(`${PSGC_API_BASE}/regions`);
+      const data = await res.json() as PSGCLocation[];
+      setRegions(data.sort((a, b) => a.name.localeCompare(b.name)));
+    } catch { showToast('Failed to load regions.'); }
+    finally { setLoadingRegions(false); }
   };
-
-  const fetchProvinces = async (regionCode: string) => {
-    setLoadingProvinces(true);
-    setCities([]);
-    setBarangays([]);
+  const fetchProvinces = async (code: string) => {
+    setLoadingProvinces(true); setCities([]); setBarangays([]);
     try {
-      const response = await fetch(`${PSGC_API_BASE}/regions/${regionCode}/provinces`);
-      const data = await response.json() as PSGCLocation[];
-      const sorted = data.sort((a: any, b: any) => a.name.localeCompare(b.name));
-      setProvinces(sorted);
-    } catch (error) {
-      console.error('Error fetching provinces:', error);
-      showNotification({ type: 'error', message: 'Failed to load provinces' });
-    } finally {
-      setLoadingProvinces(false);
-    }
+      const res  = await fetch(`${PSGC_API_BASE}/regions/${code}/provinces`);
+      const data = await res.json() as PSGCLocation[];
+      setProvinces(data.sort((a, b) => a.name.localeCompare(b.name)));
+    } catch { showToast('Failed to load provinces.'); }
+    finally { setLoadingProvinces(false); }
   };
-
-  const fetchCities = async (provinceCode: string) => {
-    setLoadingCities(true);
-    setBarangays([]);
+  const fetchCities = async (code: string) => {
+    setLoadingCities(true); setBarangays([]);
     try {
-      const response = await fetch(`${PSGC_API_BASE}/provinces/${provinceCode}/cities-municipalities`);
-      const data = await response.json() as PSGCLocation[];
-      const sorted = data.sort((a: any, b: any) => a.name.localeCompare(b.name));
-      setCities(sorted);
-    } catch (error) {
-      console.error('Error fetching cities:', error);
-      showNotification({ type: 'error', message: 'Failed to load cities/municipalities' });
-    } finally {
-      setLoadingCities(false);
-    }
+      const res  = await fetch(`${PSGC_API_BASE}/provinces/${code}/cities-municipalities`);
+      const data = await res.json() as PSGCLocation[];
+      setCities(data.sort((a, b) => a.name.localeCompare(b.name)));
+    } catch { showToast('Failed to load cities.'); }
+    finally { setLoadingCities(false); }
   };
-
-  const fetchBarangays = async (cityCode: string) => {
+  const fetchBarangays = async (code: string) => {
     setLoadingBarangays(true);
     try {
-      const response = await fetch(`${PSGC_API_BASE}/cities-municipalities/${cityCode}/barangays`);
-      const data = await response.json() as PSGCLocation[];
-      const sorted = data.sort((a: any, b: any) => a.name.localeCompare(b.name));
-      setBarangays(sorted);
-    } catch (error) {
-      console.error('Error fetching barangays:', error);
-      showNotification({ type: 'error', message: 'Failed to load barangays' });
-    } finally {
-      setLoadingBarangays(false);
-    }
-  };
-
-  const handleRegionChange = (name: string, code: string) => {
-    setSelectedRegionCode(code);
-    updateField('region', name);
-  };
-
-  const handleProvinceChange = (name: string, code: string) => {
-    setSelectedProvinceCode(code);
-    updateField('province', name);
-  };
-
-  const handleCityChange = (name: string, code: string) => {
-    setSelectedCityCode(code);
-    updateField('city_municipality', name);
-  };
-
-  const handleBarangayChange = (name: string) => {
-    updateField('barangay', name);
-  };
-
-  const handleDateChange = (event: any, date?: Date) => {
-    setShowDatePicker(Platform.OS === 'ios');
-    if (date) {
-      setSelectedDate(date);
-      const formattedDate = date.toISOString().split('T')[0]; // YYYY-MM-DD format
-      updateField('date_of_birth', formattedDate);
-    }
-  };
-
-  const handleRegister = async () => {
-    // Email verification check
-    if (!emailVerified) {
-      showNotification({ type: 'warning', message: 'Please verify your email first' });
-      return;
-    }
-
-    // Basic validation
-    if (!formData.firstname || !formData.lastname || !formData.email || 
-        !formData.username || !formData.password || !formData.confirm_password) {
-      showNotification({ type: 'error', message: 'Please fill in all required fields' });
-      return;
-    }
-
-    // Location validation
-    if (!formData.region || !formData.province || !formData.city_municipality || !formData.barangay) {
-      showNotification({ type: 'error', message: 'Please select your complete address (Region, Province, City/Municipality, and Barangay)' });
-      return;
-    }
-
-    if (formData.password !== formData.confirm_password) {
-      showNotification({ type: 'error', message: 'Passwords do not match' });
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const response = await fetch(`${API_URL}/users/register/`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(formData),
-      });
-
-      const data = await response.json() as RegisterResponse;
-
-      if (response.ok) {
-        showNotification({ type: 'success', message: 'Registration successful! Please login.' });
-        setTimeout(() => router.replace('../(auth)/login' as any), 1500);
-      } else {
-        let message = 'Registration failed';
-        if (data && Object.keys(data).length > 0) {
-          const first = Object.values(data)[0];
-          message = Array.isArray(first) ? first[0] : String(first);
-        }
-        showNotification({ type: 'error', message });
-      }
-    } catch (error) {
-      console.error('Registration error:', error);
-      showNotification({ type: 'error', message: 'Connection failed. Please check your network.' });
-    } finally {
-      setLoading(false);
-    }
+      const res  = await fetch(`${PSGC_API_BASE}/cities-municipalities/${code}/barangays`);
+      const data = await res.json() as PSGCLocation[];
+      setBarangays(data.sort((a, b) => a.name.localeCompare(b.name)));
+    } catch { showToast('Failed to load barangays.'); }
+    finally { setLoadingBarangays(false); }
   };
 
   const updateField = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
-    
-    // Reset email verification if email is changed
-    if (field === 'email' && value !== verifiedEmail) {
-      setEmailVerified(false);
-    }
+    if (field === 'email' && value !== verifiedEmail) setEmailVerified(false);
   };
 
+  const handlePhoneChange = (v: string) => {
+    const digits = v.replace(/\D/g, '').slice(0, 10);
+    setPhoneLocal(digits);
+    updateField('contact_number', digits ? '+63' + digits : '');
+  };
+
+  const dobDisplay = () => {
+    if (!dobMonth && !dobDay && !dobYear) return null;
+    const mLabel = dobMonth ? MONTH_ITEMS.find(m => m.value === dobMonth)?.label : '—';
+    return `${mLabel ?? '—'}  ${dobDay || '—'}  ${dobYear || '—'}`;
+  };
+
+  // ── Email verification ────────────────────────────────────────────────────
   const handleSendVerificationCode = async () => {
     setSendingCode(true);
     try {
-      const response = await fetch(`${API_URL}/users/send-verification-code/`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+      const res  = await fetch(`${API_URL}/users/send-verification-code/`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: formData.email }),
       });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        showNotification({ type: 'success', message: 'Verification code sent to your email!' });
-        setResendCountdown(RESEND_COOLDOWN_SECONDS);
-        setCurrentStage(2);
-      } else {
-        const errorMsg = data.error || 'Failed to send verification code';
-        showNotification({ type: 'error', message: errorMsg });
-      }
-    } catch (error) {
-      console.error('Send verification code error:', error);
-      showNotification({ type: 'error', message: 'Connection failed. Please check your network.' });
-    } finally {
-      setSendingCode(false);
-    }
+      const data = await res.json();
+      if (res.ok) { showToast('Verification code sent to your email.'); setResendCountdown(RESEND_COOLDOWN); setCurrentStage(2); }
+      else showToast(data.error || 'Failed to send verification code.');
+    } catch { showToast('Connection failed. Please check your network.'); }
+    finally { setSendingCode(false); }
   };
 
   const handleVerifyCode = async () => {
-    if (!verificationCode || verificationCode.length !== 6) {
-      showNotification({ type: 'error', message: 'Please enter a valid 6-digit code' });
-      return;
-    }
-
+    if (!verificationCode || verificationCode.length !== 6) { showToast('Please enter a valid 6-digit code.'); return; }
     setVerifyingCode(true);
     try {
-      const response = await fetch(`${API_URL}/users/verify-code/`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          email: formData.email,
-          code: verificationCode,
-        }),
+      const res  = await fetch(`${API_URL}/users/verify-code/`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: formData.email, code: verificationCode }),
       });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        setEmailVerified(true);
-        setVerifiedEmail(formData.email); // Store the verified email
-        showNotification({ type: 'success', message: 'Email verified successfully!' });
-        setCurrentStage(3);
-      } else {
-        const errorMsg = data.error || 'Invalid or expired verification code';
-        showNotification({ type: 'error', message: errorMsg });
-      }
-    } catch (error) {
-      console.error('Verify code error:', error);
-      showNotification({ type: 'error', message: 'Connection failed. Please check your network.' });
-    } finally {
-      setVerifyingCode(false);
-    }
+      const data = await res.json();
+      if (res.ok) { setEmailVerified(true); setVerifiedEmail(formData.email); showToast('Email verified!'); setCurrentStage(3); }
+      else showToast(data.error || 'Invalid or expired verification code.');
+    } catch { showToast('Connection failed. Please check your network.'); }
+    finally { setVerifyingCode(false); }
   };
 
   const handleResendCode = async () => {
-    if (resendCountdown > 0) {
-      return;
-    }
+    if (resendCountdown > 0) return;
     setVerificationCode('');
     await handleSendVerificationCode();
   };
 
-  const formatCountdown = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
+  const fmtCountdown = (sec: number) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
 
+  // ── Navigation ────────────────────────────────────────────────────────────
   const handleNext = () => {
     if (currentStage === 1) {
-      if (!formData.firstname || !formData.lastname || !formData.email || !formData.username) {
-        showNotification({ type: 'error', message: 'Please fill in all required fields' });
-        return;
-      }
-      
-      // Check if email is already verified and hasn't changed
-      if (emailVerified && formData.email === verifiedEmail) {
-        // Skip to stage 3 (Security)
-        setCurrentStage(3);
-        return;
-      }
-      
-      // Send verification code when moving from stage 1 to 2
-      handleSendVerificationCode();
-      return;
-    } else if (currentStage === 3) {
-      if (!formData.password || !formData.confirm_password) {
-        showNotification({ type: 'error', message: 'Please fill in password fields' });
-        return;
-      }
-      if (formData.password !== formData.confirm_password) {
-        showNotification({ type: 'error', message: 'Passwords do not match' });
-        return;
-      }
-    } else if (currentStage === 5) {
-      if (!formData.region || !formData.province || !formData.city_municipality || !formData.barangay) {
-        showNotification({ type: 'error', message: 'Please select your complete address' });
-        return;
-      }
+      if (!formData.firstname || !formData.lastname || !formData.email || !formData.username) { showToast('Please fill in all required fields.'); return; }
+      if (!validateEmail(formData.email)) { showToast('Please enter a valid email address.'); return; }
+      if (emailVerified && formData.email === verifiedEmail) { setCurrentStage(3); return; }
+      handleSendVerificationCode(); return;
     }
-    setCurrentStage(prev => Math.min(prev + 1, totalStages));
+    if (currentStage === 3) {
+      if (!formData.password || !formData.confirm_password) { showToast('Please fill in all password fields.'); return; }
+      const pwErr = validatePassword(formData.password);
+      if (pwErr) { showToast(pwErr); return; }
+      if (formData.password !== formData.confirm_password) { showToast('Passwords do not match.'); return; }
+    }
+    if (currentStage === 4) {
+      if (!formData.date_of_birth) { showToast('Please select your date of birth.'); return; }
+      if (!isAtLeast18(formData.date_of_birth)) { showToast('You must be at least 18 years old to register.'); return; }
+    }
+    if (currentStage === 5) {
+      if (!formData.region || !formData.province || !formData.city_municipality || !formData.barangay) { showToast('Please complete your address.'); return; }
+    }
+    setCurrentStage(p => Math.min(p + 1, totalStages));
   };
 
   const handlePrevious = () => {
-    // If on stage 3 (Security), go back to stage 1 (Personal), skip stage 2 (Email Verification)
-    if (currentStage === 3) {
-      setCurrentStage(1);
-      return;
-    }
-    
-    setCurrentStage(prev => Math.max(prev - 1, 1));
+    if (currentStage === 3) { setCurrentStage(1); return; }
+    setCurrentStage(p => Math.max(p - 1, 1));
   };
 
-  const getProgressRatio = () => {
-    if (currentStage === 1) return 0;
-    return (currentStage - 1) / (totalStages - 1);
+  const handleRegister = async () => {
+    if (!emailVerified) { showToast('Please verify your email first.'); return; }
+    if (!formData.firstname || !formData.lastname || !formData.email || !formData.username || !formData.password || !formData.confirm_password) { showToast('Please fill in all required fields.'); return; }
+    if (!formData.region || !formData.province || !formData.city_municipality || !formData.barangay) { showToast('Please complete your address.'); return; }
+    if (formData.password !== formData.confirm_password) { showToast('Passwords do not match.'); return; }
+    setLoading(true);
+    try {
+      const res  = await fetch(`${API_URL}/users/register/`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData),
+      });
+      const data = await res.json() as RegisterResponse;
+      if (res.ok) { showToast('Registration successful! Please login.'); setTimeout(() => router.replace('../(auth)/login' as any), 1500); }
+      else { const first = Object.values(data)[0]; showToast(Array.isArray(first) ? first[0] : String(first)); }
+    } catch { showToast('Connection failed. Please check your network.'); }
+    finally { setLoading(false); }
   };
 
-  const renderStepIndicator = (stepNum: number, label: string) => {
-    const isActive = currentStage === stepNum;
-    let isCompleted = currentStage > stepNum;
-    
-    // Mark stage 2 (Email Verification) as completed if email is verified
-    if (stepNum === 2 && emailVerified) {
-      isCompleted = true;
-    }
-    
-    return (
-      <View key={stepNum} style={styles.stepContainer}>
-        <View style={[
-          styles.step,
-          isActive && styles.stepActive,
-          isCompleted && styles.stepCompleted
-        ]}>
-          <Text style={[
-            styles.stepNumber,
-            (isActive || isCompleted) && styles.stepNumberActive
-          ]}>
-            {stepNum}
-          </Text>
-        </View>
-        <Text
-          numberOfLines={1}
-          adjustsFontSizeToFit
-          minimumFontScale={0.75}
-          style={[
-          styles.stepLabel,
-          isActive && styles.stepLabelActive
-          ]}
-        >
-          {label}
-        </Text>
-      </View>
-    );
-  };
-
+  // ── Stages ────────────────────────────────────────────────────────────────
   const renderStage = () => {
     switch (currentStage) {
-      case 1:
-        return (
-          <>
-            <Text style={styles.sectionTitle}>1. PERSONAL IDENTIFICATION</Text>
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>First Name <Text style={styles.required}>*</Text></Text>
-              <View style={styles.inputWrapper}>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter first name"
-                  placeholderTextColor="#999"
-                  value={formData.firstname}
-                  onChangeText={(value) => updateField('firstname', value)}
-                  editable={!loading}
-                />
-              </View>
-            </View>
+      case 1: return (
+        <>
+          <Text style={s.label}>First Name <Text style={s.req}>*</Text></Text>
+          <View style={s.inputWrapper}>
+            <TextInput style={s.input} placeholder="Enter first name" placeholderTextColor={MUTED}
+              value={formData.firstname} onChangeText={v => updateField('firstname', v)} editable={!loading} />
+          </View>
+          <Text style={[s.label, s.mt]}>Last Name <Text style={s.req}>*</Text></Text>
+          <View style={s.inputWrapper}>
+            <TextInput style={s.input} placeholder="Enter last name" placeholderTextColor={MUTED}
+              value={formData.lastname} onChangeText={v => updateField('lastname', v)} editable={!loading} />
+          </View>
+          <Text style={[s.label, s.mt]}>Middle Name <Text style={s.opt}>(Optional)</Text></Text>
+          <View style={s.inputWrapper}>
+            <TextInput style={s.input} placeholder="Enter middle name" placeholderTextColor={MUTED}
+              value={formData.middlename} onChangeText={v => updateField('middlename', v)} editable={!loading} />
+          </View>
+          <Text style={[s.label, s.mt]}>Email <Text style={s.req}>*</Text></Text>
+          <View style={s.inputWrapper}>
+            <TextInput style={s.input} placeholder="Enter email" placeholderTextColor={MUTED}
+              value={formData.email} onChangeText={v => updateField('email', v)}
+              keyboardType="email-address" autoCapitalize="none" editable={!loading} />
+          </View>
+          <Text style={[s.label, s.mt]}>Username <Text style={s.req}>*</Text></Text>
+          <View style={s.inputWrapper}>
+            <TextInput style={s.input} placeholder="Enter username" placeholderTextColor={MUTED}
+              value={formData.username} onChangeText={v => updateField('username', v)}
+              autoCapitalize="none" editable={!loading} />
+          </View>
+        </>
+      );
 
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Last Name <Text style={styles.required}>*</Text></Text>
-              <View style={styles.inputWrapper}>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter last name"
-                  placeholderTextColor="#999"
-                  value={formData.lastname}
-                  onChangeText={(value) => updateField('lastname', value)}
-                  editable={!loading}
-                />
-              </View>
-            </View>
+      case 2: return (
+        <>
+          <Text style={s.label}>Verification Code <Text style={s.req}>*</Text></Text>
+          <View style={s.inputWrapper}>
+            <TextInput style={s.input} placeholder="Enter 6-digit code" placeholderTextColor={MUTED}
+              value={verificationCode} onChangeText={setVerificationCode}
+              keyboardType="number-pad" maxLength={6} editable={!verifyingCode} />
+          </View>
+          <Text style={[s.label, { marginTop: 8 }]}>Code sent to {formData.email}</Text>
+          <TouchableOpacity style={[s.button, s.btnFull, verifyingCode && s.btnDisabled, { marginTop: 16 }]}
+            onPress={handleVerifyCode} disabled={verifyingCode}>
+            {verifyingCode ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>Verify Code</Text>}
+          </TouchableOpacity>
+          <TouchableOpacity style={[s.buttonOutline, s.btnFull, { marginTop: 12 }]}
+            onPress={handleResendCode} disabled={sendingCode || resendCountdown > 0}>
+            {sendingCode ? <ActivityIndicator color={ORANGE} />
+              : <Text style={s.btnOutlineText}>{resendCountdown > 0 ? `Resend in ${fmtCountdown(resendCountdown)}` : 'Resend Code'}</Text>}
+          </TouchableOpacity>
+        </>
+      );
 
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Middle Name <Text style={styles.optional}>(Optional)</Text></Text>
-              <View style={styles.inputWrapper}>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter middle name (optional)"
-                  placeholderTextColor="#999"
-                  value={formData.middlename}
-                  onChangeText={(value) => updateField('middlename', value)}
-                  editable={!loading}
-                />
-              </View>
-            </View>
+      case 3: return (
+        <>
+          <Text style={s.label}>Password <Text style={s.req}>*</Text></Text>
+          <View style={s.inputWrapper}>
+            <TextInput style={s.input} placeholder="Enter password" placeholderTextColor={MUTED}
+              value={formData.password} onChangeText={v => updateField('password', v)}
+              secureTextEntry autoCapitalize="none" editable={!loading} />
+          </View>
+          <Text style={s.hint}>Min 8 chars · 1 uppercase · 1 special character</Text>
+          <Text style={[s.label, s.mt]}>Confirm Password <Text style={s.req}>*</Text></Text>
+          <View style={s.inputWrapper}>
+            <TextInput style={s.input} placeholder="Re-enter password" placeholderTextColor={MUTED}
+              value={formData.confirm_password} onChangeText={v => updateField('confirm_password', v)}
+              secureTextEntry autoCapitalize="none" editable={!loading} />
+          </View>
+        </>
+      );
 
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Email <Text style={styles.required}>*</Text></Text>
-              <View style={styles.inputWrapper}>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter email"
-                  placeholderTextColor="#999"
-                  value={formData.email}
-                  onChangeText={(value) => updateField('email', value)}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  editable={!loading}
-                />
-              </View>
-            </View>
+      case 4: return (
+        <>
+          <Text style={s.label}>Contact Number <Text style={s.opt}>(Optional)</Text></Text>
+          <View style={s.inputWrapper}>
+            <Text style={s.prefix}>+63</Text>
+            <View style={s.prefixDivider} />
+            <TextInput style={s.input} placeholder="9XX XXX XXXX" placeholderTextColor={MUTED}
+              value={phoneLocal} onChangeText={handlePhoneChange}
+              keyboardType="phone-pad" maxLength={10} editable={!loading} />
+          </View>
 
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Username <Text style={styles.required}>*</Text></Text>
-              <View style={styles.inputWrapper}>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter username"
-                  placeholderTextColor="#999"
-                  value={formData.username}
-                  onChangeText={(value) => updateField('username', value)}
-                  autoCapitalize="none"
-                  editable={!loading}
-                />
-              </View>
-            </View>
-          </>
-        );
-
-      case 2:
-        return (
-          <>
-            <Text style={styles.sectionTitle}>2. EMAIL VERIFICATION</Text>
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Verification Code <Text style={styles.required}>*</Text></Text>
-              <View style={styles.inputWrapper}>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter 6-digit code"
-                  placeholderTextColor="#999"
-                  value={verificationCode}
-                  onChangeText={setVerificationCode}
-                  keyboardType="number-pad"
-                  maxLength={6}
-                  editable={!verifyingCode}
-                />
-              </View>
-              <Text style={[styles.label, { fontSize: 12, marginTop: 8 }]}>
-                Please check your email ({formData.email}) for the verification code.
+          {/* Date of Birth — 3 column row */}
+          <Text style={[s.label, s.mt]}>Date of Birth <Text style={s.req}>*</Text></Text>
+          <View style={s.dobRow}>
+            <TouchableOpacity style={[s.inputWrapper, { flex: 1.6 }]} onPress={() => setShowMonthSheet(true)}>
+              <Text style={[s.input, !dobMonth && { color: MUTED }]}>
+                {dobMonth ? MONTH_ITEMS.find(m => m.value === dobMonth)?.label : 'Month'}
               </Text>
-            </View>
-
-            <TouchableOpacity
-              style={[styles.button, verifyingCode && styles.buttonDisabled]}
-              onPress={handleVerifyCode}
-              disabled={verifyingCode}
-            >
-              {verifyingCode ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.buttonText}>Verify Code</Text>
-              )}
+              <Feather name="chevron-down" size={14} color={MUTED} />
             </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.button, styles.buttonSecondary, { marginTop: 12 }]}
-              onPress={handleResendCode}
-              disabled={sendingCode || resendCountdown > 0}
-            >
-              {sendingCode ? (
-                <ActivityIndicator color="#FF8C00" />
-              ) : (
-                <Text style={[styles.buttonText, styles.buttonTextSecondary]}>
-                  {resendCountdown > 0 ? `Resend in ${formatCountdown(resendCountdown)}` : 'Resend Code'}
-                </Text>
-              )}
+            <TouchableOpacity style={[s.inputWrapper, { flex: 1 }]} onPress={() => setShowDaySheet(true)}>
+              <Text style={[s.input, !dobDay && { color: MUTED }]}>{dobDay || 'Day'}</Text>
+              <Feather name="chevron-down" size={14} color={MUTED} />
             </TouchableOpacity>
-          </>
-        );
+            <TouchableOpacity style={[s.inputWrapper, { flex: 1.2 }]} onPress={() => setShowYearSheet(true)}>
+              <Text style={[s.input, !dobYear && { color: MUTED }]}>{dobYear || 'Year'}</Text>
+              <Feather name="chevron-down" size={14} color={MUTED} />
+            </TouchableOpacity>
+          </View>
 
-      case 3:
-        return (
-          <>
-            <Text style={styles.sectionTitle}>3. SECURITY & AUTHENTICATION</Text>
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Password <Text style={styles.required}>*</Text></Text>
-              <View style={styles.inputWrapper}>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter password"
-                  placeholderTextColor="#999"
-                  value={formData.password}
-                  onChangeText={(value) => updateField('password', value)}
-                  secureTextEntry={!showPassword}
-                  autoCapitalize="none"
-                  editable={!loading}
-                />
-                <TouchableOpacity 
-                  style={styles.eyeButton}
-                  onPress={() => setShowPassword(!showPassword)}
-                >
-                  <FontAwesome 
-                    name={showPassword ? "eye-slash" : "eye"} 
-                    size={16} 
-                    color="#8E8E93" 
-                  />
-                </TouchableOpacity>
-              </View>
-            </View>
+          {/* Gender */}
+          <Text style={[s.label, s.mt]}>Gender <Text style={s.opt}>(Optional)</Text></Text>
+          <TouchableOpacity style={s.inputWrapper} onPress={() => setShowGenderSheet(true)} disabled={loading}>
+            <Text style={[s.input, !formData.gender && { color: MUTED }]}>{formData.gender || 'Select Gender'}</Text>
+            <Feather name="chevron-down" size={16} color={MUTED} />
+          </TouchableOpacity>
+        </>
+      );
 
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Confirm Password <Text style={styles.required}>*</Text></Text>
-              <View style={styles.inputWrapper}>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Re-enter password"
-                  placeholderTextColor="#999"
-                  value={formData.confirm_password}
-                  onChangeText={(value) => updateField('confirm_password', value)}
-                  secureTextEntry={!showConfirmPassword}
-                  autoCapitalize="none"
-                  editable={!loading}
-                />
-                <TouchableOpacity 
-                  style={styles.eyeButton}
-                  onPress={() => setShowConfirmPassword(!showConfirmPassword)}
-                >
-                  <FontAwesome 
-                    name={showConfirmPassword ? "eye-slash" : "eye"} 
-                    size={16} 
-                    color="#8E8E93" 
-                  />
-                </TouchableOpacity>
-              </View>
-            </View>
-          </>
-        );
+      case 5: return (
+        <>
+          <Text style={s.label}>Region <Text style={s.req}>*</Text></Text>
+          <TouchableOpacity style={s.inputWrapper} onPress={() => setShowRegionSheet(true)} disabled={loading || loadingRegions}>
+            <Text style={[s.input, !formData.region && { color: MUTED }]}>{loadingRegions ? 'Loading...' : (formData.region || 'Select Region')}</Text>
+            {loadingRegions ? <ActivityIndicator size="small" color={ORANGE} /> : <Feather name="chevron-down" size={16} color={MUTED} />}
+          </TouchableOpacity>
+          <Text style={[s.label, s.mt]}>Province <Text style={s.req}>*</Text></Text>
+          <TouchableOpacity style={[s.inputWrapper, !selectedRegionCode && s.inputDimmed]}
+            onPress={() => setShowProvinceSheet(true)} disabled={loading || !selectedRegionCode || loadingProvinces}>
+            <Text style={[s.input, !formData.province && { color: MUTED }]}>{loadingProvinces ? 'Loading...' : (formData.province || (!selectedRegionCode ? 'Select region first' : 'Select Province'))}</Text>
+            {loadingProvinces ? <ActivityIndicator size="small" color={ORANGE} /> : <Feather name="chevron-down" size={16} color={MUTED} />}
+          </TouchableOpacity>
+          <Text style={[s.label, s.mt]}>City / Municipality <Text style={s.req}>*</Text></Text>
+          <TouchableOpacity style={[s.inputWrapper, !selectedProvinceCode && s.inputDimmed]}
+            onPress={() => setShowCitySheet(true)} disabled={loading || !selectedProvinceCode || loadingCities}>
+            <Text style={[s.input, !formData.city_municipality && { color: MUTED }]}>{loadingCities ? 'Loading...' : (formData.city_municipality || (!selectedProvinceCode ? 'Select province first' : 'Select City/Municipality'))}</Text>
+            {loadingCities ? <ActivityIndicator size="small" color={ORANGE} /> : <Feather name="chevron-down" size={16} color={MUTED} />}
+          </TouchableOpacity>
+          <Text style={[s.label, s.mt]}>Barangay <Text style={s.req}>*</Text></Text>
+          <TouchableOpacity style={[s.inputWrapper, !selectedCityCode && s.inputDimmed]}
+            onPress={() => setShowBarangaySheet(true)} disabled={loading || !selectedCityCode || loadingBarangays}>
+            <Text style={[s.input, !formData.barangay && { color: MUTED }]}>{loadingBarangays ? 'Loading...' : (formData.barangay || (!selectedCityCode ? 'Select city first' : 'Select Barangay'))}</Text>
+            {loadingBarangays ? <ActivityIndicator size="small" color={ORANGE} /> : <Feather name="chevron-down" size={16} color={MUTED} />}
+          </TouchableOpacity>
+          <Text style={[s.label, s.mt]}>Street Name <Text style={s.opt}>(Optional)</Text></Text>
+          <View style={s.inputWrapper}>
+            <TextInput style={s.input} placeholder="Enter street name" placeholderTextColor={MUTED}
+              value={formData.street_name} onChangeText={v => updateField('street_name', v)} editable={!loading} />
+          </View>
+        </>
+      );
 
-      case 4:
-        return (
-          <>
-            <Text style={styles.sectionTitle}>4. PERSONAL DEMOGRAPHICS</Text>
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Contact Number <Text style={styles.optional}>(Optional)</Text></Text>
-              <View style={styles.inputWrapper}>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter contact number"
-                  placeholderTextColor="#999"
-                  value={formData.contact_number}
-                  onChangeText={(value) => updateField('contact_number', value)}
-                  keyboardType="phone-pad"
-                  editable={!loading}
-                />
-              </View>
-            </View>
-
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Date of Birth <Text style={styles.optional}>(Optional)</Text></Text>
-              <TouchableOpacity 
-                style={styles.dateButton}
-                onPress={() => setShowDatePicker(true)}
-                disabled={loading}
-              >
-                <Text style={formData.date_of_birth ? styles.dateText : styles.placeholderText}>
-                  {formData.date_of_birth || 'Select Date of Birth'}
-                </Text>
-              </TouchableOpacity>
-              {showDatePicker && (
-                <DateTimePicker
-                  value={selectedDate}
-                  mode="date"
-                  display="default"
-                  onChange={handleDateChange}
-                  maximumDate={new Date()}
-                />
-              )}
-            </View>
-
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Gender <Text style={styles.optional}>(Optional)</Text></Text>
-              <TouchableOpacity
-                style={styles.selectButton}
-                onPress={() => setShowGenderModal(true)}
-                disabled={loading}
-              >
-                <Text style={formData.gender ? styles.selectButtonText : styles.selectButtonPlaceholder}>
-                  {formData.gender || 'Select Gender'}
-                </Text>
-                <FontAwesome name="chevron-down" size={14} color="#8E8E93" />
-              </TouchableOpacity>
-            </View>
-          </>
-        );
-
-      case 5:
-        return (
-          <>
-            <Text style={styles.sectionTitle}>5. GEOGRAPHICAL LOCATION</Text>
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Region <Text style={styles.required}>*</Text></Text>
-              <TouchableOpacity
-                style={styles.selectButton}
-                onPress={() => setShowRegionModal(true)}
-                disabled={loading || loadingRegions}
-              >
-                <Text style={selectedRegionCode ? styles.selectButtonText : styles.selectButtonPlaceholder}>
-                  {formData.region || (loadingRegions ? 'Loading regions...' : 'Select Region')}
-                </Text>
-                <FontAwesome name="chevron-down" size={14} color="#8E8E93" />
-              </TouchableOpacity>
-              {loadingRegions && (
-                <View style={styles.pickerLoadingRow}>
-                  <ActivityIndicator size="small" color="#FF8C00" />
-                  <Text style={styles.pickerLoadingText}>Fetching regions...</Text>
-                </View>
-              )}
-            </View>
-
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Province <Text style={styles.required}>*</Text></Text>
-              <TouchableOpacity
-                style={[styles.selectButton, !selectedRegionCode && styles.selectButtonDisabled]}
-                onPress={() => setShowProvinceModal(true)}
-                disabled={loading || !selectedRegionCode || loadingProvinces}
-              >
-                <Text style={selectedProvinceCode ? styles.selectButtonText : styles.selectButtonPlaceholder}>
-                  {formData.province || (loadingProvinces ? 'Loading provinces...' : (!selectedRegionCode ? 'Select a region first' : 'Select Province'))}
-                </Text>
-                <FontAwesome name="chevron-down" size={14} color="#8E8E93" />
-              </TouchableOpacity>
-              {loadingProvinces && (
-                <View style={styles.pickerLoadingRow}>
-                  <ActivityIndicator size="small" color="#FF8C00" />
-                  <Text style={styles.pickerLoadingText}>Fetching provinces...</Text>
-                </View>
-              )}
-            </View>
-
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>City/Municipality <Text style={styles.required}>*</Text></Text>
-              <TouchableOpacity
-                style={[styles.selectButton, !selectedProvinceCode && styles.selectButtonDisabled]}
-                onPress={() => setShowCityModal(true)}
-                disabled={loading || !selectedProvinceCode || loadingCities}
-              >
-                <Text style={selectedCityCode ? styles.selectButtonText : styles.selectButtonPlaceholder}>
-                  {formData.city_municipality || (loadingCities ? 'Loading cities...' : (!selectedProvinceCode ? 'Select a province first' : 'Select City/Municipality'))}
-                </Text>
-                <FontAwesome name="chevron-down" size={14} color="#8E8E93" />
-              </TouchableOpacity>
-              {loadingCities && (
-                <View style={styles.pickerLoadingRow}>
-                  <ActivityIndicator size="small" color="#FF8C00" />
-                  <Text style={styles.pickerLoadingText}>Fetching cities...</Text>
-                </View>
-              )}
-            </View>
-
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Barangay <Text style={styles.required}>*</Text></Text>
-              <TouchableOpacity
-                style={[styles.selectButton, !selectedCityCode && styles.selectButtonDisabled]}
-                onPress={() => setShowBarangayModal(true)}
-                disabled={loading || !selectedCityCode || loadingBarangays}
-              >
-                <Text style={formData.barangay ? styles.selectButtonText : styles.selectButtonPlaceholder}>
-                  {formData.barangay || (loadingBarangays ? 'Loading barangays...' : (!selectedCityCode ? 'Select a city first' : 'Select Barangay'))}
-                </Text>
-                <FontAwesome name="chevron-down" size={14} color="#8E8E93" />
-              </TouchableOpacity>
-              {loadingBarangays && (
-                <View style={styles.pickerLoadingRow}>
-                  <ActivityIndicator size="small" color="#FF8C00" />
-                  <Text style={styles.pickerLoadingText}>Fetching barangays...</Text>
-                </View>
-              )}
-            </View>
-
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Street Name <Text style={styles.optional}>(Optional)</Text></Text>
-              <View style={styles.inputWrapper}>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter street name"
-                  placeholderTextColor="#999"
-                  value={formData.street_name}
-                  onChangeText={(value) => updateField('street_name', value)}
-                  editable={!loading}
-                />
-              </View>
-            </View>
-          </>
-        );
-
-      default:
-        return null;
+      default: return null;
     }
   };
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
-    >
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-      >
-        <View style={styles.header}>
-          <Image
-            source={require('@/assets/images/logo_main.png')}
-            style={{ width: 100, height: 100, resizeMode: 'contain', marginBottom: 8 }}
-          />
-          <Text style={styles.logo}>MechConnect</Text>
-          <Text style={styles.tagline}>Create your account</Text>
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={s.container}>
+      <Toast message={toast.message} visible={toast.visible} onHide={hideToast} />
+      <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
+        <View style={s.logoRow}>
+          <Image source={require('@/assets/images/logo_main.png')} style={s.logo} />
+          <Text style={s.appName}>MechConnect</Text>
+          <Text style={s.tagline}>Create your account</Text>
         </View>
-
-        <View style={styles.progressContainer}>
-          <View style={styles.progressSteps}>
-            <View
-              style={styles.progressLine}
-              onLayout={(event) => {
-                const width = event.nativeEvent.layout.width;
-                if (width > 0 && width !== progressTrackWidth) {
-                  setProgressTrackWidth(width);
-                }
-              }}
-            />
-            <View style={[styles.progressBar, { width: progressTrackWidth * getProgressRatio() }]} />
-            {renderStepIndicator(1, 'Personal')}
-            {renderStepIndicator(2, 'Verify')}
-            {renderStepIndicator(3, 'Security')}
-            {renderStepIndicator(4, 'Demographic')}
-            {renderStepIndicator(5, 'Location')}
-          </View>
-        </View>
-
-        <View style={styles.formContainer}>
+        <Text style={s.stageLabel}>{STAGE_LABELS[currentStage]}</Text>
+        <View style={s.form}>
           {renderStage()}
-
           {currentStage !== 2 && (
-            <View style={styles.buttonContainer}>
+            <View style={s.navRow}>
               {currentStage > 1 && (
-                <TouchableOpacity
-                  style={[styles.button, styles.buttonSecondary]}
-                  onPress={handlePrevious}
-                  disabled={loading || sendingCode || verifyingCode}
-                >
-                  <Text style={[styles.buttonText, styles.buttonTextSecondary]}>Previous</Text>
+                <TouchableOpacity style={[s.buttonOutline, s.navBtn]} onPress={handlePrevious} disabled={loading || sendingCode || verifyingCode}>
+                  <Text style={s.btnOutlineText}>Previous</Text>
                 </TouchableOpacity>
               )}
               {currentStage < totalStages ? (
-                <TouchableOpacity
-                  style={[styles.button, (loading || sendingCode) && styles.buttonDisabled]}
-                  onPress={handleNext}
-                  disabled={loading || sendingCode}
-                >
-                  {(currentStage === 1 && sendingCode) ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <Text style={styles.buttonText}>Next</Text>
-                  )}
+                <TouchableOpacity style={[s.button, s.navBtn, (loading || sendingCode) && s.btnDisabled]} onPress={handleNext} disabled={loading || sendingCode}>
+                  {currentStage === 1 && sendingCode ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>Next</Text>}
                 </TouchableOpacity>
               ) : (
-                <TouchableOpacity
-                  style={[styles.button, styles.buttonSubmit, loading && styles.buttonDisabled]}
-                  onPress={handleRegister}
-                  disabled={loading}
-                >
-                  {loading ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <Text style={styles.buttonText}>Create Account</Text>
-                  )}
+                <TouchableOpacity style={[s.button, s.navBtn, loading && s.btnDisabled]} onPress={handleRegister} disabled={loading}>
+                  {loading ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>Create Account</Text>}
                 </TouchableOpacity>
               )}
             </View>
           )}
-
-          <View style={styles.footer}>
-            <Text style={styles.footerText}>Already have an account?</Text>
+          <View style={s.loginRow}>
+            <Text style={s.loginBase}>Already have an account? </Text>
             <TouchableOpacity onPress={() => router.back()}>
-              <Text style={styles.linkText}>Login</Text>
+              <Text style={s.loginLink}>Login</Text>
             </TouchableOpacity>
           </View>
         </View>
-
-        <View style={styles.copyright}>
-          <Text style={styles.copyrightText}>© 2025 MechConnect. All rights reserved.</Text>
-        </View>
+        <Text style={s.copyright}>© 2025 MechConnect. All rights reserved.</Text>
       </ScrollView>
 
-      <ThemedSelectModal
-        visible={showGenderModal}
-        title="Select Gender"
-        options={[
-          { label: 'Male', value: 'Male' },
-          { label: 'Female', value: 'Female' },
-          { label: 'Others', value: 'Others' },
-        ]}
-        selectedValue={formData.gender}
-        onClose={() => setShowGenderModal(false)}
-        onSelect={(option) => {
-          updateField('gender', option.value);
-          setShowGenderModal(false);
-        }}
-      />
+      {/* ── Date of Birth Sheets ── */}
+      <BottomSheetPicker visible={showMonthSheet} title="Month"
+        items={MONTH_ITEMS} selectedValue={dobMonth}
+        onClose={() => setShowMonthSheet(false)}
+        onSelect={opt => setDobMonth(opt.value)} />
 
-      <ThemedSelectModal
-        visible={showRegionModal}
-        title="Select Region"
-        options={regions.map((region) => ({ label: region.name, value: region.code }))}
-        selectedValue={selectedRegionCode}
-        loading={loadingRegions}
-        emptyMessage="No regions found"
-        onClose={() => setShowRegionModal(false)}
-        onSelect={(option) => {
-          handleRegionChange(option.label, option.value);
-          setShowRegionModal(false);
-        }}
-      />
+      <BottomSheetPicker visible={showDaySheet} title="Day"
+        items={DAY_ITEMS} selectedValue={dobDay}
+        onClose={() => setShowDaySheet(false)}
+        onSelect={opt => setDobDay(opt.value)} />
 
-      <ThemedSelectModal
-        visible={showProvinceModal}
-        title="Select Province"
-        options={provinces.map((province) => ({ label: province.name, value: province.code }))}
-        selectedValue={selectedProvinceCode}
-        loading={loadingProvinces}
+      <BottomSheetPicker visible={showYearSheet} title="Year"
+        items={YEAR_ITEMS} selectedValue={dobYear}
+        onClose={() => setShowYearSheet(false)}
+        onSelect={opt => {
+          setDobYear(opt.value);
+          if (dobMonth && dobDay) {
+            const dob = `${opt.value}-${dobMonth}-${dobDay}`;
+            if (!isAtLeast18(dob)) showToast('You must be at least 18 years old to register.');
+          }
+        }} />
+
+      {/* ── Gender Sheet ── */}
+      <BottomSheetPicker visible={showGenderSheet} title="Gender"
+        items={GENDER_ITEMS} selectedValue={formData.gender}
+        onClose={() => setShowGenderSheet(false)}
+        onSelect={opt => updateField('gender', opt.value)} />
+
+      {/* ── Location Sheets ── */}
+      <BottomSheetPicker visible={showRegionSheet} title="Select Region"
+        items={regions.map(r => ({ label: r.name, value: r.code }))}
+        selectedValue={selectedRegionCode} loading={loadingRegions}
+        onClose={() => setShowRegionSheet(false)}
+        onSelect={opt => { setSelectedRegionCode(opt.value); updateField('region', opt.label); }} />
+
+      <BottomSheetPicker visible={showProvinceSheet} title="Select Province"
+        items={provinces.map(p => ({ label: p.name, value: p.code }))}
+        selectedValue={selectedProvinceCode} loading={loadingProvinces}
         emptyMessage={selectedRegionCode ? 'No provinces found' : 'Select a region first'}
-        onClose={() => setShowProvinceModal(false)}
-        onSelect={(option) => {
-          handleProvinceChange(option.label, option.value);
-          setShowProvinceModal(false);
-        }}
-      />
+        onClose={() => setShowProvinceSheet(false)}
+        onSelect={opt => { setSelectedProvinceCode(opt.value); updateField('province', opt.label); }} />
 
-      <ThemedSelectModal
-        visible={showCityModal}
-        title="Select City/Municipality"
-        options={cities.map((city) => ({ label: city.name, value: city.code }))}
-        selectedValue={selectedCityCode}
-        loading={loadingCities}
+      <BottomSheetPicker visible={showCitySheet} title="Select City / Municipality"
+        items={cities.map(c => ({ label: c.name, value: c.code }))}
+        selectedValue={selectedCityCode} loading={loadingCities}
         emptyMessage={selectedProvinceCode ? 'No cities found' : 'Select a province first'}
-        onClose={() => setShowCityModal(false)}
-        onSelect={(option) => {
-          handleCityChange(option.label, option.value);
-          setShowCityModal(false);
-        }}
-      />
+        onClose={() => setShowCitySheet(false)}
+        onSelect={opt => { setSelectedCityCode(opt.value); updateField('city_municipality', opt.label); }} />
 
-      <ThemedSelectModal
-        visible={showBarangayModal}
-        title="Select Barangay"
-        options={barangays.map((barangay) => ({ label: barangay.name, value: barangay.name }))}
-        selectedValue={formData.barangay}
-        loading={loadingBarangays}
+      <BottomSheetPicker visible={showBarangaySheet} title="Select Barangay"
+        items={barangays.map(b => ({ label: b.name, value: b.name }))}
+        selectedValue={formData.barangay} loading={loadingBarangays}
         emptyMessage={selectedCityCode ? 'No barangays found' : 'Select a city first'}
-        onClose={() => setShowBarangayModal(false)}
-        onSelect={(option) => {
-          handleBarangayChange(option.value);
-          setShowBarangayModal(false);
-        }}
-      />
+        onClose={() => setShowBarangaySheet(false)}
+        onSelect={opt => updateField('barangay', opt.value)} />
+
     </KeyboardAvoidingView>
   );
 }
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+const s = StyleSheet.create({
+  container:  { flex: 1, backgroundColor: BG },
+  scroll:     { flexGrow: 1, paddingHorizontal: 24, paddingTop: 64, paddingBottom: 24 },
+  logoRow:    { alignItems: 'flex-start', marginBottom: 24 },
+  logo:       { width: 60, height: 60, resizeMode: 'contain', marginBottom: 8 },
+  appName:    { fontSize: 16, fontWeight: '600', color: TEXT },
+  tagline:    { fontSize: 14, fontWeight: '400', color: MUTED, marginTop: 2 },
+  stageLabel: { fontSize: 14, fontWeight: '600', color: TEXT, marginBottom: 20 },
+  form:       { flex: 1 },
+  label:      { fontSize: 12, fontWeight: '400', color: MUTED, marginBottom: 6 },
+  mt:         { marginTop: 12 },
+  req:        { color: ORANGE },
+  opt:        { color: MUTED },
+  hint:       { fontSize: 11, fontWeight: '300', color: MUTED, marginTop: 4 },
+  inputWrapper: {
+    flexDirection: 'row', alignItems: 'center',
+    borderWidth: 1, borderColor: BORDER, borderRadius: 8,
+    paddingHorizontal: 12, height: 42, backgroundColor: SURFACE,
+  },
+  inputDimmed:   { opacity: 0.5 },
+  input:         { flex: 1, fontSize: 14, fontWeight: '400', color: TEXT },
+  eye:           { paddingLeft: 8 },
+  prefix:        { fontSize: 14, fontWeight: '400', color: TEXT, marginRight: 8 },
+  prefixDivider: { width: 1, height: 20, backgroundColor: BORDER, marginRight: 8 },
+  dobRow:        { flexDirection: 'row', gap: 8 },
+  button: {
+    height: 42, backgroundColor: ORANGE, borderRadius: 8,
+    justifyContent: 'center', alignItems: 'center', flex: 1,
+  },
+  btnDisabled:    { opacity: 0.6 },
+  btnText:        { fontSize: 14, fontWeight: '400', color: '#fff' },
+  btnFull:        { flex: undefined, width: '100%' },
+  buttonOutline: {
+    height: 42, borderWidth: 1, borderColor: BORDER, borderRadius: 8,
+    justifyContent: 'center', alignItems: 'center', flex: 1,
+  },
+  btnOutlineText: { fontSize: 14, fontWeight: '400', color: TEXT },
+  navRow:   { flexDirection: 'row', gap: 12, marginTop: 24 },
+  navBtn:   {},
+  loginRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 20 },
+  loginBase:{ fontSize: 12, fontWeight: '400', color: MUTED },
+  loginLink:{ fontSize: 12, fontWeight: '600', color: ORANGE },
+  copyright:{ fontSize: 12, fontWeight: '300', color: MUTED, textAlign: 'center', marginTop: 32 },
+});
