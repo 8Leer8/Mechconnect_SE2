@@ -10,24 +10,18 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  StyleSheet,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { FontAwesome } from '@expo/vector-icons';
-import { styles } from '../../style/auth/loginStyles';
-import { useNotification } from '@/hooks/useNotification';
+import { Feather } from '@expo/vector-icons';
+import Toast from '@/components/gen/Toast';
 
-// For Android Emulator use: http://10.0.2.2:8000/api/users
-// For iOS Simulator use: http://localhost:8000/api/users
-// For Real Device: Get your IP with 'ipconfig' (Windows) or 'ifconfig' (Mac/Linux)
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
 interface LoginResponse {
   username?: string[];
   password?: string[];
-  account?: {
-    id?: number | string;
-    [key: string]: any;
-  } | string[];
+  account?: { id?: number | string; [key: string]: any } | string[];
   message?: string;
   active_role?: string;
   token?: string;
@@ -41,45 +35,45 @@ interface ActiveRoleResponse {
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { showNotification } = useNotification();
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [username, setUsername]       = useState('');
+  const [password, setPassword]       = useState('');
+  const [loading, setLoading]         = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [usernameFocused, setUsernameFocused] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
 
+  const [toast, setToast] = useState({ visible: false, message: '' });
+  const showToast = (message: string) => setToast({ visible: true, message });
+  const hideToast = () => setToast(t => ({ ...t, visible: false }));
+
   const handleLogin = async () => {
-    if (!username || !password) {
-      showNotification({ type: 'error', message: 'Please fill in all fields' });
+    if (!username && !password) {
+      showToast('Please enter your username and password.');
       return;
     }
-
-    // Check if API_URL is defined
+    if (!username) {
+      showToast('Please enter your username.');
+      return;
+    }
+    if (!password) {
+      showToast('Please enter your password.');
+      return;
+    }
     if (!API_URL) {
-      showNotification({ type: 'error', title: 'Configuration Error', message: 'API URL is not configured. Please check your .env file.' });
+      showToast('API URL is not configured. Check your .env file.');
       return;
     }
 
     setLoading(true);
     try {
-      console.log('Attempting login to:', `${API_URL}/users/login/`);
-      console.log('Login data:', { username });
-      
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10000); 
-      
+      const timeout = setTimeout(() => controller.abort(), 10000);
+
       const response = await fetch(`${API_URL}/users/login/`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({
-          username,
-          password,
-        }),
+        body: JSON.stringify({ username, password }),
         signal: controller.signal as any,
       });
 
@@ -87,24 +81,15 @@ export default function LoginScreen() {
       const data = await response.json() as LoginResponse;
 
       if (response.ok) {
-        console.log('Login successful');
-        
-        // Get active role from login response or fetch it
         let activeRole = data.active_role;
-        
+
         if (!activeRole) {
-          // Fallback: fetch the active role if not included in login response
-          console.log('Active role not in response, fetching...');
           try {
             const roleResponse = await fetch(`${API_URL}/users/profile/active-role/`, {
               method: 'GET',
               credentials: 'include',
-              headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json',
-              },
+              headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
             });
-
             if (roleResponse.ok) {
               const roleData = await roleResponse.json() as ActiveRoleResponse;
               activeRole = roleData.active_role;
@@ -113,83 +98,51 @@ export default function LoginScreen() {
             console.error('Error fetching role:', roleError);
           }
         }
-        
-        console.log('Active role:', activeRole);
-        
-        // Navigate based on active role
+
         if (activeRole === 'mechanic') {
-          // Check if mechanic is working for a shop
           try {
             const profileResponse = await fetch(`${API_URL}/users/profile/details/`, {
               method: 'GET',
               credentials: 'include',
-              headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json',
-              },
+              headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
             });
-
             if (profileResponse.ok) {
               const profileData = await profileResponse.json();
               const mechanicProfile = profileData.profile?.current_role_profile?.mechanic;
-              
-              if (mechanicProfile?.is_working_for_shop) {
-                showNotification({ type: 'success', message: 'Login successful!' });
-                router.replace('/(mechanicShopTabs)/main/home');
-              } else {
-                showNotification({ type: 'success', message: 'Login successful!' });
-                router.replace('/(mechanicTabs)/main/home');
-              }
+              router.replace(mechanicProfile?.is_working_for_shop
+                ? '/(mechanicShopTabs)/main/home'
+                : '/(mechanicTabs)/main/home');
             } else {
-              // Fallback to regular mechanic tabs if can't get profile
-              showNotification({ type: 'success', message: 'Login successful!' });
               router.replace('/(mechanicTabs)/main/home');
             }
-          } catch (profileError) {
-            console.error('Error fetching profile:', profileError);
-            // Fallback to regular mechanic tabs
-            showNotification({ type: 'success', message: 'Login successful!' });
+          } catch {
             router.replace('/(mechanicTabs)/main/home');
           }
         } else if (activeRole === 'shop_owner') {
-          showNotification({ type: 'success', message: 'Login successful!' });
           router.replace('/(shopownerTabs)/main/home');
         } else {
-          // Default to client
-          showNotification({ type: 'success', message: 'Login successful!' });
           router.replace('/(clientTabs)/main/home');
         }
-        // Persist account id locally for development flow (used by chat fallback)
+
         try {
           const accountPayload = data.account && !Array.isArray(data.account) ? data.account : null;
           const acctId = accountPayload?.id || null;
-          if (acctId) {
-            await AsyncStorage.setItem('account_id', String(acctId));
-          }
-          // If backend included token in login response, persist it for API calls
-          const token = data?.token || null;
-          if (token) {
-            await AsyncStorage.setItem('auth_token', token);
-          }
+          if (acctId) await AsyncStorage.setItem('account_id', String(acctId));
+          if (data?.token) await AsyncStorage.setItem('auth_token', data.token);
         } catch (e) {
           console.warn('Failed to persist account_id or token', e);
         }
       } else {
         const accountError = Array.isArray(data.account) ? data.account[0] : undefined;
-        const errorMessage = data.username?.[0] || data.password?.[0] || accountError || 'Login failed';
-        showNotification({ type: 'error', message: errorMessage });
+        const errorMessage = data.username?.[0] || data.password?.[0] || accountError || 'Login failed. Please try again.';
+        showToast(errorMessage);
       }
     } catch (error: any) {
-      console.error('Login error:', error);
-      let errorMessage = 'Connection failed. Please check your network.';
-      
       if (error.name === 'AbortError') {
-        errorMessage = 'Request timeout. The server is taking too long to respond.';
-      } else if (error.message) {
-        errorMessage = `Connection failed: ${error.message}`;
+        showToast('Request timed out. Server is not responding.');
+      } else {
+        showToast('Connection failed. Please check your network.');
       }
-      
-      showNotification({ type: 'error', message: errorMessage });
     } finally {
       setLoading(false);
     }
@@ -198,109 +151,141 @@ export default function LoginScreen() {
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
+      style={s.container}
     >
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-      >
-        <View style={styles.logoContainer}>
-          <Image
-            source={require('@/assets/images/logo_main.png')}
-            style={{ width: 100, height: 100, resizeMode: 'contain', marginBottom: 8 }}
-          />
-          <Text style={styles.title}>MechConnect</Text>
-          <Text style={styles.tagline}>Connect to your mechanical world</Text>
+      <Toast message={toast.message} visible={toast.visible} onHide={hideToast} />
+
+      <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
+
+        {/* Logo */}
+        <View style={s.logoRow}>
+          <Image source={require('@/assets/images/logo_main.png')} style={s.logo} />
+          <Text style={s.appName}>MechConnect</Text>
+          <Text style={s.tagline}>Connect to your mechanic world</Text>
         </View>
 
-        <View style={styles.formContainer}>
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Username</Text>
-            <View style={[
-              styles.inputWrapper,
-              usernameFocused && styles.inputWrapperFocused
-            ]}>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter your username"
-                placeholderTextColor="#999"
-                value={username}
-                onChangeText={setUsername}
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!loading}
-                onFocus={() => setUsernameFocused(true)}
-                onBlur={() => setUsernameFocused(false)}
-              />
-            </View>
+        {/* Form */}
+        <View style={s.form}>
+
+          <Text style={s.label}>Username</Text>
+          <View style={[s.inputWrapper, usernameFocused && s.inputFocused]}>
+            <TextInput
+              style={s.input}
+              placeholder="Enter your username"
+              placeholderTextColor="#999"
+              value={username}
+              onChangeText={setUsername}
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!loading}
+              onFocus={() => setUsernameFocused(true)}
+              onBlur={() => setUsernameFocused(false)}
+            />
           </View>
 
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Password</Text>
-            <View style={[
-              styles.inputWrapper,
-              passwordFocused && styles.inputWrapperFocused
-            ]}>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter your password"
-                placeholderTextColor="#999"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry={!showPassword}
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!loading}
-                onFocus={() => setPasswordFocused(true)}
-                onBlur={() => setPasswordFocused(false)}
-              />
-              <TouchableOpacity 
-                style={styles.eyeButton}
-                onPress={() => setShowPassword(!showPassword)}
-              >
-                <FontAwesome 
-                  name={showPassword ? "eye-slash" : "eye"} 
-                  size={16} 
-                  color="#8E8E93" 
-                />
-              </TouchableOpacity>
-            </View>
+          <Text style={[s.label, { marginTop: 12 }]}>Password</Text>
+          <View style={[s.inputWrapper, passwordFocused && s.inputFocused]}>
+            <TextInput
+              style={s.input}
+              placeholder="Enter your password"
+              placeholderTextColor="#999"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry={!showPassword}
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!loading}
+              onFocus={() => setPasswordFocused(true)}
+              onBlur={() => setPasswordFocused(false)}
+            />
+            <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={s.eye}>
+              <Feather name={showPassword ? 'eye' : 'eye-off'} size={16} color="#8E8E93" />
+            </TouchableOpacity>
           </View>
 
           <TouchableOpacity
-            style={styles.forgotPasswordContainer}
+            style={s.forgotRow}
             onPress={() => router.push('/(auth)/forgot-password')}
             disabled={loading}
           >
-            <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+            <Text style={s.forgotText}>Forgot Password?</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled]}
+            style={[s.button, loading && s.buttonDisabled]}
             onPress={handleLogin}
             disabled={loading}
           >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.buttonText}>Login</Text>
-            )}
+            {loading
+              ? <ActivityIndicator color="#fff" />
+              : <Text style={s.buttonText}>Login</Text>
+            }
           </TouchableOpacity>
 
-          <View style={styles.divider} />
-
-          <View style={styles.footer}>
-            <Text style={styles.footerText}>Don't have an account? </Text>
+          <View style={s.registerRow}>
+            <Text style={s.registerBase}>Don't have an account? </Text>
             <TouchableOpacity onPress={() => router.push('../(auth)/register' as any)}>
-              <Text style={styles.linkText}>Register</Text>
+              <Text style={s.registerLink}>Register</Text>
             </TouchableOpacity>
           </View>
+
         </View>
 
-        <View style={styles.bottomFooter}>
-          <Text style={styles.copyrightText}>© 2025 MechConnect. All rights reserved.</Text>
-        </View>
+        <Text style={s.copyright}>© 2025 MechConnect. All rights reserved.</Text>
+
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
+
+const ORANGE  = '#F97316';
+const BG      = '#121212';
+const SURFACE = '#1E1E1E';
+const BORDER  = '#2C2C2C';
+const TEXT    = '#F5F5F5';
+const MUTED   = '#9A9A9A';
+
+const s = StyleSheet.create({
+  container: { flex: 1, backgroundColor: BG },
+  scroll: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 64, paddingBottom: 24 },
+
+  logoRow: { alignItems: 'flex-start', marginBottom: 32 },
+  logo: { width: 60, height: 60, resizeMode: 'contain', marginBottom: 8 },
+  appName: { fontSize: 16, fontWeight: '600', color: TEXT },
+  tagline: { fontSize: 14, fontWeight: '400', color: MUTED, marginTop: 2 },
+
+  form: { flex: 1 },
+  label: { fontSize: 12, fontWeight: '400', color: MUTED, marginBottom: 6 },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    height: 42,
+    backgroundColor: SURFACE,
+  },
+  inputFocused: { borderColor: ORANGE },
+  input: { flex: 1, fontSize: 14, fontWeight: '400', color: TEXT },
+  eye: { paddingLeft: 8 },
+
+  forgotRow: { alignItems: 'flex-end', marginTop: 8, marginBottom: 20 },
+  forgotText: { fontSize: 12, fontWeight: '400', color: ORANGE },
+
+  button: {
+    height: 42,
+    backgroundColor: ORANGE,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  buttonDisabled: { opacity: 0.6 },
+  buttonText: { fontSize: 14, fontWeight: '400', color: '#fff' },
+
+  registerRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 20 },
+  registerBase: { fontSize: 12, fontWeight: '400', color: MUTED },
+  registerLink: { fontSize: 12, fontWeight: '600', color: ORANGE },
+
+  copyright: { fontSize: 12, fontWeight: '300', color: MUTED, textAlign: 'center', marginTop: 32 },
+});
