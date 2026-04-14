@@ -25,6 +25,8 @@ __all__ = [
     'update_profile',
     'get_profile_details',
     'update_profile_settings',
+    'verify_profile_password',
+    'change_profile_email',
     
     # Role management views
     'switch_role',

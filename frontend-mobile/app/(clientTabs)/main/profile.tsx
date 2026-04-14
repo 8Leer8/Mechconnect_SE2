@@ -209,7 +209,7 @@ export default function ProfileScreen() {
 
   const settingsItems = [
     { icon: 'heart', label: 'Favorites', route: null },
-    { icon: 'cog', label: 'Settings', route: null },
+    { icon: 'cog', label: 'Settings', route: '/client/others/settings' },
     { icon: 'shield', label: 'Privacy & Security', route: '/client/others/privacysecurity' },
     { icon: 'file-text', label: 'Terms & Regulation', route: null },
     { icon: 'info-circle', label: 'About', route: null },

@@ -357,6 +357,40 @@ class ChangePasswordSerializer(serializers.Serializer):
         return value
 
 
+class VerifyCurrentPasswordSerializer(serializers.Serializer):
+    current_password = serializers.CharField(write_only=True)
+
+    def validate_current_password(self, value):
+        account = self.context.get('account')
+        if not account or not check_password(value, account.password):
+            raise serializers.ValidationError("Current password is incorrect")
+        return value
+
+
+class ChangeEmailSerializer(serializers.Serializer):
+    new_email = serializers.EmailField()
+    current_password = serializers.CharField(write_only=True)
+    update_shop_email = serializers.BooleanField(required=False, default=True)
+
+    def validate_current_password(self, value):
+        account = self.context.get('account')
+        if not account or not check_password(value, account.password):
+            raise serializers.ValidationError("Current password is incorrect")
+        return value
+
+    def validate_new_email(self, value):
+        account = self.context.get('account')
+        normalized_value = value.strip().lower()
+
+        if account and account.email and account.email.strip().lower() == normalized_value:
+            raise serializers.ValidationError("New email must be different from your current email")
+
+        if Account.objects.filter(email__iexact=normalized_value).exists():
+            raise serializers.ValidationError("Email is already registered")
+
+        return normalized_value
+
+
 class PasswordResetRequestSerializer(serializers.Serializer):
     email = serializers.EmailField()
 

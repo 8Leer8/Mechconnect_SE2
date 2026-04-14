@@ -32,6 +32,8 @@ urlpatterns = [
     # Profile page endpoints
     path('profile/details/', views.get_profile_details, name='get_profile_details'),
     path('profile/settings/', views.update_profile_settings, name='update_profile_settings'),
+    path('profile/verify-password/', views.verify_profile_password, name='verify_profile_password'),
+    path('profile/change-email/', views.change_profile_email, name='change_profile_email'),
     path('profile/switch-role/', views.switch_role, name='switch_role'),
     path('profile/active-role/', views.get_active_role, name='get_active_role'),
     path('profile/role-status/', views.get_role_status, name='get_role_status'),

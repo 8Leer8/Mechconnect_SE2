@@ -2,9 +2,27 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
+from django.utils import timezone
+from datetime import timedelta
 
-from ..models import Account
-from ..serializers import AccountSerializer
+from ..models import Account, EmailVerification
+from ..serializers import (
+    AccountSerializer,
+    VerifyCurrentPasswordSerializer,
+    ChangeEmailSerializer,
+)
+
+
+def _get_authenticated_account(request):
+    user = getattr(request, 'user', None)
+    if getattr(user, 'is_authenticated', False):
+        return user
+
+    account_id = request.session.get('account_id')
+    if not account_id:
+        return None
+
+    return Account.objects.filter(id=account_id).first()
 
 
 @api_view(['GET'])
@@ -13,16 +31,15 @@ def get_current_user(request):
     """
     Get current logged in user details
     """
-    try:
-        account_id = request.session.get('account_id')
-        account = Account.objects.get(id=account_id)
-        return Response({
-            'account': AccountSerializer(account).data
-        }, status=status.HTTP_200_OK)
-    except Account.DoesNotExist:
+    account = _get_authenticated_account(request)
+    if not account:
         return Response({
             'error': 'Account not found'
         }, status=status.HTTP_404_NOT_FOUND)
+
+    return Response({
+        'account': AccountSerializer(account).data
+    }, status=status.HTTP_200_OK)
 
 
 @api_view(['PUT', 'PATCH'])
@@ -32,8 +49,11 @@ def update_profile(request):
     Update current user's profile information
     """
     try:
-        account_id = request.session.get('account_id')
-        account = Account.objects.get(id=account_id)
+        account = _get_authenticated_account(request)
+        if not account:
+            return Response({
+                'error': 'Authentication required'
+            }, status=status.HTTP_401_UNAUTHORIZED)
         
         # Update account fields
         allowed_fields = ['firstname', 'lastname', 'middlename', 'date_of_birth', 'gender']
@@ -77,10 +97,6 @@ def update_profile(request):
             'account': AccountSerializer(account).data
         }, status=status.HTTP_200_OK)
         
-    except Account.DoesNotExist:
-        return Response({
-            'error': 'Account not found'
-        }, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
         return Response({
             'error': str(e)
@@ -99,17 +115,13 @@ def get_profile_details(request):
     - Profile data for each role
     - Address information
     """
-    # Get account_id from session
-    account_id = request.session.get('account_id')
-    
-    if not account_id:
+    account = _get_authenticated_account(request)
+    if not account:
         return Response({
             'error': 'Authentication required'
         }, status=status.HTTP_401_UNAUTHORIZED)
-    
+
     try:
-        account = Account.objects.get(id=account_id)
-        
         from ..serializers import ProfileDetailSerializer
         serializer = ProfileDetailSerializer(account)
         
@@ -117,10 +129,6 @@ def get_profile_details(request):
             'profile': serializer.data
         }, status=status.HTTP_200_OK)
         
-    except Account.DoesNotExist:
-        return Response({
-            'error': 'Account not found'
-        }, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
         return Response({
             'error': str(e)
@@ -140,17 +148,13 @@ def update_profile_settings(request):
                barangay, city_municipality, province, region, postal_code
     - Profile photo: profile_photo (file upload)
     """
-    # Get account_id from session
-    account_id = request.session.get('account_id')
-    
-    if not account_id:
+    account = _get_authenticated_account(request)
+    if not account:
         return Response({
             'error': 'Authentication required'
         }, status=status.HTTP_401_UNAUTHORIZED)
-    
+
     try:
-        account = Account.objects.get(id=account_id)
-        
         from ..serializers import ProfileSettingsSerializer
         serializer = ProfileSettingsSerializer(data=request.data, partial=True)
         
@@ -200,11 +204,97 @@ def update_profile_settings(request):
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
-    except Account.DoesNotExist:
-        return Response({
-            'error': 'Account not found'
-        }, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
         return Response({
             'error': str(e)
         }, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def verify_profile_password(request):
+    """
+    Verify current password before sensitive profile actions.
+    """
+    account = _get_authenticated_account(request)
+    if not account:
+        return Response({
+            'error': 'Authentication required'
+        }, status=status.HTTP_401_UNAUTHORIZED)
+
+    serializer = VerifyCurrentPasswordSerializer(
+        data=request.data,
+        context={'account': account},
+    )
+    if serializer.is_valid():
+        return Response({
+            'message': 'Password verified successfully'
+        }, status=status.HTTP_200_OK)
+
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def change_profile_email(request):
+    """
+    Update the authenticated account email after OTP verification.
+    """
+    account = _get_authenticated_account(request)
+    if not account:
+        return Response({
+            'error': 'Authentication required'
+        }, status=status.HTTP_401_UNAUTHORIZED)
+
+    serializer = ChangeEmailSerializer(
+        data=request.data,
+        context={'account': account},
+    )
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    new_email = serializer.validated_data['new_email']
+    update_shop_email = serializer.validated_data.get('update_shop_email', True)
+
+    verification = EmailVerification.objects.filter(
+        email__iexact=new_email,
+        status=EmailVerification.Status.VERIFIED,
+    ).order_by('-verified_at', '-created_at').first()
+
+    if not verification or not verification.verified_at:
+        return Response({
+            'error': 'Please verify your new email with OTP first'
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    if timezone.now() - verification.verified_at > timedelta(minutes=30):
+        return Response({
+            'error': 'OTP verification has expired. Please verify your new email again.'
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    old_email = account.email
+    account.email = new_email
+    account.save(update_fields=['email'])
+
+    shop_email_updated = False
+    if update_shop_email and hasattr(account, 'shopowner'):
+        from shops.models import Shop
+
+        shop = Shop.objects.filter(shop_owner=account.shopowner).first()
+        if shop:
+            old_email_norm = (old_email or '').strip().lower()
+            shop_email_norm = (shop.email or '').strip().lower()
+            if not shop.email or shop_email_norm == old_email_norm:
+                shop.email = new_email
+                shop.save(update_fields=['email'])
+                shop_email_updated = True
+
+    EmailVerification.objects.filter(
+        email__iexact=new_email,
+        status=EmailVerification.Status.PENDING,
+    ).update(status=EmailVerification.Status.EXPIRED)
+
+    return Response({
+        'message': 'Email updated successfully',
+        'account': AccountSerializer(account).data,
+        'shop_email_updated': shop_email_updated,
+    }, status=status.HTTP_200_OK)
