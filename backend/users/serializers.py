@@ -361,6 +361,16 @@ class ChangePasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(write_only=True)
     new_password = serializers.CharField(write_only=True, min_length=8)
     confirm_password = serializers.CharField(write_only=True)
+    device_name = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    near_location = serializers.CharField(required=False, allow_blank=True, max_length=255)
+
+    def _get_account(self):
+        account = self.context.get('account')
+        if account:
+            return account
+
+        request = self.context.get('request')
+        return getattr(request, 'user', None) if request else None
 
     def validate(self, data):
         if data['new_password'] != data['confirm_password']:
@@ -374,11 +384,17 @@ class ChangePasswordSerializer(serializers.Serializer):
             raise serializers.ValidationError({"password": "Password must contain at least one lowercase letter"})
         if not re.search(r'[0-9]', password):
             raise serializers.ValidationError({"password": "Password must contain at least one number"})
+
+        account = self._get_account()
+        if account and check_password(password, account.password):
+            raise serializers.ValidationError({"new_password": "New password must be different from your current password"})
         
         return data
 
     def validate_old_password(self, value):
-        account = self.context['request'].user
+        account = self._get_account()
+        if not account:
+            raise serializers.ValidationError("Unable to verify account")
         if not check_password(value, account.password):
             raise serializers.ValidationError("Old password is incorrect")
         return value

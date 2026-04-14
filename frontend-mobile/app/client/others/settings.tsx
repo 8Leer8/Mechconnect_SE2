@@ -24,13 +24,17 @@ type SettingsApiError = {
   error?: string;
   message?: string;
   current_password?: string[];
+  old_password?: string[];
+  new_password?: string[];
+  confirm_password?: string[];
+  password?: string[];
   new_email?: string[];
   non_field_errors?: string[];
   [key: string]: any;
 };
 
 type FlowStep = 'password' | 'email' | 'otp' | 'done';
-type SettingsViewMode = 'menu' | 'change-email';
+type SettingsViewMode = 'menu' | 'change-email' | 'change-password';
 
 const stepOrder: FlowStep[] = ['password', 'email', 'otp', 'done'];
 
@@ -69,6 +73,15 @@ export default function SettingsScreen() {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [otpCode, setOtpCode] = useState('');
+  const [oldPassword, setOldPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showOldPassword, setShowOldPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [passwordEmail, setPasswordEmail] = useState('');
+  const [passwordOtpCode, setPasswordOtpCode] = useState('');
+  const [passwordEmailVerified, setPasswordEmailVerified] = useState(false);
 
   const [passwordVerified, setPasswordVerified] = useState(false);
   const [otpVerified, setOtpVerified] = useState(false);
@@ -78,8 +91,13 @@ export default function SettingsScreen() {
   const [sendingOtp, setSendingOtp] = useState(false);
   const [verifyingOtp, setVerifyingOtp] = useState(false);
   const [updatingEmail, setUpdatingEmail] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [sendingPasswordVerification, setSendingPasswordVerification] = useState(false);
+  const [verifyingPasswordOtp, setVerifyingPasswordOtp] = useState(false);
+  const [loadingPasswordEmail, setLoadingPasswordEmail] = useState(false);
 
   const [resendCountdown, setResendCountdown] = useState(0);
+  const [passwordResendCountdown, setPasswordResendCountdown] = useState(0);
 
   useEffect(() => {
     if (resendCountdown <= 0) return;
@@ -89,7 +107,23 @@ export default function SettingsScreen() {
     return () => clearInterval(timer);
   }, [resendCountdown]);
 
-  const isBusy = verifyingPassword || sendingOtp || verifyingOtp || updatingEmail;
+  useEffect(() => {
+    if (passwordResendCountdown <= 0) return;
+    const timer = setInterval(() => {
+      setPasswordResendCountdown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [passwordResendCountdown]);
+
+  const isBusy =
+    verifyingPassword ||
+    sendingOtp ||
+    verifyingOtp ||
+    updatingEmail ||
+    changingPassword ||
+    sendingPasswordVerification ||
+    verifyingPasswordOtp ||
+    loadingPasswordEmail;
 
   const canVerifyPassword = useMemo(() => {
     return currentPassword.trim().length > 0 && !isBusy;
@@ -107,9 +141,27 @@ export default function SettingsScreen() {
     return passwordVerified && otpVerified && !isBusy;
   }, [passwordVerified, otpVerified, isBusy]);
 
+  const canChangePassword = useMemo(() => {
+    return (
+      passwordEmailVerified &&
+      oldPassword.trim().length > 0 &&
+      newPassword.trim().length >= 8 &&
+      confirmPassword.trim().length >= 8 &&
+      !isBusy
+    );
+  }, [passwordEmailVerified, oldPassword, newPassword, confirmPassword, isBusy]);
+
+  const canVerifyPasswordOtp = useMemo(() => {
+    return passwordOtpCode.trim().length === 6 && !isBusy;
+  }, [passwordOtpCode, isBusy]);
+
   const extractErrorMessage = (data: SettingsApiError, fallback: string) => {
     return (
       data?.current_password?.[0] ||
+      data?.old_password?.[0] ||
+      data?.new_password?.[0] ||
+      data?.confirm_password?.[0] ||
+      data?.password?.[0] ||
       data?.new_email?.[0] ||
       data?.non_field_errors?.[0] ||
       data?.error ||
@@ -289,6 +341,172 @@ export default function SettingsScreen() {
     await handleSendOtp();
   };
 
+  const handleChangePassword = async () => {
+    if (!ensureApiUrl()) return;
+
+    if (!passwordEmailVerified) {
+      showNotification({ type: 'error', message: 'Please verify using Gmail first.' });
+      return;
+    }
+
+    if (!oldPassword.trim() || !newPassword.trim() || !confirmPassword.trim()) {
+      showNotification({ type: 'error', message: 'Please complete all password fields.' });
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      showNotification({ type: 'error', message: 'New password and confirmation do not match.' });
+      return;
+    }
+
+    setChangingPassword(true);
+    try {
+      const response = await fetch(`${API_URL}/users/password/change/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: getHeaders(),
+        body: JSON.stringify({
+          old_password: oldPassword,
+          new_password: newPassword,
+          confirm_password: confirmPassword,
+        }),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as SettingsApiError;
+
+      if (!response.ok) {
+        showNotification({
+          type: 'error',
+          message: extractErrorMessage(data, 'Failed to change password.'),
+        });
+        return;
+      }
+
+      resetChangePasswordFlow();
+      setViewMode('menu');
+      showNotification({
+        type: 'success',
+        message: (data as any)?.message || 'Password changed successfully. Please log in again.',
+      });
+
+      router.replace('/(auth)/login');
+    } catch {
+      showNotification({ type: 'error', message: 'Connection failed. Please check your network.' });
+    } finally {
+      setChangingPassword(false);
+    }
+  };
+
+  const loadPasswordEmail = async () => {
+    if (!ensureApiUrl()) return;
+
+    setLoadingPasswordEmail(true);
+    try {
+      const response = await fetch(`${API_URL}/users/profile/details/`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: getHeaders(),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as any;
+      if (!response.ok) {
+        showNotification({
+          type: 'error',
+          message: extractErrorMessage(data, 'Failed to load account email.'),
+        });
+        return;
+      }
+
+      const email = typeof data?.profile?.email === 'string' ? data.profile.email.trim().toLowerCase() : '';
+      if (!email) {
+        showNotification({ type: 'error', message: 'No account email found for verification.' });
+        return;
+      }
+
+      setPasswordEmail(email);
+    } catch {
+      showNotification({ type: 'error', message: 'Connection failed. Please check your network.' });
+    } finally {
+      setLoadingPasswordEmail(false);
+    }
+  };
+
+  const handleSendPasswordVerification = async () => {
+    if (!ensureApiUrl()) return;
+    if (!passwordEmail) {
+      showNotification({ type: 'error', message: 'Unable to load account email for verification.' });
+      return;
+    }
+
+    setSendingPasswordVerification(true);
+    try {
+      const response = await fetch(`${API_URL}/users/password/change/verify-gmail/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: getHeaders(),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as SettingsApiError;
+
+      if (!response.ok) {
+        showNotification({
+          type: 'error',
+          message: extractErrorMessage(data, 'Failed to send Gmail verification.'),
+        });
+        return;
+      }
+
+      setPasswordOtpCode('');
+      setPasswordEmailVerified(false);
+      setPasswordResendCountdown(RESEND_COOLDOWN_SECONDS);
+      showNotification({
+        type: 'success',
+        message: (data as any)?.message || 'Verification code sent to your Gmail.',
+      });
+    } catch {
+      showNotification({ type: 'error', message: 'Connection failed. Please check your network.' });
+    } finally {
+      setSendingPasswordVerification(false);
+    }
+  };
+
+  const handleVerifyPasswordGmailCode = async () => {
+    if (!ensureApiUrl()) return;
+
+    const code = passwordOtpCode.trim();
+    if (code.length !== 6) {
+      showNotification({ type: 'error', message: 'Please enter the 6-digit verification code.' });
+      return;
+    }
+
+    setVerifyingPasswordOtp(true);
+    try {
+      const response = await fetch(`${API_URL}/users/password/change/verify-gmail/confirm/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: getHeaders(),
+        body: JSON.stringify({ code }),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as SettingsApiError;
+
+      if (!response.ok) {
+        showNotification({
+          type: 'error',
+          message: extractErrorMessage(data, 'Invalid or expired verification code.'),
+        });
+        return;
+      }
+
+      setPasswordEmailVerified(true);
+      showNotification({ type: 'success', message: 'Gmail verification completed. You can now change password.' });
+    } catch {
+      showNotification({ type: 'error', message: 'Connection failed. Please check your network.' });
+    } finally {
+      setVerifyingPasswordOtp(false);
+    }
+  };
+
   const resetChangeEmailFlow = () => {
     setStep('password');
     setCurrentPassword('');
@@ -300,14 +518,41 @@ export default function SettingsScreen() {
     setResendCountdown(0);
   };
 
+  const resetChangePasswordFlow = () => {
+    setPasswordEmail('');
+    setPasswordOtpCode('');
+    setPasswordEmailVerified(false);
+    setPasswordResendCountdown(0);
+    setOldPassword('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setShowOldPassword(false);
+    setShowNewPassword(false);
+    setShowConfirmPassword(false);
+  };
+
   const startChangeEmail = () => {
     resetChangeEmailFlow();
     setViewMode('change-email');
   };
 
+  const startChangePassword = () => {
+    resetChangePasswordFlow();
+    setViewMode('change-password');
+    void loadPasswordEmail();
+  };
+
   const goBackStep = () => {
     if (viewMode === 'menu') {
       router.back();
+      return;
+    }
+
+    if (viewMode === 'change-password') {
+      if (!isBusy) {
+        setViewMode('menu');
+        resetChangePasswordFlow();
+      }
       return;
     }
 
@@ -371,6 +616,21 @@ export default function SettingsScreen() {
                 <FontAwesome name="chevron-right" size={14} color={palette.chevron} />
               </TouchableOpacity>
 
+              <TouchableOpacity
+                style={[styles.optionCard, { borderColor: palette.border, backgroundColor: palette.surface }]}
+                onPress={startChangePassword}
+                activeOpacity={0.8}
+              >
+                <View style={[styles.optionIconWrap, styles.optionIconPrimary, { backgroundColor: palette.optionIconPrimaryBg }]}> 
+                  <FontAwesome name="lock" size={15} color="#FF8C00" />
+                </View>
+                <View style={styles.optionTextWrap}>
+                  <Text style={[styles.optionTitle, { color: palette.textPrimary }]}>Change Password</Text>
+                  <Text style={[styles.optionDescription, { color: palette.textMuted }]}>Update your password using your current credentials.</Text>
+                </View>
+                <FontAwesome name="chevron-right" size={14} color={palette.chevron} />
+              </TouchableOpacity>
+
               <View
                 style={[
                   styles.optionCard,
@@ -390,7 +650,7 @@ export default function SettingsScreen() {
                 </View>
               </View>
             </>
-          ) : (
+          ) : viewMode === 'change-email' ? (
             <>
               <Text style={[styles.title, { color: palette.textPrimary }]}>Change Email</Text>
               <Text style={[styles.subtitle, { color: palette.textSecondary }]}> 
@@ -522,6 +782,155 @@ export default function SettingsScreen() {
                   </TouchableOpacity>
                 </View>
               )}
+            </>
+          ) : (
+            <>
+              <Text style={[styles.title, { color: palette.textPrimary }]}>Change Password</Text>
+              <Text style={[styles.subtitle, { color: palette.textSecondary }]}> 
+                Verify using Gmail first. Once verified, you can change your password.
+              </Text>
+
+              <View style={styles.section}>
+                <ThemedText style={[styles.sectionTitle, { color: palette.textPrimary }]}>Verify using Gmail</ThemedText>
+                <ThemedText style={[styles.metaText, { color: palette.textSecondary }]}> 
+                  {loadingPasswordEmail
+                    ? 'Loading your account email...'
+                    : passwordEmail
+                      ? `Code will be sent to ${passwordEmail}`
+                      : 'Unable to load account email'}
+                </ThemedText>
+
+                <TouchableOpacity
+                  style={[
+                    styles.primaryButton,
+                    (!passwordEmail || loadingPasswordEmail || isBusy || passwordResendCountdown > 0) && styles.disabledButton,
+                  ]}
+                  onPress={handleSendPasswordVerification}
+                  disabled={!passwordEmail || loadingPasswordEmail || isBusy || passwordResendCountdown > 0}
+                >
+                  {sendingPasswordVerification ? (
+                    <ActivityIndicator color="#111214" />
+                  ) : (
+                    <Text style={[styles.primaryButtonText, { color: palette.textPrimary }]}>
+                      {passwordResendCountdown > 0 ? `Resend in ${formatCountdown(passwordResendCountdown)}` : 'Verify using Gmail'}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+
+                <TextInput
+                  style={[styles.input, { borderColor: palette.inputBorder, backgroundColor: palette.inputBg, color: palette.inputText, marginTop: 10 }]}
+                  value={passwordOtpCode}
+                  onChangeText={setPasswordOtpCode}
+                  keyboardType="number-pad"
+                  maxLength={6}
+                  placeholder="Enter 6-digit Gmail code"
+                  placeholderTextColor="#8E8E93"
+                  editable={!isBusy && !passwordEmailVerified}
+                />
+
+                <TouchableOpacity
+                  style={[styles.secondaryButton, !canVerifyPasswordOtp && styles.disabledButton]}
+                  onPress={handleVerifyPasswordGmailCode}
+                  disabled={!canVerifyPasswordOtp || passwordEmailVerified}
+                >
+                  {verifyingPasswordOtp ? (
+                    <ActivityIndicator color="#A55500" />
+                  ) : (
+                    <Text style={[styles.secondaryButtonText, { color: palette.secondaryBtnText }]}>
+                      {passwordEmailVerified ? 'Gmail Verified' : 'Confirm Gmail Verification'}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+
+                {passwordEmailVerified && (
+                  <>
+                    <ThemedText style={[styles.sectionTitle, { color: palette.textPrimary }]}>Current Password</ThemedText>
+                    <View style={[styles.passwordInputWrap, { borderColor: palette.inputBorder, backgroundColor: palette.inputBg }]}>
+                      <TextInput
+                        style={[styles.passwordInput, { color: palette.inputText }]}
+                        value={oldPassword}
+                        onChangeText={setOldPassword}
+                        secureTextEntry={!showOldPassword}
+                        autoCapitalize="none"
+                        placeholder="Enter current password"
+                        placeholderTextColor="#8E8E93"
+                        editable={!isBusy}
+                      />
+                      <TouchableOpacity
+                        style={styles.passwordToggle}
+                        onPress={() => setShowOldPassword((prev) => !prev)}
+                        disabled={isBusy}
+                      >
+                        <FontAwesome
+                          name={showOldPassword ? 'eye-slash' : 'eye'}
+                          size={16}
+                          color={palette.iconMuted}
+                        />
+                      </TouchableOpacity>
+                    </View>
+
+                    <ThemedText style={[styles.sectionTitle, { color: palette.textPrimary }]}>New Password</ThemedText>
+                    <View style={[styles.passwordInputWrap, { borderColor: palette.inputBorder, backgroundColor: palette.inputBg }]}>
+                      <TextInput
+                        style={[styles.passwordInput, { color: palette.inputText }]}
+                        value={newPassword}
+                        onChangeText={setNewPassword}
+                        secureTextEntry={!showNewPassword}
+                        autoCapitalize="none"
+                        placeholder="Enter new password"
+                        placeholderTextColor="#8E8E93"
+                        editable={!isBusy}
+                      />
+                      <TouchableOpacity
+                        style={styles.passwordToggle}
+                        onPress={() => setShowNewPassword((prev) => !prev)}
+                        disabled={isBusy}
+                      >
+                        <FontAwesome
+                          name={showNewPassword ? 'eye-slash' : 'eye'}
+                          size={16}
+                          color={palette.iconMuted}
+                        />
+                      </TouchableOpacity>
+                    </View>
+
+                    <ThemedText style={[styles.metaText, { color: palette.textSecondary }]}>At least 8 characters with uppercase, lowercase, and a number.</ThemedText>
+
+                    <ThemedText style={[styles.sectionTitle, { color: palette.textPrimary }]}>Confirm New Password</ThemedText>
+                    <View style={[styles.passwordInputWrap, { borderColor: palette.inputBorder, backgroundColor: palette.inputBg }]}>
+                      <TextInput
+                        style={[styles.passwordInput, { color: palette.inputText }]}
+                        value={confirmPassword}
+                        onChangeText={setConfirmPassword}
+                        secureTextEntry={!showConfirmPassword}
+                        autoCapitalize="none"
+                        placeholder="Confirm new password"
+                        placeholderTextColor="#8E8E93"
+                        editable={!isBusy}
+                      />
+                      <TouchableOpacity
+                        style={styles.passwordToggle}
+                        onPress={() => setShowConfirmPassword((prev) => !prev)}
+                        disabled={isBusy}
+                      >
+                        <FontAwesome
+                          name={showConfirmPassword ? 'eye-slash' : 'eye'}
+                          size={16}
+                          color={palette.iconMuted}
+                        />
+                      </TouchableOpacity>
+                    </View>
+
+                    <TouchableOpacity
+                      style={[styles.successButton, !canChangePassword && styles.disabledButton]}
+                      onPress={handleChangePassword}
+                      disabled={!canChangePassword}
+                    >
+                      {changingPassword ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.successButtonText}>Change Password</Text>}
+                    </TouchableOpacity>
+                  </>
+                )}
+              </View>
             </>
           )}
         </View>
@@ -719,6 +1128,27 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#111214',
     marginBottom: 10,
+  },
+  passwordInputWrap: {
+    borderWidth: 1,
+    borderRadius: 12,
+    backgroundColor: '#FAFAFA',
+    marginBottom: 10,
+    position: 'relative',
+  },
+  passwordInput: {
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    paddingRight: 42,
+    fontSize: 15,
+    color: '#111214',
+  },
+  passwordToggle: {
+    position: 'absolute',
+    right: 12,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
   },
   primaryButton: {
     backgroundColor: '#FFB347',

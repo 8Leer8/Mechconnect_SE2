@@ -16,6 +16,8 @@ __all__ = [
     'verify_code',
     
     # Password views
+    'send_password_change_verification_code',
+    'verify_password_change_gmail_code',
     'change_password',
     'request_password_reset',
     'confirm_password_reset',
