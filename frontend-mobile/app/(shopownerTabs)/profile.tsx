@@ -482,17 +482,11 @@ export default function ShopOwnerProfileScreen() {
             </ThemedText>
           </View>
 
-          {/* Edit profile (placeholder for shop owner) */}
+          {/* Edit profile */}
           <TouchableOpacity
             style={clientProfileStyles.editBtn}
             activeOpacity={0.7}
-            onPress={() =>
-              showNotification({
-                type: 'info',
-                title: 'Coming Soon',
-                message: 'Profile editing for shop owners is coming soon.',
-              })
-            }
+            onPress={() => router.push('/shopowner/others/edit-profile')}
           >
             <FontAwesome name="pencil" size={14} color="#FF8C00" />
             <ThemedText style={clientProfileStyles.editBtnText}>Edit Profile</ThemedText>

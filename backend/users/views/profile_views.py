@@ -123,7 +123,7 @@ def get_profile_details(request):
 
     try:
         from ..serializers import ProfileDetailSerializer
-        serializer = ProfileDetailSerializer(account)
+        serializer = ProfileDetailSerializer(account, context={'request': request})
         
         return Response({
             'profile': serializer.data
@@ -195,11 +195,69 @@ def update_profile_settings(request):
                 if 'profile_photo' in request.FILES:
                     profile.profile_photo = request.FILES['profile_photo']
                 profile.save()
+
+            # Update mechanic-only fields
+            if hasattr(account, 'mechanic') and 'bio' in serializer.validated_data:
+                account.mechanic.bio = serializer.validated_data['bio'] or None
+                account.mechanic.save(update_fields=['bio'])
+
+            # Update shop-owner shop fields
+            has_shop_updates = any(
+                field in serializer.validated_data
+                for field in ['shop_name', 'shop_contact_number', 'shop_email', 'website', 'description']
+            ) or 'service_banner' in request.FILES
+
+            if has_shop_updates and hasattr(account, 'shopowner'):
+                from shops.models import Shop
+
+                shop = Shop.objects.filter(shop_owner=account.shopowner).first()
+                if not shop:
+                    return Response({
+                        'error': 'Shop profile not found for this account'
+                    }, status=status.HTTP_404_NOT_FOUND)
+
+                update_fields = []
+
+                if 'shop_name' in serializer.validated_data:
+                    shop_name = (serializer.validated_data['shop_name'] or '').strip()
+                    if not shop_name:
+                        return Response({
+                            'shop_name': ['Shop name cannot be blank']
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                    shop.shop_name = shop_name
+                    update_fields.append('shop_name')
+
+                if 'shop_contact_number' in serializer.validated_data:
+                    value = (serializer.validated_data['shop_contact_number'] or '').strip()
+                    shop.contact_number = value if value else None
+                    update_fields.append('contact_number')
+
+                if 'shop_email' in serializer.validated_data:
+                    value = (serializer.validated_data['shop_email'] or '').strip()
+                    shop.email = value if value else None
+                    update_fields.append('email')
+
+                if 'website' in serializer.validated_data:
+                    value = (serializer.validated_data['website'] or '').strip()
+                    shop.website = value if value else None
+                    update_fields.append('website')
+
+                if 'description' in serializer.validated_data:
+                    value = (serializer.validated_data['description'] or '').strip()
+                    shop.description = value if value else None
+                    update_fields.append('description')
+
+                if 'service_banner' in request.FILES:
+                    shop.service_banner = request.FILES['service_banner']
+                    update_fields.append('service_banner')
+
+                if update_fields:
+                    shop.save(update_fields=update_fields)
             
             from ..serializers import ProfileDetailSerializer
             return Response({
                 'message': 'Settings updated successfully',
-                'profile': ProfileDetailSerializer(account).data
+                'profile': ProfileDetailSerializer(account, context={'request': request}).data
             }, status=status.HTTP_200_OK)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

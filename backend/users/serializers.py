@@ -51,9 +51,26 @@ class MechanicSerializer(serializers.ModelSerializer):
 
 
 class ShopOwnerSerializer(serializers.ModelSerializer):
+    shop = serializers.SerializerMethodField()
+
     class Meta:
         model = ShopOwner
-        fields = ['profile_photo', 'contact_number', 'owns_shop']
+        fields = ['profile_photo', 'contact_number', 'owns_shop', 'shop']
+
+    def get_shop(self, obj):
+        shop = getattr(obj, 'shop', None)
+        if not shop:
+            return None
+
+        request = self.context.get('request') if getattr(self, 'context', None) else None
+        return {
+            'shop_name': shop.shop_name,
+            'contact_number': shop.contact_number,
+            'email': shop.email,
+            'website': shop.website,
+            'description': shop.description,
+            'service_banner': get_media_url(shop.service_banner, request) if shop.service_banner else None,
+        }
 
 
 class AdminSerializer(serializers.ModelSerializer):
@@ -133,13 +150,13 @@ class ProfileDetailSerializer(serializers.ModelSerializer):
         """Get current role profile data"""
         profiles = {}
         if hasattr(obj, 'client'):
-            profiles['client'] = ClientSerializer(obj.client).data
+            profiles['client'] = ClientSerializer(obj.client, context=self.context).data
         if hasattr(obj, 'mechanic'):
-            profiles['mechanic'] = MechanicSerializer(obj.mechanic).data
+            profiles['mechanic'] = MechanicSerializer(obj.mechanic, context=self.context).data
         if hasattr(obj, 'shopowner'):
-            profiles['shop_owner'] = ShopOwnerSerializer(obj.shopowner).data
+            profiles['shop_owner'] = ShopOwnerSerializer(obj.shopowner, context=self.context).data
         if hasattr(obj, 'admin'):
-            profiles['admin'] = AdminSerializer(obj.admin).data
+            profiles['admin'] = AdminSerializer(obj.admin, context=self.context).data
         return profiles
 
 
@@ -176,6 +193,16 @@ class ProfileSettingsSerializer(serializers.Serializer):
     
     # Contact information
     contact_number = serializers.CharField(max_length=20, required=False, allow_blank=True)
+
+    # Mechanic profile
+    bio = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    # Shop owner profile
+    shop_name = serializers.CharField(max_length=150, required=False, allow_blank=True)
+    shop_contact_number = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    shop_email = serializers.EmailField(required=False, allow_blank=True, allow_null=True)
+    website = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    description = serializers.CharField(required=False, allow_blank=True)
     
     # Address information
     house_building_number = serializers.CharField(max_length=50, required=False, allow_blank=True)

@@ -65,7 +65,7 @@ export default function ThemedSelectModal({
           ) : (
             <FlatList
               data={options}
-              keyExtractor={(item) => item.value}
+              keyExtractor={(item, index) => `${item.value}-${item.label}-${index}`}
               renderItem={renderItem}
               showsVerticalScrollIndicator={false}
               style={styles.list}
