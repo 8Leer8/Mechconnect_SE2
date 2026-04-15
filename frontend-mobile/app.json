@@ -60,7 +60,8 @@
         {
           "locationAlwaysAndWhenInUsePermission": "Allow Mechconnect to access your location to show nearby mechanics and service locations."
         }
-      ]
+      ],
+      "expo-barcode-scanner"
     ],
     "experiments": {
       "typedRoutes": true,

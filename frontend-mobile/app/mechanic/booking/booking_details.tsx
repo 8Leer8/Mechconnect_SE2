@@ -13,6 +13,7 @@ import { useNotification } from '@/hooks/useNotification';
 import { useConfirmation } from '@/hooks/useConfirmation';
 import { SkeletonDetailPage } from '@/components/skeletons/SkeletonLoaders';
 import * as Location from 'expo-location';
+import { CashQRDisplayModal, PendingPaymentModal } from '@/components/payment';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -159,9 +160,21 @@ export default function BookingDetailScreen() {
   const [pricingConfig, setPricingConfig] = useState<PricingConfig>(DEFAULT_PRICING_CONFIG);
   const [transitioning, setTransitioning] = useState(false);
   const [startTravelSubmitting, setStartTravelSubmitting] = useState(false);
-  const [paymentConfirmedOnUI, setPaymentConfirmedOnUI] = useState(false);
-  const [actionLoadingId, setActionLoadingId] = useState<number | null>(null);
-  const [requestActionLoading, setRequestActionLoading] = useState(false);
+  const [cancelTravelLoading, setCancelTravelLoading] = useState(false);
+  const [startJobLoading, setStartJobLoading] = useState(false);
+  const [cancelJobLoading, setCancelJobLoading] = useState(false);
+  const [pauseJobLoading, setPauseJobLoading] = useState(false);
+  const [resumeJobLoading, setResumeJobLoading] = useState(false);
+  const [finishJobLoading, setFinishJobLoading] = useState(false);
+  const [paymentReceivedLoading, setPaymentReceivedLoading] = useState(false);
+  const [cancelBookingLoading, setCancelBookingLoading] = useState(false);
+  const [pausedRevertLoading, setPausedRevertLoading] = useState(false);
+  const [pendingRevertLoading, setPendingRevertLoading] = useState(false);
+  const [acceptRequestLoading, setAcceptRequestLoading] = useState(false);
+  const [declineRequestLoading, setDeclineRequestLoading] = useState(false);
+  const [showPendingPayment, setShowPendingPayment] = useState(false);
+  const [showCashQR, setShowCashQR] = useState(false);
+  const [paymentReceived, setPaymentReceived] = useState(false);
   const [quotationListExpanded, setQuotationListExpanded] = useState(false);
   const [expandedQuoteItems, setExpandedQuoteItems] = useState<Record<string, boolean>>({});
   const routerHook = useRouter();
@@ -512,6 +525,33 @@ export default function BookingDetailScreen() {
       if (!bid || !bookingId) return;
       if (bid === Number(bookingId)) {
         const action = (lastMessage.action || lastMessage.type || '').toString().toLowerCase();
+
+        switch (action) {
+          case 'payment.cash_selected':
+          case 'cash_selected':
+            setShowPendingPayment(false);
+            setShowCashQR(true);
+            break;
+          case 'payment.waiting_ewallet':
+          case 'waiting_ewallet':
+            setShowCashQR(false);
+            setShowPendingPayment(true);
+            break;
+          case 'payment.completed':
+          case 'completed':
+            setShowCashQR(false);
+            setShowPendingPayment(false);
+            setPaymentReceived(true);
+            fetchBookingDetail();
+            break;
+          case 'booking.pending_payment':
+          case 'pending_payment':
+            setShowPendingPayment(true);
+            break;
+          default:
+            break;
+        }
+
         if (['quotation_accepted', 'quotationaccepted', 'booking_updated', 'booking_update', 'new_chat_message', 'new_chatmessage'].includes(action)) {
           // refresh mechanic view to reflect accepted quotation and updated totals
           fetchBookingDetail();
@@ -522,6 +562,13 @@ export default function BookingDetailScreen() {
       // ignore
     }
   }, [lastMessage, bookingId]);
+
+  useEffect(() => {
+    if (booking?.status === 'completed') {
+      setShowCashQR(false);
+      setShowPendingPayment(false);
+    }
+  }, [booking?.status]);
 
   const fetchBookingDetail = useCallback(async () => {
     if (!bookingId) return;
@@ -898,6 +945,7 @@ export default function BookingDetailScreen() {
     }
   };
   const handleCancelTravel = async () => {
+    if (cancelTravelLoading || transitioning) return;
     if (!booking) return;
     const ok = await confirm({
       type: 'warning',
@@ -906,10 +954,26 @@ export default function BookingDetailScreen() {
       confirmText: 'Cancel Travel',
       cancelText: 'Keep Going',
     });
-    if (ok) handleStatusUpdate('cancel-travel', 'Travel cancelled.', 'Failed to cancel travel');
+    if (!ok) return;
+
+    setCancelTravelLoading(true);
+    try {
+      await handleStatusUpdate('cancel-travel', 'Travel cancelled.', 'Failed to cancel travel');
+    } finally {
+      setCancelTravelLoading(false);
+    }
   };
-  const handleStartJob = () => handleStatusUpdate('start-job', 'Status updated to Active!', 'Failed to start job');
+  const handleStartJob = async () => {
+    if (startJobLoading || transitioning) return;
+    setStartJobLoading(true);
+    try {
+      await handleStatusUpdate('start-job', 'Status updated to Active!', 'Failed to start job');
+    } finally {
+      setStartJobLoading(false);
+    }
+  };
   const handleCancelJob = async () => {
+    if (cancelJobLoading || transitioning) return;
     if (!booking) return;
     const ok = await confirm({
       type: 'warning',
@@ -919,12 +983,34 @@ export default function BookingDetailScreen() {
       cancelText: 'Stay',
     });
     if (!ok) return;
-    const payload = await buildMechanicLocationPayload();
-    handleStatusUpdate('cancel-job', 'Job cancelled.', 'Failed to cancel job', payload);
+    setCancelJobLoading(true);
+    try {
+      const payload = await buildMechanicLocationPayload();
+      await handleStatusUpdate('cancel-job', 'Job cancelled.', 'Failed to cancel job', payload);
+    } finally {
+      setCancelJobLoading(false);
+    }
   };
-  const handlePauseJob = () => handleStatusUpdate('pause-job', 'Job paused.', 'Failed to pause job');
-  const handleResumeJob = () => handleStatusUpdate('resume-job', 'Job resumed.', 'Failed to resume job');
+  const handlePauseJob = async () => {
+    if (pauseJobLoading || transitioning) return;
+    setPauseJobLoading(true);
+    try {
+      await handleStatusUpdate('pause-job', 'Job paused.', 'Failed to pause job');
+    } finally {
+      setPauseJobLoading(false);
+    }
+  };
+  const handleResumeJob = async () => {
+    if (resumeJobLoading || transitioning) return;
+    setResumeJobLoading(true);
+    try {
+      await handleStatusUpdate('resume-job', 'Job resumed.', 'Failed to resume job');
+    } finally {
+      setResumeJobLoading(false);
+    }
+  };
   const handleFinishJob = async () => {
+    if (finishJobLoading || transitioning) return;
     if (!booking) return;
     const ok = await confirm({
       type: 'success',
@@ -933,10 +1019,26 @@ export default function BookingDetailScreen() {
       confirmText: 'Finish',
       cancelText: 'Not Yet',
     });
-    if (ok) handleStatusUpdate('finish-job', 'Job finished. Pending payment.', 'Failed to finish job');
+    if (!ok) return;
+
+    setFinishJobLoading(true);
+    try {
+      await handleStatusUpdate('finish-job', 'Job finished. Pending payment.', 'Failed to finish job');
+    } finally {
+      setFinishJobLoading(false);
+    }
   };
-  const handlePaymentReceived = () => handleStatusUpdate('payment-received', 'Payment received.', 'Failed to confirm payment');
+  const handlePaymentReceived = async () => {
+    if (paymentReceivedLoading || transitioning) return;
+    setPaymentReceivedLoading(true);
+    try {
+      await handleStatusUpdate('payment-received', 'Payment received.', 'Failed to confirm payment');
+    } finally {
+      setPaymentReceivedLoading(false);
+    }
+  };
   const handleCancelBooking = async () => {
+    if (cancelBookingLoading || transitioning) return;
     if (!booking) return;
     const ok = await confirm({
       type: 'danger',
@@ -945,14 +1047,22 @@ export default function BookingDetailScreen() {
       confirmText: 'Cancel Booking',
       cancelText: 'Keep Booking',
     });
-    if (ok) handleStatusUpdate('cancel-booking', 'Booking cancelled.', 'Failed to cancel booking');
+    if (!ok) return;
+
+    setCancelBookingLoading(true);
+    try {
+      await handleStatusUpdate('cancel-booking', 'Booking cancelled.', 'Failed to cancel booking');
+    } finally {
+      setCancelBookingLoading(false);
+    }
   };
 
   // Accept / Decline for pending requests
   const handleAcceptRequest = async () => {
     if (!booking || !booking.request) return;
+    if (acceptRequestLoading) return;
     const requestId = booking.request.id;
-    setRequestActionLoading(true);
+    setAcceptRequestLoading(true);
     try {
       const response = await fetch(`${API_URL}/bookings/mechanic/requests/${requestId}/accept/`, {
         method: 'POST',
@@ -969,16 +1079,17 @@ export default function BookingDetailScreen() {
     } catch (err: any) {
       showNotification({ type: 'error', message: err.message || 'Failed to accept request' });
     } finally {
-      setRequestActionLoading(false);
+      setAcceptRequestLoading(false);
     }
   };
 
   const handleDeclineRequest = async () => {
     if (!booking || !booking.request) return;
+    if (declineRequestLoading) return;
     const ok = await confirm({ type: 'danger', title: 'Decline Request', message: 'Are you sure you want to decline this request?', confirmText: 'Decline', cancelText: 'Keep' });
     if (!ok) return;
     const requestId = booking.request.id;
-    setRequestActionLoading(true);
+    setDeclineRequestLoading(true);
     try {
       const response = await fetch(`${API_URL}/bookings/mechanic/requests/${requestId}/decline/`, {
         method: 'POST',
@@ -995,7 +1106,7 @@ export default function BookingDetailScreen() {
     } catch (err: any) {
       showNotification({ type: 'error', message: err.message || 'Failed to decline request' });
     } finally {
-      setRequestActionLoading(false);
+      setDeclineRequestLoading(false);
     }
   };
 
@@ -1191,15 +1302,29 @@ export default function BookingDetailScreen() {
         {booking.status === 'pending' && (
           <View style={{ width: '100%', flexDirection: 'row', gap: 8 }}>
             <View style={styles.actionButtonWrapper}>
-              <TouchableOpacity style={[styles.actionButton, styles.cancelButton, { width: '100%' }]} onPress={handleDeclineRequest} disabled={requestActionLoading}>
-                <FontAwesome name="times" size={16} color="#fff" />
-                <ThemedText style={styles.actionButtonText}>Decline</ThemedText>
+              <TouchableOpacity
+                style={[styles.actionButton, styles.cancelButton, { width: '100%' }, declineRequestLoading && styles.actionButtonDisabled]}
+                onPress={handleDeclineRequest}
+                disabled={declineRequestLoading}
+              >
+                {declineRequestLoading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <FontAwesome name="times" size={16} color="#fff" />
+                    <ThemedText style={styles.actionButtonText}>Decline</ThemedText>
+                  </>
+                )}
               </TouchableOpacity>
             </View>
 
             <View style={styles.actionButtonWrapper}>
-              <TouchableOpacity style={[styles.actionButton, styles.completeButton, { width: '100%' }]} onPress={handleAcceptRequest} disabled={requestActionLoading}>
-                {requestActionLoading ? (
+              <TouchableOpacity
+                style={[styles.actionButton, styles.completeButton, { width: '100%' }, acceptRequestLoading && styles.actionButtonDisabled]}
+                onPress={handleAcceptRequest}
+                disabled={acceptRequestLoading}
+              >
+                {acceptRequestLoading ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
                   <>
@@ -1218,7 +1343,7 @@ export default function BookingDetailScreen() {
               <TouchableOpacity
                 style={[
                   styles.largePrimaryButton,
-                  (transitioning || startTravelSubmitting) && styles.largePrimaryButtonDisabled,
+                  (transitioning || startTravelSubmitting) && styles.actionButtonDisabled,
                 ]}
                 onPress={handleStartTravel}
                 disabled={transitioning || startTravelSubmitting}
@@ -1237,9 +1362,19 @@ export default function BookingDetailScreen() {
             
             
             <View style={{ width: '100%', marginTop: 10 }}>
-              <TouchableOpacity style={[styles.largeSecondaryButton]} onPress={handleCancelBooking} disabled={transitioning}>
-                <FontAwesome name="times" size={18} color="#fff" />
-                <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Cancel Booking</ThemedText>
+              <TouchableOpacity
+                style={[styles.largeSecondaryButton, cancelBookingLoading && styles.actionButtonDisabled]}
+                onPress={handleCancelBooking}
+                disabled={transitioning || cancelBookingLoading}
+              >
+                {cancelBookingLoading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <FontAwesome name="times" size={18} color="#fff" />
+                    <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Cancel Booking</ThemedText>
+                  </>
+                )}
               </TouchableOpacity>
             </View>
           </>
@@ -1249,15 +1384,35 @@ export default function BookingDetailScreen() {
         {booking.status === 'on_the_way' && (
           <>
             <View style={{ width: '100%' }}>
-              <TouchableOpacity style={[styles.largePrimaryButton]} onPress={handleStartJob} disabled={transitioning}>
-                <FontAwesome name="play" size={18} color="#fff" />
-                <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Start Job</ThemedText>
+              <TouchableOpacity
+                style={[styles.largePrimaryButton, startJobLoading && styles.actionButtonDisabled]}
+                onPress={handleStartJob}
+                disabled={transitioning || startJobLoading}
+              >
+                {startJobLoading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <FontAwesome name="play" size={18} color="#fff" />
+                    <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Start Job</ThemedText>
+                  </>
+                )}
               </TouchableOpacity>
             </View>
             <View style={{ width: '100%', marginTop: 10 }}>
-              <TouchableOpacity style={[styles.largeSecondaryButton]} onPress={handleCancelTravel} disabled={transitioning}>
-                <FontAwesome name="times" size={18} color="#fff" />
-                <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Cancel Travel</ThemedText>
+              <TouchableOpacity
+                style={[styles.largeSecondaryButton, cancelTravelLoading && styles.actionButtonDisabled]}
+                onPress={handleCancelTravel}
+                disabled={transitioning || cancelTravelLoading}
+              >
+                {cancelTravelLoading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <FontAwesome name="times" size={18} color="#fff" />
+                    <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Cancel Travel</ThemedText>
+                  </>
+                )}
               </TouchableOpacity>
             </View>
           </>
@@ -1268,23 +1423,53 @@ export default function BookingDetailScreen() {
           <>
             <View style={{ width: '100%', flexDirection: 'row', gap: 8 }}>
               <View style={styles.actionButtonSmallWrapper}>
-                <TouchableOpacity style={[styles.actionButton, styles.pauseButton]} onPress={handlePauseJob} disabled={transitioning}>
-                  <FontAwesome name="pause" size={16} color="#fff" />
-                  <ThemedText style={styles.actionButtonText}>Pause</ThemedText>
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.pauseButton, pauseJobLoading && styles.actionButtonDisabled]}
+                  onPress={handlePauseJob}
+                  disabled={transitioning || pauseJobLoading}
+                >
+                  {pauseJobLoading ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <>
+                      <FontAwesome name="pause" size={16} color="#fff" />
+                      <ThemedText style={styles.actionButtonText}>Pause</ThemedText>
+                    </>
+                  )}
                 </TouchableOpacity>
               </View>
               <View style={styles.actionButtonSmallWrapper}>
-                <TouchableOpacity style={[styles.actionButton, styles.cancelButton]} onPress={handleCancelJob} disabled={transitioning}>
-                  <FontAwesome name="arrow-left" size={16} color="#fff" />
-                  <ThemedText style={styles.actionButtonText}>Go Back</ThemedText>
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.cancelButton, cancelJobLoading && styles.actionButtonDisabled]}
+                  onPress={handleCancelJob}
+                  disabled={transitioning || cancelJobLoading}
+                >
+                  {cancelJobLoading ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <>
+                      <FontAwesome name="arrow-left" size={16} color="#fff" />
+                      <ThemedText style={styles.actionButtonText}>Go Back</ThemedText>
+                    </>
+                  )}
                 </TouchableOpacity>
               </View>
             </View>
 
             <View style={styles.fullWidthButtonWrapper}>
-              <TouchableOpacity style={[styles.finishLargeButton]} onPress={handleFinishJob} disabled={transitioning}>
-                <FontAwesome name="flag-checkered" size={18} color="#fff" />
-                <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Finish Job</ThemedText>
+              <TouchableOpacity
+                style={[styles.finishLargeButton, finishJobLoading && styles.actionButtonDisabled]}
+                onPress={handleFinishJob}
+                disabled={transitioning || finishJobLoading}
+              >
+                {finishJobLoading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <FontAwesome name="flag-checkered" size={18} color="#fff" />
+                    <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Finish Job</ThemedText>
+                  </>
+                )}
               </TouchableOpacity>
             </View>
           </>
@@ -1294,14 +1479,24 @@ export default function BookingDetailScreen() {
         {booking.status === 'paused' && (
           <>
             <View style={styles.actionButtonWrapper}>
-              <TouchableOpacity style={[styles.actionButton, styles.resumeButton]} onPress={handleResumeJob} disabled={transitioning}>
-                <FontAwesome name="play" size={16} color="#fff" />
-                <ThemedText style={styles.actionButtonText}>Resume Job</ThemedText>
+              <TouchableOpacity
+                style={[styles.actionButton, styles.resumeButton, resumeJobLoading && styles.actionButtonDisabled]}
+                onPress={handleResumeJob}
+                disabled={transitioning || resumeJobLoading}
+              >
+                {resumeJobLoading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <FontAwesome name="play" size={16} color="#fff" />
+                    <ThemedText style={styles.actionButtonText}>Resume Job</ThemedText>
+                  </>
+                )}
               </TouchableOpacity>
             </View>
             <View style={styles.actionButtonWrapper}>
               <TouchableOpacity
-                style={[styles.actionButton, styles.cancelButton]}
+                style={[styles.actionButton, styles.cancelButton, pausedRevertLoading && styles.actionButtonDisabled]}
                 onPress={async () => {
                   const ok = await confirm({
                     type: 'warning',
@@ -1311,6 +1506,7 @@ export default function BookingDetailScreen() {
                     cancelText: 'Stay',
                   });
                   if (!ok) return;
+                  setPausedRevertLoading(true);
                   setTransitioning(true);
                   try {
                     const payload = await buildMechanicLocationPayload();
@@ -1344,13 +1540,20 @@ export default function BookingDetailScreen() {
                   } catch (err: any) {
                     showNotification({ type: 'error', message: err.message || 'Failed to revert stage' });
                   } finally {
+                    setPausedRevertLoading(false);
                     setTransitioning(false);
                   }
                 }}
-                disabled={transitioning}
+                disabled={transitioning || pausedRevertLoading}
               >
-                <FontAwesome name="arrow-left" size={16} color="#fff" />
-                <ThemedText style={styles.actionButtonText}>Go Back</ThemedText>
+                {pausedRevertLoading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <FontAwesome name="arrow-left" size={16} color="#fff" />
+                    <ThemedText style={styles.actionButtonText}>Go Back</ThemedText>
+                  </>
+                )}
               </TouchableOpacity>
             </View>
           </>
@@ -1359,75 +1562,42 @@ export default function BookingDetailScreen() {
         {/* Finished: Accept payment (server) */}
         {booking.status === 'finished' && (
           <View style={styles.actionButtonWrapper}>
-            <TouchableOpacity style={[styles.actionButton, styles.paymentReceivedButton]} onPress={handlePaymentReceived} disabled={transitioning}>
-              <FontAwesome name="money" size={16} color="#fff" />
-              <ThemedText style={styles.actionButtonText}>Payment Received</ThemedText>
+            <TouchableOpacity
+              style={[styles.actionButton, styles.paymentReceivedButton, paymentReceivedLoading && styles.actionButtonDisabled]}
+              onPress={handlePaymentReceived}
+              disabled={transitioning || paymentReceivedLoading}
+            >
+              {paymentReceivedLoading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <>
+                  <FontAwesome name="money" size={16} color="#fff" />
+                  <ThemedText style={styles.actionButtonText}>Payment Received</ThemedText>
+                </>
+              )}
             </TouchableOpacity>
           </View>
         )}
 
-        {/* Pending payment: checkbox, full-width Mark as Complete, then full-width Go Back */}
+        {/* Pending payment: proceed to payment modal + go back */}
         {booking.status === 'pending_payment' && (
           <View style={{ width: '100%' }}>
-            <TouchableOpacity
-              style={[styles.checkboxRowFull, paymentConfirmedOnUI ? styles.checkboxChecked : styles.checkboxUnchecked]}
-              onPress={() => setPaymentConfirmedOnUI(prev => !prev)}
-              disabled={transitioning}
-            >
-              <FontAwesome name={paymentConfirmedOnUI ? 'check-square' : 'square-o'} size={18} color={paymentConfirmedOnUI ? '#34C759' : '#fff'} />
-              <ThemedText style={[styles.actionButtonText, { marginLeft: 12 }]}>I received payment</ThemedText>
-            </TouchableOpacity>
-
             <View style={{ marginTop: 12 }}>
-              <TouchableOpacity style={[styles.finishLargeButton, !paymentConfirmedOnUI && styles.disabledButton]} onPress={async () => {
-                if (!paymentConfirmedOnUI) {
-                  showNotification({ type: 'warning', title: 'Confirm Payment', message: 'Please confirm you received payment before marking complete.' });
-                  return;
-                }
-                const ok = await confirm({
-                  type: 'success',
-                  title: 'Mark as Complete',
-                  message: 'Are you sure you want to mark this booking as complete?',
-                  confirmText: 'Mark Complete',
-                  cancelText: 'Not Yet',
-                });
-                if (!ok) return;
-                setCompleting(true);
-                try {
-                  const pr = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/payment-received/`, {
-                    method: 'POST',
-                    credentials: 'include',
-                    headers: { 'Content-Type': 'application/json' },
-                  });
-                  if (!pr.ok) {
-                    const e = await pr.json().catch(() => null);
-                    throw new Error(parseApiErrorMessage(e, 'Failed to confirm payment'));
-                  }
-                  const response = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/complete/`, {
-                    method: 'POST',
-                    credentials: 'include',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({}),
-                  });
-                  if (!response.ok) {
-                    const err = await response.json().catch(() => null);
-                    throw new Error(parseApiErrorMessage(err, 'Failed to complete booking'));
-                  }
-                  showNotification({ type: 'success', message: 'Booking marked as complete' });
-                  fetchBookingDetail();
-                } catch (err: any) {
-                  showNotification({ type: 'error', message: err.message || 'Failed to mark booking as complete' });
-                } finally {
-                  setCompleting(false);
-                }
-              }} disabled={completing || transitioning}>
-                {completing ? <ActivityIndicator color="#fff" /> : <FontAwesome name="check" size={18} color="#fff" />}
-                <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Mark as Complete</ThemedText>
+              <TouchableOpacity
+                style={styles.finishLargeButton}
+                onPress={() => {
+                  setShowCashQR(false);
+                  setShowPendingPayment(true);
+                }}
+                disabled={transitioning}
+              >
+                <FontAwesome name="credit-card" size={18} color="#fff" />
+                <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Proceed to Payment</ThemedText>
               </TouchableOpacity>
             </View>
 
             <View style={{ marginTop: 12 }}>
-              <TouchableOpacity style={[styles.finishLargeButton, styles.cancelButton]} onPress={async () => {
+              <TouchableOpacity style={[styles.finishLargeButton, styles.cancelButton, pendingRevertLoading && styles.actionButtonDisabled]} onPress={async () => {
                 const ok = await confirm({
                   type: 'warning',
                   title: 'Go Back',
@@ -1436,6 +1606,7 @@ export default function BookingDetailScreen() {
                   cancelText: 'Stay',
                 });
                 if (!ok) return;
+                setPendingRevertLoading(true);
                 setTransitioning(true);
                 try {
                   const payload = await buildMechanicLocationPayload();
@@ -1454,11 +1625,18 @@ export default function BookingDetailScreen() {
                 } catch (err: any) {
                   showNotification({ type: 'error', message: err.message || 'Failed to revert stage' });
                 } finally {
+                  setPendingRevertLoading(false);
                   setTransitioning(false);
                 }
-              }} disabled={transitioning}>
-                <FontAwesome name="arrow-left" size={18} color="#fff" />
-                <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Go Back</ThemedText>
+              }} disabled={transitioning || pendingRevertLoading}>
+                {pendingRevertLoading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <FontAwesome name="arrow-left" size={18} color="#fff" />
+                    <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Go Back</ThemedText>
+                  </>
+                )}
               </TouchableOpacity>
             </View>
           </View>
@@ -2046,6 +2224,33 @@ export default function BookingDetailScreen() {
 
         
       </ScrollView>
+      <PendingPaymentModal
+        visible={showPendingPayment && booking.status === 'pending_payment'}
+        bookingId={booking.id}
+        amount={booking.amount_fee}
+        onClose={() => setShowPendingPayment(false)}
+        onCashSelected={() => {
+          setShowPendingPayment(false);
+          setShowCashQR(true);
+        }}
+        onPaymentReceived={() => {
+          setShowPendingPayment(false);
+          setPaymentReceived(true);
+          fetchBookingDetail();
+        }}
+      />
+
+      <CashQRDisplayModal
+        visible={showCashQR && booking.status === 'pending_payment'}
+        bookingId={booking.id}
+        amount={booking.amount_fee}
+        onClose={() => setShowCashQR(false)}
+        onPaymentReceived={() => {
+          setShowCashQR(false);
+          setPaymentReceived(true);
+          fetchBookingDetail();
+        }}
+      />
     </ThemedView>
   );
 }

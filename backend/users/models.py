@@ -124,6 +124,18 @@ class Mechanic(models.Model):
     is_working_for_shop = models.BooleanField(default=False)
     shop = models.ForeignKey('shops.Shop', on_delete=models.SET_NULL, null=True, blank=True, related_name='mechanics')
     status = models.CharField(max_length=20, choices=WorkStatus.choices, default=WorkStatus.AVAILABLE)
+    payout_method = models.CharField(
+        max_length=10,
+        choices=[('gcash', 'GCash'), ('maya', 'Maya')],
+        null=True,
+        blank=True,
+    )
+    payout_number = models.CharField(
+        max_length=11,
+        null=True,
+        blank=True,
+        help_text="GCash or Maya number for receiving payouts",
+    )
     tokens_balance = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -172,6 +184,18 @@ class ShopOwner(models.Model):
     verification_status = models.CharField(max_length=20, choices=VerificationStatus.choices, default=VerificationStatus.PENDING, help_text="Admin approval status of the shop owner.")
     rejection_note = models.TextField(null=True,blank=True, help_text="Admin explanation when the shop owner application is rejected.")
     verified_at = models.DateTimeField(null=True, blank=True)
+    payout_method = models.CharField(
+        max_length=10,
+        choices=[('gcash', 'GCash'), ('maya', 'Maya')],
+        null=True,
+        blank=True,
+    )
+    payout_number = models.CharField(
+        max_length=11,
+        null=True,
+        blank=True,
+        help_text="GCash or Maya number for receiving payouts",
+    )
     owns_shop = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

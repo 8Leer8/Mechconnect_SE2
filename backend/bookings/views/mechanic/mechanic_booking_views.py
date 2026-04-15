@@ -598,6 +598,26 @@ def mechanic_finish_job(request, booking_id):
         "Job finished and awaiting payment",
     )
 
+    try:
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+
+        channel_layer = get_channel_layer()
+        payload = {
+            "type": "booking_update",
+            "action": "booking.pending_payment",
+            "booking_id": booking.id,
+            "status": booking.status,
+            "amount": float(booking.amount_fee),
+            "message": "Booking is pending payment",
+        }
+        targets = {account.id, booking.request.client.account_id}
+        for target in targets:
+            if target and channel_layer:
+                async_to_sync(channel_layer.group_send)(f"user_{target}", payload)
+    except Exception:
+        pass
+
     return Response({"message": "Job finished. Pending payment.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
 
 
@@ -1849,6 +1869,27 @@ def mechanic_complete_booking(request, booking_id):
             {"error": "Booking is already completed"},
             status=status.HTTP_400_BAD_REQUEST,
         )
+
+    # Block manual completion while payment is pending/unconfirmed.
+    if booking.status == Booking.Status.PENDING_PAYMENT:
+        return Response(
+            {
+                "error": "Cannot complete booking. Payment is pending confirmation."
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        receipt = booking.receipt
+        if not receipt.payment_received:
+            return Response(
+                {
+                    "error": "Cannot complete booking. Payment has not been confirmed yet."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+    except Receipt.DoesNotExist:
+        pass
 
     total_amount = request.data.get("total_amount")
     notes = request.data.get("notes", "")

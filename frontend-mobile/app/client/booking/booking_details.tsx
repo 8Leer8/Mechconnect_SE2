@@ -12,6 +12,14 @@ import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useWebSocketContext } from '@/context/WebSocketContext';
+import {
+  EWalletOptionsModal,
+  PaymentMethodModal,
+  PaymentSuccessModal,
+  QRConfirmationModal,
+  QRScannerModal,
+  type QRScanResult,
+} from '@/components/payment';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -138,6 +146,14 @@ export default function ClientBookingDetailScreen() {
   const [backjobImage, setBackjobImage] = useState<string | null>(null);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string | null>(null);
   const [isPaying, setIsPaying] = useState(false);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showEWalletModal, setShowEWalletModal] = useState(false);
+  const [showQRScanner, setShowQRScanner] = useState(false);
+  const [showQRConfirm, setShowQRConfirm] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [qrScanData, setQrScanData] = useState<QRScanResult | null>(null);
+  const [scannedToken, setScannedToken] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'gcash' | 'maya' | string>('cash');
   const [expandedQuoteItems, setExpandedQuoteItems] = useState<Record<string, boolean>>({});
   const [quotationListExpanded, setQuotationListExpanded] = useState(false);
   const [pricingConfig, setPricingConfig] = useState<PricingConfig>({});
@@ -576,6 +592,13 @@ export default function ClientBookingDetailScreen() {
       const bid = Number(lastMessage.booking_id);
       if (!bid || !bookingId) return;
       if (bid === Number(bookingId)) {
+        const action = String(lastMessage.action || '').toLowerCase();
+        if (action === 'booking.pending_payment') {
+          setShowPaymentModal(true);
+        }
+        if (action === 'payment.completed') {
+          setShowSuccess(true);
+        }
         // lightweight refresh
         fetchBookingDetail(true);
       }
@@ -588,6 +611,12 @@ export default function ClientBookingDetailScreen() {
     setRefreshing(true);
     fetchBookingDetail();
   };
+
+  useEffect(() => {
+    if (booking?.status === 'pending_payment') {
+      setShowPaymentModal(true);
+    }
+  }, [booking?.status]);
 
   const getStatusLabel = (status: string) => {
     switch (status) {
@@ -876,83 +905,19 @@ export default function ClientBookingDetailScreen() {
 
 
 
-        {/* Payment: show options only when booking is pending_payment and no payment recorded.
-            If the booking already includes a payment (from the server), show a confirmation message.
-            This derives visibility from server data (`booking.payment`) so it persists after refresh. */}
-        {booking.status === 'pending_payment' && !(booking as any).payment?.payment_method && (
-          <View style={styles.sectionCard}>
+        {booking.status === 'pending_payment' && (
+          <TouchableOpacity style={styles.sectionCard} activeOpacity={0.7} onPress={() => setShowPaymentModal(true)}>
             <View style={styles.sectionHeader}>
               <View style={[styles.sectionIcon, { backgroundColor: '#FFD60A15' }]}> 
                 <FontAwesome name="money" size={16} color="#FFD60A" />
               </View>
               <ThemedText style={styles.sectionTitle}>Payment</ThemedText>
+              <FontAwesome name="chevron-right" size={16} color="#8E8E93" style={{ marginLeft: 'auto' }} />
             </View>
             <View style={{ paddingVertical: 8 }}>
-              <ThemedText style={{ color: '#666', marginBottom: 8 }}>Choose how you'd like to pay for this booking.</ThemedText>
-              <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
-                <TouchableOpacity
-                  onPress={() => setSelectedPaymentMethod('cash')}
-                  style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#111214', borderWidth: 1, borderColor: selectedPaymentMethod === 'cash' ? '#FF8C00' : '#2A2C2E', alignItems: 'flex-start' }}
-                >
-                  <ThemedText style={{ fontWeight: '700' }}>Cash</ThemedText>
-                  <ThemedText style={{ color: '#666' }}>Pay the mechanic in person</ThemedText>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => setSelectedPaymentMethod('online')}
-                  style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#111214', borderWidth: 1, borderColor: selectedPaymentMethod === 'online' ? '#FF8C00' : '#2A2C2E', alignItems: 'flex-start' }}
-                >
-                  <ThemedText style={{ fontWeight: '700' }}>Online Payment</ThemedText>
-                  <ThemedText style={{ color: '#666' }}>Pay now with card or e-wallet</ThemedText>
-                </TouchableOpacity>
-              </View>
-
-              <TouchableOpacity
-                style={[styles.sendBtn, { opacity: selectedPaymentMethod ? 1 : 0.5 }]}
-                disabled={!selectedPaymentMethod || isPaying}
-                onPress={async () => {
-                  if (!selectedPaymentMethod) return;
-                  try {
-                    setIsPaying(true);
-                    await fetch(`${API_URL}/bookings/bookings/${booking.id}/pay/`, {
-                      method: 'PATCH',
-                      credentials: 'include',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ payment_method: selectedPaymentMethod }),
-                    });
-                    // Refresh booking detail to reflect status change (server returns payment state)
-                    await fetchBookingDetail();
-                  } catch (e) {
-                    // ignore UI-only errors for now
-                  } finally {
-                    setIsPaying(false);
-                  }
-                }}
-              >
-                {isPaying ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <ThemedText style={styles.sendBtnText}>Confirm Payment Method</ThemedText>
-                )}
-              </TouchableOpacity>
+              <ThemedText style={{ color: '#666' }}>Payment is pending. Tap here to proceed with payment.</ThemedText>
             </View>
-          </View>
-        )}
-
-        {/* If a payment method has already been recorded on the booking, show a read-only confirmation message. */}
-        {((booking as any).payment && (booking as any).payment.payment_method) && (
-          <View style={styles.sectionCard}>
-            <View style={styles.sectionHeader}>
-              <View style={[styles.sectionIcon, { backgroundColor: '#FFD60A15' }]}> 
-                <FontAwesome name="money" size={16} color="#FFD60A" />
-              </View>
-              <ThemedText style={styles.sectionTitle}>Payment</ThemedText>
-            </View>
-            <View style={{ paddingVertical: 8 }}>
-              <ThemedText style={{ color: '#666', marginBottom: 8 }}>Payment method confirmed:</ThemedText>
-              <ThemedText style={{ fontWeight: '700' }}>{((booking as any).payment.payment_method || '').toString().toUpperCase()}</ThemedText>
-            </View>
-          </View>
+          </TouchableOpacity>
         )}
 
         {/* Location Section */}
@@ -1484,6 +1449,74 @@ export default function ClientBookingDetailScreen() {
         </Modal>
 
       </ScrollView>
+
+      <PaymentMethodModal
+        visible={showPaymentModal && booking.status === 'pending_payment'}
+        bookingId={booking.id}
+        totalAmount={booking.amount_fee}
+        onClose={() => setShowPaymentModal(false)}
+        onPaymentInitiated={(method) => {
+          setPaymentMethod(method);
+          if (method === 'cash') {
+            setShowPaymentModal(false);
+            setShowQRScanner(true);
+            return;
+          }
+
+          if (method === 'ewallet') {
+            setShowPaymentModal(false);
+            setShowEWalletModal(true);
+          }
+        }}
+      />
+
+      <EWalletOptionsModal
+        visible={showEWalletModal}
+        bookingId={booking.id}
+        totalAmount={booking.amount_fee}
+        onClose={() => setShowEWalletModal(false)}
+        onPaymentInitiated={() => {
+          setShowEWalletModal(false);
+        }}
+      />
+
+      <QRScannerModal
+        visible={showQRScanner}
+        bookingId={booking.id}
+        onClose={() => setShowQRScanner(false)}
+        onScanSuccess={(data) => {
+          setQrScanData(data);
+          setScannedToken(data.token);
+          setShowQRScanner(false);
+          setShowQRConfirm(true);
+        }}
+      />
+
+      <QRConfirmationModal
+        visible={showQRConfirm}
+        scanData={qrScanData}
+        token={scannedToken}
+        onConfirm={() => {
+          setShowQRConfirm(false);
+          setShowSuccess(true);
+          fetchBookingDetail(true);
+        }}
+        onCancel={() => {
+          setShowQRConfirm(false);
+          setShowQRScanner(true);
+        }}
+      />
+
+      <PaymentSuccessModal
+        visible={showSuccess}
+        bookingId={booking.id}
+        amount={booking.amount_fee}
+        paymentMethod={paymentMethod}
+        onClose={() => {
+          setShowSuccess(false);
+          fetchBookingDetail(true);
+        }}
+      />
     </ThemedView>
   );
 }

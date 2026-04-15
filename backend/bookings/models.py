@@ -167,15 +167,74 @@ class Receipt(models.Model):
     booking = models.OneToOneField(Booking, on_delete=models.CASCADE)
     # Record payment method and any external transaction id for online payments
     PAYMENT_METHOD_CHOICES = (
-        ('cash', 'cash'),
-        ('online', 'online'),
+        ('cash', 'Cash'),
+        ('gcash', 'GCash'),
+        ('maya', 'Maya'),
     )
 
     payment_received = models.BooleanField(default=False)
     payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default='cash')
+    ewallet_type = models.CharField(
+        max_length=10,
+        choices=[('gcash', 'GCash'), ('maya', 'Maya')],
+        null=True,
+        blank=True,
+        help_text="E-wallet type if payment_method is gcash or maya",
+    )
+    ewallet_source_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="PayMongo payment source ID for e-wallet",
+    )
+    platform_fee = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Base fee deducted as platform earnings",
+    )
+    mechanic_payout = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Amount disbursed to mechanic or shop owner",
+    )
+    paid_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp when payment was confirmed",
+    )
     transaction_id = models.CharField(max_length=255, null=True, blank=True)
     receipt_image = models.ImageField(upload_to='bookings/receipts/', null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class PaymentQRToken(models.Model):
+    booking = models.OneToOneField(
+        Booking,
+        on_delete=models.CASCADE,
+        related_name='qr_token',
+    )
+    token = models.UUIDField(
+        unique=True,
+        help_text="Unique signed UUID for QR code",
+    )
+    is_used = models.BooleanField(
+        default=False,
+        help_text="True after client confirms payment",
+    )
+    expires_at = models.DateTimeField(
+        help_text="24 hours after booking marked FINISHED",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'bookings_paymentqrtoken'
+
+    def is_valid(self):
+        return not self.is_used and timezone.now() < self.expires_at
 
 
 class Backjob(models.Model):

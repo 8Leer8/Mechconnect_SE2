@@ -1,7 +1,7 @@
 from django.urls import path
 from . import views
+from .views.mechanic import payment_views
 from .views.client.client_request_list_views import get_request_detail
-from .views.client.client_booking_views import client_pay_booking
 from .views.admin import (
     admin_booking_overview,
     admin_list_disputes,
@@ -42,8 +42,11 @@ urlpatterns = [
     # Client booking endpoints
     path('bookings/', views.list_client_bookings, name='list-client-bookings'),
     path('bookings/<int:booking_id>/', views.get_booking_detail, name='get-booking-detail'),
-    # Client selects payment method when booking is in pending_payment
-    path('bookings/<int:booking_id>/pay/', client_pay_booking, name='client-pay-booking'),
+    path('payments/initiate/', payment_views.initiate_payment, name='payments-initiate'),
+    path('payments/qr/<int:booking_id>/', payment_views.get_qr_token, name='payments-qr-token'),
+    path('payments/qr/scan/', payment_views.scan_qr, name='payments-qr-scan'),
+    path('payments/qr/confirm/', payment_views.confirm_qr_payment, name='payments-qr-confirm'),
+    path('payments/webhook/', payment_views.paymongo_webhook, name='payments-webhook'),
     path('bookings/<int:booking_id>/quotation/accept/', views.client_accept_quotation, name='client-accept-quotation'),
     path('bookings/<int:booking_id>/quotation/reject/', views.client_reject_quotation, name='client-reject-quotation'),
     # Live mechanic location (GET for client polling, POST for mechanic pushing GPS)

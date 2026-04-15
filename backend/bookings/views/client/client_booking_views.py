@@ -976,94 +976,10 @@ def client_reject_quotation(request, booking_id):
 @api_view(['PATCH'])
 @permission_classes([AllowAny])
 def client_pay_booking(request, booking_id):
-    """Client selects payment method for a booking in pending_payment.
-
-    Payload: { payment_method: 'cash' | 'online' }
-    """
-    account_id = request.session.get('account_id')
-    if not account_id:
-        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
-
-    try:
-        account = Account.objects.get(id=account_id)
-        if not hasattr(account, 'client'):
-            return Response({'error': 'Only clients may perform this action'}, status=status.HTTP_403_FORBIDDEN)
-        client = account.client
-
-        booking = Booking.objects.select_related('request', 'request__provider').get(id=booking_id, request__client=client)
-
-        if booking.status != Booking.Status.PENDING_PAYMENT:
-            return Response({'error': 'Booking not in pending_payment state'}, status=status.HTTP_400_BAD_REQUEST)
-
-        serializer = BookingPaymentSerializer(data=request.data, context={'request': request})
-        serializer.is_valid(raise_exception=True)
-        payment_method = serializer.validated_data['payment_method']
-
-        receipt, created = Receipt.objects.get_or_create(
-            booking=booking,
-            defaults={
-                'payment_received': True if payment_method == 'cash' else False,
-                'payment_method': payment_method,
-            },
-        )
-        if not created:
-            receipt.payment_method = payment_method
-            receipt.payment_received = True if payment_method == 'cash' else False
-            receipt.save(update_fields=['payment_method', 'payment_received'])
-
-        if payment_method == 'cash':
-            booking.status = Booking.Status.COMPLETED
-            booking.completed_at = timezone.now()
-            booking.save(update_fields=['status', 'completed_at'])
-            try:
-                CompleteBooking.objects.get_or_create(
-                    booking=booking,
-                    defaults={'total_amount': booking.amount_fee},
-                )
-            except Exception:
-                logger.exception('Failed to create CompleteBooking for booking %s', booking.id)
-
-            try:
-                provider_account = booking.request.provider
-                if provider_account:
-                    Notification.objects.create(
-                        receiver=provider_account,
-                        title='Payment received (cash)',
-                        message=f'Client confirmed cash payment for Booking #{booking.id}',
-                    )
-            except Exception:
-                logger.exception('Failed to create payment notification for booking %s', booking.id)
-
-            try:
-                booking_data = _serialize_single_booking(booking)
-            except Exception:
-                booking_data = BookingSerializer(booking).data
-
-            return Response({'message': 'cash_confirmed', 'booking': booking_data}, status=status.HTTP_200_OK)
-
-        try:
-            provider_account = booking.request.provider
-            if provider_account:
-                Notification.objects.create(
-                    receiver=provider_account,
-                    title='Payment method selected',
-                    message=f'Client selected online payment for Booking #{booking.id}',
-                )
-        except Exception:
-            logger.exception('Failed to create payment method notification for booking %s', booking.id)
-
-        try:
-            booking_data = _serialize_single_booking(booking)
-        except Exception:
-            booking_data = BookingSerializer(booking).data
-
-        return Response({'message': 'online_initiated', 'booking': booking_data}, status=status.HTTP_200_OK)
-
-    except Account.DoesNotExist:
-        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
-    except Booking.DoesNotExist:
-        return Response({'error': 'Booking not found or not owned by client'}, status=status.HTTP_404_NOT_FOUND)
-    except Exception:
-        logger.exception('Unhandled error in client_pay_booking')
-        return Response({'error': 'Internal server error'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    # DEPRECATED: Replaced by payment_views.initiate_payment
+    # Kept for reference only - do not use.
+    return Response(
+        {'error': 'Deprecated endpoint. Use /bookings/payments/initiate/ instead.'},
+        status=status.HTTP_410_GONE,
+    )
 

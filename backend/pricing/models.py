@@ -70,6 +70,12 @@ class PricingConfiguration(models.Model):
         max_digits=5, decimal_places=2, default=10.00,
         help_text="Platform commission percentage"
     )
+    disbursement_fee = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        default=10.00,
+        help_text="PayMongo InstaPay fee per disbursement",
+    )
 
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.CharField(max_length=100, blank=True)

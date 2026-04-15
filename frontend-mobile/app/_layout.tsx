@@ -1,7 +1,10 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+import { Linking } from 'react-native';
 import { Stack } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
+import { useEffect } from 'react';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { NotificationProvider } from '@/hooks/useNotification';
@@ -10,6 +13,20 @@ import { WebSocketProvider } from '@/context/WebSocketContext';
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
+  const router = useRouter();
+
+  useEffect(() => {
+    const handleDeepLink = ({ url }: { url: string }) => {
+      if (url === 'mechconnect://payment/success') {
+        router.push('/payment/success');
+      } else if (url === 'mechconnect://payment/failed') {
+        router.push('/payment/failed');
+      }
+    };
+
+    const subscription = Linking.addEventListener('url', handleDeepLink);
+    return () => subscription.remove();
+  }, [router]);
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>

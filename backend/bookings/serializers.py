@@ -227,15 +227,15 @@ class BookingSerializer(serializers.ModelSerializer):
 
 
 class BookingPaymentSerializer(serializers.Serializer):
-    """Serializer for client payment selection (cash | online).
+    """Serializer for client payment selection (cash | gcash | maya).
     This endpoint only records the chosen method and performs the simple
     status transition logic implemented in the view.
     """
-    payment_method = serializers.ChoiceField(choices=['cash', 'online'])
+    payment_method = serializers.ChoiceField(choices=['cash', 'gcash', 'maya'])
     receipt_image = serializers.ImageField(required=False, allow_null=True)
 
     def validate_payment_method(self, value):
-        if value not in ('cash', 'online'):
+        if value not in ('cash', 'gcash', 'maya'):
             raise serializers.ValidationError('Invalid payment method')
         return value
 

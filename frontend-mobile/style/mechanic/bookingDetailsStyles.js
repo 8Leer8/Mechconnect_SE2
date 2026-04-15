@@ -566,6 +566,9 @@ export const styles = StyleSheet.create({
     borderWidth: 1,
     justifyContent: 'center',
   },
+  actionButtonDisabled: {
+    opacity: 0.7,
+  },
   actionButtonText: {
     color: '#fff',
     fontWeight: '700',

@@ -225,6 +225,9 @@ EMAIL_TIMEOUT = 10
 # External routing/traffic API keys
 ORS_API_KEY = os.getenv('ORS_API_KEY', os.getenv('EXPO_PUBLIC_ORS_API_KEY', ''))
 TOMTOM_API_KEY = os.getenv('TOMTOM_API_KEY', os.getenv('EXPO_PUBLIC_TOMTOM_API_KEY', ''))
+PAYMONGO_SECRET_KEY = os.getenv('PAYMONGO_SECRET_KEY', '')
+PAYMONGO_PUBLIC_KEY = os.getenv('PAYMONGO_PUBLIC_KEY', '')
+PAYMONGO_WEBHOOK_SECRET = os.getenv('PAYMONGO_WEBHOOK_SECRET', '')
 
 # Supabase Storage Configuration
 USE_S3 = os.environ.get("USE_S3", "False") == "True"
