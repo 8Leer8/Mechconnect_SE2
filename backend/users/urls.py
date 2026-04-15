@@ -43,6 +43,7 @@ urlpatterns = [
     path('password/change/verify-gmail/confirm/', views.verify_password_change_gmail_code, name='verify_password_change_gmail_code'),
     path('password/change/', views.change_password, name='change_password'),
     path('password/reset/request/', views.request_password_reset, name='request_password_reset'),
+    path('password/reset/verify/', views.verify_password_reset_token, name='verify_password_reset_token'),
     path('password/reset/confirm/', views.confirm_password_reset, name='confirm_password_reset'),
     
     # Discovery endpoints

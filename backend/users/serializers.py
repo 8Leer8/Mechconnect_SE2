@@ -480,6 +480,24 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
         return value
 
 
+class PasswordResetVerifySerializer(serializers.Serializer):
+    reset_token = serializers.CharField()
+
+    def validate_reset_token(self, value):
+        try:
+            reset = PasswordReset.objects.get(
+                reset_token=value,
+                status=PasswordReset.Status.PENDING
+            )
+            if timezone.now() > reset.expires_at:
+                reset.status = PasswordReset.Status.EXPIRED
+                reset.save()
+                raise serializers.ValidationError("Reset token has expired")
+        except PasswordReset.DoesNotExist:
+            raise serializers.ValidationError("Invalid or expired reset token")
+        return value
+
+
 class MechanicReviewSerializer(serializers.ModelSerializer):
     """Serializer for mechanic reviews"""
     reviewer_name = serializers.SerializerMethodField()

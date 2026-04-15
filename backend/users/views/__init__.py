@@ -20,6 +20,7 @@ __all__ = [
     'verify_password_change_gmail_code',
     'change_password',
     'request_password_reset',
+    'verify_password_reset_token',
     'confirm_password_reset',
     
     # Profile views

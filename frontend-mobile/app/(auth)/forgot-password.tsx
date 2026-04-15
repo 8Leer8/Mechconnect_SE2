@@ -30,12 +30,16 @@ export default function ForgotPasswordScreen() {
   const router = useRouter();
   const { showNotification } = useNotification();
 
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+
   const [email, setEmail] = useState('');
   const [resetCode, setResetCode] = useState('');
+  const [verifiedToken, setVerifiedToken] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
   const [sendingCode, setSendingCode] = useState(false);
+  const [verifyingCode, setVerifyingCode] = useState(false);
   const [resettingPassword, setResettingPassword] = useState(false);
   const [codeSent, setCodeSent] = useState(false);
 
@@ -84,6 +88,9 @@ export default function ForgotPasswordScreen() {
 
       if (response.ok) {
         setCodeSent(true);
+        setStep(2);
+        setVerifiedToken('');
+        setResetCode('');
         showNotification({
           type: 'success',
           message: 'Reset code sent. Please check your Gmail.',
@@ -107,14 +114,61 @@ export default function ForgotPasswordScreen() {
     }
   };
 
-  const handleResetPassword = async () => {
-    if (!resetCode.trim() || !newPassword || !confirmPassword) {
-      showNotification({ type: 'error', message: 'Please fill in all reset fields' });
+  const handleVerifyCode = async () => {
+    if (!resetCode.trim()) {
+      showNotification({ type: 'error', message: 'Please enter the verification code' });
       return;
     }
 
     if (resetCode.trim().length !== 6) {
-      showNotification({ type: 'error', message: 'Reset code must be 6 digits' });
+      showNotification({ type: 'error', message: 'Verification code must be 6 digits' });
+      return;
+    }
+
+    if (!API_URL) {
+      showNotification({
+        type: 'error',
+        title: 'Configuration Error',
+        message: 'API URL is not configured. Please check your .env file.',
+      });
+      return;
+    }
+
+    setVerifyingCode(true);
+    try {
+      const response = await fetch(`${API_URL}/users/password/reset/verify/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({ reset_token: resetCode.trim() }),
+      });
+
+      const data = (await response.json()) as ErrorPayload;
+
+      if (response.ok) {
+        setVerifiedToken(resetCode.trim());
+        setStep(3);
+        showNotification({ type: 'success', message: 'Code verified. Set your new password.' });
+      } else {
+        const msg = extractErrorMessage(data, 'Invalid or expired verification code');
+        showNotification({ type: 'error', message: msg });
+      }
+    } catch (error) {
+      console.error('Verify reset code error:', error);
+      showNotification({
+        type: 'error',
+        message: 'Connection failed. Please check your network.',
+      });
+    } finally {
+      setVerifyingCode(false);
+    }
+  };
+
+  const handleResetPassword = async () => {
+    if (!verifiedToken || !newPassword || !confirmPassword) {
+      showNotification({ type: 'error', message: 'Please fill in all reset fields' });
       return;
     }
 
@@ -132,7 +186,7 @@ export default function ForgotPasswordScreen() {
           Accept: 'application/json',
         },
         body: JSON.stringify({
-          reset_token: resetCode.trim(),
+          reset_token: verifiedToken,
           new_password: newPassword,
           confirm_password: confirmPassword,
         }),
@@ -145,6 +199,12 @@ export default function ForgotPasswordScreen() {
           type: 'success',
           message: 'Password reset successful. Please login.',
         });
+        setStep(1);
+        setCodeSent(false);
+        setVerifiedToken('');
+        setResetCode('');
+        setNewPassword('');
+        setConfirmPassword('');
         setTimeout(() => {
           router.replace('/(auth)/login');
         }, 900);
@@ -163,6 +223,14 @@ export default function ForgotPasswordScreen() {
     }
   };
 
+  const stepTitle = step === 1 ? '1/3 Email' : step === 2 ? '2/3 Verification' : '3/3 New Password';
+  const stepSubtitle =
+    step === 1
+      ? 'Enter your Gmail to receive a reset code.'
+      : step === 2
+      ? 'Enter the 6-digit verification code from your email.'
+      : 'Create and confirm your new password.';
+
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -171,44 +239,61 @@ export default function ForgotPasswordScreen() {
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         <View style={styles.header}>
           <Text style={styles.title}>Forgot Password</Text>
-          <Text style={styles.subtitle}>Reset your account using a code sent to your Gmail</Text>
+          <Text style={styles.subtitle}>{stepTitle}</Text>
+          <Text style={styles.subtitleSecondary}>{stepSubtitle}</Text>
         </View>
 
         <View style={styles.card}>
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Gmail Address</Text>
-            <View style={styles.inputWrapper}>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter your Gmail"
-                placeholderTextColor="#8E8E93"
-                autoCapitalize="none"
-                keyboardType="email-address"
-                value={email}
-                onChangeText={setEmail}
-                editable={!sendingCode && !resettingPassword}
-              />
+          <View style={styles.stepIndicatorRow}>
+            <View style={[styles.stepBadge, step >= 1 && styles.stepBadgeActive]}>
+              <Text style={[styles.stepBadgeText, step >= 1 && styles.stepBadgeTextActive]}>1</Text>
+            </View>
+            <View style={[styles.stepLine, step >= 2 && styles.stepLineActive]} />
+            <View style={[styles.stepBadge, step >= 2 && styles.stepBadgeActive]}>
+              <Text style={[styles.stepBadgeText, step >= 2 && styles.stepBadgeTextActive]}>2</Text>
+            </View>
+            <View style={[styles.stepLine, step >= 3 && styles.stepLineActive]} />
+            <View style={[styles.stepBadge, step >= 3 && styles.stepBadgeActive]}>
+              <Text style={[styles.stepBadgeText, step >= 3 && styles.stepBadgeTextActive]}>3</Text>
             </View>
           </View>
 
-          <TouchableOpacity
-            style={[styles.buttonPrimary, !canSendCode && styles.buttonDisabled]}
-            onPress={handleSendCode}
-            disabled={!canSendCode}
-          >
-            {sendingCode ? (
-              <ActivityIndicator color="#111214" />
-            ) : (
-              <Text style={styles.buttonPrimaryText}>{codeSent ? 'Resend Code' : 'Send Code'}</Text>
-            )}
-          </TouchableOpacity>
-
-          {codeSent && (
+          {step === 1 && (
             <>
-              <View style={styles.sectionDivider} />
-
               <View style={styles.inputContainer}>
-                <Text style={styles.label}>Reset Code</Text>
+                <Text style={styles.label}>Gmail Address</Text>
+                <View style={styles.inputWrapper}>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Enter your Gmail"
+                    placeholderTextColor="#8E8E93"
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                    value={email}
+                    onChangeText={setEmail}
+                    editable={!sendingCode && !resettingPassword}
+                  />
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.buttonPrimary, !canSendCode && styles.buttonDisabled]}
+                onPress={handleSendCode}
+                disabled={!canSendCode}
+              >
+                {sendingCode ? (
+                  <ActivityIndicator color="#111214" />
+                ) : (
+                  <Text style={styles.buttonPrimaryText}>{codeSent ? 'Resend Code' : 'Send Code'}</Text>
+                )}
+              </TouchableOpacity>
+            </>
+          )}
+
+          {step === 2 && (
+            <>
+              <View style={styles.inputContainer}>
+                <Text style={styles.label}>Verification Code</Text>
                 <View style={styles.inputWrapper}>
                   <TextInput
                     style={styles.input}
@@ -218,9 +303,38 @@ export default function ForgotPasswordScreen() {
                     maxLength={6}
                     value={resetCode}
                     onChangeText={setResetCode}
-                    editable={!resettingPassword}
+                    editable={!verifyingCode}
                   />
                 </View>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.buttonPrimary, verifyingCode && styles.buttonDisabled]}
+                onPress={handleVerifyCode}
+                disabled={verifyingCode}
+              >
+                {verifyingCode ? (
+                  <ActivityIndicator color="#111214" />
+                ) : (
+                  <Text style={styles.buttonPrimaryText}>Verify Code</Text>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.buttonSecondary}
+                onPress={() => setStep(1)}
+                disabled={verifyingCode}
+              >
+                <Text style={styles.buttonSecondaryText}>Back to Email</Text>
+              </TouchableOpacity>
+            </>
+          )}
+
+          {step === 3 && (
+            <>
+              <View style={styles.verifiedCodeRow}>
+                <Text style={styles.verifiedCodeLabel}>Verified Code</Text>
+                <Text style={styles.verifiedCodeValue}>{verifiedToken}</Text>
               </View>
 
               <View style={styles.inputContainer}>
@@ -271,6 +385,14 @@ export default function ForgotPasswordScreen() {
                 ) : (
                   <Text style={styles.buttonPrimaryText}>Reset Password</Text>
                 )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.buttonSecondary}
+                onPress={() => setStep(2)}
+                disabled={resettingPassword}
+              >
+                <Text style={styles.buttonSecondaryText}>Back to Verification</Text>
               </TouchableOpacity>
             </>
           )}

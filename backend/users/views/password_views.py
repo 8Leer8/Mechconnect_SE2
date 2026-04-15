@@ -11,7 +11,7 @@ import random
 from ..models import Account, PasswordReset, EmailVerification
 from ..serializers import (
     ChangePasswordSerializer, PasswordResetRequestSerializer,
-    PasswordResetConfirmSerializer
+    PasswordResetConfirmSerializer, PasswordResetVerifySerializer
 )
 from utils.email import (
     build_verification_email_html,
@@ -388,4 +388,20 @@ def confirm_password_reset(request):
             'message': 'Password reset successful'
         }, status=status.HTTP_200_OK)
     
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def verify_password_reset_token(request):
+    """
+    Verify reset token before allowing new password entry.
+
+    Required fields:
+    - reset_token
+    """
+    serializer = PasswordResetVerifySerializer(data=request.data)
+    if serializer.is_valid():
+        return Response({'message': 'Reset token verified'}, status=status.HTTP_200_OK)
+
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
