@@ -16,6 +16,8 @@ __all__ = [
     'verify_code',
     
     # Password views
+    'send_password_change_verification_code',
+    'verify_password_change_gmail_code',
     'change_password',
     'request_password_reset',
     'confirm_password_reset',
@@ -25,6 +27,8 @@ __all__ = [
     'update_profile',
     'get_profile_details',
     'update_profile_settings',
+    'verify_profile_password',
+    'change_profile_email',
     
     # Role management views
     'switch_role',

@@ -24,10 +24,16 @@ export function getImageUrl(imageUrl: string | null | undefined): string | null 
   }
   
   // Remove trailing slash from API URL if present
-  const baseUrl = apiUrl.endsWith('/') ? apiUrl.slice(0, -1) : apiUrl;
+  const normalizedApiUrl = apiUrl.endsWith('/') ? apiUrl.slice(0, -1) : apiUrl;
   
   // Ensure image URL starts with /
   const imagePath = imageUrl.startsWith('/') ? imageUrl : `/${imageUrl}`;
+
+  // If backend returns /media/... and API URL ends with /api, use the root host.
+  // Example: http://host/api + /media/file.jpg -> http://host/media/file.jpg
+  const baseUrl = imagePath.startsWith('/media/')
+    ? normalizedApiUrl.replace(/\/api$/, '')
+    : normalizedApiUrl;
   
   return `${baseUrl}${imagePath}`;
 }

@@ -13,7 +13,7 @@ from ..serializers import (
     RegisterSerializer, LoginSerializer, AccountSerializer
 )
 import jwt
-from utils.email import build_verification_email_html, send_html_email
+from utils.email import build_verification_email_html, send_html_email, send_html_email_async
 
 
 logger = logging.getLogger(__name__)
@@ -216,7 +216,7 @@ def send_verification_code(request):
         or 'there'
     )
 
-    # Send email
+    # Queue email send so API response is fast even if provider is slow
     try:
         subject = 'MechConnect - Your Verification Code'
         html_content = build_verification_email_html(
@@ -224,6 +224,20 @@ def send_verification_code(request):
             verification_code=verification_code,
             expires_in_minutes=15,
         )
+        queued = send_html_email_async(
+            to_email=email,
+            subject=subject,
+            html_content=html_content,
+        )
+
+        if queued:
+            return Response({
+                'message': 'Verification code sent successfully',
+                'expires_in_minutes': 15,
+                'note': 'Email may take up to 60 seconds to appear in inbox.'
+            }, status=status.HTTP_200_OK)
+
+        # Fallback to synchronous send only if queueing fails
         email_sent = send_html_email(
             to_email=email,
             subject=subject,
@@ -233,7 +247,8 @@ def send_verification_code(request):
         if email_sent:
             return Response({
                 'message': 'Verification code sent successfully',
-                'expires_in_minutes': 15
+                'expires_in_minutes': 15,
+                'note': 'Email may take up to 60 seconds to appear in inbox.'
             }, status=status.HTTP_200_OK)
 
         logger.warning('Verification code generated but email sending failed for %s', email)

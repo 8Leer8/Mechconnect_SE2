@@ -1,5 +1,6 @@
 import logging
 from html import escape
+from concurrent.futures import ThreadPoolExecutor
 
 import sib_api_v3_sdk
 from sib_api_v3_sdk.rest import ApiException
@@ -7,6 +8,7 @@ from django.conf import settings
 
 
 logger = logging.getLogger(__name__)
+_email_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="email-dispatch")
 
 
 def send_html_email(to_email, subject, html_content):
@@ -46,6 +48,17 @@ def send_html_email(to_email, subject, html_content):
         return False
     except Exception as e:
         logger.exception("Failed to send email via Brevo to %s", to_email)
+        return False
+
+
+def send_html_email_async(to_email, subject, html_content):
+    """Queue HTML email sending in a background thread. Returns True if queued."""
+    try:
+        _email_executor.submit(send_html_email, to_email, subject, html_content)
+        logger.info("Email queued for async delivery to %s", to_email)
+        return True
+    except Exception:
+        logger.exception("Failed to queue async email to %s", to_email)
         return False
 
 
@@ -152,6 +165,49 @@ def build_booking_confirmation_email_html(
         "</div>"
         "<div style=\"padding:16px 28px;border-top:1px solid #E5E7EB;background-color:#F9FAFB;\">"
         "<p style=\"margin:0;font-size:12px;line-height:1.6;color:#6B7280;\">MechConnect • This is an automated message, please do not reply.</p>"
+        "</div>"
+        "</div>"
+        "</div>"
+    )
+
+
+def build_password_change_verification_email_html(
+    masked_user,
+    when_text,
+    device_name,
+    near_location,
+    confirm_url,
+):
+    safe_user = escape(masked_user or "u***r")
+    safe_when = escape(when_text or "-")
+    safe_device = escape(device_name or "Unknown device")
+    safe_near = escape(near_location or "Unknown location")
+    safe_confirm_url = escape(confirm_url or "#")
+
+    return (
+        "<div style=\"margin:0;padding:24px;background-color:#ecedee;font-family:Arial,sans-serif;color:#ECEDEE;\">"
+        "<div style=\"max-width:640px;margin:0 auto;border:1px solid #2A2C2E;border-radius:14px;overflow:hidden;background-color:#151718;\">"
+        "<div style=\"background-color:#1A1C1E;padding:22px 28px;border-bottom:1px solid #2A2C2E;\">"
+        "<h1 style=\"margin:0;font-size:22px;line-height:1.35;color:#ECEDEE;font-weight:700;\">Password Change Verification</h1>"
+        "</div>"
+        "<div style=\"padding:28px;\">"
+        "<p style=\"margin:0 0 14px;font-size:16px;line-height:1.6;color:#ECEDEE;\">Someone is attempting to add password to your account.</p>"
+        f"<p style=\"margin:0 0 6px;font-size:15px;line-height:1.6;color:#C8CDD2;\"><strong>User:</strong> {safe_user}</p>"
+        f"<p style=\"margin:0 0 6px;font-size:15px;line-height:1.6;color:#C8CDD2;\"><strong>When:</strong> {safe_when}</p>"
+        f"<p style=\"margin:0 0 6px;font-size:15px;line-height:1.6;color:#C8CDD2;\"><strong>Device:</strong> {safe_device}</p>"
+        f"<p style=\"margin:0 0 16px;font-size:15px;line-height:1.6;color:#C8CDD2;\"><strong>Near:</strong> {safe_near}</p>"
+        "<p style=\"margin:0 0 8px;font-size:14px;line-height:1.6;color:#C8CDD2;\">Beware of scams. Do NOT allow if you:</p>"
+        "<ul style=\"margin:0 0 16px 20px;padding:0;color:#C8CDD2;\">"
+        "<li style=\"margin:0 0 6px;font-size:14px;line-height:1.6;\">Receive calls claiming to be from Shopee</li>"
+        "<li style=\"margin:0;font-size:14px;line-height:1.6;\">Offered lottery prize</li>"
+        "</ul>"
+        "<p style=\"margin:0 0 14px;font-size:14px;line-height:1.7;color:#C8CDD2;\">If this is you, please click below to confirm.</p>"
+        f"<a href=\"{safe_confirm_url}\" style=\"display:inline-block;padding:11px 18px;border-radius:10px;background-color:#FF8C00;color:#111214;text-decoration:none;font-size:14px;font-weight:700;\">Confirm Password Change</a>"
+        "<p style=\"margin:16px 0 0;font-size:13px;line-height:1.7;color:#8E8E93;\">If you do not recognise this add password request, your account may be at risk. Please ignore this message and contact us immediately.</p>"
+        "<p style=\"margin:16px 0 0;font-size:14px;line-height:1.6;color:#C8CDD2;\">Cheers,<br/>MechConnect Team</p>"
+        "</div>"
+        "<div style=\"padding:16px 28px;border-top:1px solid #2A2C2E;background-color:#1A1C1E;\">"
+        "<p style=\"margin:0;font-size:12px;line-height:1.6;color:#8E8E93;\">MechConnect • This is an automated message, please do not reply.</p>"
         "</div>"
         "</div>"
         "</div>"

@@ -51,9 +51,26 @@ class MechanicSerializer(serializers.ModelSerializer):
 
 
 class ShopOwnerSerializer(serializers.ModelSerializer):
+    shop = serializers.SerializerMethodField()
+
     class Meta:
         model = ShopOwner
-        fields = ['profile_photo', 'contact_number', 'owns_shop']
+        fields = ['profile_photo', 'contact_number', 'owns_shop', 'shop']
+
+    def get_shop(self, obj):
+        shop = getattr(obj, 'shop', None)
+        if not shop:
+            return None
+
+        request = self.context.get('request') if getattr(self, 'context', None) else None
+        return {
+            'shop_name': shop.shop_name,
+            'contact_number': shop.contact_number,
+            'email': shop.email,
+            'website': shop.website,
+            'description': shop.description,
+            'service_banner': get_media_url(shop.service_banner, request) if shop.service_banner else None,
+        }
 
 
 class AdminSerializer(serializers.ModelSerializer):
@@ -133,13 +150,13 @@ class ProfileDetailSerializer(serializers.ModelSerializer):
         """Get current role profile data"""
         profiles = {}
         if hasattr(obj, 'client'):
-            profiles['client'] = ClientSerializer(obj.client).data
+            profiles['client'] = ClientSerializer(obj.client, context=self.context).data
         if hasattr(obj, 'mechanic'):
-            profiles['mechanic'] = MechanicSerializer(obj.mechanic).data
+            profiles['mechanic'] = MechanicSerializer(obj.mechanic, context=self.context).data
         if hasattr(obj, 'shopowner'):
-            profiles['shop_owner'] = ShopOwnerSerializer(obj.shopowner).data
+            profiles['shop_owner'] = ShopOwnerSerializer(obj.shopowner, context=self.context).data
         if hasattr(obj, 'admin'):
-            profiles['admin'] = AdminSerializer(obj.admin).data
+            profiles['admin'] = AdminSerializer(obj.admin, context=self.context).data
         return profiles
 
 
@@ -176,6 +193,16 @@ class ProfileSettingsSerializer(serializers.Serializer):
     
     # Contact information
     contact_number = serializers.CharField(max_length=20, required=False, allow_blank=True)
+
+    # Mechanic profile
+    bio = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    # Shop owner profile
+    shop_name = serializers.CharField(max_length=150, required=False, allow_blank=True)
+    shop_contact_number = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    shop_email = serializers.EmailField(required=False, allow_blank=True, allow_null=True)
+    website = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    description = serializers.CharField(required=False, allow_blank=True)
     
     # Address information
     house_building_number = serializers.CharField(max_length=50, required=False, allow_blank=True)
@@ -334,6 +361,16 @@ class ChangePasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(write_only=True)
     new_password = serializers.CharField(write_only=True, min_length=8)
     confirm_password = serializers.CharField(write_only=True)
+    device_name = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    near_location = serializers.CharField(required=False, allow_blank=True, max_length=255)
+
+    def _get_account(self):
+        account = self.context.get('account')
+        if account:
+            return account
+
+        request = self.context.get('request')
+        return getattr(request, 'user', None) if request else None
 
     def validate(self, data):
         if data['new_password'] != data['confirm_password']:
@@ -347,14 +384,54 @@ class ChangePasswordSerializer(serializers.Serializer):
             raise serializers.ValidationError({"password": "Password must contain at least one lowercase letter"})
         if not re.search(r'[0-9]', password):
             raise serializers.ValidationError({"password": "Password must contain at least one number"})
+
+        account = self._get_account()
+        if account and check_password(password, account.password):
+            raise serializers.ValidationError({"new_password": "New password must be different from your current password"})
         
         return data
 
     def validate_old_password(self, value):
-        account = self.context['request'].user
+        account = self._get_account()
+        if not account:
+            raise serializers.ValidationError("Unable to verify account")
         if not check_password(value, account.password):
             raise serializers.ValidationError("Old password is incorrect")
         return value
+
+
+class VerifyCurrentPasswordSerializer(serializers.Serializer):
+    current_password = serializers.CharField(write_only=True)
+
+    def validate_current_password(self, value):
+        account = self.context.get('account')
+        if not account or not check_password(value, account.password):
+            raise serializers.ValidationError("Current password is incorrect")
+        return value
+
+
+class ChangeEmailSerializer(serializers.Serializer):
+    new_email = serializers.EmailField()
+    current_password = serializers.CharField(write_only=True)
+    update_shop_email = serializers.BooleanField(required=False, default=True)
+
+    def validate_current_password(self, value):
+        account = self.context.get('account')
+        if not account or not check_password(value, account.password):
+            raise serializers.ValidationError("Current password is incorrect")
+        return value
+
+    def validate_new_email(self, value):
+        account = self.context.get('account')
+        normalized_value = value.strip().lower()
+
+        if account and account.email and account.email.strip().lower() == normalized_value:
+            raise serializers.ValidationError("New email must be different from your current email")
+
+        if Account.objects.filter(email__iexact=normalized_value).exists():
+            raise serializers.ValidationError("Email is already registered")
+
+        return normalized_value
 
 
 class PasswordResetRequestSerializer(serializers.Serializer):
