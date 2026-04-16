@@ -8,13 +8,27 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  StyleSheet,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { FontAwesome } from '@expo/vector-icons';
-import { styles } from '../../style/auth/forgotPasswordStyles';
-import { useNotification } from '@/hooks/useNotification';
+import Toast from '@/components/gen/Toast';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
+
+// ─── Theme ────────────────────────────────────────────────────────────────────
+const ORANGE  = '#F97316';
+const BG      = '#121212';
+const SURFACE = '#1E1E1E';
+const BORDER  = '#2C2C2C';
+const TEXT    = '#F5F5F5';
+const MUTED   = '#9A9A9A';
+
+const STAGE_LABELS: Record<number, string> = {
+  1: '1/3 Email',
+  2: '2/3 Verification',
+  3: '3/3 New Password',
+};
 
 type ErrorPayload = {
   error?: string;
@@ -28,8 +42,13 @@ type ErrorPayload = {
 
 export default function ForgotPasswordScreen() {
   const router = useRouter();
-  const { showNotification } = useNotification();
 
+  // ── Toast (replaces useNotification) ──────────────────────────────────────
+  const [toast, setToast] = useState({ visible: false, message: '' });
+  const showToast = (msg: string) => setToast({ visible: true, message: msg });
+  const hideToast = () => setToast(t => ({ ...t, visible: false }));
+
+  // ── Step state ─────────────────────────────────────────────────────────────
   const [step, setStep] = useState<1 | 2 | 3>(1);
 
   const [email, setEmail] = useState('');
@@ -48,28 +67,24 @@ export default function ForgotPasswordScreen() {
 
   const canSendCode = useMemo(() => !!email.trim() && !sendingCode, [email, sendingCode]);
 
+  // ── Error extractor ────────────────────────────────────────────────────────
   const extractErrorMessage = (data: ErrorPayload, fallback: string) => {
     const firstSerializerError =
       data?.email?.[0] ||
       data?.reset_token?.[0] ||
       data?.new_password?.[0] ||
       data?.password?.[0];
-
     return firstSerializerError || data?.error || data?.message || fallback;
   };
 
+  // ── Stage 1: Send code ─────────────────────────────────────────────────────
   const handleSendCode = async () => {
     if (!email.trim()) {
-      showNotification({ type: 'error', message: 'Please enter your Gmail address' });
+      showToast('Please enter your Gmail address.');
       return;
     }
-
     if (!API_URL) {
-      showNotification({
-        type: 'error',
-        title: 'Configuration Error',
-        message: 'API URL is not configured. Please check your .env file.',
-      });
+      showToast('API URL is not configured. Please check your .env file.');
       return;
     }
 
@@ -77,10 +92,7 @@ export default function ForgotPasswordScreen() {
     try {
       const response = await fetch(`${API_URL}/users/password/reset/request/`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({ email: email.trim() }),
       });
 
@@ -91,46 +103,31 @@ export default function ForgotPasswordScreen() {
         setStep(2);
         setVerifiedToken('');
         setResetCode('');
-        showNotification({
-          type: 'success',
-          message: 'Reset code sent. Please check your Gmail.',
-        });
+        showToast('Reset code sent. Please check your Gmail.');
       } else {
-        const msg = extractErrorMessage(data, 'Failed to send reset code');
-        if (msg.toLowerCase().includes('no account found')) {
-          showNotification({ type: 'error', message: 'This Gmail is not registered' });
-        } else {
-          showNotification({ type: 'error', message: msg });
-        }
+        const msg = extractErrorMessage(data, 'Failed to send reset code.');
+        showToast(msg.toLowerCase().includes('no account found') ? 'This Gmail is not registered.' : msg);
       }
     } catch (error) {
       console.error('Send reset code error:', error);
-      showNotification({
-        type: 'error',
-        message: 'Connection failed. Please check your network.',
-      });
+      showToast('Connection failed. Please check your network.');
     } finally {
       setSendingCode(false);
     }
   };
 
+  // ── Stage 2: Verify code ───────────────────────────────────────────────────
   const handleVerifyCode = async () => {
     if (!resetCode.trim()) {
-      showNotification({ type: 'error', message: 'Please enter the verification code' });
+      showToast('Please enter the verification code.');
       return;
     }
-
     if (resetCode.trim().length !== 6) {
-      showNotification({ type: 'error', message: 'Verification code must be 6 digits' });
+      showToast('Verification code must be 6 digits.');
       return;
     }
-
     if (!API_URL) {
-      showNotification({
-        type: 'error',
-        title: 'Configuration Error',
-        message: 'API URL is not configured. Please check your .env file.',
-      });
+      showToast('API URL is not configured. Please check your .env file.');
       return;
     }
 
@@ -138,10 +135,7 @@ export default function ForgotPasswordScreen() {
     try {
       const response = await fetch(`${API_URL}/users/password/reset/verify/`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({ reset_token: resetCode.trim() }),
       });
 
@@ -150,30 +144,27 @@ export default function ForgotPasswordScreen() {
       if (response.ok) {
         setVerifiedToken(resetCode.trim());
         setStep(3);
-        showNotification({ type: 'success', message: 'Code verified. Set your new password.' });
+        showToast('Code verified. Set your new password.');
       } else {
-        const msg = extractErrorMessage(data, 'Invalid or expired verification code');
-        showNotification({ type: 'error', message: msg });
+        const msg = extractErrorMessage(data, 'Invalid or expired verification code.');
+        showToast(msg);
       }
     } catch (error) {
       console.error('Verify reset code error:', error);
-      showNotification({
-        type: 'error',
-        message: 'Connection failed. Please check your network.',
-      });
+      showToast('Connection failed. Please check your network.');
     } finally {
       setVerifyingCode(false);
     }
   };
 
+  // ── Stage 3: Reset password ────────────────────────────────────────────────
   const handleResetPassword = async () => {
     if (!verifiedToken || !newPassword || !confirmPassword) {
-      showNotification({ type: 'error', message: 'Please fill in all reset fields' });
+      showToast('Please fill in all reset fields.');
       return;
     }
-
     if (newPassword !== confirmPassword) {
-      showNotification({ type: 'error', message: 'Passwords do not match' });
+      showToast('Passwords do not match.');
       return;
     }
 
@@ -181,10 +172,7 @@ export default function ForgotPasswordScreen() {
     try {
       const response = await fetch(`${API_URL}/users/password/reset/confirm/`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({
           reset_token: verifiedToken,
           new_password: newPassword,
@@ -195,10 +183,7 @@ export default function ForgotPasswordScreen() {
       const data = (await response.json()) as ErrorPayload;
 
       if (response.ok) {
-        showNotification({
-          type: 'success',
-          message: 'Password reset successful. Please login.',
-        });
+        showToast('Password reset successful. Please login.');
         setStep(1);
         setCodeSent(false);
         setVerifiedToken('');
@@ -209,199 +194,255 @@ export default function ForgotPasswordScreen() {
           router.replace('/(auth)/login');
         }, 900);
       } else {
-        const msg = extractErrorMessage(data, 'Password reset failed');
-        showNotification({ type: 'error', message: msg });
+        const msg = extractErrorMessage(data, 'Password reset failed.');
+        showToast(msg);
       }
     } catch (error) {
       console.error('Reset password error:', error);
-      showNotification({
-        type: 'error',
-        message: 'Connection failed. Please check your network.',
-      });
+      showToast('Connection failed. Please check your network.');
     } finally {
       setResettingPassword(false);
     }
   };
 
-  const stepTitle = step === 1 ? '1/3 Email' : step === 2 ? '2/3 Verification' : '3/3 New Password';
-  const stepSubtitle =
-    step === 1
-      ? 'Enter your Gmail to receive a reset code.'
-      : step === 2
-      ? 'Enter the 6-digit verification code from your email.'
-      : 'Create and confirm your new password.';
+  // ── Render stages ──────────────────────────────────────────────────────────
+  const renderStage = () => {
+    switch (step) {
+      case 1:
+        return (
+          <>
+            <Text style={s.label}>Gmail Address</Text>
+            <View style={s.inputWrapper}>
+              <TextInput
+                style={s.input}
+                placeholder="Enter your Gmail"
+                placeholderTextColor={MUTED}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                value={email}
+                onChangeText={setEmail}
+                editable={!sendingCode}
+              />
+            </View>
+
+            <TouchableOpacity
+              style={[s.button, !canSendCode && s.btnDisabled, { marginTop: 20 }]}
+              onPress={handleSendCode}
+              disabled={!canSendCode}
+            >
+              {sendingCode ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={s.btnText}>{codeSent ? 'Resend Code' : 'Send Code'}</Text>
+              )}
+            </TouchableOpacity>
+          </>
+        );
+
+      case 2:
+        return (
+          <>
+            <Text style={s.label}>Verification Code</Text>
+            <View style={s.inputWrapper}>
+              <TextInput
+                style={s.input}
+                placeholder="Enter 6-digit code"
+                placeholderTextColor={MUTED}
+                keyboardType="number-pad"
+                maxLength={6}
+                value={resetCode}
+                onChangeText={setResetCode}
+                editable={!verifyingCode}
+              />
+            </View>
+
+            <TouchableOpacity
+              style={[s.button, verifyingCode && s.btnDisabled, { marginTop: 20 }]}
+              onPress={handleVerifyCode}
+              disabled={verifyingCode}
+            >
+              {verifyingCode ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={s.btnText}>Verify Code</Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[s.buttonOutline, { marginTop: 12 }, verifyingCode && s.btnDisabled]}
+              onPress={() => setStep(1)}
+              disabled={verifyingCode}
+            >
+              <Text style={s.btnOutlineText}>Back to Email</Text>
+            </TouchableOpacity>
+          </>
+        );
+
+      case 3:
+        return (
+          <>
+            <Text style={s.label}>New Password</Text>
+            <View style={s.inputWrapper}>
+              <TextInput
+                style={s.input}
+                placeholder="Enter new password"
+                placeholderTextColor={MUTED}
+                secureTextEntry={!showNewPassword}
+                autoCapitalize="none"
+                value={newPassword}
+                onChangeText={setNewPassword}
+                editable={!resettingPassword}
+              />
+              <TouchableOpacity
+                style={s.eyeButton}
+                onPress={() => setShowNewPassword(v => !v)}
+              >
+                <FontAwesome
+                  name={showNewPassword ? 'eye-slash' : 'eye'}
+                  size={16}
+                  color={MUTED}
+                />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={[s.label, { marginTop: 12 }]}>Confirm New Password</Text>
+            <View style={s.inputWrapper}>
+              <TextInput
+                style={s.input}
+                placeholder="Re-enter new password"
+                placeholderTextColor={MUTED}
+                secureTextEntry={!showConfirmPassword}
+                autoCapitalize="none"
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                editable={!resettingPassword}
+              />
+              <TouchableOpacity
+                style={s.eyeButton}
+                onPress={() => setShowConfirmPassword(v => !v)}
+              >
+                <FontAwesome
+                  name={showConfirmPassword ? 'eye-slash' : 'eye'}
+                  size={16}
+                  color={MUTED}
+                />
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              style={[s.button, resettingPassword && s.btnDisabled, { marginTop: 20 }]}
+              onPress={handleResetPassword}
+              disabled={resettingPassword}
+            >
+              {resettingPassword ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={s.btnText}>Reset Password</Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[s.buttonOutline, { marginTop: 12 }, resettingPassword && s.btnDisabled]}
+              onPress={() => setStep(2)}
+              disabled={resettingPassword}
+            >
+              <Text style={s.btnOutlineText}>Back to Verification</Text>
+            </TouchableOpacity>
+          </>
+        );
+
+      default:
+        return null;
+    }
+  };
 
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
+      style={s.container}
     >
-      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
-        <View style={styles.header}>
-          <Text style={styles.title}>Forgot Password</Text>
-          <Text style={styles.subtitle}>{stepTitle}</Text>
-          <Text style={styles.subtitleSecondary}>{stepSubtitle}</Text>
+      <Toast message={toast.message} visible={toast.visible} onHide={hideToast} />
+
+      <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
+
+        {/* Header */}
+        <View style={s.headerRow}>
+          <Text style={s.title}>Forgot Password</Text>
+          <Text style={s.subtitle}>Ohh no, you forgot your password? Don't worry.</Text>
         </View>
 
-        <View style={styles.card}>
-          <View style={styles.stepIndicatorRow}>
-            <View style={[styles.stepBadge, step >= 1 && styles.stepBadgeActive]}>
-              <Text style={[styles.stepBadgeText, step >= 1 && styles.stepBadgeTextActive]}>1</Text>
-            </View>
-            <View style={[styles.stepLine, step >= 2 && styles.stepLineActive]} />
-            <View style={[styles.stepBadge, step >= 2 && styles.stepBadgeActive]}>
-              <Text style={[styles.stepBadgeText, step >= 2 && styles.stepBadgeTextActive]}>2</Text>
-            </View>
-            <View style={[styles.stepLine, step >= 3 && styles.stepLineActive]} />
-            <View style={[styles.stepBadge, step >= 3 && styles.stepBadgeActive]}>
-              <Text style={[styles.stepBadgeText, step >= 3 && styles.stepBadgeTextActive]}>3</Text>
-            </View>
+        {/* Stage label */}
+        <Text style={s.stageLabel}>{STAGE_LABELS[step]}</Text>
+
+        {/* Form */}
+        <View style={s.form}>
+          {renderStage()}
+
+          {/* Back to Login */}
+          <View style={s.loginRow}>
+            <Text style={s.loginBase}>Remember the password? </Text>
+            <TouchableOpacity onPress={() => router.replace('/(auth)/login')}>
+              <Text style={s.loginLink}>Login</Text>
+            </TouchableOpacity>
           </View>
-
-          {step === 1 && (
-            <>
-              <View style={styles.inputContainer}>
-                <Text style={styles.label}>Gmail Address</Text>
-                <View style={styles.inputWrapper}>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Enter your Gmail"
-                    placeholderTextColor="#8E8E93"
-                    autoCapitalize="none"
-                    keyboardType="email-address"
-                    value={email}
-                    onChangeText={setEmail}
-                    editable={!sendingCode && !resettingPassword}
-                  />
-                </View>
-              </View>
-
-              <TouchableOpacity
-                style={[styles.buttonPrimary, !canSendCode && styles.buttonDisabled]}
-                onPress={handleSendCode}
-                disabled={!canSendCode}
-              >
-                {sendingCode ? (
-                  <ActivityIndicator color="#111214" />
-                ) : (
-                  <Text style={styles.buttonPrimaryText}>{codeSent ? 'Resend Code' : 'Send Code'}</Text>
-                )}
-              </TouchableOpacity>
-            </>
-          )}
-
-          {step === 2 && (
-            <>
-              <View style={styles.inputContainer}>
-                <Text style={styles.label}>Verification Code</Text>
-                <View style={styles.inputWrapper}>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Enter 6-digit code"
-                    placeholderTextColor="#8E8E93"
-                    keyboardType="number-pad"
-                    maxLength={6}
-                    value={resetCode}
-                    onChangeText={setResetCode}
-                    editable={!verifyingCode}
-                  />
-                </View>
-              </View>
-
-              <TouchableOpacity
-                style={[styles.buttonPrimary, verifyingCode && styles.buttonDisabled]}
-                onPress={handleVerifyCode}
-                disabled={verifyingCode}
-              >
-                {verifyingCode ? (
-                  <ActivityIndicator color="#111214" />
-                ) : (
-                  <Text style={styles.buttonPrimaryText}>Verify Code</Text>
-                )}
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.buttonSecondary}
-                onPress={() => setStep(1)}
-                disabled={verifyingCode}
-              >
-                <Text style={styles.buttonSecondaryText}>Back to Email</Text>
-              </TouchableOpacity>
-            </>
-          )}
-
-          {step === 3 && (
-            <>
-              <View style={styles.verifiedCodeRow}>
-                <Text style={styles.verifiedCodeLabel}>Verified Code</Text>
-                <Text style={styles.verifiedCodeValue}>{verifiedToken}</Text>
-              </View>
-
-              <View style={styles.inputContainer}>
-                <Text style={styles.label}>New Password</Text>
-                <View style={styles.inputWrapper}>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Enter new password"
-                    placeholderTextColor="#8E8E93"
-                    secureTextEntry={!showNewPassword}
-                    autoCapitalize="none"
-                    value={newPassword}
-                    onChangeText={setNewPassword}
-                    editable={!resettingPassword}
-                  />
-                  <TouchableOpacity style={styles.eyeButton} onPress={() => setShowNewPassword((v) => !v)}>
-                    <FontAwesome name={showNewPassword ? 'eye-slash' : 'eye'} size={16} color="#8E8E93" />
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              <View style={styles.inputContainer}>
-                <Text style={styles.label}>Confirm New Password</Text>
-                <View style={styles.inputWrapper}>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Re-enter new password"
-                    placeholderTextColor="#8E8E93"
-                    secureTextEntry={!showConfirmPassword}
-                    autoCapitalize="none"
-                    value={confirmPassword}
-                    onChangeText={setConfirmPassword}
-                    editable={!resettingPassword}
-                  />
-                  <TouchableOpacity style={styles.eyeButton} onPress={() => setShowConfirmPassword((v) => !v)}>
-                    <FontAwesome name={showConfirmPassword ? 'eye-slash' : 'eye'} size={16} color="#8E8E93" />
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              <TouchableOpacity
-                style={[styles.buttonPrimary, resettingPassword && styles.buttonDisabled]}
-                onPress={handleResetPassword}
-                disabled={resettingPassword}
-              >
-                {resettingPassword ? (
-                  <ActivityIndicator color="#111214" />
-                ) : (
-                  <Text style={styles.buttonPrimaryText}>Reset Password</Text>
-                )}
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.buttonSecondary}
-                onPress={() => setStep(2)}
-                disabled={resettingPassword}
-              >
-                <Text style={styles.buttonSecondaryText}>Back to Verification</Text>
-              </TouchableOpacity>
-            </>
-          )}
-
-          <TouchableOpacity style={styles.backToLogin} onPress={() => router.replace('/(auth)/login')}>
-            <Text style={styles.backToLoginText}>Back to Login</Text>
-          </TouchableOpacity>
         </View>
+
+        <Text style={s.copyright}>© 2025 MechConnect. All rights reserved.</Text>
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
+
+const s = StyleSheet.create({
+  container:  { flex: 1, backgroundColor: BG },
+  scroll:     { flexGrow: 1, paddingHorizontal: 24, paddingTop: 64, paddingBottom: 24 },
+
+  headerRow:  { marginBottom: 24 },
+  title:      { fontSize: 16, fontWeight: '600', color: TEXT, marginBottom: 6 },
+  subtitle:   { fontSize: 14, fontWeight: '400', color: MUTED },
+
+  stageLabel: { fontSize: 14, fontWeight: '600', color: TEXT, marginBottom: 20 },
+
+  form:       { flex: 1 },
+  label:      { fontSize: 12, fontWeight: '400', color: MUTED, marginBottom: 6 },
+  hint:       { fontSize: 11, fontWeight: '300', color: MUTED, marginTop: 4 },
+
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    height: 42,
+    backgroundColor: SURFACE,
+  },
+  input:          { flex: 1, fontSize: 14, fontWeight: '400', color: TEXT },
+  eyeButton:      { paddingLeft: 8 },
+
+  button: {
+    height: 42,
+    backgroundColor: ORANGE,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  btnDisabled:    { opacity: 0.6 },
+  btnText:        { fontSize: 14, fontWeight: '400', color: '#fff' },
+
+  buttonOutline: {
+    height: 42,
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  btnOutlineText: { fontSize: 14, fontWeight: '400', color: TEXT },
+
+  loginRow:   { flexDirection: 'row', justifyContent: 'center', marginTop: 24 },
+  loginBase:  { fontSize: 12, fontWeight: '400', color: MUTED },
+  loginLink:  { fontSize: 12, fontWeight: '600', color: ORANGE },
+
+  copyright:  { fontSize: 12, fontWeight: '300', color: MUTED, textAlign: 'center', marginTop: 32 },
+});
