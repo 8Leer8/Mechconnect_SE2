@@ -17,9 +17,10 @@ export default function RootLayout() {
 
   useEffect(() => {
     const handleDeepLink = ({ url }: { url: string }) => {
-      if (url === 'mechconnect://payment/success') {
+      const normalizedUrl = String(url || '').toLowerCase();
+      if (normalizedUrl.startsWith('mechconnect://payment/success')) {
         router.push('/payment/success');
-      } else if (url === 'mechconnect://payment/failed') {
+      } else if (normalizedUrl.startsWith('mechconnect://payment/failed')) {
         router.push('/payment/failed');
       }
     };

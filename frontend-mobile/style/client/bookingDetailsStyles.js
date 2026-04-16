@@ -92,6 +92,38 @@ export const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 40,
   },
+  scrollContentWithFloatingAction: {
+    paddingBottom: 140,
+  },
+  actionButtonsContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#1A1C1E',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  finishLargeButton: {
+    backgroundColor: '#FF8C00',
+    borderRadius: 12,
+    paddingVertical: 16,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  actionButtonText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#fff',
+  },
   // Status Card
   statusCard: {
     flexDirection: 'row',

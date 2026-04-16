@@ -770,7 +770,10 @@ export default function ClientBookingDetailScreen() {
 
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          booking.status === 'pending_payment' ? styles.scrollContentWithFloatingAction : null,
+        ]}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF8C00" />
@@ -899,23 +902,6 @@ export default function ClientBookingDetailScreen() {
             </View>
             <View style={styles.tapHintContainer}>
               <ThemedText style={styles.tapHintText}>Tap to view shop profile</ThemedText>
-            </View>
-          </TouchableOpacity>
-        )}
-
-
-
-        {booking.status === 'pending_payment' && (
-          <TouchableOpacity style={styles.sectionCard} activeOpacity={0.7} onPress={() => setShowPaymentModal(true)}>
-            <View style={styles.sectionHeader}>
-              <View style={[styles.sectionIcon, { backgroundColor: '#FFD60A15' }]}> 
-                <FontAwesome name="money" size={16} color="#FFD60A" />
-              </View>
-              <ThemedText style={styles.sectionTitle}>Payment</ThemedText>
-              <FontAwesome name="chevron-right" size={16} color="#8E8E93" style={{ marginLeft: 'auto' }} />
-            </View>
-            <View style={{ paddingVertical: 8 }}>
-              <ThemedText style={{ color: '#666' }}>Payment is pending. Tap here to proceed with payment.</ThemedText>
             </View>
           </TouchableOpacity>
         )}
@@ -1449,6 +1435,15 @@ export default function ClientBookingDetailScreen() {
         </Modal>
 
       </ScrollView>
+
+      {booking.status === 'pending_payment' && (
+        <View style={styles.actionButtonsContainer}>
+          <TouchableOpacity style={styles.finishLargeButton} onPress={() => setShowPaymentModal(true)}>
+            <FontAwesome name="credit-card" size={16} color="#fff" style={{ marginRight: 8 }} />
+            <ThemedText style={styles.actionButtonText}>Proceed to Payment</ThemedText>
+          </TouchableOpacity>
+        </View>
+      )}
 
       <PaymentMethodModal
         visible={showPaymentModal && booking.status === 'pending_payment'}

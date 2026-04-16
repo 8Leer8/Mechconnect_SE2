@@ -10,6 +10,7 @@ from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.conf import settings
 from django.db import DatabaseError, NotSupportedError, transaction
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
@@ -23,6 +24,16 @@ from ...models import Booking, PaymentQRToken, Receipt
 
 
 logger = logging.getLogger(__name__)
+
+
+def _build_paymongo_redirect_urls():
+    base_url = str(getattr(settings, "PAYMONGO_REDIRECT_BASE_URL", "") or "").rstrip("/")
+    if not base_url.startswith("https://"):
+        raise ValueError("PAYMONGO_REDIRECT_BASE_URL must be an https URL")
+    return (
+        f"{base_url}/api/bookings/payments/redirect/success/",
+        f"{base_url}/api/bookings/payments/redirect/failed/",
+    )
 
 
 def _get_authenticated_account(request):
@@ -81,6 +92,8 @@ def create_paymongo_source(amount, payment_method, booking_id):
         "maya": "paymaya",
     }
 
+    success_redirect, failed_redirect = _build_paymongo_redirect_urls()
+
     payload = {
         "data": {
             "attributes": {
@@ -88,8 +101,8 @@ def create_paymongo_source(amount, payment_method, booking_id):
                 "currency": "PHP",
                 "type": type_map[payment_method],
                 "redirect": {
-                    "success": "mechconnect://payment/success",
-                    "failed": "mechconnect://payment/failed",
+                    "success": success_redirect,
+                    "failed": failed_redirect,
                 },
                 "metadata": {
                     "booking_id": str(booking_id),
@@ -110,6 +123,180 @@ def create_paymongo_source(amount, payment_method, booking_id):
     response.raise_for_status()
     data = response.json()
     return data["data"]["attributes"]["redirect"]["checkout_url"]
+
+
+def create_paymongo_maya_intent(amount, booking_id):
+    """Creates PayMongo Payment Intent + Payment Method for Maya (paymaya)."""
+    secret_key = settings.PAYMONGO_SECRET_KEY
+    encoded_key = base64.b64encode(f"{secret_key}:".encode()).decode()
+    headers = {
+        "Authorization": f"Basic {encoded_key}",
+        "Content-Type": "application/json",
+    }
+
+    amount_centavos = int(Decimal(amount) * 100)
+    success_redirect, failed_redirect = _build_paymongo_redirect_urls()
+
+    # Step 1: Create Payment Intent
+    intent_payload = {
+        "data": {
+            "attributes": {
+                "amount": amount_centavos,
+                "currency": "PHP",
+                "payment_method_allowed": ["paymaya"],
+                "metadata": {
+                    "booking_id": str(booking_id),
+                },
+            }
+        }
+    }
+    intent_response = requests.post(
+        "https://api.paymongo.com/v1/payment_intents",
+        json=intent_payload,
+        headers=headers,
+        timeout=25,
+    )
+    intent_response.raise_for_status()
+    intent_data = intent_response.json()
+    intent_id = intent_data["data"]["id"]
+    intent_client_key = intent_data["data"]["attributes"]["client_key"]
+
+    # Step 2: Create Payment Method
+    method_payload = {
+        "data": {
+            "attributes": {
+                "type": "paymaya",
+            }
+        }
+    }
+    method_response = requests.post(
+        "https://api.paymongo.com/v1/payment_methods",
+        json=method_payload,
+        headers=headers,
+        timeout=25,
+    )
+    method_response.raise_for_status()
+    method_data = method_response.json()
+    method_id = method_data["data"]["id"]
+
+    # Step 3: Attach Payment Method to Intent
+    attach_payload = {
+        "data": {
+            "attributes": {
+                "payment_method": method_id,
+                "client_key": intent_client_key,
+                "return_url": success_redirect,
+            }
+        }
+    }
+    attach_response = requests.post(
+        f"https://api.paymongo.com/v1/payment_intents/{intent_id}/attach",
+        json=attach_payload,
+        headers=headers,
+        timeout=25,
+    )
+    attach_response.raise_for_status()
+    attach_data = attach_response.json()
+
+    # Step 4: Extract redirect URL
+    next_action = attach_data["data"]["attributes"].get("next_action") or {}
+    redirect_url = (next_action.get("redirect", {}) or {}).get("url")
+
+    if not redirect_url:
+        raise ValueError("No redirect URL returned from PayMongo Maya intent")
+
+    return redirect_url
+
+
+def _build_redirect_bridge_page(target_deep_link, status_label):
+    safe_target = str(target_deep_link)
+    safe_status = str(status_label)
+    return f"""<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MechConnect Payment {safe_status}</title>
+  </head>
+  <body style="font-family: Arial, sans-serif; margin: 24px;">
+    <h2>Payment {safe_status}</h2>
+    <p>Returning you to MechConnect...</p>
+    <p><a href="{safe_target}">Tap here if app does not open</a></p>
+    <script>
+      window.location.href = "{safe_target}";
+    </script>
+  </body>
+</html>"""
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def payment_redirect_success(request):
+    html = _build_redirect_bridge_page("mechconnect://payment/success", "Successful")
+    return HttpResponse(html)
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def payment_redirect_failed(request):
+    html = _build_redirect_bridge_page("mechconnect://payment/failed", "Failed")
+    return HttpResponse(html)
+
+
+def create_paymongo_payment_from_source(source_id, amount_centavos, currency="PHP"):
+    """Charge a chargeable source (GCash/Maya) via PayMongo Payments API."""
+    secret_key = settings.PAYMONGO_SECRET_KEY
+    encoded_key = base64.b64encode(f"{secret_key}:".encode()).decode()
+
+    payload = {
+        "data": {
+            "attributes": {
+                "amount": int(amount_centavos),
+                "source": {
+                    "id": source_id,
+                    "type": "source",
+                },
+                "currency": currency or "PHP",
+            }
+        }
+    }
+
+    response = requests.post(
+        "https://api.paymongo.com/v1/payments",
+        json=payload,
+        headers={
+            "Authorization": f"Basic {encoded_key}",
+            "Content-Type": "application/json",
+        },
+        timeout=25,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def _extract_booking_id_from_paymongo_event(event_payload):
+    """Best-effort extraction of booking_id across different PayMongo event shapes."""
+    event_data = event_payload.get("data", {}) or {}
+    event_attributes = event_data.get("attributes", {}) or {}
+    resource = event_attributes.get("data", {}) or {}
+    resource_attributes = resource.get("attributes", {}) or {}
+
+    candidates = [
+        # Common source/payment metadata shape
+        resource_attributes.get("metadata", {}) or {},
+        # Payment object may include nested source with metadata
+        (
+            ((resource_attributes.get("source", {}) or {}).get("data", {}) or {})
+            .get("attributes", {}) or {}
+        ).get("metadata", {}) or {},
+    ]
+
+    for metadata in candidates:
+        booking_id = metadata.get("booking_id")
+        if booking_id is not None:
+            return booking_id
+
+    return None
 
 
 def trigger_disbursement(booking):
@@ -307,13 +494,19 @@ def initiate_payment(request):
         )
 
     try:
-        checkout_url = create_paymongo_source(
-            amount=total,
-            payment_method=payment_method,
-            booking_id=booking.id,
-        )
+        if payment_method == "maya":
+            checkout_url = create_paymongo_maya_intent(
+                amount=total,
+                booking_id=booking.id,
+            )
+        else:
+            checkout_url = create_paymongo_source(
+                amount=total,
+                payment_method=payment_method,
+                booking_id=booking.id,
+            )
     except Exception:
-        logger.exception("PayMongo source creation failed")
+        logger.exception("PayMongo source creation failed for method: %s", payment_method)
         return Response({"error": "Unable to initialize e-wallet payment"}, status=502)
 
     Receipt.objects.update_or_create(
@@ -502,38 +695,83 @@ def confirm_qr_payment(request):
 def paymongo_webhook(request):
     """Handle PayMongo webhooks with signature verification."""
     webhook_secret = settings.PAYMONGO_WEBHOOK_SECRET
-    signature = request.headers.get("Paymongo-Signature", "")
-    payload = request.body.decode("utf-8")
+    if not webhook_secret:
+        logger.error("PAYMONGO_WEBHOOK_SECRET is not configured")
+        return Response({"error": "Webhook is not configured"}, status=500)
+
+    signature_header = request.headers.get("Paymongo-Signature", "")
+    raw_body = request.body
+
+    # Parse "t=1234567890,v1=abcdef...,v1=..."
+    timestamp_value = ""
+    signature_values = []
+
+    for part in signature_header.split(","):
+        part = part.strip()
+        if part.startswith("t="):
+            timestamp_value = part[2:].strip()
+        elif part.startswith("te="):
+            value = part[3:].strip()
+            if value:
+                signature_values.append(value)
+        elif part.startswith("li="):
+            value = part[3:].strip()
+            if value:
+                signature_values.append(value)
+        elif part.startswith("v1="):
+            # fallback: keep for forward compatibility
+            value = part[3:].strip()
+            if value:
+                signature_values.append(value)       
+
+    if not timestamp_value or not signature_values:
+        logger.warning(
+            "PayMongo webhook: malformed signature header: %s",
+            signature_header,
+        )
+        return Response({"error": "Invalid signature"}, status=400)
+
+    # PayMongo signs exact bytes of: b"<timestamp>." + raw_body
+    signed_payload = timestamp_value.encode("utf-8") + b"." + raw_body
 
     computed = hmac.new(
-        webhook_secret.encode(),
-        payload.encode(),
+        webhook_secret.encode("utf-8"),
+        signed_payload,
         hashlib.sha256,
     ).hexdigest()
 
-    signature_value = signature
-    if "," in signature:
-        parts = [p.strip() for p in signature.split(",")]
-        for part in parts:
-            if part.startswith("v1="):
-                signature_value = part.replace("v1=", "", 1)
-                break
-
-    if not hmac.compare_digest(computed, signature_value):
+    if not any(hmac.compare_digest(computed, sig) for sig in signature_values):
+        logger.warning("PayMongo webhook: signature mismatch")
         return Response({"error": "Invalid signature"}, status=400)
 
-    event_type = request.data.get("data", {}).get("attributes", {}).get("type")
+    event_data = request.data.get("data", {}) or {}
+    event_attributes = event_data.get("attributes", {}) or {}
+    event_type = event_attributes.get("type")
+    resource = event_attributes.get("data", {}) or {}
+    resource_attributes = resource.get("attributes", {}) or {}
+
+    # For source-based e-wallet flow, source.chargeable must be charged by backend.
+    if event_type == "source.chargeable":
+        source_id = resource.get("id")
+        amount = resource_attributes.get("amount")
+        currency = resource_attributes.get("currency", "PHP")
+
+        if source_id and amount:
+            try:
+                create_paymongo_payment_from_source(
+                    source_id=source_id,
+                    amount_centavos=amount,
+                    currency=currency,
+                )
+            except requests.exceptions.HTTPError:
+                logger.exception("Failed to create PayMongo payment for source %s", source_id)
+                return Response({"error": "Unable to charge source"}, status=502)
+            except Exception:
+                logger.exception("Unexpected error while charging PayMongo source %s", source_id)
+                return Response({"error": "Unable to charge source"}, status=500)
 
     if event_type == "payment.paid":
-        metadata = (
-            request.data.get("data", {})
-            .get("attributes", {})
-            .get("data", {})
-            .get("attributes", {})
-            .get("metadata", {})
-        )
-
-        booking_id = metadata.get("booking_id")
+        booking_id = _extract_booking_id_from_paymongo_event(request.data)
         if booking_id:
             try:
                 booking = Booking.objects.select_related("receipt").get(id=booking_id)
@@ -544,8 +782,46 @@ def paymongo_webhook(request):
                 receipt, _ = Receipt.objects.get_or_create(booking=booking)
                 receipt.payment_received = True
                 receipt.paid_at = timezone.now()
-                receipt.ewallet_source_id = request.data.get("data", {}).get("id")
-                receipt.save(update_fields=["payment_received", "paid_at", "ewallet_source_id"])
+                # Keep source id when available; fallback to object id to retain external traceability.
+                source_obj = (resource_attributes.get("source", {}) or {}).get("data", {}) or {}
+                source_id = source_obj.get("id")
+                receipt.ewallet_source_id = source_id or receipt.ewallet_source_id
+                receipt.transaction_id = resource.get("id") or receipt.transaction_id
+                receipt.save(
+                    update_fields=[
+                        "payment_received",
+                        "paid_at",
+                        "ewallet_source_id",
+                        "transaction_id",
+                    ]
+                )
+
+                booking.status = Booking.Status.COMPLETED
+                booking.completed_at = timezone.now()
+                booking.save(update_fields=["status", "completed_at"])
+
+                trigger_disbursement(booking)
+                notify_payment_completed(booking)
+
+    if event_type == "payment_intent.succeeded":
+        booking_id = _extract_booking_id_from_paymongo_event(request.data)
+        if not booking_id:
+            # Try extracting from payment intent metadata directly.
+            resource_metadata = resource_attributes.get("metadata", {}) or {}
+            booking_id = resource_metadata.get("booking_id")
+
+        if booking_id:
+            try:
+                booking = Booking.objects.select_related("receipt").get(id=booking_id)
+            except Booking.DoesNotExist:
+                return Response({"received": True})
+
+            if booking.status == Booking.Status.PENDING_PAYMENT:
+                receipt, _ = Receipt.objects.get_or_create(booking=booking)
+                receipt.payment_received = True
+                receipt.paid_at = timezone.now()
+                receipt.transaction_id = resource.get("id") or receipt.transaction_id
+                receipt.save(update_fields=["payment_received", "paid_at", "transaction_id"])
 
                 booking.status = Booking.Status.COMPLETED
                 booking.completed_at = timezone.now()

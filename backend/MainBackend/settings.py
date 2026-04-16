@@ -228,6 +228,10 @@ TOMTOM_API_KEY = os.getenv('TOMTOM_API_KEY', os.getenv('EXPO_PUBLIC_TOMTOM_API_K
 PAYMONGO_SECRET_KEY = os.getenv('PAYMONGO_SECRET_KEY', '')
 PAYMONGO_PUBLIC_KEY = os.getenv('PAYMONGO_PUBLIC_KEY', '')
 PAYMONGO_WEBHOOK_SECRET = os.getenv('PAYMONGO_WEBHOOK_SECRET', '')
+PAYMONGO_REDIRECT_BASE_URL = os.getenv(
+    'PAYMONGO_REDIRECT_BASE_URL',
+    'https://mechconnectse2-production.up.railway.app',
+)
 
 # Supabase Storage Configuration
 USE_S3 = os.environ.get("USE_S3", "False") == "True"
