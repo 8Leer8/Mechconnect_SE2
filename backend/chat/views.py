@@ -10,6 +10,7 @@ from users.models import Account
 from django.db.models import Prefetch
 from bookings.models import Booking
 from bookings.models import Backjob
+from .permissions import evaluate_booking_chat_access, sync_booking_conversation_participants
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 import json
@@ -44,7 +45,7 @@ def list_conversations(request):
         'participants',
         Prefetch('messages', queryset=Message.objects.order_by('-created_at')[:1]),
     )
-    serializer = ConversationSerializer(qs, many=True)
+    serializer = ConversationSerializer(qs, many=True, context={'request': request})
     return Response(serializer.data)
 
 
@@ -60,59 +61,86 @@ def conversation_for_booking(request, booking_id):
     if not account:
         return Response({'detail': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
 
+    try:
+        booking = Booking.objects.select_related(
+            'request',
+            'request__client',
+            'request__client__account',
+            'request__provider',
+            'request__shop',
+            'request__shop__shop_owner',
+            'request__shop__shop_owner__account',
+        ).get(id=booking_id)
+    except Booking.DoesNotExist:
+        return Response({'detail': 'Booking not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    access = evaluate_booking_chat_access(booking, account)
+    if not access.get('is_participant'):
+        return Response({'detail': 'Not a participant'}, status=status.HTTP_403_FORBIDDEN)
+
     # Try find existing conversation
     conv = Conversation.objects.filter(booking_id=booking_id).first()
     if request.method == 'GET':
         if not conv:
             return Response({'detail': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+        sync_booking_conversation_participants(conv, booking)
         if not conv.participants.filter(id=account.id).exists():
-            return Response({'detail': 'Not a participant'}, status=status.HTTP_403_FORBIDDEN)
-        return Response(ConversationSerializer(conv).data)
+            conv.participants.add(account)
+        return Response(ConversationSerializer(conv, context={'request': request}).data)
 
     # POST - create if not exists
     if conv:
-        # already exists: allow auto-joining when the requester is associated with the booking
+        # already exists: keep participants in sync with booking roles/assignments
+        sync_booking_conversation_participants(conv, booking)
         if conv.participants.filter(id=account.id).exists():
-            return Response(ConversationSerializer(conv).data)
-
-        # Determine if requester is permitted to join this booking conversation
-        try:
-            booking = Booking.objects.select_related('request', 'request__client', 'request__provider', 'request__shop', 'request__shop__shop_owner', 'request__client__account').get(id=booking_id)
-        except Booking.DoesNotExist:
-            return Response({'detail': 'Not a participant'}, status=status.HTTP_403_FORBIDDEN)
-
-        permitted = False
-        # client account
-        try:
-            client_account = booking.request.client.account
-            if client_account and client_account.id == account.id:
-                permitted = True
-        except Exception:
-            pass
-
-        # direct provider (mechanic) assigned to request
-        if not permitted and booking.request.provider and booking.request.provider.id == account.id:
-            permitted = True
-
-        # shop owner (if booking attached to shop)
-        try:
-            if not permitted and booking.request.shop and booking.request.shop.shop_owner and booking.request.shop.shop_owner.account.id == account.id:
-                permitted = True
-        except Exception:
-            pass
-
-        if permitted:
-            conv.participants.add(account)
-            conv.save()
-            return Response(ConversationSerializer(conv).data)
-
-        return Response({'detail': 'Not a participant'}, status=status.HTTP_403_FORBIDDEN)
+            return Response(ConversationSerializer(conv, context={'request': request}).data)
+        conv.participants.add(account)
+        conv.save()
+        return Response(ConversationSerializer(conv, context={'request': request}).data)
 
     # create conversation for this booking, starting with the current user as participant
     conv = Conversation.objects.create(title=request.data.get('title', None), booking_id=booking_id)
+    sync_booking_conversation_participants(conv, booking)
     conv.participants.add(account)
     conv.save()
-    return Response(ConversationSerializer(conv).data, status=status.HTTP_201_CREATED)
+    return Response(ConversationSerializer(conv, context={'request': request}).data, status=status.HTTP_201_CREATED)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def booking_chat_access(request, booking_id):
+    """
+    Return booking-chat role/access metadata without creating or mutating conversations.
+    """
+    account = get_current_account(request)
+    if not account:
+        return Response({'detail': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        booking = Booking.objects.select_related(
+            'request',
+            'request__client',
+            'request__client__account',
+            'request__provider',
+            'request__shop',
+            'request__shop__shop_owner',
+            'request__shop__shop_owner__account',
+        ).get(id=booking_id)
+    except Booking.DoesNotExist:
+        return Response({'detail': 'Booking not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    access = evaluate_booking_chat_access(booking, account)
+    conv = Conversation.objects.filter(booking_id=booking_id).first()
+    return Response(
+        {
+            'booking_id': booking_id,
+            'conversation_id': conv.id if conv else None,
+            'my_chat_role': access.get('role', 'none'),
+            'can_send': bool(access.get('can_send')),
+            'is_participant': bool(access.get('is_participant')),
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 @api_view(['POST'])
@@ -131,7 +159,7 @@ def create_conversation(request):
     conv = Conversation.objects.create(title=request.data.get('title', None))
     conv.participants.add(*Account.objects.filter(id__in=participant_ids))
     conv.save()
-    serializer = ConversationSerializer(conv)
+    serializer = ConversationSerializer(conv, context={'request': request})
     return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
@@ -264,25 +292,57 @@ def messages_view(request, pk):
     if not conv.participants.filter(id=account.id).exists():
         return Response({'detail': 'Not a participant'}, status=status.HTTP_403_FORBIDDEN)
 
+    can_send = True
+    booking = None
+    if conv.booking_id:
+        try:
+            booking = Booking.objects.select_related(
+                'request',
+                'request__client',
+                'request__client__account',
+                'request__provider',
+                'request__shop',
+                'request__shop__shop_owner',
+                'request__shop__shop_owner__account',
+            ).get(id=conv.booking_id)
+        except Booking.DoesNotExist:
+            return Response({'detail': 'Booking not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        access = evaluate_booking_chat_access(booking, account)
+        if not access.get('is_participant'):
+            return Response({'detail': 'Not a participant'}, status=status.HTTP_403_FORBIDDEN)
+        can_send = bool(access.get('can_send'))
+
     if request.method == 'GET':
         qs = conv.messages.select_related('sender').order_by('created_at')
+        if booking:
+            setattr(conv, '_booking_obj', booking)
         # optional auto-mark read via query param
         mark = request.query_params.get('mark_read')
         if mark and mark.lower() in ('1', 'true', 'yes'):
             # mark unread messages not sent by current account as read
             conv.messages.filter(is_read=False).exclude(sender=account).update(is_read=True)
-        serializer = MessageSerializer(qs, many=True, context={'request': request})
+        serializer = MessageSerializer(
+            qs,
+            many=True,
+            context={'request': request, 'booking': booking, 'booking_id': conv.booking_id},
+        )
         return Response(serializer.data)
 
     # POST create message
     content = request.data.get('content')
     if not content:
         return Response({'content': 'This field is required.'}, status=status.HTTP_400_BAD_REQUEST)
+    if not can_send:
+        return Response(
+            {'detail': 'You can view this chat but cannot send messages for this booking.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
     msg = Message.objects.create(conversation=conv, sender=account, content=content)
     # update conversation timestamp
     conv.save()
-    serializer = MessageSerializer(msg, context={'request': request})
+    serializer = MessageSerializer(msg, context={'request': request, 'booking': booking, 'booking_id': conv.booking_id})
     # Broadcast the new message to connected websocket clients in the user's groups.
     try:
         channel_layer = get_channel_layer()

@@ -8,7 +8,7 @@ import logging
 
 from ...models import (
     Booking, Request, ActiveBooking, CancelBooking,
-    ReworkBooking, DisputeBooking, CompleteBooking, Receipt, BroadcastOffer
+    ReworkBooking, DisputeBooking, CompleteBooking, Receipt, BroadcastOffer, RequestAssignment
 )
 from ...serializers import BookingSerializer, BookingPaymentSerializer
 from users.models import Account
@@ -295,6 +295,20 @@ def _serialize_single_booking(booking):
             'vehicle_model': booking.request.vehicle_model,
             'created_at': booking.request.created_at.isoformat(),
             'broadcast_request': broadcast_request_payload,
+            'assigned_mechanics': [
+                {
+                    'id': a.id,
+                    'role': a.role,
+                    'mechanic': {
+                        'id': a.mechanic.id,
+                        'firstname': a.mechanic.firstname,
+                        'lastname': a.mechanic.lastname,
+                        'username': a.mechanic.username,
+                    },
+                    'assigned_at': a.assigned_at.isoformat() if a.assigned_at else None,
+                }
+                for a in RequestAssignment.objects.filter(request=booking.request).select_related('mechanic')
+            ],
         },
         'provider': {
             'id': booking.request.provider.id,

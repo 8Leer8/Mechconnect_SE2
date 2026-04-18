@@ -21,6 +21,7 @@ from ...models import (
     Receipt,
     CancelBooking,
     MechanicLocation,
+    RequestAssignment,
 )
 from ...models import Quotation, QuotationItem
 from users.models import Account
@@ -670,6 +671,15 @@ def mechanic_booking_quotation(request, booking_id):
     except Booking.DoesNotExist:
         return Response({"error": "Booking not found or you do not have permission to access it"}, status=status.HTTP_404_NOT_FOUND)
 
+    # Assistants can view quotation data but cannot create/update/delete quotation.
+    assignment = RequestAssignment.objects.filter(
+        request=booking.request,
+        mechanic=account,
+    ).first()
+    is_assistant_mechanic = bool(
+        assignment and assignment.role == RequestAssignment.Role.ASSISTANT
+    )
+
     # GET: return existing quotation or a clear empty response
     if request.method == 'GET':
         try:
@@ -688,6 +698,14 @@ def mechanic_booking_quotation(request, booking_id):
 
     # POST: create or update
     if request.method == 'POST':
+        if is_assistant_mechanic:
+            return Response(
+                {
+                    "error": "Assistant mechanics are view-only and cannot create or edit quotations for this booking."
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         data = request.data or {}
         ser = QuotationSerializer(data=data, context={'request': request, 'booking': booking, 'mechanic': account})
         original_booking_status = booking.status

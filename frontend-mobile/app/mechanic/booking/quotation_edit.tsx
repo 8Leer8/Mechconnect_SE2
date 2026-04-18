@@ -44,6 +44,46 @@ export default function QuotationEdit() {
   const [selectedItems, setSelectedItems] = useState<Record<string, boolean>>({});
   const [selectMode, setSelectMode] = useState(false);
   const [showSaveReviewModal, setShowSaveReviewModal] = useState(false);
+  const [roleChecked, setRoleChecked] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    const checkMechanicRole = async () => {
+      if (!bookingId) {
+        if (mounted) setRoleChecked(true);
+        return;
+      }
+
+      try {
+        const res = await fetch(`${API_URL}/chat/booking/${bookingId}/access/`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (mounted && String(data?.my_chat_role || '') === 'assistant_mechanic') {
+            showNotification({
+              type: 'error',
+              message: 'Assistant mechanics are view-only and cannot edit quotations.',
+            });
+            router.back();
+            return;
+          }
+        }
+      } catch (e) {
+        // Ignore role check errors. Backend still blocks assistant POST saves.
+      } finally {
+        if (mounted) setRoleChecked(true);
+      }
+    };
+
+    checkMechanicRole();
+    return () => {
+      mounted = false;
+    };
+  }, [bookingId, router, showNotification]);
 
   useEffect(() => {
     if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -455,7 +495,7 @@ export default function QuotationEdit() {
     }
   };
 
-  if (loading) {
+  if (loading || !roleChecked) {
     return (
       <View style={styles.container}>
       <View style={styles.header}>
