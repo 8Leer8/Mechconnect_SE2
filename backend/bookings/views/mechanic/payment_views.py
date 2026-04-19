@@ -20,10 +20,12 @@ from rest_framework.response import Response
 from pricing.models import PricingConfiguration
 from users.models import Account
 
-from ...models import Booking, PaymentQRToken, Receipt
+from ...models import Booking, PaymentInstallment, PaymentQRToken, PaymentTransaction, Quotation, Receipt
 
 
 logger = logging.getLogger(__name__)
+WEBHOOK_MAX_AGE_SECONDS = 30 * 60
+PAYMENT_OPEN_STATUSES = {Booking.Status.PENDING_PAYMENT, Booking.Status.ACCEPTED}
 
 
 def _build_paymongo_redirect_urls():
@@ -34,6 +36,14 @@ def _build_paymongo_redirect_urls():
         f"{base_url}/api/bookings/payments/redirect/success/",
         f"{base_url}/api/bookings/payments/redirect/failed/",
     )
+
+
+def _is_payment_open(booking):
+    return booking.status in PAYMENT_OPEN_STATUSES
+
+
+def _is_initial_stage_only(booking):
+    return booking.status == Booking.Status.ACCEPTED
 
 
 def _get_authenticated_account(request):
@@ -80,7 +90,457 @@ def _compute_payment_split(booking):
     return total, platform_fee, disbursement_fee, mechanic_payout
 
 
-def create_paymongo_source(amount, payment_method, booking_id):
+def _to_money(value):
+    amount = Decimal(value or 0)
+    return amount.quantize(Decimal("0.01"))
+
+
+def _compute_request_service_subtotal(booking):
+    request_obj = getattr(booking, "request", None)
+    if request_obj is None:
+        return Decimal("0.00")
+
+    subtotal = Decimal("0.00")
+
+    # Broadcast request path: sum selected services + add-ons.
+    try:
+        broadcast = getattr(request_obj, "broadcast_request", None)
+        if broadcast is not None:
+            for svc in broadcast.services.all():
+                subtotal += _to_money(getattr(svc, "minimum_price", 0))
+            for addon_rel in broadcast.add_ons.select_related("service_add_on").all():
+                subtotal += _to_money(getattr(addon_rel.service_add_on, "price", 0))
+            if subtotal > 0:
+                return subtotal.quantize(Decimal("0.01"))
+    except Exception:
+        pass
+
+    # Direct request path: service minimum price + direct add-ons.
+    try:
+        direct = getattr(request_obj, "directrequest", None)
+        if direct is not None:
+            subtotal += _to_money(getattr(direct.service, "minimum_price", 0))
+            for addon_rel in request_obj.directrequestaddon_set.select_related("service_add_on").all():
+                subtotal += _to_money(getattr(addon_rel.service_add_on, "price", 0))
+            if subtotal > 0:
+                return subtotal.quantize(Decimal("0.01"))
+    except Exception:
+        pass
+
+    return Decimal("0.00")
+
+
+def _compute_overall_payable_total(booking):
+    current_total = _to_money(booking.amount_fee)
+    quotation = getattr(booking, "quotation", None)
+    accepted_total = Decimal("0.00")
+
+    if quotation is not None:
+        try:
+            accepted_items = quotation.items.filter(status=Quotation.Status.ACCEPTED)
+            for item in accepted_items:
+                accepted_total += _to_money(item.line_total)
+        except Exception:
+            accepted_total = Decimal("0.00")
+
+    accepted_total = _to_money(accepted_total)
+    if accepted_total <= 0:
+        accepted_total = _compute_request_service_subtotal(booking)
+
+    if accepted_total <= 0:
+        return current_total
+
+    convenience_component = _to_money(booking.convenience_fee or 0)
+    if convenience_component <= 0:
+        inferred_component = (current_total - accepted_total).quantize(Decimal("0.01"))
+        if inferred_component > 0:
+            convenience_component = inferred_component
+
+    payable_total = (accepted_total + max(Decimal("0.00"), convenience_component)).quantize(Decimal("0.01"))
+    if payable_total <= 0:
+        return current_total
+    return payable_total
+
+
+def _sync_booking_payable_total(booking):
+    computed_total = _compute_overall_payable_total(booking)
+    current_total = _to_money(booking.amount_fee)
+    if computed_total != current_total:
+        booking.amount_fee = computed_total
+        booking.save(update_fields=["amount_fee", "updated_at"])
+    return computed_total
+
+
+def _sync_pending_installments_to_total(booking):
+    installments = list(PaymentInstallment.objects.filter(booking=booking).order_by("created_at", "id"))
+    if not installments:
+        return
+
+    total_amount = _to_money(booking.amount_fee)
+    paid_total = Decimal("0.00")
+    paid_exists = False
+    for item in installments:
+        if item.status == PaymentInstallment.Status.PAID:
+            paid_exists = True
+            paid_total += _to_money(item.amount)
+
+    remaining_amount = max(Decimal("0.00"), (total_amount - paid_total)).quantize(Decimal("0.01"))
+
+    pending_installments = [
+        item for item in installments if item.status == PaymentInstallment.Status.PENDING
+    ]
+
+    if paid_exists and not pending_installments and remaining_amount > Decimal("0.00"):
+        PaymentInstallment.objects.create(
+            booking=booking,
+            installment_type=PaymentInstallment.Type.FINAL,
+            amount=remaining_amount,
+            status=PaymentInstallment.Status.PENDING,
+        )
+        return
+
+    if not pending_installments:
+        return
+
+    if paid_exists:
+        target = next(
+            (item for item in pending_installments if item.installment_type == PaymentInstallment.Type.FINAL),
+            None,
+        )
+        if target is None:
+            target = next(
+                (item for item in pending_installments if item.installment_type == PaymentInstallment.Type.FULL),
+                None,
+            )
+        if target is None:
+            target = pending_installments[0]
+
+        if _to_money(target.amount) != remaining_amount:
+            target.amount = remaining_amount
+            target.save(update_fields=["amount", "updated_at"])
+        return
+
+    full_pending = [
+        item for item in pending_installments if item.installment_type == PaymentInstallment.Type.FULL
+    ]
+    if full_pending:
+        full_item = full_pending[0]
+        if _to_money(full_item.amount) != total_amount:
+            full_item.amount = total_amount
+            full_item.save(update_fields=["amount", "updated_at"])
+        return
+
+    initial_pending = next(
+        (item for item in pending_installments if item.installment_type == PaymentInstallment.Type.INITIAL),
+        None,
+    )
+    final_pending = next(
+        (item for item in pending_installments if item.installment_type == PaymentInstallment.Type.FINAL),
+        None,
+    )
+    if initial_pending and final_pending:
+        existing_total = _to_money(initial_pending.amount) + _to_money(final_pending.amount)
+        if existing_total > 0:
+            initial_ratio = (_to_money(initial_pending.amount) / existing_total)
+        else:
+            initial_ratio = Decimal("0.30")
+
+        updated_initial = (total_amount * initial_ratio).quantize(Decimal("0.01"))
+        if updated_initial >= total_amount:
+            updated_initial = max(Decimal("0.00"), (total_amount - Decimal("0.01"))).quantize(Decimal("0.01"))
+        updated_final = (total_amount - updated_initial).quantize(Decimal("0.01"))
+
+        if _to_money(initial_pending.amount) != updated_initial:
+            initial_pending.amount = updated_initial
+            initial_pending.save(update_fields=["amount", "updated_at"])
+        if _to_money(final_pending.amount) != updated_final:
+            final_pending.amount = updated_final
+            final_pending.save(update_fields=["amount", "updated_at"])
+
+
+def _build_installment_plan(booking, use_initial_payment=False, initial_payment_amount=None):
+    total_amount = _to_money(booking.amount_fee)
+    if not use_initial_payment:
+        return [(PaymentInstallment.Type.FULL, total_amount)]
+
+    initial_amount = _to_money(initial_payment_amount)
+    if initial_amount <= 0:
+        initial_amount = (total_amount * Decimal("0.30")).quantize(Decimal("0.01"))
+    if initial_amount >= total_amount:
+        initial_amount = total_amount
+
+    final_amount = (total_amount - initial_amount).quantize(Decimal("0.01"))
+    if final_amount <= 0:
+        return [(PaymentInstallment.Type.FULL, total_amount)]
+
+    return [
+        (PaymentInstallment.Type.INITIAL, initial_amount),
+        (PaymentInstallment.Type.FINAL, final_amount),
+    ]
+
+
+def _ensure_installments_for_booking(booking, use_initial_payment=False, initial_payment_amount=None):
+    # Respect an existing installment plan unless caller explicitly asks to seed initial/final.
+    existing_qs = PaymentInstallment.objects.filter(booking=booking)
+    if existing_qs.exists() and not use_initial_payment and initial_payment_amount is None:
+        return False
+
+    plan = _build_installment_plan(
+        booking,
+        use_initial_payment=use_initial_payment,
+        initial_payment_amount=initial_payment_amount,
+    )
+
+    # Allow changing the initial/final split only before any payment is made.
+    if len(plan) == 2 and {plan[0][0], plan[1][0]} == {PaymentInstallment.Type.INITIAL, PaymentInstallment.Type.FINAL}:
+        existing_installments = list(PaymentInstallment.objects.filter(booking=booking))
+        has_paid_installment = any(item.status == PaymentInstallment.Status.PAID for item in existing_installments)
+        if has_paid_installment:
+            return False
+
+        plan_amounts = {installment_type: amount for installment_type, amount in plan}
+        for installment_type in (PaymentInstallment.Type.INITIAL, PaymentInstallment.Type.FINAL):
+            existing = next((it for it in existing_installments if it.installment_type == installment_type), None)
+            if existing:
+                if existing.amount != plan_amounts[installment_type]:
+                    existing.amount = plan_amounts[installment_type]
+                    existing.save(update_fields=["amount", "updated_at"])
+
+    created_any = False
+    for installment_type, amount in plan:
+        _, created = PaymentInstallment.objects.get_or_create(
+            booking=booking,
+            installment_type=installment_type,
+            defaults={"amount": amount, "status": PaymentInstallment.Status.PENDING},
+        )
+        created_any = created_any or created
+
+    if len(plan) == 2 and {plan[0][0], plan[1][0]} == {PaymentInstallment.Type.INITIAL, PaymentInstallment.Type.FINAL}:
+        # If an earlier attempt created a FULL pending row, remove it so charge targeting
+        # does not pick FULL ahead of INITIAL during accepted-stage initial payment.
+        PaymentInstallment.objects.filter(
+            booking=booking,
+            installment_type=PaymentInstallment.Type.FULL,
+            status=PaymentInstallment.Status.PENDING,
+        ).delete()
+
+    if len(plan) == 1 and plan[0][0] == PaymentInstallment.Type.FULL:
+        PaymentInstallment.objects.filter(
+            booking=booking,
+            installment_type__in=[PaymentInstallment.Type.INITIAL, PaymentInstallment.Type.FINAL],
+            status=PaymentInstallment.Status.PENDING,
+        ).delete()
+
+    return created_any
+
+
+def _get_payment_summary(booking):
+    _sync_booking_payable_total(booking)
+    _sync_pending_installments_to_total(booking)
+    total_amount = _to_money(booking.amount_fee)
+    installments = list(PaymentInstallment.objects.filter(booking=booking).order_by("created_at", "id"))
+
+    if not installments:
+        installments = [
+            PaymentInstallment.objects.create(
+                booking=booking,
+                installment_type=PaymentInstallment.Type.FULL,
+                amount=total_amount,
+                status=PaymentInstallment.Status.PENDING,
+            )
+        ]
+
+    total_paid = Decimal("0.00")
+    for installment in installments:
+        if installment.status == PaymentInstallment.Status.PAID:
+            total_paid += _to_money(installment.amount)
+
+    total_paid = total_paid.quantize(Decimal("0.01"))
+    remaining_balance = max(Decimal("0.00"), (total_amount - total_paid)).quantize(Decimal("0.01"))
+    fully_paid = total_paid >= total_amount
+
+    if fully_paid:
+        payment_status = Booking.PaymentStatus.FULLY_PAID
+    elif total_paid > 0:
+        payment_status = Booking.PaymentStatus.PARTIALLY_PAID
+    else:
+        payment_status = Booking.PaymentStatus.UNPAID
+
+    return {
+        "total_amount": total_amount,
+        "total_paid": total_paid,
+        "remaining_balance": remaining_balance,
+        "fully_paid": fully_paid,
+        "payment_status": payment_status,
+    }
+
+
+def _resolve_installment_for_payment(booking, installment_type=None, for_update=False):
+    queryset = PaymentInstallment.objects.filter(booking=booking)
+    if for_update:
+        queryset = queryset.select_for_update()
+
+    if installment_type:
+        normalized = str(installment_type).strip().lower()
+        return queryset.filter(installment_type=normalized).first()
+
+    full_pending = queryset.filter(
+        installment_type=PaymentInstallment.Type.FULL,
+        status=PaymentInstallment.Status.PENDING,
+    ).first()
+    if full_pending:
+        return full_pending
+
+    initial_pending = queryset.filter(
+        installment_type=PaymentInstallment.Type.INITIAL,
+        status=PaymentInstallment.Status.PENDING,
+    ).first()
+    if initial_pending:
+        return initial_pending
+
+    final_pending = queryset.filter(
+        installment_type=PaymentInstallment.Type.FINAL,
+        status=PaymentInstallment.Status.PENDING,
+    ).first()
+    if final_pending:
+        return final_pending
+
+    return queryset.order_by("created_at", "id").first()
+
+
+def _get_next_installment_for_charge(booking):
+    return _resolve_installment_for_payment(booking, for_update=False)
+
+
+def _release_paid_installments(booking):
+    unreleased_qs = PaymentInstallment.objects.filter(
+        booking=booking,
+        status=PaymentInstallment.Status.PAID,
+        is_released=False,
+    )
+    if not unreleased_qs.exists():
+        return 0
+    return unreleased_qs.update(is_released=True, updated_at=timezone.now())
+
+
+def _finalize_payment_success(
+    booking,
+    paid_at=None,
+    external_reference=None,
+    source_id=None,
+    installment_type=None,
+    method=None,
+):
+    paid_at = paid_at or timezone.now()
+    method = str(method or "qr").lower().strip() or "qr"
+    reference = str(external_reference).strip() if external_reference else None
+
+    with transaction.atomic():
+        booking = Booking.objects.select_for_update().get(id=booking.id)
+        _ensure_installments_for_booking(booking)
+
+        if reference:
+            existing_tx = PaymentTransaction.objects.filter(
+                reference=reference,
+                status=PaymentTransaction.Status.SUCCESS,
+            ).first()
+            if existing_tx:
+                summary = _get_payment_summary(booking)
+                return {
+                    "installment": existing_tx.installment,
+                    "summary": summary,
+                    "fully_paid": summary["fully_paid"],
+                    "duplicate": True,
+                }
+
+        installment = _resolve_installment_for_payment(
+            booking,
+            installment_type=installment_type,
+            for_update=True,
+        )
+        if installment is None:
+            summary = _get_payment_summary(booking)
+            return {
+                "installment": None,
+                "summary": summary,
+                "fully_paid": summary["fully_paid"],
+                "duplicate": True,
+            }
+
+        if installment.status == PaymentInstallment.Status.PAID:
+            summary = _get_payment_summary(booking)
+            return {
+                "installment": installment,
+                "summary": summary,
+                "fully_paid": summary["fully_paid"],
+                "duplicate": True,
+            }
+
+        installment.status = PaymentInstallment.Status.PAID
+        installment.paid_at = paid_at
+        if reference and not installment.external_reference:
+            installment.external_reference = reference
+        installment.save(update_fields=["status", "paid_at", "external_reference", "updated_at"])
+
+        PaymentTransaction.objects.create(
+            booking=booking,
+            installment=installment,
+            amount=installment.amount,
+            method=method,
+            reference=reference,
+            status=PaymentTransaction.Status.SUCCESS,
+        )
+
+        summary = _get_payment_summary(booking)
+
+        receipt, _ = Receipt.objects.get_or_create(booking=booking)
+        receipt.payment_received = summary["fully_paid"]
+        if summary["total_paid"] > 0 and not receipt.paid_at:
+            receipt.paid_at = paid_at
+        elif summary["fully_paid"]:
+            receipt.paid_at = paid_at
+
+        if source_id:
+            receipt.ewallet_source_id = source_id
+        if reference:
+            receipt.transaction_id = reference
+
+        receipt.save(
+            update_fields=[
+                "payment_received",
+                "paid_at",
+                "ewallet_source_id",
+                "transaction_id",
+            ]
+        )
+
+        if booking.payment_status != summary["payment_status"]:
+            booking.payment_status = summary["payment_status"]
+
+        if summary["fully_paid"] and booking.status == Booking.Status.PENDING_PAYMENT:
+            booking.status = Booking.Status.COMPLETED
+            booking.completed_at = paid_at
+            booking.save(update_fields=["payment_status", "status", "completed_at", "updated_at"])
+        else:
+            booking.save(update_fields=["payment_status", "updated_at"])
+
+    disbursed = False
+    if summary["fully_paid"] and booking.status == Booking.Status.COMPLETED:
+        disbursed = trigger_disbursement(booking)
+        if disbursed:
+            _release_paid_installments(booking)
+            notify_payment_completed(booking)
+
+    return {
+        "installment": installment,
+        "summary": summary,
+        "fully_paid": summary["fully_paid"],
+        "duplicate": False,
+        "disbursed": bool(disbursed),
+    }
+
+
+def create_paymongo_source(amount, payment_method, booking_id, installment_type=None):
     """Creates PayMongo payment source and returns redirect URL."""
     secret_key = settings.PAYMONGO_SECRET_KEY
     encoded_key = base64.b64encode(f"{secret_key}:".encode()).decode()
@@ -106,6 +566,7 @@ def create_paymongo_source(amount, payment_method, booking_id):
                 },
                 "metadata": {
                     "booking_id": str(booking_id),
+                    "installment_type": str(installment_type or ""),
                 },
             }
         }
@@ -125,7 +586,7 @@ def create_paymongo_source(amount, payment_method, booking_id):
     return data["data"]["attributes"]["redirect"]["checkout_url"]
 
 
-def create_paymongo_maya_intent(amount, booking_id):
+def create_paymongo_maya_intent(amount, booking_id, installment_type=None):
     """Creates PayMongo Payment Intent + Payment Method for Maya (paymaya)."""
     secret_key = settings.PAYMONGO_SECRET_KEY
     encoded_key = base64.b64encode(f"{secret_key}:".encode()).decode()
@@ -146,6 +607,7 @@ def create_paymongo_maya_intent(amount, booking_id):
                 "payment_method_allowed": ["paymaya"],
                 "metadata": {
                     "booking_id": str(booking_id),
+                    "installment_type": str(installment_type or ""),
                 },
             }
         }
@@ -299,15 +761,49 @@ def _extract_booking_id_from_paymongo_event(event_payload):
     return None
 
 
+def _extract_installment_type_from_paymongo_event(event_payload):
+    event_data = event_payload.get("data", {}) or {}
+    event_attributes = event_data.get("attributes", {}) or {}
+    resource = event_attributes.get("data", {}) or {}
+    resource_attributes = resource.get("attributes", {}) or {}
+
+    candidates = [
+        resource_attributes.get("metadata", {}) or {},
+        (
+            ((resource_attributes.get("source", {}) or {}).get("data", {}) or {})
+            .get("attributes", {}) or {}
+        ).get("metadata", {}) or {},
+    ]
+    for metadata in candidates:
+        raw = metadata.get("installment_type")
+        if raw:
+            return str(raw).strip().lower()
+    return None
+
+
 def trigger_disbursement(booking):
     """Trigger payout to mechanic/shop owner. Failures are logged but not shown to users."""
+    summary = _get_payment_summary(booking)
+    if not summary["fully_paid"]:
+        logger.info("Skipping disbursement for booking %s: payment not fully released", booking.id)
+        return False
+
+    unreleased_exists = PaymentInstallment.objects.filter(
+        booking=booking,
+        status=PaymentInstallment.Status.PAID,
+        is_released=False,
+    ).exists()
+    if not unreleased_exists:
+        logger.info("Skipping disbursement for booking %s: installments already released", booking.id)
+        return True
+
     try:
         receipt = booking.receipt
     except Exception:
-        return
+        return False
 
     if not receipt.mechanic_payout:
-        return
+        return False
 
     payout_number = None
     payout_method = None
@@ -323,11 +819,11 @@ def trigger_disbursement(booking):
             payout_method = getattr(mechanic, "payout_method", None)
     except Exception:
         logger.warning("Missing payout relation for booking %s", booking.id)
-        return
+        return False
 
     if not payout_number or not payout_method:
         logger.warning("No payout details for booking %s", booking.id)
-        return
+        return False
 
     bank_code = str(payout_method).upper()
     valid_paymongo_codes = ["GCASH", "MAYA", "PAYMAYA"]
@@ -336,7 +832,7 @@ def trigger_disbursement(booking):
             f"[DISBURSEMENT] INVALID payout_method "
             f"'{payout_method}' for booking {booking.id}"
         )
-        return
+        return False
 
     if bank_code == "MAYA":
         bank_code = "PAYMAYA"
@@ -380,23 +876,28 @@ def trigger_disbursement(booking):
                 f"| amount: {mechanic_payout} "
                 f"| ref: {response_data.get('data', {}).get('id', 'N/A')}"
             )
+            return True
         except requests.exceptions.HTTPError as e:
             print(
                 f"[DISBURSEMENT] HTTP ERROR booking {booking.id} "
                 f"| status: {e.response.status_code} "
                 f"| body: {e.response.text}"
             )
+            return False
         except requests.exceptions.Timeout:
             print(
                 f"[DISBURSEMENT] TIMEOUT booking {booking.id}"
             )
+            return False
         except Exception as e:
             print(
                 f"[DISBURSEMENT] UNEXPECTED ERROR booking {booking.id} "
                 f"| error: {str(e)}"
             )
+            return False
     except Exception:
         logger.exception("Disbursement failed for booking %s", booking.id)
+        return False
 
 
 def notify_mechanic_cash_selected(booking):
@@ -458,10 +959,54 @@ def initiate_payment(request):
     if booking.request.client.account_id != account.id:
         return Response({"error": "Unauthorized"}, status=403)
 
-    if booking.status != Booking.Status.PENDING_PAYMENT:
-        return Response({"error": "Booking is not pending payment"}, status=400)
+    use_initial_payment = bool(request.data.get("use_initial_payment", False))
+    initial_payment_amount = request.data.get("initial_payment_amount")
+
+    _sync_booking_payable_total(booking)
+
+    if not _is_payment_open(booking):
+        return Response({"error": "Booking is not ready for payment"}, status=400)
+
+    if _is_initial_stage_only(booking):
+        if not use_initial_payment:
+            return Response(
+                {"error": "Only initial payment is allowed at this stage"},
+                status=400,
+            )
+        try:
+            requested_initial = _to_money(initial_payment_amount)
+        except Exception:
+            requested_initial = Decimal("0.00")
+        if requested_initial <= 0:
+            requested_initial = (_to_money(booking.amount_fee) * Decimal("0.30")).quantize(Decimal("0.01"))
+            initial_payment_amount = requested_initial
+        if requested_initial >= _to_money(booking.amount_fee):
+            return Response(
+                {"error": "Initial payment must be less than total amount"},
+                status=400,
+            )
+
+    _ensure_installments_for_booking(
+        booking,
+        use_initial_payment=use_initial_payment,
+        initial_payment_amount=initial_payment_amount,
+    )
+    _sync_pending_installments_to_total(booking)
 
     total, platform_fee, _, mechanic_payout = _compute_payment_split(booking)
+    summary = _get_payment_summary(booking)
+    target_installment = _get_next_installment_for_charge(booking)
+
+    if not target_installment or target_installment.status == PaymentInstallment.Status.PAID:
+        return Response({"error": "Booking is already fully paid"}, status=400)
+
+    if _is_initial_stage_only(booking) and target_installment.installment_type != PaymentInstallment.Type.INITIAL:
+        return Response(
+            {"error": "Only initial payment can be charged before job completion"},
+            status=400,
+        )
+
+    amount_to_charge = _to_money(target_installment.amount)
 
     if payment_method == "cash":
         token, _ = PaymentQRToken.objects.update_or_create(
@@ -473,14 +1018,15 @@ def initiate_payment(request):
             },
         )
 
+        receipt_defaults = {
+            "payment_method": "cash",
+            "ewallet_type": None,
+            "platform_fee": platform_fee,
+            "mechanic_payout": mechanic_payout,
+        }
         Receipt.objects.update_or_create(
             booking=booking,
-            defaults={
-                "payment_method": "cash",
-                "ewallet_type": None,
-                "platform_fee": platform_fee,
-                "mechanic_payout": mechanic_payout,
-            },
+            defaults=receipt_defaults,
         )
 
         notify_mechanic_cash_selected(booking)
@@ -490,20 +1036,25 @@ def initiate_payment(request):
                 "method": "cash",
                 "token_ready": True,
                 "token": str(token.token),
+                "total_paid": str(summary["total_paid"]),
+                "remaining_balance": str(summary["remaining_balance"]),
+                "installment_type": target_installment.installment_type,
             }
         )
 
     try:
         if payment_method == "maya":
             checkout_url = create_paymongo_maya_intent(
-                amount=total,
+                amount=amount_to_charge,
                 booking_id=booking.id,
+                installment_type=target_installment.installment_type,
             )
         else:
             checkout_url = create_paymongo_source(
-                amount=total,
+                amount=amount_to_charge,
                 payment_method=payment_method,
                 booking_id=booking.id,
+                installment_type=target_installment.installment_type,
             )
     except Exception:
         logger.exception("PayMongo source creation failed for method: %s", payment_method)
@@ -525,6 +1076,9 @@ def initiate_payment(request):
         {
             "method": payment_method,
             "checkout_url": checkout_url,
+            "total_paid": str(summary["total_paid"]),
+            "remaining_balance": str(summary["remaining_balance"]),
+            "installment_type": target_installment.installment_type,
         }
     )
 
@@ -542,8 +1096,13 @@ def get_qr_token(request, booking_id):
     if booking.request.provider_id != account.id:
         return Response({"error": "Unauthorized"}, status=403)
 
-    if booking.status != Booking.Status.PENDING_PAYMENT:
-        return Response({"error": "Booking not pending payment"}, status=400)
+    if not _is_payment_open(booking):
+        return Response({"error": "Booking not ready for payment"}, status=400)
+
+    _sync_booking_payable_total(booking)
+    _sync_pending_installments_to_total(booking)
+    target_installment = _get_next_installment_for_charge(booking)
+    amount_due = _to_money(target_installment.amount) if target_installment else _to_money(booking.amount_fee)
 
     try:
         qr_token = booking.qr_token
@@ -556,9 +1115,10 @@ def get_qr_token(request, booking_id):
     return Response(
         {
             "token": str(qr_token.token),
-            "amount": str(booking.amount_fee),
+            "amount": str(amount_due),
             "expires_at": qr_token.expires_at.isoformat(),
             "booking_id": booking.id,
+            "installment_type": target_installment.installment_type if target_installment else None,
         }
     )
 
@@ -589,8 +1149,13 @@ def scan_qr(request):
     if not qr_token.is_valid():
         return Response({"error": "QR code has expired or already been used"}, status=400)
 
-    if qr_token.booking.status != Booking.Status.PENDING_PAYMENT:
-        return Response({"error": "Booking is not pending payment"}, status=400)
+    if not _is_payment_open(qr_token.booking):
+        return Response({"error": "Booking is not ready for payment"}, status=400)
+
+    _sync_booking_payable_total(qr_token.booking)
+    _sync_pending_installments_to_total(qr_token.booking)
+    target_installment = _get_next_installment_for_charge(qr_token.booking)
+    amount_due = _to_money(target_installment.amount) if target_installment else _to_money(qr_token.booking.amount_fee)
 
     mechanic_account = qr_token.booking.request.provider
     first = getattr(mechanic_account, "firstname", "") if mechanic_account else ""
@@ -602,7 +1167,8 @@ def scan_qr(request):
             "valid": True,
             "token": str(qr_token.token),
             "booking_id": qr_token.booking.id,
-            "amount": str(qr_token.booking.amount_fee),
+            "amount": str(amount_due),
+            "installment_type": target_installment.installment_type if target_installment else None,
             "mechanic_name": mechanic_name,
             "booking_number": f"#{qr_token.booking.id}",
         }
@@ -618,6 +1184,7 @@ def confirm_qr_payment(request):
         return Response({"error": "Authentication required"}, status=401)
 
     token_value = request.data.get("token")
+    requested_installment_type = request.data.get("installment_type")
     if not token_value:
         return Response({"error": "Token is required"}, status=400)
 
@@ -653,41 +1220,43 @@ def confirm_qr_payment(request):
             if not qr_token.is_valid():
                 return Response({"error": "QR code expired or already used"}, status=400)
 
-            if booking.status != Booking.Status.PENDING_PAYMENT:
-                return Response({"error": "Booking not pending payment"}, status=400)
+            if not _is_payment_open(booking):
+                return Response({"error": "Booking not ready for payment"}, status=400)
+
+            if _is_initial_stage_only(booking):
+                requested_norm = str(requested_installment_type or PaymentInstallment.Type.INITIAL).strip().lower()
+                if requested_norm != PaymentInstallment.Type.INITIAL:
+                    return Response({"error": "Only initial payment is allowed at this stage"}, status=400)
+                requested_installment_type = PaymentInstallment.Type.INITIAL
 
             qr_token.is_used = True
             qr_token.save(update_fields=["is_used"])
 
             now = timezone.now()
 
-            try:
-                receipt = Receipt.objects.get(booking=booking)
-                receipt.payment_received = True
-                receipt.paid_at = now
-                receipt.save()
-            except Receipt.DoesNotExist:
-                _, platform_fee, _, mechanic_payout = _compute_payment_split(booking)
-                Receipt.objects.create(
-                    booking=booking,
-                    payment_method="cash",
-                    payment_received=True,
-                    paid_at=now,
-                    platform_fee=platform_fee,
-                    mechanic_payout=mechanic_payout,
-                )
-
-            booking.status = Booking.Status.COMPLETED
-            booking.completed_at = now
-            booking.save()
+            _ensure_installments_for_booking(booking)
+            result = _finalize_payment_success(
+                booking,
+                paid_at=now,
+                external_reference=str(qr_token.token),
+                installment_type=requested_installment_type,
+                method=PaymentTransaction.Method.QR,
+            )
     except Exception:
         logger.exception("QR confirm failed for booking token %s", token_value)
         return Response({"error": "Unable to confirm payment"}, status=500)
 
-    trigger_disbursement(booking)
-    notify_payment_completed(booking)
-
-    return Response({"success": True, "message": "Payment confirmed successfully"})
+    summary = result["summary"]
+    return Response(
+        {
+            "success": True,
+            "message": "Payment confirmed successfully",
+            "payment_status": summary["payment_status"],
+            "total_paid": str(summary["total_paid"]),
+            "remaining_balance": str(summary["remaining_balance"]),
+            "fully_paid": bool(result["fully_paid"]),
+        }
+    )
 
 
 @api_view(["POST"])
@@ -731,6 +1300,16 @@ def paymongo_webhook(request):
         )
         return Response({"error": "Invalid signature"}, status=400)
 
+    try:
+        signature_ts = int(timestamp_value)
+    except (TypeError, ValueError):
+        return Response({"error": "Invalid signature timestamp"}, status=400)
+
+    now_ts = int(timezone.now().timestamp())
+    if abs(now_ts - signature_ts) > WEBHOOK_MAX_AGE_SECONDS:
+        logger.warning("PayMongo webhook: stale timestamp rejected")
+        return Response({"error": "Stale webhook event"}, status=400)
+
     # PayMongo signs exact bytes of: b"<timestamp>." + raw_body
     signed_payload = timestamp_value.encode("utf-8") + b"." + raw_body
 
@@ -772,43 +1351,59 @@ def paymongo_webhook(request):
 
     if event_type == "payment.paid":
         booking_id = _extract_booking_id_from_paymongo_event(request.data)
+        installment_type = _extract_installment_type_from_paymongo_event(request.data)
+        reference = resource.get("id")
+        if reference and PaymentTransaction.objects.filter(
+            reference=str(reference),
+            status=PaymentTransaction.Status.SUCCESS,
+        ).exists():
+            return Response({"received": True, "duplicate": True})
+
         if booking_id:
             try:
                 booking = Booking.objects.select_related("receipt").get(id=booking_id)
             except Booking.DoesNotExist:
                 return Response({"received": True})
 
-            if booking.status == Booking.Status.PENDING_PAYMENT:
-                receipt, _ = Receipt.objects.get_or_create(booking=booking)
-                receipt.payment_received = True
-                receipt.paid_at = timezone.now()
+            if _is_payment_open(booking):
                 # Keep source id when available; fallback to object id to retain external traceability.
                 source_obj = (resource_attributes.get("source", {}) or {}).get("data", {}) or {}
                 source_id = source_obj.get("id")
-                receipt.ewallet_source_id = source_id or receipt.ewallet_source_id
-                receipt.transaction_id = resource.get("id") or receipt.transaction_id
-                receipt.save(
-                    update_fields=[
-                        "payment_received",
-                        "paid_at",
-                        "ewallet_source_id",
-                        "transaction_id",
-                    ]
+                source_attributes = source_obj.get("attributes", {}) or {}
+                source_type = str(source_attributes.get("type") or "").lower()
+                method = PaymentTransaction.Method.MAYA if source_type in {"paymaya", "maya"} else PaymentTransaction.Method.GCASH
+                if _is_initial_stage_only(booking):
+                    _ensure_installments_for_booking(booking, use_initial_payment=True)
+                    installment_type = installment_type or PaymentInstallment.Type.INITIAL
+                    if str(installment_type).lower() != PaymentInstallment.Type.INITIAL:
+                        return Response({"received": True, "ignored": True})
+                else:
+                    _ensure_installments_for_booking(booking)
+                _finalize_payment_success(
+                    booking,
+                    paid_at=timezone.now(),
+                    external_reference=reference,
+                    source_id=source_id,
+                    installment_type=installment_type,
+                    method=method,
                 )
-
-                booking.status = Booking.Status.COMPLETED
-                booking.completed_at = timezone.now()
-                booking.save(update_fields=["status", "completed_at"])
-
-                trigger_disbursement(booking)
-                notify_payment_completed(booking)
 
     if event_type == "payment_intent.succeeded":
         booking_id = _extract_booking_id_from_paymongo_event(request.data)
+        installment_type = _extract_installment_type_from_paymongo_event(request.data)
+        reference = resource.get("id")
+        if reference and PaymentTransaction.objects.filter(
+            reference=str(reference),
+            status=PaymentTransaction.Status.SUCCESS,
+        ).exists():
+            return Response({"received": True, "duplicate": True})
+
         if not booking_id:
             # Try extracting from payment intent metadata directly.
             resource_metadata = resource_attributes.get("metadata", {}) or {}
             booking_id = resource_metadata.get("booking_id")
+            if not installment_type:
+                installment_type = resource_metadata.get("installment_type")
 
         if booking_id:
             try:
@@ -816,18 +1411,20 @@ def paymongo_webhook(request):
             except Booking.DoesNotExist:
                 return Response({"received": True})
 
-            if booking.status == Booking.Status.PENDING_PAYMENT:
-                receipt, _ = Receipt.objects.get_or_create(booking=booking)
-                receipt.payment_received = True
-                receipt.paid_at = timezone.now()
-                receipt.transaction_id = resource.get("id") or receipt.transaction_id
-                receipt.save(update_fields=["payment_received", "paid_at", "transaction_id"])
-
-                booking.status = Booking.Status.COMPLETED
-                booking.completed_at = timezone.now()
-                booking.save(update_fields=["status", "completed_at"])
-
-                trigger_disbursement(booking)
-                notify_payment_completed(booking)
+            if _is_payment_open(booking):
+                if _is_initial_stage_only(booking):
+                    _ensure_installments_for_booking(booking, use_initial_payment=True)
+                    installment_type = installment_type or PaymentInstallment.Type.INITIAL
+                    if str(installment_type).lower() != PaymentInstallment.Type.INITIAL:
+                        return Response({"received": True, "ignored": True})
+                else:
+                    _ensure_installments_for_booking(booking)
+                _finalize_payment_success(
+                    booking,
+                    paid_at=timezone.now(),
+                    external_reference=reference,
+                    installment_type=installment_type,
+                    method=PaymentTransaction.Method.MAYA,
+                )
 
     return Response({"received": True})

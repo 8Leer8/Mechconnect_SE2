@@ -98,6 +98,19 @@ interface BookingDetail {
     images?: string[];
     requested_by?: { id: number; name: string } | null;
   } | null;
+  payment_summary?: {
+    payment_status?: string;
+    total_paid?: number;
+    remaining_balance?: number;
+    installments?: Array<{
+      id?: number;
+      installment_type?: string;
+      amount?: number;
+      status?: string;
+      paid_at?: string | null;
+      released_at?: string | null;
+    }>;
+  };
 }
 
 interface PricingConfig {
@@ -1280,6 +1293,35 @@ export default function BookingDetailScreen() {
     booking.status === 'active'
   );
 
+  const paymentSummary = booking.payment_summary || {};
+  const installments = Array.isArray(paymentSummary.installments) ? paymentSummary.installments : [];
+  const remainingBalance = Number(paymentSummary.remaining_balance ?? booking.amount_fee ?? 0);
+  const totalPaid = Number(paymentSummary.total_paid || 0);
+  const paymentStatus = String(paymentSummary.payment_status || 'unpaid').toLowerCase();
+  const initialInstallment = installments.find((item) => String(item.installment_type || '').toLowerCase() === 'initial');
+  const initialPaid = !!initialInstallment && String(initialInstallment.status || '').toLowerCase() === 'paid';
+
+  const getPaymentStatusColor = (status: string) => {
+    switch (status) {
+      case 'fully_paid':
+      case 'paid':
+        return '#34C759';
+      case 'partially_paid':
+      case 'partial':
+        return '#FFD60A';
+      default:
+        return '#8E8E93';
+    }
+  };
+
+  const getInstallmentLabel = (typeRaw: string) => {
+    const normalized = String(typeRaw || '').toLowerCase();
+    if (normalized === 'initial') return 'Initial Payment';
+    if (normalized === 'final') return 'Final Payment';
+    if (normalized === 'full') return 'Full Payment';
+    return normalized ? `${normalized.charAt(0).toUpperCase()}${normalized.slice(1)} Payment` : 'Payment';
+  };
+
   return (
     <ThemedView style={styles.container}>
       {/* Header */}
@@ -1687,6 +1729,62 @@ export default function BookingDetailScreen() {
             </ThemedText>
           </View>
           <ThemedText style={styles.amountLarge}>₱{parseFloat(String(booking.amount_fee || '0')).toFixed(2)}</ThemedText>
+        </View>
+
+        <View style={styles.sectionCard}>
+          <View style={styles.sectionHeader}>
+            <View style={[styles.sectionIcon, { backgroundColor: '#34C75915' }]}>
+              <FontAwesome name="shield" size={16} color="#34C759" />
+            </View>
+            <ThemedText style={styles.sectionTitle}>Payment Assurance</ThemedText>
+            <View style={[styles.paymentStatusBadge, { backgroundColor: getPaymentStatusColor(paymentStatus) + '22', borderColor: getPaymentStatusColor(paymentStatus) + '66' }]}>
+              <ThemedText style={[styles.paymentStatusBadgeText, { color: getPaymentStatusColor(paymentStatus) }]}>
+                {paymentStatus === 'fully_paid' ? 'Fully Paid' : paymentStatus === 'partially_paid' ? 'Partially Paid' : 'Unpaid'}
+              </ThemedText>
+            </View>
+          </View>
+
+          {initialPaid ? (
+            <View style={styles.initialPaidBanner}>
+              <FontAwesome name="check-circle" size={13} color="#34C759" />
+              <ThemedText style={styles.initialPaidBannerText}>Initial payment received</ThemedText>
+            </View>
+          ) : null}
+
+          <View style={styles.paymentSummaryRow}>
+            <ThemedText style={styles.paymentSummaryLabel}>Total Paid</ThemedText>
+            <ThemedText style={[styles.paymentSummaryValue, { color: '#34C759' }]}>₱{totalPaid.toFixed(2)}</ThemedText>
+          </View>
+          <View style={styles.paymentSummaryRow}>
+            <ThemedText style={styles.paymentSummaryLabel}>Remaining Balance</ThemedText>
+            <ThemedText style={[styles.paymentSummaryValue, { color: remainingBalance > 0 ? '#FFD60A' : '#34C759' }]}>
+              ₱{remainingBalance.toFixed(2)}
+            </ThemedText>
+          </View>
+
+          {installments.length > 0 ? (
+            <View style={styles.installmentListWrap}>
+              {installments.map((item, index) => {
+                const installmentType = String(item.installment_type || '').toLowerCase();
+                const statusRaw = String(item.status || 'pending').toLowerCase();
+                const statusColor = statusRaw === 'paid' ? '#34C759' : '#FFD60A';
+                return (
+                  <View key={String(item.id || `${installmentType}-${index}`)} style={styles.installmentRow}>
+                    <View style={styles.installmentLeft}>
+                      <FontAwesome name={statusRaw === 'paid' ? 'check-circle' : 'clock-o'} size={13} color={statusColor} />
+                      <ThemedText style={styles.installmentTitle}>{getInstallmentLabel(installmentType)}</ThemedText>
+                    </View>
+                    <View style={styles.installmentRight}>
+                      <ThemedText style={styles.installmentAmount}>₱{Number(item.amount || 0).toFixed(2)}</ThemedText>
+                      <ThemedText style={[styles.installmentStatusText, { color: statusColor }]}>
+                        {statusRaw === 'paid' ? 'Paid' : 'Pending'}
+                      </ThemedText>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          ) : null}
         </View>
 
         <View style={styles.sectionCard}>

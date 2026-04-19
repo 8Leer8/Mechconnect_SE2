@@ -76,8 +76,18 @@ class Booking(models.Model):
         CANCELLED = "cancelled"
         DISPUTED = "disputed"
 
+    class PaymentStatus(models.TextChoices):
+        UNPAID = "unpaid"
+        PARTIALLY_PAID = "partially_paid"
+        FULLY_PAID = "fully_paid"
+
     request = models.OneToOneField(Request, on_delete=models.CASCADE)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
+    payment_status = models.CharField(
+        max_length=20,
+        choices=PaymentStatus.choices,
+        default=PaymentStatus.UNPAID,
+    )
     amount_fee = models.DecimalField(max_digits=10, decimal_places=2)
     distance_km = models.DecimalField(
         max_digits=6, decimal_places=2,
@@ -209,6 +219,69 @@ class Receipt(models.Model):
     transaction_id = models.CharField(max_length=255, null=True, blank=True)
     receipt_image = models.ImageField(upload_to='bookings/receipts/', null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class PaymentInstallment(models.Model):
+    class Type(models.TextChoices):
+        INITIAL = "initial"
+        FINAL = "final"
+        FULL = "full"
+
+    class Status(models.TextChoices):
+        PENDING = "pending"
+        PAID = "paid"
+
+    booking = models.ForeignKey(
+        Booking,
+        on_delete=models.CASCADE,
+        related_name="payment_installments",
+    )
+    installment_type = models.CharField(max_length=20, choices=Type.choices)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    is_released = models.BooleanField(default=False)
+    paid_at = models.DateTimeField(null=True, blank=True)
+    external_reference = models.CharField(max_length=255, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+        unique_together = [["booking", "installment_type"]]
+
+    def __str__(self):
+        return f"Installment({self.installment_type}) Booking {self.booking_id} - {self.status}"
+
+
+class PaymentTransaction(models.Model):
+    class Method(models.TextChoices):
+        QR = "qr"
+        GCASH = "gcash"
+        MAYA = "maya"
+
+    class Status(models.TextChoices):
+        SUCCESS = "success"
+        FAILED = "failed"
+
+    booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name="payment_transactions")
+    installment = models.ForeignKey(
+        PaymentInstallment,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="transactions",
+    )
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    method = models.CharField(max_length=20, choices=Method.choices)
+    reference = models.CharField(max_length=255, null=True, blank=True, db_index=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.SUCCESS)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self):
+        return f"PaymentTransaction({self.method}) Booking {self.booking_id} - {self.status}"
 
 
 class PaymentQRToken(models.Model):

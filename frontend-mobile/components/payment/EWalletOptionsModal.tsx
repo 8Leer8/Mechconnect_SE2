@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ActivityIndicator, Alert, Image, Linking, Modal, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { FontAwesome } from '@expo/vector-icons';
 
 import { API_URL } from '@/config';
 import { ThemedText } from '@/components/themed-text';
@@ -8,6 +9,11 @@ interface EWalletOptionsModalProps {
   visible: boolean;
   bookingId: number;
   totalAmount: number;
+  allowInitialPayment?: boolean;
+  useInitialPayment?: boolean;
+  onToggleInitialPayment?: (value: boolean) => void;
+  selectedPercentage?: 0.3 | 0.5;
+  onSelectPercentage?: (value: 0.3 | 0.5) => void;
   onClose: () => void;
   onPaymentInitiated: () => void;
 }
@@ -16,10 +22,20 @@ export default function EWalletOptionsModal({
   visible,
   bookingId,
   totalAmount,
+  allowInitialPayment = false,
+  useInitialPayment = false,
+  onToggleInitialPayment,
+  selectedPercentage = 0.3,
+  onSelectPercentage,
   onClose,
   onPaymentInitiated,
 }: EWalletOptionsModalProps) {
   const [loadingMethod, setLoadingMethod] = useState<string | null>(null);
+  const safeTotalAmount = Math.max(0, Number(totalAmount || 0));
+  const computedInitialAmount = safeTotalAmount * selectedPercentage;
+  const computedRemaining = Math.max(0, safeTotalAmount - computedInitialAmount);
+  const effectiveInitialPayment = allowInitialPayment && useInitialPayment;
+  const amountToPay = effectiveInitialPayment ? computedInitialAmount : safeTotalAmount;
 
   const initiate = async (method: 'gcash' | 'maya') => {
     try {
@@ -28,7 +44,17 @@ export default function EWalletOptionsModal({
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ booking_id: bookingId, payment_method: method }),
+        body: JSON.stringify((() => {
+          const payload: Record<string, unknown> = {
+            booking_id: bookingId,
+            payment_method: method,
+          };
+          if (effectiveInitialPayment) {
+            payload.use_initial_payment = true;
+            payload.initial_payment_amount = Number(computedInitialAmount.toFixed(2));
+          }
+          return payload;
+        })()),
       });
 
       const rawPayload: unknown = await response.json().catch(() => ({}));
@@ -60,7 +86,52 @@ export default function EWalletOptionsModal({
         <View style={styles.sheet}>
           <View style={styles.handle} />
           <ThemedText style={styles.title}>Choose E-Wallet</ThemedText>
-          <ThemedText style={styles.subtitle}>PHP {Number(totalAmount || 0).toFixed(2)}</ThemedText>
+          <ThemedText style={styles.subtitle}>PHP {amountToPay.toFixed(2)}</ThemedText>
+
+          {allowInitialPayment ? (
+            <View style={styles.installmentPanel}>
+              <TouchableOpacity
+                style={styles.toggleRow}
+                activeOpacity={0.8}
+                onPress={() => onToggleInitialPayment && onToggleInitialPayment(!useInitialPayment)}
+              >
+                <View style={styles.toggleIconWrap}>
+                  <FontAwesome
+                    name={useInitialPayment ? 'check-square-o' : 'square-o'}
+                    size={18}
+                    color={useInitialPayment ? '#34C759' : '#8E8E93'}
+                  />
+                </View>
+                <ThemedText style={styles.toggleText}>Pay initial payment now (recommended)</ThemedText>
+              </TouchableOpacity>
+              {effectiveInitialPayment ? (
+                <View style={styles.breakdownBlock}>
+                  <View style={styles.percentageSelector}>
+                    <TouchableOpacity
+                      style={[styles.percentageOption, selectedPercentage === 0.3 ? styles.percentageOptionActive : null]}
+                      onPress={() => onSelectPercentage && onSelectPercentage(0.3)}
+                    >
+                      <ThemedText style={[styles.percentageText, selectedPercentage === 0.3 ? styles.percentageTextActive : null]}>30%</ThemedText>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.percentageOption, selectedPercentage === 0.5 ? styles.percentageOptionActive : null]}
+                      onPress={() => onSelectPercentage && onSelectPercentage(0.5)}
+                    >
+                      <ThemedText style={[styles.percentageText, selectedPercentage === 0.5 ? styles.percentageTextActive : null]}>50%</ThemedText>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={styles.breakdownRow}>
+                    <ThemedText style={styles.breakdownLabel}>Initial Payment</ThemedText>
+                    <ThemedText style={styles.breakdownValue}>PHP {computedInitialAmount.toFixed(2)}</ThemedText>
+                  </View>
+                  <View style={styles.breakdownRow}>
+                    <ThemedText style={styles.breakdownLabel}>Balance Remaining</ThemedText>
+                    <ThemedText style={styles.breakdownValue}>PHP {computedRemaining.toFixed(2)}</ThemedText>
+                  </View>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
 
           <View style={styles.row}>
             <TouchableOpacity
@@ -163,6 +234,75 @@ const styles = StyleSheet.create({
   walletLogo: {
     width: '96%',
     height: '100%',
+  },
+  installmentPanel: {
+    backgroundColor: '#151718',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+    padding: 12,
+    marginBottom: 10,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  toggleIconWrap: {
+    width: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  toggleText: {
+    color: '#ECEDEE',
+    fontWeight: '700',
+    marginLeft: 6,
+    flex: 1,
+  },
+  breakdownBlock: {
+    marginTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#2A2C2E',
+    paddingTop: 10,
+    gap: 6,
+  },
+  percentageSelector: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 6,
+  },
+  percentageOption: {
+    backgroundColor: '#1A1C1E',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  percentageOptionActive: {
+    borderColor: '#34C759',
+    backgroundColor: '#34C75920',
+  },
+  percentageText: {
+    color: '#9BA1A6',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  percentageTextActive: {
+    color: '#34C759',
+  },
+  breakdownRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  breakdownLabel: {
+    color: '#8E8E93',
+    fontSize: 12,
+  },
+  breakdownValue: {
+    color: '#ECEDEE',
+    fontWeight: '700',
+    fontSize: 13,
   },
   cancelButton: {
     marginTop: 14,

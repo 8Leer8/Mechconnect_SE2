@@ -21,6 +21,7 @@ from ...models import (
     Receipt,
     CancelBooking,
     MechanicLocation,
+    PaymentInstallment,
 )
 from ...models import Quotation, QuotationItem
 from users.models import Account
@@ -583,12 +584,66 @@ def mechanic_finish_job(request, booking_id):
     if booking.status != Booking.Status.ACTIVE:
         return Response({"error": "Booking must be in 'active' status to finish the job."}, status=status.HTTP_400_BAD_REQUEST)
 
+    # Finalize payable total before entering pending payment so payment summary and charge targets stay consistent.
+    try:
+        accepted_total = Decimal("0.00")
+        quotation = getattr(booking, "quotation", None)
+        if quotation is not None:
+            for item in quotation.items.filter(status=Quotation.Status.ACCEPTED):
+                accepted_total += Decimal(item.line_total or 0)
+            accepted_total = accepted_total.quantize(Decimal("0.01"))
+
+        current_total = Decimal(booking.amount_fee or 0).quantize(Decimal("0.01"))
+        convenience_component = Decimal(booking.convenience_fee or 0).quantize(Decimal("0.01"))
+
+        if accepted_total > 0:
+            if convenience_component <= 0:
+                inferred_convenience = (current_total - accepted_total).quantize(Decimal("0.01"))
+                if inferred_convenience > 0:
+                    convenience_component = inferred_convenience
+            booking.amount_fee = (accepted_total + max(Decimal("0.00"), convenience_component)).quantize(Decimal("0.01"))
+    except Exception:
+        pass
+
     # When mechanic finishes the job, mark it as pending payment and create a receipt
     booking.status = Booking.Status.PENDING_PAYMENT
-    booking.save(update_fields=["status"])
+    booking.payment_status = Booking.PaymentStatus.UNPAID
+    booking.save(update_fields=["status", "payment_status", "amount_fee", "updated_at"])
 
     # Create a receipt if not exists
     Receipt.objects.get_or_create(booking=booking)
+    has_existing_plan = PaymentInstallment.objects.filter(booking=booking).exists()
+    if not has_existing_plan:
+        PaymentInstallment.objects.get_or_create(
+            booking=booking,
+            installment_type=PaymentInstallment.Type.FULL,
+            defaults={
+                "amount": booking.amount_fee,
+                "status": PaymentInstallment.Status.PENDING,
+            },
+        )
+    else:
+        installments = list(PaymentInstallment.objects.filter(booking=booking).order_by("created_at", "id"))
+        paid_total = Decimal("0.00")
+        for row in installments:
+            if row.status == PaymentInstallment.Status.PAID:
+                paid_total += Decimal(row.amount or 0)
+
+        total_amount = Decimal(booking.amount_fee or 0).quantize(Decimal("0.01"))
+        remaining_amount = max(Decimal("0.00"), (total_amount - paid_total)).quantize(Decimal("0.01"))
+
+        pending_final = next(
+            (row for row in installments if row.status == PaymentInstallment.Status.PENDING and row.installment_type == PaymentInstallment.Type.FINAL),
+            None,
+        )
+        pending_full = next(
+            (row for row in installments if row.status == PaymentInstallment.Status.PENDING and row.installment_type == PaymentInstallment.Type.FULL),
+            None,
+        )
+        target = pending_final or pending_full
+        if target and Decimal(target.amount or 0).quantize(Decimal("0.01")) != remaining_amount:
+            target.amount = remaining_amount
+            target.save(update_fields=["amount", "updated_at"])
 
     notify_booking_parties(
         account.id,
@@ -643,6 +698,9 @@ def mechanic_payment_received(request, booking_id):
 
     receipt.payment_received = True
     receipt.save(update_fields=["payment_received"])
+
+    booking.payment_status = Booking.PaymentStatus.FULLY_PAID
+    booking.save(update_fields=["payment_status"])
 
     notify_booking_parties(
         account.id,

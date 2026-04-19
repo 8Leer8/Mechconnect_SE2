@@ -91,6 +91,19 @@ interface BookingDetail {
     images?: string[];
     requested_by?: { id: number; name: string } | null;
   } | null;
+  payment_summary?: {
+    payment_status?: string;
+    total_paid?: number;
+    remaining_balance?: number;
+    installments?: Array<{
+      id?: number;
+      installment_type?: string;
+      amount?: number;
+      status?: string;
+      paid_at?: string | null;
+      released_at?: string | null;
+    }>;
+  };
 }
 
 interface PricingConfig {
@@ -154,6 +167,8 @@ export default function ClientBookingDetailScreen() {
   const [qrScanData, setQrScanData] = useState<QRScanResult | null>(null);
   const [scannedToken, setScannedToken] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'gcash' | 'maya' | string>('cash');
+  const [useInitialPayment, setUseInitialPayment] = useState(true);
+  const [selectedInitialPaymentPercentage, setSelectedInitialPaymentPercentage] = useState<0.3 | 0.5>(0.3);
   const [expandedQuoteItems, setExpandedQuoteItems] = useState<Record<string, boolean>>({});
   const [quotationListExpanded, setQuotationListExpanded] = useState(false);
   const [pricingConfig, setPricingConfig] = useState<PricingConfig>({});
@@ -427,13 +442,8 @@ export default function ClientBookingDetailScreen() {
     const persistedDistanceKm = Number((booking as any).distance_km || 0);
     const distanceKm = Number.isFinite(persistedDistanceKm) ? Math.max(0, persistedDistanceKm) : 0;
 
-    const freeDistanceKm = Math.max(0, Number(pricingConfig.free_distance_km ?? 0));
     const baseDistanceFee = Math.max(0, Number(pricingConfig.base_distance_fee ?? 0));
     const ratePerKm = Math.max(0, Number(pricingConfig.price_per_km ?? 0));
-    const billableDistanceKm = Math.max(0, distanceKm - freeDistanceKm);
-    const baseFee = distanceKm > freeDistanceKm ? baseDistanceFee : 0;
-    const distanceFee = billableDistanceKm * ratePerKm;
-    const travelFee = baseFee + distanceFee;
 
     const conveniencePct = Math.max(0, Number(pricingConfig.convenience_fee_percentage ?? 0)) / 100;
     const convenienceFixed = Number(pricingConfig.convenience_fee_fixed ?? 0);
@@ -449,9 +459,28 @@ export default function ClientBookingDetailScreen() {
     };
 
     const trafficMeta = trafficConfig[normalizedLevel];
-    const estimatedTrafficFee = travelFee * Math.max(0, trafficMeta.multiplier - 1);
+    let baseFee = 0;
+    let distanceFee = 0;
+    let trafficFee = 0;
+    let travelFee = 0;
+
+    if (hasPersistedConvenience) {
+      // When backend already locked convenience_fee, derive a readable split from persisted values.
+      baseFee = distanceKm > 0 ? baseDistanceFee : 0;
+      trafficFee = hasPersistedTrafficSurcharge ? persistedTrafficSurcharge : 0;
+      distanceFee = Math.max(0, persistedConvenienceFee - baseFee - trafficFee);
+      travelFee = baseFee + distanceFee;
+    } else {
+      const freeDistanceKm = Math.max(0, Number(pricingConfig.free_distance_km ?? 0));
+      const billableDistanceKm = Math.max(0, distanceKm - freeDistanceKm);
+      baseFee = distanceKm > freeDistanceKm ? baseDistanceFee : 0;
+      distanceFee = billableDistanceKm * ratePerKm;
+      travelFee = baseFee + distanceFee;
+      const estimatedTrafficFee = travelFee * Math.max(0, trafficMeta.multiplier - 1);
+      trafficFee = hasPersistedTrafficSurcharge ? persistedTrafficSurcharge : estimatedTrafficFee;
+    }
+
     const isOnTheWay = booking.status === 'on_the_way';
-    const trafficFee = hasPersistedTrafficSurcharge ? persistedTrafficSurcharge : estimatedTrafficFee;
     const serviceSubtotal = quotationEstimatedTotal > 0
       ? quotationEstimatedTotal
       : (shouldUseLiveAdditivePricing(booking.status)
@@ -459,9 +488,9 @@ export default function ClientBookingDetailScreen() {
         : Math.max(0, amountFee - travelFee - trafficFee - (hasPersistedConvenience ? persistedConvenienceFee : 0)));
 
     const estimatedConvenienceFee = (serviceSubtotal * conveniencePct) + convenienceFixed;
-    const totalConvenienceFee = shouldUseLiveAdditivePricing(booking.status)
-      ? estimatedConvenienceFee
-      : (hasPersistedConvenience ? persistedConvenienceFee : estimatedConvenienceFee);
+    const totalConvenienceFee = hasPersistedConvenience
+      ? persistedConvenienceFee
+      : (shouldUseLiveAdditivePricing(booking.status) ? estimatedConvenienceFee : estimatedConvenienceFee);
 
     const persistedEta = Number((booking as any).estimated_eta_minutes || 0);
     const derivedEta = Math.max(1, Math.ceil((distanceKm / Math.max(1, trafficMeta.speedKmh)) * 60));
@@ -480,6 +509,7 @@ export default function ClientBookingDetailScreen() {
       trafficLabel: trafficMeta.label,
       etaMinutes,
       estimated: !isOnTheWay,
+      isLocked: hasPersistedConvenience,
     };
   }, [booking, pricingConfig, quotationEstimatedTotal]);
 
@@ -709,6 +739,26 @@ export default function ClientBookingDetailScreen() {
     setBackjobModalVisible(false);
   };
 
+  useEffect(() => {
+    if (!booking) return;
+
+    const paymentSummary = booking.payment_summary || {};
+    const installments = Array.isArray(paymentSummary.installments) ? paymentSummary.installments : [];
+    const paymentStatus = String(paymentSummary.payment_status || 'unpaid').toLowerCase();
+    const hasPaidInstallment = installments.some(
+      (item) => String(item.status || '').toLowerCase() === 'paid'
+    );
+    const isBookedState = booking.status === 'booked' || booking.status === 'accepted';
+    const canChooseInitialPayment =
+      (booking.status === 'pending_payment' || isBookedState) &&
+      paymentStatus === 'unpaid' &&
+      !hasPaidInstallment;
+
+    if (!canChooseInitialPayment && useInitialPayment) {
+      setUseInitialPayment(false);
+    }
+  }, [booking, useInitialPayment]);
+
   if (loading) {
     return (
       <ThemedView style={styles.container}>
@@ -754,6 +804,68 @@ export default function ClientBookingDetailScreen() {
   const totalFee = convenienceFeeTotal + quotationEstimatedTotal;
   const showPricingQuotationCard = !!(convenienceBreakdown || displayQuotation);
 
+  const paymentSummary = booking.payment_summary || {};
+  const installments = Array.isArray(paymentSummary.installments) ? paymentSummary.installments : [];
+  const totalPaid = Number(paymentSummary.total_paid || 0);
+  const summaryTotalAmount = Math.max(0, Number((paymentSummary as any).total_amount ?? booking.amount_fee ?? 0));
+  const summaryPaymentStatus = String(paymentSummary.payment_status || 'unpaid').toLowerCase();
+  const hasPaidInstallment = installments.some(
+    (item) => String(item.status || '').toLowerCase() === 'paid'
+  );
+  const isBookedState = booking.status === 'booked' || booking.status === 'accepted';
+  const canChooseInitialPayment =
+    (booking.status === 'pending_payment' || isBookedState) &&
+    summaryPaymentStatus === 'unpaid' &&
+    !hasPaidInstallment;
+  const isPayableTotalLive = booking.status !== 'pending_payment';
+
+  const payableTotal = Math.max(0, Math.max(totalFee, summaryTotalAmount));
+  const fallbackInitialAmount = payableTotal * selectedInitialPaymentPercentage;
+  const fallbackInitialRemaining = Math.max(0, payableTotal - fallbackInitialAmount);
+  const pendingInitial = installments.find((item) => String(item.installment_type || '').toLowerCase() === 'initial');
+  const pendingFinal = installments.find((item) => String(item.installment_type || '').toLowerCase() === 'final');
+  const initialPreviewAmount = pendingInitial ? Number(pendingInitial.amount || 0) : fallbackInitialAmount;
+  const _remainingAfterInitialPreview = pendingFinal ? Number(pendingFinal.amount || 0) : fallbackInitialRemaining;
+  const remainingBalance = Math.max(0, payableTotal - totalPaid);
+  const paymentStatus = totalPaid >= payableTotal && payableTotal > 0
+    ? 'fully_paid'
+    : (totalPaid > 0 ? 'partially_paid' : 'unpaid');
+
+  const getPaymentStatusColor = (status: string) => {
+    switch (status) {
+      case 'fully_paid':
+        return '#34C759';
+      case 'partially_paid':
+        return '#FFD60A';
+      case 'unpaid':
+      default:
+        return '#8E8E93';
+    }
+  };
+
+  const getPaymentStatusLabel = (status: string) => {
+    switch (status) {
+      case 'fully_paid':
+        return 'Fully Paid';
+      case 'partially_paid':
+        return 'Partially Paid';
+      case 'unpaid':
+      default:
+        return 'Unpaid';
+    }
+  };
+
+  const currentPaymentAmount = useInitialPayment && canChooseInitialPayment
+    ? initialPreviewAmount
+    : (booking.status === 'pending_payment' ? remainingBalance : payableTotal);
+  const totalAmount = payableTotal;
+  const modalAmountToPay = booking.status === 'pending_payment'
+    ? remainingBalance
+    : totalAmount;
+  const paymentProgressPct = totalAmount > 0
+    ? Math.min(100, Math.max(0, (totalPaid / totalAmount) * 100))
+    : 0;
+
   return (
     <ThemedView style={styles.container}>
       {/* Header */}
@@ -772,7 +884,7 @@ export default function ClientBookingDetailScreen() {
         style={styles.scrollView}
         contentContainerStyle={[
           styles.scrollContent,
-          booking.status === 'pending_payment' ? styles.scrollContentWithFloatingAction : null,
+          (booking.status === 'pending_payment' || isBookedState) ? styles.scrollContentWithFloatingAction : null,
         ]}
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -811,10 +923,8 @@ export default function ClientBookingDetailScreen() {
               <ThemedText style={styles.timerText}>{formatDuration(timer)}</ThemedText>
             )}
           </View>
-          <ThemedText style={styles.amountLarge}>₱{parseFloat(String(booking.amount_fee || '0')).toFixed(2)}</ThemedText>
+          <ThemedText style={styles.amountLarge}>₱{totalAmount.toFixed(2)}</ThemedText>
         </View>
-
-
 
         {/* Provider Information */}
         {booking.provider && (
@@ -975,6 +1085,52 @@ export default function ClientBookingDetailScreen() {
               <ThemedText style={styles.sectionTitle}>Pricing & Quotation</ThemedText>
             </View>
 
+            <View style={styles.receiptList}>
+              <View style={[styles.sectionHeader, { marginBottom: 10 }]}> 
+                <View style={[styles.sectionIcon, { backgroundColor: '#34C75915' }]}>
+                  <FontAwesome name="shield" size={16} color="#34C759" />
+                </View>
+                <ThemedText style={styles.sectionTitle}>Payment Secured</ThemedText>
+                <View style={[styles.statusBadge, { backgroundColor: getPaymentStatusColor(paymentStatus), marginLeft: 10 }]}> 
+                  <ThemedText style={styles.statusBadgeText}>
+                    {getPaymentStatusLabel(paymentStatus)}
+                  </ThemedText>
+                </View>
+              </View>
+
+              <View style={styles.paymentSummaryGrid}>
+                <View style={styles.paymentSummaryTile}>
+                  <ThemedText style={styles.paymentSummaryLabel}>Total</ThemedText>
+                  <ThemedText style={styles.paymentSummaryValue}>₱{totalAmount.toFixed(2)}</ThemedText>
+                  {isPayableTotalLive ? (
+                    <ThemedText style={[styles.progressText, { marginTop: 3, textAlign: 'left', fontSize: 11 }]}>Live</ThemedText>
+                  ) : null}
+                </View>
+                <View style={styles.paymentSummaryTile}>
+                  <ThemedText style={styles.paymentSummaryLabel}>Paid</ThemedText>
+                  <ThemedText style={[styles.paymentSummaryValue, { color: '#34C759' }]}>₱{totalPaid.toFixed(2)}</ThemedText>
+                </View>
+                <View style={styles.paymentSummaryTile}>
+                  <ThemedText style={styles.paymentSummaryLabel}>Remaining</ThemedText>
+                  <ThemedText style={[styles.paymentSummaryValue, { color: remainingBalance > 0 ? '#FFD60A' : '#34C759' }]}>₱{remainingBalance.toFixed(2)}</ThemedText>
+                </View>
+              </View>
+
+              <View style={styles.progressBarContainer}>
+                <View style={[styles.progressBarFill, { width: `${paymentProgressPct}%` }]} />
+              </View>
+              <ThemedText style={styles.progressText}>{Math.round(paymentProgressPct)}% Paid</ThemedText>
+
+              {paymentStatus === 'unpaid' ? (
+                <View style={styles.noteBox}>
+                  <ThemedText style={styles.noteText}>Secure your booking with an optional initial payment.</ThemedText>
+                </View>
+              ) : null}
+
+              <ThemedText style={[styles.noteText, { marginTop: 6, marginBottom: 8 }]}>Payment will be released to mechanic after job completion.</ThemedText>
+              <View style={styles.receiptDivider} />
+            </View>
+
             {isQuotationPending ? (
               <View style={styles.pendingHintBanner}>
                 <View style={styles.pendingHintContent}>
@@ -1009,7 +1165,7 @@ export default function ClientBookingDetailScreen() {
                   </View>
                   {typeof convenienceBreakdown.etaMinutes === 'number' && convenienceBreakdown.etaMinutes > 0 && (
                     <View style={styles.receiptRow}>
-                      <ThemedText style={styles.receiptItem}>Estimated ETA</ThemedText>
+                      <ThemedText style={styles.receiptItem}>Estimated Time Arrive</ThemedText>
                       <ThemedText style={styles.receiptAmount}>{convenienceBreakdown.etaMinutes} min</ThemedText>
                     </View>
                   )}
@@ -1436,19 +1592,26 @@ export default function ClientBookingDetailScreen() {
 
       </ScrollView>
 
-      {booking.status === 'pending_payment' && (
+      {(booking.status === 'pending_payment' || isBookedState) && (
         <View style={styles.actionButtonsContainer}>
           <TouchableOpacity style={styles.finishLargeButton} onPress={() => setShowPaymentModal(true)}>
             <FontAwesome name="credit-card" size={16} color="#fff" style={{ marginRight: 8 }} />
-            <ThemedText style={styles.actionButtonText}>Proceed to Payment</ThemedText>
+            <ThemedText style={styles.actionButtonText}>
+              {isBookedState ? 'Secure Booking (Optional Initial Payment)' : 'Proceed to Payment'}
+            </ThemedText>
           </TouchableOpacity>
         </View>
       )}
 
       <PaymentMethodModal
-        visible={showPaymentModal && booking.status === 'pending_payment'}
+        visible={showPaymentModal && (booking.status === 'pending_payment' || isBookedState)}
         bookingId={booking.id}
-        totalAmount={booking.amount_fee}
+        totalAmount={modalAmountToPay}
+        allowInitialPayment={canChooseInitialPayment}
+        useInitialPayment={useInitialPayment}
+        onToggleInitialPayment={setUseInitialPayment}
+        selectedPercentage={selectedInitialPaymentPercentage}
+        onSelectPercentage={setSelectedInitialPaymentPercentage}
         onClose={() => setShowPaymentModal(false)}
         onPaymentInitiated={(method) => {
           setPaymentMethod(method);
@@ -1468,7 +1631,12 @@ export default function ClientBookingDetailScreen() {
       <EWalletOptionsModal
         visible={showEWalletModal}
         bookingId={booking.id}
-        totalAmount={booking.amount_fee}
+        totalAmount={modalAmountToPay}
+        allowInitialPayment={canChooseInitialPayment}
+        useInitialPayment={useInitialPayment}
+        onToggleInitialPayment={setUseInitialPayment}
+        selectedPercentage={selectedInitialPaymentPercentage}
+        onSelectPercentage={setSelectedInitialPaymentPercentage}
         onClose={() => setShowEWalletModal(false)}
         onPaymentInitiated={() => {
           setShowEWalletModal(false);
@@ -1505,8 +1673,12 @@ export default function ClientBookingDetailScreen() {
       <PaymentSuccessModal
         visible={showSuccess}
         bookingId={booking.id}
-        amount={booking.amount_fee}
+        amount={currentPaymentAmount}
         paymentMethod={paymentMethod}
+        totalPaid={totalPaid}
+        remainingBalance={remainingBalance}
+        paymentStatus={paymentStatus}
+        installmentCount={installments.length}
         onClose={() => {
           setShowSuccess(false);
           fetchBookingDetail(true);

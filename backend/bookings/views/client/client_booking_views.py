@@ -8,7 +8,7 @@ import logging
 
 from ...models import (
     Booking, Request, ActiveBooking, CancelBooking,
-    ReworkBooking, DisputeBooking, CompleteBooking, Receipt, BroadcastOffer
+    ReworkBooking, DisputeBooking, CompleteBooking, Receipt, BroadcastOffer, PaymentInstallment, Quotation
 )
 from ...serializers import BookingSerializer, BookingPaymentSerializer
 from users.models import Account
@@ -16,6 +16,89 @@ from notification.models import Notification
 
 
 logger = logging.getLogger(__name__)
+
+
+def _to_money(value):
+    from decimal import Decimal
+
+    amount = Decimal(value or 0)
+    return amount.quantize(Decimal('0.01'))
+
+
+def _build_booking_payment_summary(booking):
+    total_amount = _to_money(booking.amount_fee)
+
+    quotation = getattr(booking, 'quotation', None)
+    if booking.status != Booking.Status.PENDING_PAYMENT and quotation is not None:
+        accepted_total = _to_money(0)
+        try:
+            for item in quotation.items.filter(status=Quotation.Status.ACCEPTED):
+                accepted_total += _to_money(item.line_total)
+            accepted_total = _to_money(accepted_total)
+            if accepted_total > 0:
+                convenience_component = _to_money(getattr(booking, 'convenience_fee', 0) or 0)
+                if convenience_component <= 0:
+                    inferred = _to_money(total_amount - accepted_total)
+                    if inferred > 0:
+                        convenience_component = inferred
+                computed_total = _to_money(accepted_total + max(_to_money(0), convenience_component))
+                if computed_total > 0 and computed_total != total_amount:
+                    booking.amount_fee = computed_total
+                    booking.save(update_fields=['amount_fee', 'updated_at'])
+                    total_amount = computed_total
+        except Exception:
+            pass
+
+    installments = list(
+        PaymentInstallment.objects.filter(booking=booking).order_by('created_at', 'id')
+    )
+
+    total_paid = _to_money(0)
+    serialized_installments = []
+    for installment in installments:
+        if installment.status == PaymentInstallment.Status.PAID:
+            total_paid += _to_money(installment.amount)
+        serialized_installments.append(
+            {
+                'type': installment.installment_type,
+                'installment_type': installment.installment_type,
+                'amount': float(installment.amount),
+                'status': installment.status,
+                'is_released': bool(installment.is_released),
+                'paid_at': installment.paid_at.isoformat() if installment.paid_at else None,
+            }
+        )
+
+    remaining_balance = max(_to_money(0), _to_money(total_amount - total_paid))
+
+    if installments:
+        paid_exists = any(it.status == PaymentInstallment.Status.PAID for it in installments)
+        pending_final = next(
+            (it for it in installments if it.status == PaymentInstallment.Status.PENDING and it.installment_type == PaymentInstallment.Type.FINAL),
+            None,
+        )
+        if paid_exists and pending_final and _to_money(pending_final.amount) != remaining_balance:
+            pending_final.amount = remaining_balance
+            pending_final.save(update_fields=['amount', 'updated_at'])
+            for serialized in serialized_installments:
+                if serialized.get('installment_type') == PaymentInstallment.Type.FINAL and serialized.get('status') == PaymentInstallment.Status.PENDING:
+                    serialized['amount'] = float(remaining_balance)
+                    break
+
+    if total_paid >= total_amount and total_amount > 0:
+        derived_payment_status = Booking.PaymentStatus.FULLY_PAID
+    elif total_paid > _to_money(0):
+        derived_payment_status = Booking.PaymentStatus.PARTIALLY_PAID
+    else:
+        derived_payment_status = Booking.PaymentStatus.UNPAID
+
+    return {
+        'payment_status': derived_payment_status,
+        'total_amount': float(total_amount),
+        'total_paid': float(total_paid),
+        'remaining_balance': float(remaining_balance),
+        'installments': serialized_installments,
+    }
 
 
 @api_view(['GET'])
@@ -528,6 +611,17 @@ def _serialize_single_booking(booking):
             booking_data['payment'] = None
     except Exception:
         booking_data['payment'] = None
+
+    # Installment-aware payment summary used by mobile UIs.
+    try:
+        booking_data['payment_summary'] = _build_booking_payment_summary(booking)
+    except Exception:
+        booking_data['payment_summary'] = {
+            'payment_status': getattr(booking, 'payment_status', 'unpaid'),
+            'total_paid': 0.0,
+            'remaining_balance': float(booking.amount_fee),
+            'installments': [],
+        }
 
     return booking_data
 
