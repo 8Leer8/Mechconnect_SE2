@@ -42,6 +42,7 @@ urlpatterns = [
     # Client booking endpoints
     path('bookings/', views.list_client_bookings, name='list-client-bookings'),
     path('bookings/<int:booking_id>/', views.get_booking_detail, name='get-booking-detail'),
+    path('bookings/<int:booking_id>/mechanic-review/', views.submit_mechanic_review, name='submit-mechanic-review'),
     path('payments/initiate/', payment_views.initiate_payment, name='payments-initiate'),
     path('payments/qr/<int:booking_id>/', payment_views.get_qr_token, name='payments-qr-token'),
     path('payments/qr/scan/', payment_views.scan_qr, name='payments-qr-scan'),

@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 // Ensure the router header is hidden for this route so only the in-page header shows
 export const screenOptions = { headerShown: false } as const;
-import {View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Linking, Platform, Modal, TextInput, KeyboardAvoidingView } from 'react-native';
+import {View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Linking, Platform, Modal, TextInput, KeyboardAvoidingView, Alert } from 'react-native';
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -20,6 +20,7 @@ import {
   QRScannerModal,
   type QRScanResult,
 } from '@/components/payment';
+import MechanicRatingModal from '@/components/booking/MechanicRatingModal';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -104,6 +105,16 @@ interface BookingDetail {
       released_at?: string | null;
     }>;
   };
+  mechanic_review?: {
+    can_rate?: boolean;
+    has_review?: boolean;
+    review?: {
+      id?: number;
+      rating?: number;
+      comment?: string;
+      created_at?: string;
+    } | null;
+  };
 }
 
 interface PricingConfig {
@@ -169,6 +180,9 @@ export default function ClientBookingDetailScreen() {
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'gcash' | 'maya' | string>('cash');
   const [useInitialPayment, setUseInitialPayment] = useState(true);
   const [selectedInitialPaymentPercentage, setSelectedInitialPaymentPercentage] = useState<0.3 | 0.5>(0.3);
+  const [showRatingModal, setShowRatingModal] = useState(false);
+  const [ratingSubmitting, setRatingSubmitting] = useState(false);
+  const [ratingPromptDismissed, setRatingPromptDismissed] = useState(false);
   const [expandedQuoteItems, setExpandedQuoteItems] = useState<Record<string, boolean>>({});
   const [quotationListExpanded, setQuotationListExpanded] = useState(false);
   const [pricingConfig, setPricingConfig] = useState<PricingConfig>({});
@@ -760,6 +774,22 @@ export default function ClientBookingDetailScreen() {
     }
   }, [booking, useInitialPayment]);
 
+  useEffect(() => {
+    if (!booking) return;
+    const paymentSummary = booking.payment_summary || {};
+    const summaryPaymentStatus = String(paymentSummary.payment_status || '').toLowerCase();
+    const canRateFromBooking =
+      booking.status === 'completed' &&
+      summaryPaymentStatus === 'fully_paid' &&
+      !!booking.provider &&
+      !!booking.mechanic_review?.can_rate;
+    const hasReviewFromBooking = !!booking.mechanic_review?.has_review;
+
+    if (canRateFromBooking && !hasReviewFromBooking && !ratingPromptDismissed) {
+      setShowRatingModal(true);
+    }
+  }, [booking, ratingPromptDismissed]);
+
   if (loading) {
     return (
       <ThemedView style={styles.container}>
@@ -863,9 +893,46 @@ export default function ClientBookingDetailScreen() {
   const modalAmountToPay = booking.status === 'pending_payment'
     ? remainingBalance
     : totalAmount;
+  const mechanicReviewMeta = booking.mechanic_review || {};
+  const existingMechanicReview = mechanicReviewMeta.review || null;
+  const canRateMechanic =
+    booking.status === 'completed' &&
+    paymentStatus === 'fully_paid' &&
+    !!booking.provider &&
+    !!mechanicReviewMeta.can_rate;
+  const hasMechanicReview = !!mechanicReviewMeta.has_review;
   const paymentProgressPct = totalAmount > 0
     ? Math.min(100, Math.max(0, (totalPaid / totalAmount) * 100))
     : 0;
+
+  const handleSubmitMechanicRating = async (payload: { rating: number; comment: string }) => {
+    if (!booking?.id) return;
+    try {
+      setRatingSubmitting(true);
+      const response = await fetch(`${API_URL}/bookings/bookings/${booking.id}/mechanic-review/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rating: payload.rating,
+          comment: payload.comment,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error((data as any)?.error || 'Unable to submit rating');
+      }
+
+      setShowRatingModal(false);
+      setRatingPromptDismissed(true);
+      fetchBookingDetail(true);
+    } catch (err: any) {
+      Alert.alert('Rating Error', err?.message || 'Unable to submit rating');
+    } finally {
+      setRatingSubmitting(false);
+    }
+  };
 
   return (
     <ThemedView style={styles.container}>
@@ -1450,6 +1517,31 @@ export default function ClientBookingDetailScreen() {
                   <ThemedText style={styles.noteText}>{booking.completion_details.notes}</ThemedText>
                 </View>
               )}
+
+              {canRateMechanic ? (
+                <View style={{ marginTop: 12 }}>
+                  {hasMechanicReview && existingMechanicReview ? (
+                    <View style={styles.noteBox}>
+                      <ThemedText style={styles.noteLabel}>Your Rating</ThemedText>
+                      <ThemedText style={styles.noteText}>
+                        {Number(existingMechanicReview.rating || 0).toFixed(0)} / 5
+                      </ThemedText>
+                      {existingMechanicReview.comment ? (
+                        <ThemedText style={[styles.noteText, { marginTop: 6 }]}>{existingMechanicReview.comment}</ThemedText>
+                      ) : null}
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={[styles.finishLargeButton, { backgroundColor: '#FFD60A' }]}
+                      onPress={() => setShowRatingModal(true)}
+                      activeOpacity={0.85}
+                    >
+                      <FontAwesome name="star" size={16} color="#111214" style={{ marginRight: 8 }} />
+                      <ThemedText style={[styles.actionButtonText, { color: '#111214' }]}>Rate Mechanic</ThemedText>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ) : null}
               
             </View>
           </View>
@@ -1690,6 +1782,23 @@ export default function ClientBookingDetailScreen() {
           setShowSuccess(false);
           fetchBookingDetail(true);
         }}
+      />
+
+      <MechanicRatingModal
+        visible={showRatingModal && canRateMechanic && !hasMechanicReview}
+        mechanicName={booking.provider?.name}
+        loading={ratingSubmitting}
+        initialRating={existingMechanicReview?.rating}
+        initialComment={existingMechanicReview?.comment || ''}
+        onClose={() => {
+          setShowRatingModal(false);
+          setRatingPromptDismissed(true);
+        }}
+        onSkip={() => {
+          setShowRatingModal(false);
+          setRatingPromptDismissed(true);
+        }}
+        onSubmit={handleSubmitMechanicRating}
       />
     </ThemedView>
   );

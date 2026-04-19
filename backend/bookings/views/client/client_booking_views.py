@@ -11,7 +11,7 @@ from ...models import (
     ReworkBooking, DisputeBooking, CompleteBooking, Receipt, BroadcastOffer, PaymentInstallment, Quotation, RequestAssignment
 )
 from ...serializers import BookingSerializer, BookingPaymentSerializer
-from users.models import Account
+from users.models import Account, Mechanic, MechanicReview
 from notification.models import Notification
 
 
@@ -189,7 +189,7 @@ def list_client_bookings(request):
             paginated_bookings = bookings_queryset[start_index:end_index]
             
             # Serialize and return filtered bookings
-            bookings_data = _serialize_bookings(paginated_bookings)
+            bookings_data = _serialize_bookings(paginated_bookings, viewer_account=account)
 
             return Response({
                 'status': status_filter.lower(),
@@ -214,23 +214,23 @@ def list_client_bookings(request):
 
             return Response({
                 'active': {
-                    'bookings': _serialize_bookings(active_bookings),
+                    'bookings': _serialize_bookings(active_bookings, viewer_account=account),
                     'count': active_bookings.count()
                 },
                 'completed': {
-                    'bookings': _serialize_bookings(completed_bookings),
+                    'bookings': _serialize_bookings(completed_bookings, viewer_account=account),
                     'count': completed_bookings.count()
                 },
                 'cancelled': {
-                    'bookings': _serialize_bookings(cancelled_bookings),
+                    'bookings': _serialize_bookings(cancelled_bookings, viewer_account=account),
                     'count': cancelled_bookings.count()
                 },
                 'reworked': {
-                    'bookings': _serialize_bookings(reworked_bookings),
+                    'bookings': _serialize_bookings(reworked_bookings, viewer_account=account),
                     'count': reworked_bookings.count()
                 },
                 'disputed': {
-                    'bookings': _serialize_bookings(disputed_bookings),
+                    'bookings': _serialize_bookings(disputed_bookings, viewer_account=account),
                     'count': disputed_bookings.count()
                 },
                 'total_count': bookings_queryset.count()
@@ -301,7 +301,7 @@ def get_booking_detail(request, booking_id):
                 pass
 
         # Serialize booking
-        booking_data = _serialize_single_booking(booking)
+        booking_data = _serialize_single_booking(booking, viewer_account=account)
         
         return Response({
             'booking': booking_data
@@ -321,17 +321,103 @@ def get_booking_detail(request, booking_id):
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-def _serialize_bookings(bookings_queryset):
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def submit_mechanic_review(request, booking_id):
+    """Submit a mechanic review from client booking details.
+
+    Rules:
+    - Requesting user must be the booking's client.
+    - Booking must be completed.
+    - Booking payment must be fully paid.
+    - Booking provider must be a mechanic account.
+    - One review per reviewer/mechanic pair (model constraint). Existing review is updated.
+    """
+    account_id = request.session.get('account_id')
+    if not account_id:
+        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        account = Account.objects.get(id=account_id)
+        if not hasattr(account, 'client'):
+            return Response({'error': 'Only clients can submit mechanic reviews'}, status=status.HTTP_403_FORBIDDEN)
+
+        booking = Booking.objects.select_related('request__client', 'request__provider').get(
+            id=booking_id,
+            request__client=account.client,
+        )
+
+        if booking.status != Booking.Status.COMPLETED:
+            return Response({'error': 'You can review only after the booking is completed'}, status=status.HTTP_400_BAD_REQUEST)
+
+        payment_summary = _build_booking_payment_summary(booking)
+        if str(payment_summary.get('payment_status', '')).lower() != Booking.PaymentStatus.FULLY_PAID:
+            return Response({'error': 'You can review only after full payment is completed'}, status=status.HTTP_400_BAD_REQUEST)
+
+        provider_account = getattr(booking.request, 'provider', None)
+        if provider_account is None:
+            return Response({'error': 'No provider found for this booking'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            mechanic = provider_account.mechanic
+        except Mechanic.DoesNotExist:
+            return Response({'error': 'Booking provider is not a mechanic'}, status=status.HTTP_400_BAD_REQUEST)
+
+        rating_raw = request.data.get('rating')
+        try:
+            rating = int(rating_raw)
+        except (TypeError, ValueError):
+            return Response({'error': 'Rating is required and must be an integer from 1 to 5'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if rating < 1 or rating > 5:
+            return Response({'error': 'Rating must be between 1 and 5'}, status=status.HTTP_400_BAD_REQUEST)
+
+        comment = request.data.get('comment', '')
+        if comment is None:
+            comment = ''
+        comment = str(comment).strip()
+
+        review, created = MechanicReview.objects.update_or_create(
+            reviewer=account,
+            mechanic=mechanic,
+            defaults={
+                'rating': rating,
+                'comment': comment,
+            },
+        )
+
+        return Response(
+            {
+                'message': 'Review submitted successfully' if created else 'Review updated successfully',
+                'review': {
+                    'id': review.id,
+                    'rating': review.rating,
+                    'comment': review.comment,
+                    'created_at': review.created_at.isoformat() if review.created_at else None,
+                },
+                'created': created,
+            },
+            status=status.HTTP_200_OK,
+        )
+    except Booking.DoesNotExist:
+        return Response({'error': 'Booking not found or you do not have permission'}, status=status.HTTP_404_NOT_FOUND)
+    except Account.DoesNotExist:
+        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+def _serialize_bookings(bookings_queryset, viewer_account=None):
     """Helper function to serialize a queryset of bookings"""
     bookings_data = []
     
     for booking in bookings_queryset:
-        bookings_data.append(_serialize_single_booking(booking))
+        bookings_data.append(_serialize_single_booking(booking, viewer_account=viewer_account))
     
     return bookings_data
 
 
-def _serialize_single_booking(booking):
+def _serialize_single_booking(booking, viewer_account=None):
     """Helper function to serialize a single booking with all details"""
     broadcast_request_payload = None
     accepted_offer = None
@@ -635,6 +721,42 @@ def _serialize_single_booking(booking):
             'total_paid': 0.0,
             'remaining_balance': float(booking.amount_fee),
             'installments': [],
+        }
+
+    # Attach mechanic review state for client-side rating prompt.
+    try:
+        provider_account = getattr(booking.request, 'provider', None)
+        viewer_is_client = bool(viewer_account and hasattr(viewer_account, 'client'))
+        can_rate = False
+        review_payload = None
+
+        if viewer_is_client and provider_account is not None:
+            try:
+                mechanic = provider_account.mechanic
+                payment_status = str((booking_data.get('payment_summary') or {}).get('payment_status', '')).lower()
+                can_rate = booking.status == Booking.Status.COMPLETED and payment_status == Booking.PaymentStatus.FULLY_PAID
+
+                review_obj = MechanicReview.objects.filter(reviewer=viewer_account, mechanic=mechanic).first()
+                if review_obj is not None:
+                    review_payload = {
+                        'id': review_obj.id,
+                        'rating': review_obj.rating,
+                        'comment': review_obj.comment,
+                        'created_at': review_obj.created_at.isoformat() if review_obj.created_at else None,
+                    }
+            except Mechanic.DoesNotExist:
+                pass
+
+        booking_data['mechanic_review'] = {
+            'can_rate': bool(can_rate),
+            'has_review': review_payload is not None,
+            'review': review_payload,
+        }
+    except Exception:
+        booking_data['mechanic_review'] = {
+            'can_rate': False,
+            'has_review': False,
+            'review': None,
         }
 
     return booking_data
