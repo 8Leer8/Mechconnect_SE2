@@ -284,6 +284,10 @@ export default function MechanicDirectRequestScreen() {
 			return '/client/request/main_request_form/mechanic-profile/_direct-request/map';
 		}
 
+		if (pathname.includes('/client/booking/mechanic-profile/_direct-request')) {
+			return '/client/booking/mechanic-profile/_direct-request/map';
+		}
+
 		if (pathname.includes('/client/mechanic/_direct-request')) {
 			return '/client/mechanic/_direct-request/map';
 		}

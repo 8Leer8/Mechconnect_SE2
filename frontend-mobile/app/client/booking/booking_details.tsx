@@ -931,7 +931,10 @@ export default function ClientBookingDetailScreen() {
         {booking.provider && (
           <TouchableOpacity 
             style={styles.sectionCard}
-            onPress={() => router.push(`/client/mechanic/mechanicprofile?mechanicId=${booking.provider?.id}`)}
+            onPress={() => router.push({
+              pathname: '/client/booking/mechanic-profile/[id]',
+              params: { id: String(booking.provider?.id) },
+            })}
             activeOpacity={0.7}
           >
             <View style={styles.sectionHeader}>
@@ -983,7 +986,10 @@ export default function ClientBookingDetailScreen() {
         {booking.shop && (
           <TouchableOpacity 
             style={styles.sectionCard}
-            onPress={() => router.push(`/client/shop/shopprofile?shopId=${booking.shop?.id}`)}
+            onPress={() => router.push({
+              pathname: '/client/booking/shop-profile/[id]',
+              params: { id: String(booking.shop?.id) },
+            })}
             activeOpacity={0.7}
           >
             <View style={styles.sectionHeader}>

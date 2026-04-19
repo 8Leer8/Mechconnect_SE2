@@ -160,7 +160,7 @@ export default function MechanicProfileScreen() {
     router.replace('/(clientTabs)/main/discover');
   };
 
-  const showDirectRequest = !pathname.includes('/client/booking');
+  const showDirectRequest = !pathname.includes('/_direct-request');
 
   const handleDirectRequest = () => {
     const providerAccountId = profile?.account_id || profile?.id;
@@ -199,7 +199,29 @@ export default function MechanicProfileScreen() {
       return;
     }
 
-    if (pathname.includes('/client/booking')) {
+    if (pathname.includes('/client/booking/mechanic-profile')) {
+      router.push({
+        pathname: '/client/booking/mechanic-profile/_direct-request/[id]',
+        params: {
+          id: String(profileMechanicId),
+          mechanicId: String(profileMechanicId),
+          providerId: String(providerAccountId),
+          providerName: profile.full_name,
+          street_name: profile.address?.street_name || undefined,
+          subdivision_village: profile.address?.subdivision_village || undefined,
+          barangay: profile.address?.barangay || undefined,
+          city_municipality: profile.address?.city_municipality || undefined,
+          province: profile.address?.province || undefined,
+          region: profile.address?.region || undefined,
+          providerStreet: profile.address?.street_name || undefined,
+          providerSubdivision: profile.address?.subdivision_village || undefined,
+          providerBarangay: profile.address?.barangay || undefined,
+          providerCity: profile.address?.city_municipality || undefined,
+          providerProvince: profile.address?.province || undefined,
+          providerRegion: profile.address?.region || undefined,
+          distance_km: typeof distance_km === 'string' ? distance_km : undefined,
+        },
+      });
       return;
     }
 
