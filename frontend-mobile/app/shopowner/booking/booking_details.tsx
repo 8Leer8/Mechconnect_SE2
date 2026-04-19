@@ -521,6 +521,28 @@ export default function ShopOwnerBookingDetailScreen() {
           </ThemedText>
         </View>
 
+        {/* Chat Section */}
+        <TouchableOpacity
+          style={styles.sectionCard}
+          onPress={() =>
+            router.push({ pathname: '/chat/booking_chat', params: { bookingId: String(booking.id) } })
+          }
+          activeOpacity={0.8}
+        >
+          <View style={styles.sectionHeader}>
+            <View style={[styles.sectionIcon, { backgroundColor: '#007AFF15' }]}>
+              <FontAwesome name="comments" size={16} color="#007AFF" />
+            </View>
+            <ThemedText style={styles.sectionTitle}>Chat with Lead Mechanic</ThemedText>
+            <FontAwesome name="chevron-right" size={16} color="#8E8E93" style={{ marginLeft: 'auto' }} />
+          </View>
+          <View style={{ paddingVertical: 8 }}>
+            <ThemedText style={{ color: '#666' }}>
+              Open the booking chat to coordinate with the assigned team.
+            </ThemedText>
+          </View>
+        </TouchableOpacity>
+
         <View style={styles.sectionCard}>
           <View style={styles.sectionHeader}>
             <View style={[styles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>

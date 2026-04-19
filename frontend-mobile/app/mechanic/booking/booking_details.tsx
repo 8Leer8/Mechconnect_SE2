@@ -42,6 +42,10 @@ interface BookingDetail {
     vehicle_brand?: string | null;
     vehicle_model?: string | null;
     created_at: string;
+    assigned_mechanics?: Array<{
+      mechanic?: { id: number };
+      role?: 'lead' | 'assistant' | string;
+    }>;
   };
   provider?: {
     id: number;
@@ -193,7 +197,31 @@ export default function BookingDetailScreen() {
   const routerHook = useRouter();
   const isMechanicShopSource = source === 'mechanic_shop';
   const [quotation, setQuotation] = useState<any | null>(null);
+  const [currentAccountId, setCurrentAccountId] = useState<number | null>(null);
   const { lastMessage } = useWebSocketContext();
+
+  useEffect(() => {
+    let mounted = true;
+    const fetchCurrentAccount = async () => {
+      try {
+        const r = await fetch(`${API_URL}/users/profile/details/`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (!r.ok || !mounted) return;
+        const d = await r.json();
+        const aid = d?.profile?.id || d?.id || d?.profile?.account_id || null;
+        if (aid) setCurrentAccountId(Number(aid));
+      } catch (e) {
+        // ignore
+      }
+    };
+    fetchCurrentAccount();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -1292,6 +1320,13 @@ export default function BookingDetailScreen() {
     booking.status === 'on_the_way' ||
     booking.status === 'active'
   );
+  const myAssignmentRole = (() => {
+    const assigned = booking.request?.assigned_mechanics || [];
+    if (!currentAccountId || !Array.isArray(assigned)) return null;
+    const hit = assigned.find((a) => Number(a?.mechanic?.id) === Number(currentAccountId));
+    return (hit?.role || null) as string | null;
+  })();
+  const canOpenQuotationEditor = myAssignmentRole !== 'assistant';
 
   const paymentSummary = booking.payment_summary || {};
   const installments = Array.isArray(paymentSummary.installments) ? paymentSummary.installments : [];
@@ -2011,7 +2046,7 @@ export default function BookingDetailScreen() {
                 </View>
               )}
 
-              {canEditQuotation && (
+              {canEditQuotation && canOpenQuotationEditor && (
                 <TouchableOpacity
                   style={[styles.finishLargeButton, { marginTop: 10 }]}
                   onPress={() => routerHook.push({ pathname: '/mechanic/booking/quotation_edit', params: { bookingId: String(booking.id) } })}
@@ -2056,12 +2091,14 @@ export default function BookingDetailScreen() {
                 <FontAwesome name="file-text-o" size={16} color="#34C759" />
               </View>
               <ThemedText style={styles.sectionTitle}>Receipt</ThemedText>
-              <TouchableOpacity
-                onPress={() => routerHook.push({ pathname: '/mechanic/booking/quotation_edit', params: { bookingId: String(booking.id) } })}
-                style={{ marginLeft: 'auto', paddingHorizontal: 8, paddingVertical: 4 }}
-              >
-                <FontAwesome name={quotation ? 'pencil' : 'plus'} size={16} color="#007AFF" />
-              </TouchableOpacity>
+              {canOpenQuotationEditor ? (
+                <TouchableOpacity
+                  onPress={() => routerHook.push({ pathname: '/mechanic/booking/quotation_edit', params: { bookingId: String(booking.id) } })}
+                  style={{ marginLeft: 'auto', paddingHorizontal: 8, paddingVertical: 4 }}
+                >
+                  <FontAwesome name={quotation ? 'pencil' : 'plus'} size={16} color="#007AFF" />
+                </TouchableOpacity>
+              ) : null}
             </View>
             <View style={styles.receiptList}>
               {displayQuotation && sortedQuotationItems.length > 0 ? (

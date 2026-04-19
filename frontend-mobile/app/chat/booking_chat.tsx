@@ -15,6 +15,8 @@ export default function BookingChatScreen() {
   const navigation = useNavigation();
   const listRef = useRef<FlatList<any> | null>(null);
   const [conversationData, setConversationData] = useState<any | null>(null);
+  const [canSendMessages, setCanSendMessages] = useState(true);
+  const [myChatRole, setMyChatRole] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [conversationId, setConversationId] = useState<number | null>(null);
   const [messages, setMessages] = useState<any[]>([]);
@@ -122,10 +124,40 @@ export default function BookingChatScreen() {
       const data = await res.json();
       setConversationId(data.id);
       setConversationData(data);
+      setCanSendMessages(Boolean(data?.can_send ?? false));
+      setMyChatRole(data?.my_chat_role || null);
     } catch (e) {
       console.warn(e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const refreshConversationAccess = async () => {
+    if (!bookingId) return;
+    try {
+      const headers: any = { 'Content-Type': 'application/json' };
+      try {
+        const token = await AsyncStorage.getItem('auth_token');
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+      } catch (e) {
+        // ignore
+      }
+      const res = await fetch(`${API_URL}/chat/booking/${bookingId}/`, {
+        method: 'GET',
+        credentials: 'include',
+        headers,
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      setConversationData(data);
+      setCanSendMessages(Boolean(data?.can_send ?? false));
+      setMyChatRole(data?.my_chat_role || null);
+      if (data?.id && data.id !== conversationId) {
+        setConversationId(data.id);
+      }
+    } catch (e) {
+      // ignore permission refresh failures
     }
   };
 
@@ -164,6 +196,7 @@ export default function BookingChatScreen() {
   }, [messages]);
 
   const canOpenQuotationEditor = useMemo(() => {
+    if (!canSendMessages) return false;
     if (isAssignedMechanicForBooking) return true;
     if (!accountId) return false;
     return messages.some((m: any) => {
@@ -174,7 +207,7 @@ export default function BookingChatScreen() {
         return false;
       }
     });
-  }, [isAssignedMechanicForBooking, accountId, messages]);
+  }, [canSendMessages, isAssignedMechanicForBooking, accountId, messages]);
 
   useEffect(() => {
     if (!bookingId || !accountId) {
@@ -260,6 +293,7 @@ export default function BookingChatScreen() {
   useEffect(() => {
     if (!conversationId) return;
     let mounted = true;
+    let accessPoll: any = null;
 
     const fetchMessages = async () => {
       try {
@@ -315,9 +349,15 @@ export default function BookingChatScreen() {
       }
     };
 
+    refreshConversationAccess();
     fetchMessages();
     pollRef.current = setInterval(fetchMessages, 3000);
-    return () => { mounted = false; if (pollRef.current) clearInterval(pollRef.current); };
+    accessPoll = setInterval(refreshConversationAccess, 15000);
+    return () => {
+      mounted = false;
+      if (pollRef.current) clearInterval(pollRef.current);
+      if (accessPoll) clearInterval(accessPoll);
+    };
   }, [conversationId, accountId, acceptedLocks]);
 
   useEffect(() => {
@@ -424,6 +464,10 @@ export default function BookingChatScreen() {
   };
 
   const handleSend = async () => {
+    if (!canSendMessages) {
+      Alert.alert('View only', 'Only lead mechanic and shop owner can send messages in this booking chat.');
+      return;
+    }
     if (!text.trim()) {
       Alert.alert('Empty message', 'Please enter a message before sending.');
       return;
@@ -569,8 +613,8 @@ export default function BookingChatScreen() {
 
     if (parsed && parsed.type === 'backjob_request') {
       return (
-        <View style={[styles.messageRow, { alignItems: 'center', flexDirection: 'row', justifyContent: 'center' }]}> 
-          <View style={styles.systemBubbleContainer}>
+        <View style={styles.messageRow}>
+          <View style={[styles.systemBubbleContainer, styles.systemBubbleContainerAligned]}>
             <View style={styles.systemBubble}>
               <ThemedText style={styles.systemTitle}>Backjob Request</ThemedText>
               <ThemedText style={styles.systemText}>{parsed.requested_by_name || 'Client'} asked for a backjob</ThemedText>
@@ -751,8 +795,8 @@ export default function BookingChatScreen() {
       const removedItems = orderedPreviousItems.filter((_: any, prevIdx: number) => !usedPrevIndexes.has(prevIdx));
 
       return (
-        <View style={[styles.messageRow, { alignItems: 'center', flexDirection: 'row', justifyContent: 'center' }]}>
-          <View style={styles.systemBubbleContainer}>
+        <View style={styles.messageRow}>
+          <View style={[styles.systemBubbleContainer, styles.systemBubbleContainerAligned]}>
             <View style={styles.quotationCompactBubble}>
               <TouchableOpacity
                 onPress={() => setExpandedQuoteCards(prev => ({ ...prev, [quoteMessageKey]: !prev[quoteMessageKey] }))}
@@ -855,8 +899,8 @@ export default function BookingChatScreen() {
 
       if (parsed && parsed.type === 'backjob_accepted') {
         return (
-          <View style={[styles.messageRow, { alignItems: 'center', flexDirection: 'row', justifyContent: 'center' }]}> 
-            <View style={styles.systemBubbleContainer}>
+          <View style={styles.messageRow}>
+            <View style={[styles.systemBubbleContainer, styles.systemBubbleContainerAligned]}>
               <View style={styles.systemBubble}>
                 <ThemedText style={styles.systemTitle}>Backjob Accepted</ThemedText>
                 <ThemedText style={styles.systemText}>{parsed.mechanic_name || 'Mechanic'} accepted the backjob</ThemedText>
@@ -870,10 +914,57 @@ export default function BookingChatScreen() {
 
     const senderId = item?.sender?.id != null ? Number(item.sender.id) : null;
     const isMe = Boolean(item?.is_mine) || (senderId != null && accountId != null && Number(senderId) === Number(accountId));
+    const senderName = [item?.sender?.firstname, item?.sender?.lastname].filter(Boolean).join(' ').trim() || item?.sender?.username || 'User';
+    const senderInitial = (senderName || 'U').charAt(0).toUpperCase();
+    const senderPhoto = item?.sender?.profile_photo || null;
+    const senderRole = String(item?.sender?.chat_role || 'participant');
+    const senderRoleLabelMap: Record<string, string> = {
+      lead_mechanic: 'Lead',
+      assistant_mechanic: 'Assistant',
+      shop_owner: 'Shop Owner',
+      client: 'Client',
+      provider_mechanic: 'Mechanic',
+      participant: 'Participant',
+      admin: 'Admin',
+      none: 'Participant',
+    };
+    const senderRoleLabel = senderRoleLabelMap[senderRole] || 'Participant';
     return (
       <View style={[styles.messageRow, isMe ? { alignItems: 'flex-end' } : { alignItems: 'flex-start' }]}> 
-        <View style={[styles.messageBubble, isMe ? styles.messageBubbleMine : styles.messageBubbleOther]}>
-          <ThemedText style={isMe ? styles.messageTextMine : styles.messageTextOther}>{item.content}</ThemedText>
+        <View style={[styles.senderRow, isMe ? styles.senderRowMine : styles.senderRowOther]}>
+          {!isMe ? (
+            senderPhoto ? (
+              <Image source={{ uri: senderPhoto }} style={styles.messageAvatar} />
+            ) : (
+              <View style={styles.messageAvatarFallback}>
+                <ThemedText style={styles.messageAvatarFallbackText}>{senderInitial}</ThemedText>
+              </View>
+            )
+          ) : null}
+
+          <View style={[styles.messageContentWrap, isMe ? styles.messageContentWrapMine : styles.messageContentWrapOther]}>
+            <View style={[styles.senderMetaRow, isMe ? styles.senderMetaRowMine : styles.senderMetaRowOther]}>
+              <ThemedText style={[styles.senderName, isMe ? styles.senderNameMine : styles.senderNameOther]}>
+                {isMe ? 'You' : senderName}
+              </ThemedText>
+              <ThemedText style={[styles.senderRoleInline, isMe ? styles.senderRoleInlineMine : styles.senderRoleInlineOther]}>
+                {senderRoleLabel}
+              </ThemedText>
+            </View>
+            <View style={[styles.messageBubble, isMe ? styles.messageBubbleMine : styles.messageBubbleOther]}>
+              <ThemedText style={isMe ? styles.messageTextMine : styles.messageTextOther}>{item.content}</ThemedText>
+            </View>
+          </View>
+
+          {isMe ? (
+            senderPhoto ? (
+              <Image source={{ uri: senderPhoto }} style={styles.messageAvatar} />
+            ) : (
+              <View style={styles.messageAvatarFallback}>
+                <ThemedText style={styles.messageAvatarFallbackText}>{senderInitial}</ThemedText>
+              </View>
+            )
+          ) : null}
         </View>
         <ThemedText style={[styles.messageTimeOutside, isMe ? styles.messageTimeOutsideMine : styles.messageTimeOutsideOther]}>
           {new Date(item.created_at).toLocaleTimeString()}
@@ -890,13 +981,18 @@ export default function BookingChatScreen() {
         </TouchableOpacity>
         <View style={styles.headerIdentityWrap}>
           <View style={styles.headerAvatar}>
-            <ThemedText style={styles.headerAvatarText}>{(() => {
-              if (!conversationData || !conversationData.participants) return '?';
+            {(() => {
+              if (!conversationData || !conversationData.participants) {
+                return <ThemedText style={styles.headerAvatarText}>?</ThemedText>;
+              }
               const others = conversationData.participants.filter((p: any) => String(p.id) !== String(accountId));
               const pick = others.length ? others[0] : conversationData.participants[0];
+              if (pick?.profile_photo) {
+                return <Image source={{ uri: pick.profile_photo }} style={styles.headerAvatarImage} />;
+              }
               const initial = (pick?.firstname || pick?.username || '?').toString().charAt(0).toUpperCase();
-              return initial || '?';
-            })()}</ThemedText>
+              return <ThemedText style={styles.headerAvatarText}>{initial || '?'}</ThemedText>;
+            })()}
           </View>
           <View style={{ flex: 1, alignItems: 'center' }}>
           <ThemedText style={styles.headerName}>{(() => {
@@ -1038,21 +1134,30 @@ export default function BookingChatScreen() {
             </View>
           </Modal>
 
-          <View style={styles.inputRow}>
-            <TextInput
-              value={text}
-              onChangeText={setText}
-              placeholder="Write a message..."
-              placeholderTextColor="#8E8E93"
-              style={styles.input}
-              selectionColor="#FF8C00"
-              keyboardAppearance="dark"
-              multiline
-            />
-            <TouchableOpacity style={[styles.sendBtn, !text.trim() ? styles.sendBtnDisabled : null]} onPress={handleSend} disabled={sending || !text.trim()}>
-              {sending ? <ActivityIndicator color="#fff" /> : <FontAwesome name="send" size={20} color="#fff" />}
-            </TouchableOpacity>
-          </View>
+          {canSendMessages ? (
+            <View style={styles.inputRow}>
+              <TextInput
+                value={text}
+                onChangeText={setText}
+                placeholder="Write a message..."
+                placeholderTextColor="#8E8E93"
+                style={styles.input}
+                selectionColor="#FF8C00"
+                keyboardAppearance="dark"
+                multiline
+              />
+              <TouchableOpacity style={[styles.sendBtn, !text.trim() ? styles.sendBtnDisabled : null]} onPress={handleSend} disabled={sending || !text.trim()}>
+                {sending ? <ActivityIndicator color="#fff" /> : <FontAwesome name="send" size={20} color="#fff" />}
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.viewOnlyRow}>
+              <FontAwesome name="eye" size={14} color="#F2B15C" />
+              <ThemedText style={styles.viewOnlyText}>
+                View only ({myChatRole === 'assistant_mechanic' ? 'Assistant Mechanic' : 'Participant'}). You can read updates but cannot send messages for this booking.
+              </ThemedText>
+            </View>
+          )}
         </KeyboardAvoidingView>
       )}
     </View>
@@ -1090,6 +1195,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  headerAvatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 17,
+  },
   headerAvatarText: {
     color: '#E5E7EB',
     fontWeight: '700',
@@ -1098,9 +1208,87 @@ const styles = StyleSheet.create({
   headerName: { fontSize: 16, fontWeight: '700', color: '#fff' },
   headerBooking: { fontSize: 12, color: '#8E8E93', marginTop: 2 },
   messageRow: { marginBottom: 8, width: '100%' },
+  senderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+    width: '100%',
+  },
+  senderRowOther: {
+    justifyContent: 'flex-start',
+  },
+  senderRowMine: {
+    justifyContent: 'flex-end',
+  },
+  messageContentWrap: {
+    maxWidth: '82%',
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  messageContentWrapOther: {
+    alignItems: 'flex-start',
+  },
+  messageContentWrapMine: {
+    alignItems: 'flex-end',
+  },
+  senderName: {
+    fontSize: 11,
+    marginBottom: 4,
+    fontWeight: '600',
+  },
+  senderMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 4,
+  },
+  senderMetaRowOther: {
+    justifyContent: 'flex-start',
+  },
+  senderMetaRowMine: {
+    justifyContent: 'flex-end',
+  },
+  senderNameOther: {
+    color: '#9CA3AF',
+  },
+  senderNameMine: {
+    color: '#B8BDC3',
+  },
+  senderRoleInline: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  senderRoleInlineOther: {
+    color: '#AEB6C2',
+  },
+  senderRoleInlineMine: {
+    color: '#D3D8E0',
+  },
+  messageAvatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#22262B',
+    borderWidth: 1,
+    borderColor: '#2F353C',
+  },
+  messageAvatarFallback: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#22262B',
+    borderWidth: 1,
+    borderColor: '#2F353C',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  messageAvatarFallbackText: {
+    color: '#E5E7EB',
+    fontSize: 11,
+    fontWeight: '700',
+  },
   messageBubble: {
     alignSelf: 'flex-start',
-    maxWidth: '76%',
     borderRadius: 18,
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -1135,12 +1323,12 @@ const styles = StyleSheet.create({
   },
   messageTimeOutsideMine: {
     alignSelf: 'flex-end',
-    marginRight: 4,
+    marginRight: 36,
     color: '#B8BDC3',
   },
   messageTimeOutsideOther: {
     alignSelf: 'flex-start',
-    marginLeft: 4,
+    marginLeft: 36,
     color: '#7F8790',
   },
   inputRow: {
@@ -1177,14 +1365,40 @@ const styles = StyleSheet.create({
   sendBtnDisabled: {
     backgroundColor: '#3A3D42',
   },
-  systemBubble: { backgroundColor: '#2C2C2E', padding: 12, borderRadius: 12, maxWidth: '90%', alignItems: 'center' },
+  viewOnlyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#202428',
+    backgroundColor: '#111214',
+  },
+  viewOnlyText: {
+    color: '#F2B15C',
+    fontSize: 12,
+    fontWeight: '600',
+    flex: 1,
+  },
+  systemBubble: {
+    backgroundColor: '#2C2C2E',
+    padding: 12,
+    borderRadius: 12,
+    maxWidth: '82%',
+    alignItems: 'flex-start',
+    borderWidth: 1,
+    borderColor: '#2F353C',
+  },
   quotationCompactBubble: {
-    backgroundColor: 'transparent',
-    paddingVertical: 2,
-    paddingHorizontal: 2,
-    borderRadius: 0,
-    maxWidth: '90%',
+    backgroundColor: '#1B1D20',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    maxWidth: '82%',
     alignItems: 'stretch',
+    borderWidth: 1,
+    borderColor: '#2A2E33',
   },
   quotationCompactRow: {
     width: '100%',
@@ -1320,9 +1534,14 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   systemTitle: { fontSize: 13, fontWeight: '700', color: '#FF8C00', marginBottom: 4 },
-  systemText: { fontSize: 13, color: '#ECEDEE', textAlign: 'center' },
+  systemText: { fontSize: 13, color: '#ECEDEE', textAlign: 'left' },
   systemImage: { width: 220, height: 140, borderRadius: 10, marginTop: 8 },
-  systemBubbleContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
+  systemBubbleContainer: { flexDirection: 'row', width: '100%' },
+  systemBubbleContainerAligned: {
+    justifyContent: 'flex-start',
+    paddingLeft: 36,
+    paddingRight: 8,
+  },
   headerAction: {
     width: 36,
     height: 36,

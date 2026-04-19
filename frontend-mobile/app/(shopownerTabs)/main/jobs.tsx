@@ -888,6 +888,20 @@ export default function ShopOwnerJobsScreen() {
                   <ThemedText style={styles.amount}>
                     ₱{parseFloat(String(b.amount_fee || '0')).toFixed(2)}
                   </ThemedText>
+                  <View style={styles.footerActions}>
+                    <TouchableOpacity
+                      style={[styles.assignBtn, { backgroundColor: '#FF8C0015' }]}
+                      onPress={() =>
+                        router.push({
+                          pathname: '/shopowner/booking/booking_details',
+                          params: { bookingId: b.id.toString() },
+                        })
+                      }
+                    >
+                      <ThemedText style={[styles.assignBtnText, { color: '#FF8C00' }]}>Details</ThemedText>
+                      <FontAwesome name="chevron-right" size={11} color="#FF8C00" />
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </View>
             ))}
@@ -961,22 +975,20 @@ export default function ShopOwnerJobsScreen() {
                   </ThemedText>
 
                   <View style={styles.footerActions}>
-                    {activeTab === 'on_going' ? (
-                      <TouchableOpacity
-                        style={[styles.assignBtn, { backgroundColor: '#FF8C0015' }]}
-                        onPress={() =>
-                          router.push({
-                            pathname: '/shopowner/booking/booking_details',
-                            params: { bookingId: b.id.toString() },
-                          })
-                        }
-                      >
-                        <ThemedText style={[styles.assignBtnText, { color: '#FF8C00' }]}>
-                          Details
-                        </ThemedText>
-                        <FontAwesome name="chevron-right" size={11} color="#FF8C00" />
-                      </TouchableOpacity>
-                    ) : (
+                    <TouchableOpacity
+                      style={[styles.assignBtn, { backgroundColor: '#FF8C0015' }]}
+                      onPress={() =>
+                        router.push({
+                          pathname: '/shopowner/booking/booking_details',
+                          params: { bookingId: b.id.toString() },
+                        })
+                      }
+                    >
+                      <ThemedText style={[styles.assignBtnText, { color: '#FF8C00' }]}>Details</ThemedText>
+                      <FontAwesome name="chevron-right" size={11} color="#FF8C00" />
+                    </TouchableOpacity>
+
+                    {activeTab === 'on_going' ? null : (
                       // Assign Mechanics button — available for non-terminal statuses outside On Going tab
                       ['accepted', 'on_the_way', 'active', 'paused'].includes(b.status) && (
                         <TouchableOpacity
