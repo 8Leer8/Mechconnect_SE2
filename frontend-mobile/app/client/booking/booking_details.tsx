@@ -644,6 +644,7 @@ export default function ClientBookingDetailScreen() {
 
   useEffect(() => {
     if (booking?.status === 'pending_payment') {
+      setUseInitialPayment(false);
       setShowPaymentModal(true);
     }
   }, [booking?.status]);
@@ -750,7 +751,7 @@ export default function ClientBookingDetailScreen() {
     );
     const isBookedState = booking.status === 'booked' || booking.status === 'accepted';
     const canChooseInitialPayment =
-      (booking.status === 'pending_payment' || isBookedState) &&
+      isBookedState &&
       paymentStatus === 'unpaid' &&
       !hasPaidInstallment;
 
@@ -814,7 +815,7 @@ export default function ClientBookingDetailScreen() {
   );
   const isBookedState = booking.status === 'booked' || booking.status === 'accepted';
   const canChooseInitialPayment =
-    (booking.status === 'pending_payment' || isBookedState) &&
+    isBookedState &&
     summaryPaymentStatus === 'unpaid' &&
     !hasPaidInstallment;
   const isPayableTotalLive = booking.status !== 'pending_payment';
@@ -1121,7 +1122,7 @@ export default function ClientBookingDetailScreen() {
               </View>
               <ThemedText style={styles.progressText}>{Math.round(paymentProgressPct)}% Paid</ThemedText>
 
-              {paymentStatus === 'unpaid' ? (
+              {paymentStatus === 'unpaid' && canChooseInitialPayment ? (
                 <View style={styles.noteBox}>
                   <ThemedText style={styles.noteText}>Secure your booking with an optional initial payment.</ThemedText>
                 </View>

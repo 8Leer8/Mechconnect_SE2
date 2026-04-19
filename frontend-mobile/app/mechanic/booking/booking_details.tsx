@@ -340,17 +340,32 @@ export default function BookingDetailScreen() {
   const convenienceBreakdown = useMemo(() => {
     if (!booking) return null;
 
-    const freeDistanceKm = Math.max(0, Number(pricingConfig.free_distance_km || 0));
     const baseDistanceFee = Number(pricingConfig.base_distance_fee || 0);
     const ratePerKm = Number(pricingConfig.price_per_km || 0);
     const conveniencePct = Number(pricingConfig.convenience_fee_percentage || 0) / 100;
     const convenienceFixed = Number(pricingConfig.convenience_fee_fixed || 0);
 
     const safeDistanceKm = Math.max(0, Number((booking as any).distance_km || 0));
-    const billableDistanceKm = Math.max(0, safeDistanceKm - freeDistanceKm);
-    const baseFee = safeDistanceKm > freeDistanceKm ? baseDistanceFee : 0;
-    const distanceFee = billableDistanceKm * ratePerKm;
-    const travelFee = baseFee + distanceFee;
+    const persistedConvenienceFee = Number((booking as any).convenience_fee || 0);
+    const hasPersistedConvenience = Number.isFinite(persistedConvenienceFee) && persistedConvenienceFee > 0;
+
+    let baseFee = 0;
+    let distanceFee = 0;
+    let trafficFee = 0;
+    let travelFee = 0;
+
+    if (hasPersistedConvenience) {
+      baseFee = safeDistanceKm > 0 ? baseDistanceFee : 0;
+      const persistedTrafficSurcharge = Number((booking as any).traffic_surcharge);
+      const hasPersistedTrafficSurcharge = Number.isFinite(persistedTrafficSurcharge) && persistedTrafficSurcharge >= 0;
+      trafficFee = hasPersistedTrafficSurcharge ? persistedTrafficSurcharge : 0;
+      distanceFee = Math.max(0, persistedConvenienceFee - baseFee - trafficFee);
+      travelFee = baseFee + distanceFee;
+    } else {
+      baseFee = safeDistanceKm > 0 ? baseDistanceFee : 0;
+      distanceFee = safeDistanceKm * ratePerKm;
+      travelFee = baseFee + distanceFee;
+    }
 
     const levelRaw = String((booking as any).traffic_level || 'moderate').toLowerCase();
     const normalizedLevel = levelRaw === 'light' || levelRaw === 'low'
@@ -366,14 +381,14 @@ export default function BookingDetailScreen() {
     const estimatedTrafficFee = travelFee * Math.max(0, trafficMeta.multiplier - 1);
     const persistedTrafficSurcharge = Number((booking as any).traffic_surcharge);
     const hasPersistedTrafficSurcharge = Number.isFinite(persistedTrafficSurcharge) && persistedTrafficSurcharge >= 0;
-    const trafficFee = hasPersistedTrafficSurcharge ? persistedTrafficSurcharge : estimatedTrafficFee;
+    if (!hasPersistedConvenience) {
+      trafficFee = hasPersistedTrafficSurcharge ? persistedTrafficSurcharge : estimatedTrafficFee;
+    }
 
     const quotationSubtotal = parseFloat(String(displayQuotation?.total_amount || 0)) || 0;
     const amountFee = Number((booking as any).amount_fee || 0);
     const bookingStatus = String((booking as any).status || '').toLowerCase();
     const useLiveAdditivePricing = shouldUseLiveAdditivePricing(bookingStatus);
-    const persistedConvenienceFee = Number((booking as any).convenience_fee || 0);
-    const hasPersistedConvenience = (booking as any).convenience_fee !== null && (booking as any).convenience_fee !== undefined;
     const serviceSubtotal = quotationSubtotal > 0
       ? quotationSubtotal
       : useLiveAdditivePricing
@@ -381,9 +396,7 @@ export default function BookingDetailScreen() {
         : Math.max(0, amountFee - travelFee - trafficFee - (hasPersistedConvenience ? persistedConvenienceFee : 0));
 
     const estimatedConvenienceFee = (serviceSubtotal * conveniencePct) + convenienceFixed;
-    const totalConvenienceFee = useLiveAdditivePricing
-      ? estimatedConvenienceFee
-      : (hasPersistedConvenience ? persistedConvenienceFee : estimatedConvenienceFee);
+    const totalConvenienceFee = hasPersistedConvenience ? persistedConvenienceFee : estimatedConvenienceFee;
     const isOnTheWay = booking.status === 'on_the_way';
 
     const persistedEta = Number((booking as any).estimated_eta_minutes || 0);
@@ -1209,11 +1222,8 @@ export default function BookingDetailScreen() {
     (booking.request as any)?.request_details?.vehicle?.model ||
     null;
 
-  const serviceSubtotalTotal = convenienceBreakdown ? convenienceBreakdown.serviceSubtotal : quotationEstimatedTotal;
-  const travelFeeTotal = convenienceBreakdown ? convenienceBreakdown.travelFee : 0;
-  const trafficFeeTotal = convenienceBreakdown ? convenienceBreakdown.trafficFee : 0;
   const convenienceFeeTotal = convenienceBreakdown ? convenienceBreakdown.totalConvenienceFee : 0;
-  const totalFee = serviceSubtotalTotal + travelFeeTotal + trafficFeeTotal + convenienceFeeTotal;
+  const totalFee = convenienceFeeTotal + quotationEstimatedTotal;
 
   const acceptedByAssoc: Record<string, any> = {};
   const acceptedRows: any[] = [];
@@ -1313,6 +1323,7 @@ export default function BookingDetailScreen() {
     booking.status === 'accepted' ||
     booking.status === 'on_the_way' ||
     booking.status === 'active' ||
+    booking.status === 'pending_payment' ||
     booking.status === 'completed'
   ) && !!(convenienceBreakdown || displayQuotation);
   const canEditQuotation = (
@@ -1329,12 +1340,16 @@ export default function BookingDetailScreen() {
   const canOpenQuotationEditor = myAssignmentRole !== 'assistant';
 
   const paymentSummary = booking.payment_summary || {};
-  const installments = Array.isArray(paymentSummary.installments) ? paymentSummary.installments : [];
-  const remainingBalance = Number(paymentSummary.remaining_balance ?? booking.amount_fee ?? 0);
+  const summaryTotalAmount = Math.max(0, Number((paymentSummary as any).total_amount ?? booking.amount_fee ?? 0));
+  const totalAmount = Math.max(0, Math.max(totalFee, summaryTotalAmount));
   const totalPaid = Number(paymentSummary.total_paid || 0);
-  const paymentStatus = String(paymentSummary.payment_status || 'unpaid').toLowerCase();
-  const initialInstallment = installments.find((item) => String(item.installment_type || '').toLowerCase() === 'initial');
-  const initialPaid = !!initialInstallment && String(initialInstallment.status || '').toLowerCase() === 'paid';
+  const remainingBalance = Math.max(0, totalAmount - totalPaid);
+  const paymentStatus = totalPaid >= totalAmount && totalAmount > 0
+    ? 'fully_paid'
+    : (totalPaid > 0 ? 'partially_paid' : 'unpaid');
+  const paymentProgressPct = totalAmount > 0
+    ? Math.min(100, Math.max(0, (totalPaid / totalAmount) * 100))
+    : 0;
 
   const getPaymentStatusColor = (status: string) => {
     switch (status) {
@@ -1347,14 +1362,6 @@ export default function BookingDetailScreen() {
       default:
         return '#8E8E93';
     }
-  };
-
-  const getInstallmentLabel = (typeRaw: string) => {
-    const normalized = String(typeRaw || '').toLowerCase();
-    if (normalized === 'initial') return 'Initial Payment';
-    if (normalized === 'final') return 'Final Payment';
-    if (normalized === 'full') return 'Full Payment';
-    return normalized ? `${normalized.charAt(0).toUpperCase()}${normalized.slice(1)} Payment` : 'Payment';
   };
 
   return (
@@ -1763,63 +1770,7 @@ export default function BookingDetailScreen() {
                 : 'Service Request'}
             </ThemedText>
           </View>
-          <ThemedText style={styles.amountLarge}>₱{parseFloat(String(booking.amount_fee || '0')).toFixed(2)}</ThemedText>
-        </View>
-
-        <View style={styles.sectionCard}>
-          <View style={styles.sectionHeader}>
-            <View style={[styles.sectionIcon, { backgroundColor: '#34C75915' }]}>
-              <FontAwesome name="shield" size={16} color="#34C759" />
-            </View>
-            <ThemedText style={styles.sectionTitle}>Payment Assurance</ThemedText>
-            <View style={[styles.paymentStatusBadge, { backgroundColor: getPaymentStatusColor(paymentStatus) + '22', borderColor: getPaymentStatusColor(paymentStatus) + '66' }]}>
-              <ThemedText style={[styles.paymentStatusBadgeText, { color: getPaymentStatusColor(paymentStatus) }]}>
-                {paymentStatus === 'fully_paid' ? 'Fully Paid' : paymentStatus === 'partially_paid' ? 'Partially Paid' : 'Unpaid'}
-              </ThemedText>
-            </View>
-          </View>
-
-          {initialPaid ? (
-            <View style={styles.initialPaidBanner}>
-              <FontAwesome name="check-circle" size={13} color="#34C759" />
-              <ThemedText style={styles.initialPaidBannerText}>Initial payment received</ThemedText>
-            </View>
-          ) : null}
-
-          <View style={styles.paymentSummaryRow}>
-            <ThemedText style={styles.paymentSummaryLabel}>Total Paid</ThemedText>
-            <ThemedText style={[styles.paymentSummaryValue, { color: '#34C759' }]}>₱{totalPaid.toFixed(2)}</ThemedText>
-          </View>
-          <View style={styles.paymentSummaryRow}>
-            <ThemedText style={styles.paymentSummaryLabel}>Remaining Balance</ThemedText>
-            <ThemedText style={[styles.paymentSummaryValue, { color: remainingBalance > 0 ? '#FFD60A' : '#34C759' }]}>
-              ₱{remainingBalance.toFixed(2)}
-            </ThemedText>
-          </View>
-
-          {installments.length > 0 ? (
-            <View style={styles.installmentListWrap}>
-              {installments.map((item, index) => {
-                const installmentType = String(item.installment_type || '').toLowerCase();
-                const statusRaw = String(item.status || 'pending').toLowerCase();
-                const statusColor = statusRaw === 'paid' ? '#34C759' : '#FFD60A';
-                return (
-                  <View key={String(item.id || `${installmentType}-${index}`)} style={styles.installmentRow}>
-                    <View style={styles.installmentLeft}>
-                      <FontAwesome name={statusRaw === 'paid' ? 'check-circle' : 'clock-o'} size={13} color={statusColor} />
-                      <ThemedText style={styles.installmentTitle}>{getInstallmentLabel(installmentType)}</ThemedText>
-                    </View>
-                    <View style={styles.installmentRight}>
-                      <ThemedText style={styles.installmentAmount}>₱{Number(item.amount || 0).toFixed(2)}</ThemedText>
-                      <ThemedText style={[styles.installmentStatusText, { color: statusColor }]}>
-                        {statusRaw === 'paid' ? 'Paid' : 'Pending'}
-                      </ThemedText>
-                    </View>
-                  </View>
-                );
-              })}
-            </View>
-          ) : null}
+          <ThemedText style={styles.amountLarge}>₱{totalAmount.toFixed(2)}</ThemedText>
         </View>
 
         <View style={styles.sectionCard}>
@@ -1976,6 +1927,42 @@ export default function BookingDetailScreen() {
               <ThemedText style={styles.sectionTitle}>Pricing & Quotation</ThemedText>
             </View>
 
+            <View style={styles.receiptList}>
+              <View style={[styles.sectionHeader, { marginBottom: 10 }]}> 
+                <View style={[styles.sectionIcon, { backgroundColor: '#34C75915' }]}>
+                  <FontAwesome name="shield" size={16} color="#34C759" />
+                </View>
+                <ThemedText style={styles.sectionTitle}>Payment Secured</ThemedText>
+                <View style={[styles.paymentStatusBadge, { backgroundColor: getPaymentStatusColor(paymentStatus) + '22', borderColor: getPaymentStatusColor(paymentStatus) + '66' }]}>
+                  <ThemedText style={[styles.paymentStatusBadgeText, { color: getPaymentStatusColor(paymentStatus) }]}>
+                    {paymentStatus === 'fully_paid' ? 'Fully Paid' : paymentStatus === 'partially_paid' ? 'Partially Paid' : 'Unpaid'}
+                  </ThemedText>
+                </View>
+              </View>
+
+              <View style={styles.paymentSummaryGrid}>
+                <View style={styles.paymentSummaryTile}>
+                  <ThemedText style={styles.paymentSummaryLabel}>Total</ThemedText>
+                  <ThemedText style={styles.paymentSummaryValue}>₱{totalAmount.toFixed(2)}</ThemedText>
+                </View>
+                <View style={styles.paymentSummaryTile}>
+                  <ThemedText style={styles.paymentSummaryLabel}>Paid</ThemedText>
+                  <ThemedText style={[styles.paymentSummaryValue, { color: '#34C759' }]}>₱{totalPaid.toFixed(2)}</ThemedText>
+                </View>
+                <View style={styles.paymentSummaryTile}>
+                  <ThemedText style={styles.paymentSummaryLabel}>Remaining</ThemedText>
+                  <ThemedText style={[styles.paymentSummaryValue, { color: remainingBalance > 0 ? '#FFD60A' : '#34C759' }]}>₱{remainingBalance.toFixed(2)}</ThemedText>
+                </View>
+              </View>
+
+              <View style={styles.progressBarContainer}>
+                <View style={[styles.progressBarFill, { width: `${paymentProgressPct}%` }]} />
+              </View>
+              <ThemedText style={styles.progressText}>{Math.round(paymentProgressPct)}% Paid</ThemedText>
+              <ThemedText style={[styles.noteText, { marginTop: 6, marginBottom: 8 }]}>Payment will be released to mechanic after job completion.</ThemedText>
+              <View style={styles.receiptDivider} />
+            </View>
+
             {isQuotationPending ? (
               <View style={styles.pendingHintBanner}>
                 <FontAwesome name="clock-o" size={12} color="#C89B55" />
@@ -2058,23 +2045,15 @@ export default function BookingDetailScreen() {
 
               <View style={styles.receiptDivider} />
               <View style={styles.receiptRow}>
-                <ThemedText style={styles.receiptTotalLabel}>Service & Add-ons Subtotal</ThemedText>
-                <ThemedText style={styles.receiptTotalValue}>₱{serviceSubtotalTotal.toFixed(2)}</ThemedText>
-              </View>
-              <View style={styles.receiptRow}>
-                <ThemedText style={styles.receiptTotalLabel}>Travel Fee Total</ThemedText>
-                <ThemedText style={styles.receiptTotalValue}>₱{travelFeeTotal.toFixed(2)}</ThemedText>
-              </View>
-              <View style={styles.receiptRow}>
-                <ThemedText style={styles.receiptTotalLabel}>Traffic Surcharge</ThemedText>
-                <ThemedText style={styles.receiptTotalValue}>₱{trafficFeeTotal.toFixed(2)}</ThemedText>
-              </View>
-              <View style={styles.receiptRow}>
-                <ThemedText style={styles.receiptTotalLabel}>Convenience Fee</ThemedText>
+                <ThemedText style={styles.receiptTotalLabel}>Convenience Fee Total</ThemedText>
                 <ThemedText style={styles.receiptTotalValue}>₱{convenienceFeeTotal.toFixed(2)}</ThemedText>
               </View>
               <View style={styles.receiptRow}>
-                <ThemedText style={styles.receiptTotalLabel}>Total Estimated Amount</ThemedText>
+                <ThemedText style={styles.receiptTotalLabel}>Quotation Estimated Total</ThemedText>
+                <ThemedText style={styles.receiptTotalValue}>₱{quotationEstimatedTotal.toFixed(2)}</ThemedText>
+              </View>
+              <View style={styles.receiptRow}>
+                <ThemedText style={styles.receiptTotalLabel}>Total Fee</ThemedText>
                 <ThemedText style={styles.receiptTotalValue}>₱{totalFee.toFixed(2)}</ThemedText>
               </View>
 
@@ -2083,79 +2062,6 @@ export default function BookingDetailScreen() {
         )}
 
         {/* Booking Timeline */}
-        {/* Receipt / Services (shown when pending payment) */}
-        {booking.status === 'pending_payment' && (
-          <View style={styles.sectionCard}>
-            <View style={styles.sectionHeader}>
-              <View style={[styles.sectionIcon, { backgroundColor: '#34C75915' }]}>
-                <FontAwesome name="file-text-o" size={16} color="#34C759" />
-              </View>
-              <ThemedText style={styles.sectionTitle}>Receipt</ThemedText>
-              {canOpenQuotationEditor ? (
-                <TouchableOpacity
-                  onPress={() => routerHook.push({ pathname: '/mechanic/booking/quotation_edit', params: { bookingId: String(booking.id) } })}
-                  style={{ marginLeft: 'auto', paddingHorizontal: 8, paddingVertical: 4 }}
-                >
-                  <FontAwesome name={quotation ? 'pencil' : 'plus'} size={16} color="#007AFF" />
-                </TouchableOpacity>
-              ) : null}
-            </View>
-            <View style={styles.receiptList}>
-              {displayQuotation && sortedQuotationItems.length > 0 ? (
-                <>
-                  {sortedQuotationItems.map(renderQuotationRow)}
-                  <View style={styles.receiptDivider} />
-                  <View style={styles.receiptRow}> 
-                    <ThemedText style={styles.receiptTotalLabel}>Total</ThemedText>
-                    <ThemedText style={styles.receiptTotalValue}>₱{parseFloat(String(quotationEstimatedTotal || booking.amount_fee)).toFixed(2)}</ThemedText>
-                  </View>
-                  <View style={styles.receiptRow}> 
-                    <ThemedText style={styles.receiptYouLabel}>You receive</ThemedText>
-                    <ThemedText style={styles.receiptYouValue}>₱{parseFloat(String(quotationEstimatedTotal || booking.amount_fee)).toFixed(2)}</ThemedText>
-                  </View>
-                </>
-              ) : (
-                <>
-                  <View style={styles.receiptRow}>
-                    <ThemedText style={styles.receiptItem}>Service</ThemedText>
-                    <ThemedText style={styles.receiptAmount}>{booking.request?.type ? booking.request.type.charAt(0).toUpperCase() + booking.request.type.slice(1) : 'Service'}</ThemedText>
-                  </View>
-                  <View style={styles.receiptRow}>
-                    <ThemedText style={styles.receiptItem}>Quantity</ThemedText>
-                    <ThemedText style={styles.receiptAmount}>1</ThemedText>
-                  </View>
-                  <View style={styles.receiptDivider} />
-                  <View style={styles.receiptRow}> 
-                    <ThemedText style={styles.receiptTotalLabel}>Total</ThemedText>
-                    <ThemedText style={styles.receiptTotalValue}>₱{parseFloat(String(booking.amount_fee || 0)).toFixed(2)}</ThemedText>
-                  </View>
-                  <View style={styles.receiptRow}> 
-                    <ThemedText style={styles.receiptYouLabel}>You receive</ThemedText>
-                    <ThemedText style={styles.receiptYouValue}>₱{parseFloat(String(booking.amount_fee || 0)).toFixed(2)}</ThemedText>
-                  </View>
-                </>
-              )}
-            </View>
-            {/* Show payment method immediately under the receipt for mechanics */}
-            {((booking as any).payment && (booking as any).payment.payment_method) && (
-              <View style={styles.sectionCard}>
-                <View style={styles.sectionHeader}>
-                  <View style={[styles.sectionIcon, { backgroundColor: '#FFD60A15' }]}> 
-                    <FontAwesome name="money" size={16} color="#FFD60A" />
-                  </View>
-                  <ThemedText style={styles.sectionTitle}>Payment Method</ThemedText>
-                </View>
-                <View style={{ paddingVertical: 8 }}>
-                  <ThemedText style={{ color: '#666', marginBottom: 4 }}>Chosen by client:</ThemedText>
-                  <ThemedText style={{ fontWeight: '700' }}>{((booking as any).payment.payment_method || '').toString().toUpperCase()}</ThemedText>
-                </View>
-              </View>
-            )}
-          </View>
-        )}
-
-
-
         <View style={styles.sectionCard}>
           <View style={styles.sectionHeader}>
             <View style={[styles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
@@ -2362,7 +2268,7 @@ export default function BookingDetailScreen() {
       <PendingPaymentModal
         visible={showPendingPayment && booking.status === 'pending_payment'}
         bookingId={booking.id}
-        amount={booking.amount_fee}
+        amount={remainingBalance}
         onClose={() => setShowPendingPayment(false)}
         onCashSelected={() => {
           setShowPendingPayment(false);
@@ -2378,7 +2284,7 @@ export default function BookingDetailScreen() {
       <CashQRDisplayModal
         visible={showCashQR && booking.status === 'pending_payment'}
         bookingId={booking.id}
-        amount={booking.amount_fee}
+        amount={remainingBalance}
         onClose={() => setShowCashQR(false)}
         onPaymentReceived={() => {
           setShowCashQR(false);
