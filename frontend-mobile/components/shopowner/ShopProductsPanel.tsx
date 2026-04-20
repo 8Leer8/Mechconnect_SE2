@@ -46,13 +46,20 @@ export function ShopProductsPanel() {
         name: String(s.name || ''),
       }));
       setAvailableServices(services);
-      if (services.length > 0 && selectedServiceId === null) {
-        setSelectedServiceId(services[0].service_id);
-      }
+
+      // Keep selected service valid when user switches accounts.
+      setSelectedServiceId((prev) => {
+        if (services.length === 0) return null;
+        if (prev !== null && services.some((s) => s.service_id === prev)) return prev;
+        return services[0].service_id;
+      });
     } catch (e: any) {
       setError(e?.message || 'Failed to load services');
+      setAvailableServices([]);
+      setSelectedServiceId(null);
+      setProducts([]);
     }
-  }, [selectedServiceId]);
+  }, []);
 
   const fetchProducts = useCallback(async (serviceId: number) => {
     try {
@@ -177,10 +184,18 @@ export function ShopProductsPanel() {
             <View style={styles.pickerContainer}>
               <Picker
                 enabled={availableServices.length > 0}
-                selectedValue={selectedServiceId ?? null}
+                selectedValue={
+                  selectedServiceId !== null && availableServices.some((s) => s.service_id === selectedServiceId)
+                    ? selectedServiceId
+                    : null
+                }
                 onValueChange={(value) => {
                   if (value === null) setSelectedServiceId(null);
-                  else setSelectedServiceId(Number(value));
+                  else {
+                    const next = Number(value);
+                    if (Number.isFinite(next)) setSelectedServiceId(next);
+                    else setSelectedServiceId(null);
+                  }
                 }}
                 dropdownIconColor={selectedServiceId ? '#FF8C00' : '#555'}
                 style={styles.picker}

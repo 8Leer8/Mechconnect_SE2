@@ -23,6 +23,7 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL;
 interface Booking {
   id: number;
   status: string;
+  dispute_status?: 'none' | 'active' | 'resolved' | string;
   amount_fee: number;
   booked_at: string;
   updated_at?: string;
@@ -398,12 +399,12 @@ export default function ShopOwnerJobsScreen() {
         }),
       ]);
       if (mechRes.ok) {
-        const md = await mechRes.json();
+        const md = (await mechRes.json()) as any;
         setShopMechanics(md.mechanics || []);
       }
       if (assignRes.ok) {
-        const ad = await assignRes.json();
-        setAssignments(ad || []);
+        const ad = (await assignRes.json()) as any;
+        setAssignments(Array.isArray(ad) ? (ad as Assignment[]) : []);
       }
     } catch {
       showNotification({ type: 'error', message: 'Failed to load mechanics' });
@@ -432,7 +433,7 @@ export default function ShopOwnerJobsScreen() {
           body: JSON.stringify({ mechanic_id: accountId, role }),
         }
       );
-      const data = await res.json();
+      const data = (await res.json()) as any;
       if (!res.ok) {
         showNotification({ type: 'error', message: data.error || 'Failed to assign' });
         return;
@@ -453,7 +454,7 @@ export default function ShopOwnerJobsScreen() {
         { method: 'DELETE', credentials: 'include', headers: { 'Content-Type': 'application/json' } }
       );
       if (!res.ok) {
-        const d = await res.json();
+        const d = (await res.json()) as any;
         showNotification({ type: 'error', message: d.error || 'Failed to remove' });
         return;
       }
@@ -493,7 +494,7 @@ export default function ShopOwnerJobsScreen() {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
       });
-      const data = await res.json();
+      const data = (await res.json()) as any;
       if (!res.ok) {
         if (data?.error === 'Request is not pending') {
           // Backend says this request was already processed; remove it from the list
@@ -539,7 +540,7 @@ export default function ShopOwnerJobsScreen() {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
       });
-      const data = await res.json();
+      const data = (await res.json()) as any;
       if (!res.ok) {
         if (data?.error === 'Request is not pending') {
           // Backend says this request was already processed; remove it from the list
@@ -921,6 +922,14 @@ export default function ShopOwnerJobsScreen() {
           <View style={styles.list}>
             {bookings.map((b) => (
               <View key={b.id} style={styles.card}>
+                {activeTab === 'completed' && String(b.dispute_status || 'none').toLowerCase() === 'active' ? (
+                  <View style={styles.disputeBanner}>
+                    <FontAwesome name="warning" size={13} color="#FF3B30" />
+                    <ThemedText style={styles.disputeBannerText}>
+                      Active Dispute: Account functions limited until resolved.
+                    </ThemedText>
+                  </View>
+                ) : null}
                 {/* Top row */}
                 <View style={styles.cardTop}>
                   <View style={styles.cardTopLeft}>
@@ -1238,6 +1247,24 @@ const styles = StyleSheet.create({
     padding: 16,
     borderWidth: 1,
     borderColor: '#2A2A2A',
+  },
+  disputeBanner: {
+    borderWidth: 1,
+    borderColor: '#FF3B3060',
+    backgroundColor: '#FF3B3018',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  disputeBannerText: {
+    color: '#FFD6D2',
+    fontSize: 12,
+    fontWeight: '700',
+    flex: 1,
   },
   cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   cardTopLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },

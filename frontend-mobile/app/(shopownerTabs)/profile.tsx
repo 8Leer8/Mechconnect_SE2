@@ -157,7 +157,7 @@ export default function ShopOwnerProfileScreen() {
         headers: { 'Content-Type': 'application/json' },
       });
       if (res.ok) {
-        const data = await res.json();
+        const data = (await res.json()) as any;
         setMyServices(data.services || []);
       }
     } catch (e) {
@@ -187,7 +187,7 @@ export default function ShopOwnerProfileScreen() {
         headers: { 'Content-Type': 'application/json' },
       });
       if (res.ok) {
-        const data = await res.json();
+        const data = (await res.json()) as any;
         const all: AvailableService[] = data.services || [];
         const myIds = new Set(myServices.map((s) => s.id));
         setAvailableServices(all.filter((s) => !myIds.has(s.id)));
@@ -489,7 +489,7 @@ export default function ShopOwnerProfileScreen() {
             onPress={() => router.push('/shopowner/others/edit-profile')}
           >
             <FontAwesome name="pencil" size={14} color="#FF8C00" />
-            <ThemedText style={clientProfileStyles.editBtnText}>Edit Profile</ThemedText>
+            <ThemedText style={clientProfileStyles.editBtnText}>Edit Shop Profile</ThemedText>
           </TouchableOpacity>
         </View>
 
@@ -723,7 +723,7 @@ export default function ShopOwnerProfileScreen() {
                 <FontAwesome name="times" size={22} color="#fff" />
               </TouchableOpacity>
             </View>
-            <ShopProductsPanel />
+            <ShopProductsPanel key={`shop-products-${profileData.id}`} />
           </View>
         </View>
       </Modal>

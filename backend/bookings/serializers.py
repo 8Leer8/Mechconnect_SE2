@@ -193,7 +193,7 @@ class BookingSerializer(serializers.ModelSerializer):
     class Meta:
         model = Booking
         fields = [
-            'id', 'request', 'status', 'amount_fee', 'convenience_fee', 'distance_km', 'estimated_eta_minutes', 'traffic_level', 'booked_at',
+            'id', 'request', 'status', 'dispute_status', 'amount_fee', 'convenience_fee', 'distance_km', 'estimated_eta_minutes', 'traffic_level', 'booked_at',
             'updated_at', 'completed_at', 'active_details'
         ]
         read_only_fields = ['id', 'request', 'amount_fee', 'booked_at', 'updated_at', 'completed_at', 'active_details']

@@ -241,8 +241,9 @@ export default function ShopDirectRequestScreen() {
 			}
 
 			try {
+				const providerQuery = selectedProviderId ? `?provider_id=${selectedProviderId}` : '';
 				const response = await fetch(
-					`${API_URL}/bookings/direct/services/${selectedServiceId}/addons/`,
+					`${API_URL}/bookings/direct/services/${selectedServiceId}/addons/${providerQuery}`,
 					{ credentials: 'include', signal: controller.signal as any }
 				);
 				if (cancelled || !isMountedRef.current) return;
@@ -267,7 +268,7 @@ export default function ShopDirectRequestScreen() {
 			cancelled = true;
 			controller.abort();
 		};
-	}, [selectedServiceId]);
+	}, [selectedServiceId, selectedProviderId]);
 
 	useFocusEffect(
 		React.useCallback(() => {

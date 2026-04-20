@@ -21,6 +21,16 @@ import VehicleTypeModal from '@/components/VehicleTypeModal';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const { height } = Dimensions.get('window');
+const emergencyPhrases = [
+  "Engine won't start / Dead battery",
+  'Flat tire / Need help installing spare',
+  'Engine is overheating',
+  "Car stalled while driving and won't restart",
+  'Locked keys inside the car',
+  'Brakes failed / Unsafe to drive',
+  'Major fluid leak under the car',
+  'Ran out of fuel',
+];
 
 interface EmergencyModalProps {
   visible: boolean;
@@ -306,6 +316,29 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
                 <FontAwesome name="align-left" size={14} color="#8E8E93" />
                 <ThemedText style={styles.sectionTitle}>Description (Optional)</ThemedText>
               </View>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.chipsScrollContent}
+                style={styles.chipsScrollView}
+              >
+                {emergencyPhrases.map((phrase) => {
+                  const isSelected = description === phrase;
+                  return (
+                    <TouchableOpacity
+                      key={phrase}
+                      style={[styles.chip, isSelected && styles.chipSelected]}
+                      onPress={() => setDescription(phrase)}
+                      activeOpacity={0.8}
+                      disabled={loading}
+                    >
+                      <ThemedText style={[styles.chipText, isSelected && styles.chipTextSelected]}>
+                        {phrase}
+                      </ThemedText>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
               <TextInput
                 style={styles.textArea}
                 placeholder="Describe the issue or situation..."
@@ -524,6 +557,33 @@ const styles = StyleSheet.create({
     color: '#ECEDEE',
     minHeight: 90,
     textAlignVertical: 'top',
+  },
+  chipsScrollView: {
+    marginBottom: 10,
+  },
+  chipsScrollContent: {
+    paddingRight: 6,
+  },
+  chip: {
+    backgroundColor: '#2C2C2E',
+    borderWidth: 1,
+    borderColor: '#3A3A3C',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginRight: 8,
+  },
+  chipSelected: {
+    backgroundColor: '#FF3B301A',
+    borderColor: '#FF3B30',
+  },
+  chipText: {
+    color: '#C7C7CC',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  chipTextSelected: {
+    color: '#FFD7D4',
   },
   pickerContainer: {
     backgroundColor: '#2C2C2E',

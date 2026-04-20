@@ -87,6 +87,25 @@ export const styles = StyleSheet.create({
   scrollContent: {
     paddingTop: 8,
   },
+  lockBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#FF3B3060',
+    backgroundColor: '#FF3B3016',
+  },
+  lockBannerText: {
+    color: '#FFB4AF',
+    fontSize: 12,
+    fontWeight: '600',
+    flex: 1,
+  },
   loader: {
     marginTop: 40,
   },
@@ -152,6 +171,21 @@ export const styles = StyleSheet.create({
     marginBottom: 12,
     borderWidth: 1,
     borderColor: '#2A2C2E',
+  },
+  disputeBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 10,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2A2C2E',
+  },
+  disputeBannerText: {
+    fontSize: 11,
+    color: '#FF8A80',
+    fontWeight: '600',
+    flex: 1,
   },
   cardTopRow: {
     flexDirection: 'row',
@@ -255,6 +289,9 @@ export const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: '#34C759',
   },
+  acceptBtnDisabled: {
+    backgroundColor: '#3A3D40',
+  },
   acceptBtnText: {
     fontSize: 12,
     fontWeight: '600',
@@ -308,6 +345,21 @@ export const styles = StyleSheet.create({
     paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: '#222426',
+  },
+  uploadReceiptBtn: {
+    marginLeft: 'auto',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 8,
+    backgroundColor: '#FF8C00',
+  },
+  uploadReceiptBtnText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
   },
   jobDoneText: {
     fontSize: 12,

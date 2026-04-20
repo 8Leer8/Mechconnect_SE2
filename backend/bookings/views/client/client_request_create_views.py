@@ -281,7 +281,7 @@ def create_mechanic_direct_request(request):
 
         for add_on_id in add_on_ids:
             try:
-                add_on = ServiceAddOn.objects.get(id=add_on_id, service=service)
+                add_on = ServiceAddOn.objects.get(id=add_on_id, service=service, shop__isnull=True)
                 DirectRequestAddOn.objects.create(
                     request=new_request,
                     service_add_on=add_on,
@@ -351,7 +351,7 @@ def get_mechanic_services(request, mechanic_id):
         services_data = []
         for ms in mechanic_services:
             service = ms.service
-            add_ons = ServiceAddOn.objects.filter(service=service)
+            add_ons = ServiceAddOn.objects.filter(service=service, shop__isnull=True)
             add_ons_data = [
                 {
                     'id': addon.id,
@@ -382,10 +382,29 @@ def get_mechanic_services(request, mechanic_id):
 def get_service_addons(request, service_id):
     """
     Get add-ons for a specific service.
+    Optional query params:
+    - provider_id: when set to a shop owner account id, returns add-ons owned by that shop.
+      Without provider_id, only global (shop-less) add-ons are returned.
     """
     try:
         service = Service.objects.get(id=service_id)
+        provider_id = request.query_params.get('provider_id')
         add_ons = ServiceAddOn.objects.filter(service=service)
+
+        if provider_id:
+            try:
+                provider_id = int(provider_id)
+            except (TypeError, ValueError):
+                return Response({'error': 'provider_id must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
+
+            try:
+                shop_owner = ShopOwner.objects.select_related('shop').get(account__id=provider_id)
+                add_ons = add_ons.filter(shop=shop_owner.shop)
+            except ShopOwner.DoesNotExist:
+                return Response({'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
+        else:
+            add_ons = add_ons.filter(shop__isnull=True)
+
         category_name = service.category.name if service.category else None
 
         add_ons_data = [
@@ -458,7 +477,7 @@ def get_shop_services(request, shop_id):
         services_data = []
         for ss in shop_services:
             service = ss.service
-            add_ons = ServiceAddOn.objects.filter(service=service)
+            add_ons = ServiceAddOn.objects.filter(service=service, shop=shop)
             add_ons_data = [
                 {
                     'id': addon.id,
@@ -587,7 +606,7 @@ def create_shop_direct_request(request):
 
         for add_on_id in add_on_ids:
             try:
-                add_on = ServiceAddOn.objects.get(id=add_on_id, service=service)
+                add_on = ServiceAddOn.objects.get(id=add_on_id, service=service, shop=shop)
                 DirectRequestAddOn.objects.create(
                     request=new_request,
                     service_add_on=add_on,

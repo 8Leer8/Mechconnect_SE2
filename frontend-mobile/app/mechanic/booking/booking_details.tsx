@@ -9,10 +9,12 @@ import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/mechanic/bookingDetailsStyles';
 import WalletBadge from '@/components/wallet-badge';
+import AfterServicePhotoModal from '@/components/booking/AfterServicePhotoModal';
 import { useNotification } from '@/hooks/useNotification';
 import { useConfirmation } from '@/hooks/useConfirmation';
 import { SkeletonDetailPage } from '@/components/skeletons/SkeletonLoaders';
 import * as Location from 'expo-location';
+import { Image } from 'expo-image';
 import { CashQRDisplayModal, PendingPaymentModal } from '@/components/payment';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -183,6 +185,7 @@ export default function BookingDetailScreen() {
   const [pauseJobLoading, setPauseJobLoading] = useState(false);
   const [resumeJobLoading, setResumeJobLoading] = useState(false);
   const [finishJobLoading, setFinishJobLoading] = useState(false);
+  const [showAfterServicePhotoModal, setShowAfterServicePhotoModal] = useState(false);
   const [paymentReceivedLoading, setPaymentReceivedLoading] = useState(false);
   const [cancelBookingLoading, setCancelBookingLoading] = useState(false);
   const [pausedRevertLoading, setPausedRevertLoading] = useState(false);
@@ -1066,20 +1069,45 @@ export default function BookingDetailScreen() {
   const handleFinishJob = async () => {
     if (finishJobLoading || transitioning) return;
     if (!booking) return;
-    const ok = await confirm({
-      type: 'success',
-      title: 'Finish Job',
-      message: 'Are you sure you want to finish this job? This will move the booking to pending payment.',
-      confirmText: 'Finish',
-      cancelText: 'Not Yet',
-    });
-    if (!ok) return;
+    setShowAfterServicePhotoModal(true);
+  };
+
+  const handleSubmitAfterServicePhoto = async (photoUri: string) => {
+    if (!booking || !photoUri) return;
 
     setFinishJobLoading(true);
+    setTransitioning(true);
     try {
-      await handleStatusUpdate('finish-job', 'Job finished. Pending payment.', 'Failed to finish job');
+      const formData = new FormData();
+      const fileName = photoUri.split('/').pop() || `after-service-${booking.id}.jpg`;
+      const ext = fileName.split('.').pop()?.toLowerCase();
+      const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+
+      formData.append('after_picture_service', {
+        uri: photoUri,
+        name: fileName,
+        type: mime,
+      } as any);
+
+      const response = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/finish-job/`, {
+        method: 'POST',
+        credentials: 'include',
+        body: formData as any,
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(parseApiErrorMessage(payload, 'Failed to finish job'));
+      }
+
+      setShowAfterServicePhotoModal(false);
+      showNotification({ type: 'success', message: 'Job finished. Pending payment.' });
+      await fetchBookingDetail();
+    } catch (err: any) {
+      showNotification({ type: 'error', message: err.message || 'Failed to finish job' });
     } finally {
       setFinishJobLoading(false);
+      setTransitioning(false);
     }
   };
   const handlePaymentReceived = async () => {
@@ -2162,6 +2190,43 @@ export default function BookingDetailScreen() {
           </View>
         )}
 
+        {/* After-Service Photo */}
+        {booking.active_details && (
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#34C75915' }]}>
+                <FontAwesome name="camera" size={16} color="#34C759" />
+              </View>
+              <ThemedText style={styles.sectionTitle}>After-Service Photo</ThemedText>
+            </View>
+
+            {booking.active_details.after_picture ? (
+              <Image
+                source={{ uri: booking.active_details.after_picture }}
+                style={{ width: '100%', height: 220, borderRadius: 12, marginTop: 8 }}
+                contentFit="cover"
+              />
+            ) : (
+              <View
+                style={{
+                  marginTop: 8,
+                  height: 140,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: '#2A2C2E',
+                  backgroundColor: '#111214',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                }}
+              >
+                <FontAwesome name="image" size={26} color="#6C6C70" />
+                <ThemedText style={{ color: '#8E8E93' }}>No after-service photo uploaded yet</ThemedText>
+              </View>
+            )}
+          </View>
+        )}
+
 
 
         
@@ -2291,6 +2356,15 @@ export default function BookingDetailScreen() {
           setPaymentReceived(true);
           fetchBookingDetail();
         }}
+      />
+
+      <AfterServicePhotoModal
+        visible={showAfterServicePhotoModal}
+        loading={finishJobLoading}
+        onClose={() => {
+          if (!finishJobLoading) setShowAfterServicePhotoModal(false);
+        }}
+        onSubmit={handleSubmitAfterServicePhoto}
       />
     </ThemedView>
   );

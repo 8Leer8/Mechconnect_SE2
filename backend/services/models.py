@@ -32,6 +32,7 @@ class Service(models.Model):
         return self.name
 
 class ServiceAddOn(models.Model):
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, null=True, blank=True, related_name='service_add_ons')
     service = models.ForeignKey(Service, on_delete=models.CASCADE)
     name = models.CharField(max_length=100)
     description = models.TextField()
