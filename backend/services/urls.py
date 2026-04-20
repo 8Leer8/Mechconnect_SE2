@@ -28,7 +28,7 @@ urlpatterns = [
     path('shop/my-services/add/', views.add_shop_service, name='add_shop_service'),
     path('shop/my-services/remove/', views.remove_shop_service, name='remove_shop_service'),
     path('shop/my-services/update-price/', views.update_shop_service_price, name='update_shop_service_price'),
-    # Shop owner: manage global ServiceAddOn rows for services your shop offers
+    # Shop owner: manage add-ons owned by your shop
     path('shop/addons/', views.list_shop_service_addons, name='list_shop_service_addons'),
     path('shop/addons/add/', views.add_shop_service_addon, name='add_shop_service_addon'),
     path('shop/addons/remove/', views.remove_shop_service_addon, name='remove_shop_service_addon'),

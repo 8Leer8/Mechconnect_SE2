@@ -1,13 +1,11 @@
 """
 Shop owner CRUD for ServiceAddOn (services_serviceaddon).
 
-Add-ons are global per `Service` (not per shop), but shop owners are allowed to manage
-them only for services their shop offers.
+Add-ons are scoped per shop + service.
 """
 
 from decimal import Decimal, InvalidOperation
 
-from django.db.models import Q
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
@@ -53,7 +51,7 @@ def _parse_decimal(value):
 @permission_classes([AllowAny])
 def list_shop_service_addons(request):
     """
-    List ServiceAddOn for a selected service_id, but only if that service is offered by the shop.
+    List ServiceAddOn for a selected service_id owned by the current shop.
     Query params: ?service_id=<int>
     """
     shop, err = _get_shop(request)
@@ -76,10 +74,7 @@ def list_shop_service_addons(request):
             status=status.HTTP_403_FORBIDDEN,
         )
 
-    add_ons = (
-        ServiceAddOn.objects.filter(service_id=service_id)
-        .order_by("name")
-    )
+    add_ons = ServiceAddOn.objects.filter(service_id=service_id, shop=shop).order_by("name")
 
     data = [
         {
@@ -144,11 +139,12 @@ def add_shop_service_addon(request):
     except Service.DoesNotExist:
         return Response({"error": "Service not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    # Avoid exact duplicates (same service + same name) - safe UX.
-    if ServiceAddOn.objects.filter(service=service, name__iexact=name).exists():
+    # Avoid exact duplicates for the same shop and service.
+    if ServiceAddOn.objects.filter(shop=shop, service=service, name__iexact=name).exists():
         return Response({"error": "Add-on with this name already exists for this service"}, status=status.HTTP_400_BAD_REQUEST)
 
     add_on = ServiceAddOn.objects.create(
+        shop=shop,
         service=service,
         name=name,
         description=description,
@@ -194,9 +190,9 @@ def remove_shop_service_addon(request):
     except ServiceAddOn.DoesNotExist:
         return Response({"error": "Add-on not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    # Permission scope: only allow deleting add-ons for services offered by this shop.
-    if not ShopService.objects.filter(shop=shop, service_id=add_on.service_id).exists():
-        return Response({"error": "Service not offered by your shop"}, status=status.HTTP_403_FORBIDDEN)
+    # Permission scope: only allow deleting rows owned by this shop.
+    if add_on.shop_id != shop.id:
+        return Response({"error": "Add-on does not belong to your shop"}, status=status.HTTP_403_FORBIDDEN)
 
     add_on.delete()
     return Response({"message": "Add-on removed", "service_add_on_id": service_add_on_id}, status=status.HTTP_200_OK)

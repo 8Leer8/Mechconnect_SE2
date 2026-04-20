@@ -16,6 +16,65 @@ export default function RootLayout() {
   const router = useRouter();
 
   useEffect(() => {
+    if (!__DEV__) return;
+
+    const keepAwakeErrorText = 'unable to activate keep awake';
+    const globalAny = globalThis as any;
+    const errorUtils = globalAny?.ErrorUtils;
+    const previousRejectionHandler = globalAny?.onunhandledrejection;
+
+    if (typeof previousRejectionHandler !== 'undefined') {
+      globalAny.onunhandledrejection = (event: any) => {
+        const reason = event?.reason;
+        const message =
+          reason instanceof Error
+            ? reason.message
+            : typeof reason === 'string'
+              ? reason
+              : String(reason ?? '');
+
+        if (message.toLowerCase().includes(keepAwakeErrorText)) {
+          event?.preventDefault?.();
+          console.warn('[dev] Ignored keep-awake activation failure.');
+          return;
+        }
+
+        if (typeof previousRejectionHandler === 'function') {
+          previousRejectionHandler(event);
+        }
+      };
+    }
+
+    if (!errorUtils?.getGlobalHandler || !errorUtils?.setGlobalHandler) {
+      return () => {
+        if (typeof previousRejectionHandler !== 'undefined') {
+          globalAny.onunhandledrejection = previousRejectionHandler;
+        }
+      };
+    }
+
+    const defaultHandler = errorUtils.getGlobalHandler();
+    errorUtils.setGlobalHandler((error: unknown, isFatal?: boolean) => {
+      const message =
+        error instanceof Error ? error.message : typeof error === 'string' ? error : String(error ?? '');
+
+      if (message.toLowerCase().includes(keepAwakeErrorText)) {
+        console.warn('[dev] Ignored keep-awake activation failure.');
+        return;
+      }
+
+      defaultHandler(error, isFatal);
+    });
+
+    return () => {
+      errorUtils.setGlobalHandler(defaultHandler);
+      if (typeof previousRejectionHandler !== 'undefined') {
+        globalAny.onunhandledrejection = previousRejectionHandler;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     const handleDeepLink = ({ url }: { url: string }) => {
       const normalizedUrl = String(url || '').toLowerCase();
       if (normalizedUrl.startsWith('mechconnect://payment/success')) {
