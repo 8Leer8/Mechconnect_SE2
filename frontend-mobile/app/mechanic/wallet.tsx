@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import { View, TouchableOpacity, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { eventBus } from '@/utils/eventBus';
 import { styles } from '@/style/mechanic/walletScreenStyles';
+import CreditsEWalletModal from '@/components/payment/CreditsEWalletModal';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -14,6 +15,15 @@ type TokenPricingData = {
   min_token_purchase: number;
   max_token_purchase: number;
   token_packages: { tokens: number; price: number }[];
+};
+
+type WalletTransaction = {
+  id: number;
+  tokens: number;
+  price: number;
+  payment_method: 'gcash' | 'maya' | null;
+  status: string;
+  time: string;
 };
 
 const DEFAULT_TOKEN_PRICING: TokenPricingData = {
@@ -38,12 +48,28 @@ function buildFallbackTokenPackages(minTokens: number, maxTokens: number, baseTo
   }));
 }
 
+function getMethodMeta(method: WalletTransaction['payment_method']) {
+  if (method === 'gcash') return { icon: 'mobile', color: '#4DA3FF', label: 'GCASH' };
+  if (method === 'maya') return { icon: 'credit-card', color: '#21D4A0', label: 'MAYA' };
+  return { icon: 'exchange', color: '#8E8E93', label: 'E-CASH' };
+}
+
+function getStatusMeta(rawStatus: string) {
+  const status = String(rawStatus || '').toLowerCase();
+  if (status === 'completed') return { label: 'Completed', style: styles.statusCompleted, textStyle: styles.statusCompletedText };
+  if (status === 'pending') return { label: 'Pending', style: styles.statusPending, textStyle: styles.statusPendingText };
+  if (status === 'failed') return { label: 'Failed', style: styles.statusFailed, textStyle: styles.statusFailedText };
+  return { label: status || 'Unknown', style: styles.statusPending, textStyle: styles.statusPendingText };
+}
+
 export default function WalletScreen() {
   const router = useRouter();
   const [balance, setBalance] = useState<number | null>(null);
-  const [transactions, setTransactions] = useState<any[]>([]);
+  const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
   const [topUpLoading, setTopUpLoading] = useState<number | null>(null);
   const [tokenPricing, setTokenPricing] = useState<TokenPricingData>(DEFAULT_TOKEN_PRICING);
+  const [selectedPackage, setSelectedPackage] = useState<{ tokens: number; price: number } | null>(null);
+  const [paymentModalVisible, setPaymentModalVisible] = useState(false);
 
   const tokenPackages = useMemo(() => {
     if (tokenPricing.token_packages.length > 0) {
@@ -59,6 +85,7 @@ export default function WalletScreen() {
   useEffect(() => {
     fetchBalance();
     fetchTokenPricing();
+    fetchTransactions();
   }, []);
 
   async function fetchBalance() {
@@ -91,26 +118,60 @@ export default function WalletScreen() {
     } catch (e) {}
   }
 
-  async function topUp(pkg: { tokens: number; price: number }) {
+  async function fetchTransactions() {
+    try {
+      const res = await fetch(`${API_URL}/users/mechanic/wallet/transactions/`, { credentials: 'include' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const normalized = Array.isArray(data.transactions)
+        ? data.transactions.map((item: any) => ({
+            id: Number(item.id),
+            tokens: Number(item.tokens),
+            price: Number(item.price),
+            payment_method: (String(item.payment_method || '').toLowerCase() || null) as 'gcash' | 'maya' | null,
+            status: String(item.status || 'completed'),
+            time: String(item.time || new Date().toISOString()),
+          }))
+        : [];
+      setTransactions(normalized);
+    } catch (e) {}
+  }
+
+  async function topUp(pkg: { tokens: number; price: number }, method: 'gcash' | 'maya') {
     try {
       setTopUpLoading(pkg.tokens);
       const res = await fetch(`${API_URL}/users/mechanic/wallet/topup/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ tokens: pkg.tokens, price: pkg.price }),
+        body: JSON.stringify({ tokens: pkg.tokens, price: pkg.price, payment_method: method }),
       });
-      if (!res.ok) return;
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(String(err.error || 'Failed to buy credits'));
+      }
       const data = await res.json();
       setBalance(data.tokens_balance ?? balance);
-      setTransactions((prev) => [
-        { id: Date.now(), type: 'topup', tokens: pkg.tokens, time: new Date().toISOString() },
-        ...prev,
-      ]);
+      await fetchTransactions();
       eventBus.emit('walletChanged', { tokens_balance: data.tokens_balance });
-    } catch (e) {} finally {
+    } catch (e: any) {
+      Alert.alert('Top-up failed', String(e?.message || 'Unable to process e-cash payment'));
+    } finally {
       setTopUpLoading(null);
     }
+  }
+
+  function openPaymentMethodModal(pkg: { tokens: number; price: number }) {
+    if (topUpLoading !== null) return;
+    setSelectedPackage(pkg);
+    setPaymentModalVisible(true);
+  }
+
+  async function confirmWalletMethod(method: 'gcash' | 'maya') {
+    if (!selectedPackage) return;
+    await topUp(selectedPackage, method);
+    setPaymentModalVisible(false);
+    setSelectedPackage(null);
   }
 
   return (
@@ -158,7 +219,7 @@ export default function WalletScreen() {
               <TouchableOpacity
                 key={pkg.tokens}
                 style={styles.packageCard}
-                onPress={() => topUp(pkg)}
+                onPress={() => openPaymentMethodModal(pkg)}
                 disabled={topUpLoading !== null}
                 activeOpacity={0.7}
               >
@@ -196,10 +257,12 @@ export default function WalletScreen() {
               {transactions.map((item) => (
                 <View key={String(item.id)} style={styles.txRow}>
                   <View style={styles.txIconCircle}>
-                    <FontAwesome name="arrow-up" size={14} color="#34C759" />
+                    <FontAwesome name={getMethodMeta(item.payment_method).icon as any} size={14} color={getMethodMeta(item.payment_method).color} />
                   </View>
                   <View style={styles.txInfo}>
-                    <ThemedText style={styles.txType}>Top up</ThemedText>
+                    <ThemedText style={styles.txType}>
+                      Top up • {getMethodMeta(item.payment_method).label}
+                    </ThemedText>
                     <ThemedText style={styles.txTime}>
                       {new Date(item.time).toLocaleString('en-US', {
                         month: 'short',
@@ -209,7 +272,14 @@ export default function WalletScreen() {
                       })}
                     </ThemedText>
                   </View>
-                  <ThemedText style={styles.txAmount}>+{item.tokens}</ThemedText>
+                  <View style={styles.txRight}>
+                    <ThemedText style={styles.txAmount}>+{item.tokens}</ThemedText>
+                    <View style={[styles.statusBadge, getStatusMeta(item.status).style]}>
+                      <ThemedText style={[styles.statusBadgeText, getStatusMeta(item.status).textStyle]}>
+                        {getStatusMeta(item.status).label}
+                      </ThemedText>
+                    </View>
+                  </View>
                 </View>
               ))}
             </View>
@@ -218,6 +288,17 @@ export default function WalletScreen() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      <CreditsEWalletModal
+        visible={paymentModalVisible}
+        amount={selectedPackage?.price || 0}
+        onClose={() => {
+          if (topUpLoading !== null) return;
+          setPaymentModalVisible(false);
+          setSelectedPackage(null);
+        }}
+        onConfirm={confirmWalletMethod}
+      />
     </ThemedView>
   );
 }

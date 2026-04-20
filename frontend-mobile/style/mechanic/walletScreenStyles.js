@@ -149,5 +149,41 @@ export const styles = StyleSheet.create({
   txInfo: { flex: 1 },
   txType: { fontSize: 14, fontWeight: '600', color: '#fff' },
   txTime: { fontSize: 12, color: '#8E8E93', marginTop: 2 },
+  txRight: {
+    alignItems: 'flex-end',
+    gap: 6,
+  },
   txAmount: { fontSize: 16, fontWeight: '700', color: '#34C759' },
+  statusBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderWidth: 1,
+  },
+  statusBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  statusCompleted: {
+    backgroundColor: '#34C75922',
+    borderColor: '#34C75966',
+  },
+  statusCompletedText: {
+    color: '#34C759',
+  },
+  statusPending: {
+    backgroundColor: '#FFD60A22',
+    borderColor: '#FFD60A66',
+  },
+  statusPendingText: {
+    color: '#FFD60A',
+  },
+  statusFailed: {
+    backgroundColor: '#FF3B3022',
+    borderColor: '#FF3B3066',
+  },
+  statusFailedText: {
+    color: '#FF6B60',
+  },
 });

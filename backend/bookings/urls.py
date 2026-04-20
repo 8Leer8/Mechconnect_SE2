@@ -5,7 +5,6 @@ from .views.client.client_request_list_views import get_request_detail
 from .views.admin import (
     admin_booking_overview,
     admin_list_disputes,
-    admin_resolve_dispute,
     admin_list_bookings,
     admin_list_requests,
 )
@@ -43,12 +42,8 @@ urlpatterns = [
     # Client booking endpoints
     path('bookings/', views.list_client_bookings, name='list-client-bookings'),
     path('bookings/<int:booking_id>/', views.get_booking_detail, name='get-booking-detail'),
+    path('bookings/<int:booking_id>/report-no-show/', views.report_emergency_no_show, name='report-emergency-no-show'),
     path('bookings/<int:booking_id>/mechanic-review/', views.submit_mechanic_review, name='submit-mechanic-review'),
-    path('bookings/<int:booking_id>/disputes/create/', views.create_dispute, name='create-dispute'),
-    path('bookings/<int:booking_id>/disputes/resolve/', views.resolve_dispute, name='resolve-dispute'),
-    path('bookings/<int:booking_id>/disputes/refund-details/', views.provide_refund_details, name='provide-refund-details'),
-    path('bookings/<int:booking_id>/disputes/verify-refund/', views.client_verify_refund, name='client-verify-refund'),
-    path('disputes/my/', views.list_my_disputes, name='list-my-disputes'),
     path('payments/initiate/', payment_views.initiate_payment, name='payments-initiate'),
     path('payments/qr/<int:booking_id>/', payment_views.get_qr_token, name='payments-qr-token'),
     path('payments/qr/scan/', payment_views.scan_qr, name='payments-qr-scan'),
@@ -73,8 +68,6 @@ urlpatterns = [
     path('mechanic/bookings/<int:booking_id>/pause-job/', views.mechanic_pause_job, name='mechanic-pause-job'),
     path('mechanic/bookings/<int:booking_id>/resume-job/', views.mechanic_resume_job, name='mechanic-resume-job'),
     path('mechanic/bookings/<int:booking_id>/finish-job/', views.mechanic_finish_job, name='mechanic-finish-job'),
-    path('mechanic/bookings/<int:booking_id>/disputes/upload-receipt/', views.mechanic_upload_dispute_receipt, name='mechanic-upload-dispute-receipt'),
-    path('mechanic/bookings/<int:booking_id>/disputes/submit-defense/', views.SubmitDisputeDefenseView.as_view(), name='mechanic-submit-dispute-defense'),
     path('mechanic/bookings/<int:booking_id>/payment-received/', views.mechanic_payment_received, name='mechanic-payment-received'),
     path('mechanic/bookings/<int:booking_id>/quotation/', views.mechanic_booking_quotation, name='mechanic-booking-quotation'),
     path('mechanic/bookings/<int:booking_id>/revert-stage/', views.mechanic_revert_stage, name='mechanic-revert-stage'),
@@ -110,7 +103,6 @@ urlpatterns = [
 admin_urlpatterns = [
     path('overview/', admin_booking_overview, name='admin-booking-overview'),
     path('disputes/', admin_list_disputes, name='admin-list-disputes'),
-    path('disputes/<int:dispute_id>/resolve/', admin_resolve_dispute, name='admin-resolve-dispute'),
     path('list/', admin_list_bookings, name='admin-list-bookings'),
     path('requests/', admin_list_requests, name='admin-list-requests'),
 ]

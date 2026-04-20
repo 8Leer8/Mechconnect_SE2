@@ -2,67 +2,23 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
-from rest_framework.views import APIView
-from django.db.models import Prefetch, Q
 from django.db import transaction
+from django.db.models import Prefetch, Q
 from django.utils import timezone
-from datetime import timedelta
-from math import atan2, cos, radians, sin, sqrt
 import logging
 
 from ...models import (
     Booking, Request, ActiveBooking, CancelBooking,
-    ReworkBooking, DisputeBooking, CompleteBooking, Receipt, BroadcastOffer, PaymentInstallment, Quotation, RequestAssignment,
-    BroadcastRequest, BroadcastRequestAddOn, DirectRequestAddOn, MechanicLocation
+    ReworkBooking, DisputeBooking, CompleteBooking, Receipt, BroadcastOffer,
+    PaymentInstallment, Quotation, RequestAssignment, EmergencyRequest
 )
 from ...serializers import BookingSerializer, BookingPaymentSerializer
-from users.models import Account, Mechanic, MechanicReview, TokenTransaction
+from users.models import Account, Mechanic, MechanicReview, AccountWarning
 from notification.models import Notification
+from ...ws_utils import notify_booking_parties
 
 
 logger = logging.getLogger(__name__)
-
-
-def _broadcast_booking_action(booking, action, message):
-    """Broadcast booking websocket action to all involved account groups."""
-    try:
-        from channels.layers import get_channel_layer
-        from asgiref.sync import async_to_sync
-
-        channel_layer = get_channel_layer()
-        if channel_layer is None:
-            return
-
-        participant_ids = set()
-        try:
-            if booking.request and booking.request.client and booking.request.client.account_id:
-                participant_ids.add(booking.request.client.account_id)
-        except Exception:
-            pass
-        try:
-            if booking.request and booking.request.provider_id:
-                participant_ids.add(booking.request.provider_id)
-        except Exception:
-            pass
-        try:
-            if booking.request and booking.request.shop and booking.request.shop.shop_owner and booking.request.shop.shop_owner.account_id:
-                participant_ids.add(booking.request.shop.shop_owner.account_id)
-        except Exception:
-            pass
-
-        payload = {
-            'type': 'booking_update',
-            'action': action,
-            'booking_id': booking.id,
-            'status': booking.status,
-            'dispute_status': booking.dispute_status,
-            'message': message,
-        }
-
-        for account_id in participant_ids:
-            async_to_sync(channel_layer.group_send)(f'user_{account_id}', payload)
-    except Exception:
-        logger.exception('Failed to broadcast booking action %s for booking %s', action, getattr(booking, 'id', None))
 
 
 def _to_money(value):
@@ -70,99 +26,6 @@ def _to_money(value):
 
     amount = Decimal(value or 0)
     return amount.quantize(Decimal('0.01'))
-
-
-def _haversine_meters(lat1, lon1, lat2, lon2):
-    """Return great-circle distance between two coordinates in meters."""
-    earth_radius_m = 6_371_000
-
-    d_lat = radians(lat2 - lat1)
-    d_lon = radians(lon2 - lon1)
-    a = sin(d_lat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(d_lon / 2) ** 2
-    c = 2 * atan2(sqrt(a), sqrt(1 - a))
-    return earth_radius_m * c
-
-
-def _collect_rescue_services_and_addons(original_request, booking):
-    """Collect service and add-on IDs to clone into an auto-rescue broadcast."""
-    service_ids = set()
-    add_on_ids = set()
-
-    # Direct request source of truth
-    if hasattr(original_request, 'directrequest') and original_request.directrequest is not None:
-        direct_request = original_request.directrequest
-        if direct_request.service_id:
-            service_ids.add(direct_request.service_id)
-
-        for add_on in DirectRequestAddOn.objects.filter(request=original_request).values_list('service_add_on_id', flat=True):
-            if add_on:
-                add_on_ids.add(add_on)
-
-    # Existing broadcast source of truth
-    if hasattr(original_request, 'broadcast_request') and original_request.broadcast_request is not None:
-        broadcast = original_request.broadcast_request
-        service_ids.update(list(broadcast.services.values_list('id', flat=True)))
-        add_on_ids.update(
-            list(
-                BroadcastRequestAddOn.objects.filter(broadcast_request=broadcast).values_list(
-                    'service_add_on_id', flat=True
-                )
-            )
-        )
-
-    # Custom request fallback via latest quotation selections
-    try:
-        quotation = booking.quotation
-        quote_items = quotation.items.exclude(status=Quotation.Status.REJECTED)
-        for item in quote_items:
-            if item.service_id:
-                service_ids.add(item.service_id)
-            if item.service_add_on_id:
-                add_on_ids.add(item.service_add_on_id)
-    except Exception:
-        pass
-
-    return list(service_ids), list(add_on_ids)
-
-
-def _build_rescue_description(original_request, booking):
-    """Build a sensible rescue description from the original request payload."""
-    if hasattr(original_request, 'broadcast_request') and original_request.broadcast_request is not None:
-        description = (original_request.broadcast_request.description or '').strip()
-        if description:
-            return description
-
-    if hasattr(original_request, 'customrequest') and original_request.customrequest is not None:
-        description = (original_request.customrequest.description or '').strip()
-        if description:
-            return description
-
-    if hasattr(original_request, 'emergencyrequest') and original_request.emergencyrequest is not None:
-        description = (original_request.emergencyrequest.description or '').strip()
-        if description:
-            return description
-
-    if hasattr(original_request, 'directrequest') and original_request.directrequest is not None:
-        try:
-            service_name = original_request.directrequest.service.name
-            if service_name:
-                return f"Auto-rescue no-show for {service_name}"
-        except Exception:
-            pass
-
-    try:
-        quotation = booking.quotation
-        names = [
-            item.service.name
-            for item in quotation.items.select_related('service').exclude(service=None)
-            if item.service and item.service.name
-        ]
-        if names:
-            return f"Auto-rescue no-show for {', '.join(sorted(set(names)))}"
-    except Exception:
-        pass
-
-    return "Client reported a mechanic no-show."
 
 
 def _build_booking_payment_summary(booking):
@@ -549,448 +412,126 @@ def submit_mechanic_review(request, booking_id):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
-def create_dispute(request, booking_id):
-    """Create a dispute without changing Booking.status (decoupled dispute state)."""
+def report_emergency_no_show(request, booking_id):
+    """
+    Client reports a no-show for an emergency booking.
+
+    Action taken:
+    - Cancel current booking assignment.
+    - Flag previous mechanic account.
+    - Recreate emergency request immediately for automatic re-search.
+    """
     account_id = request.session.get('account_id')
     if not account_id:
         return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
 
     try:
         account = Account.objects.get(id=account_id)
-        booking = Booking.objects.select_related(
-            'request__client__account',
-            'request__provider',
-            'request__shop__shop_owner',
-        ).get(id=booking_id)
+        if not hasattr(account, 'client'):
+            return Response({'error': 'Only clients can report no-show'}, status=status.HTTP_403_FORBIDDEN)
 
-        allowed_statuses = {Booking.Status.PENDING_PAYMENT, Booking.Status.COMPLETED}
-        if booking.status not in allowed_statuses:
-            return Response(
-                {'error': 'Disputes are allowed only for pending_payment or completed bookings'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if booking.dispute_status == Booking.DisputeState.ACTIVE:
-            return Response({'error': 'An active dispute already exists for this booking'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if not booking.request.client or booking.request.client.account_id != account.id:
-            return Response({'error': 'Only the booking client can file a dispute'}, status=status.HTTP_403_FORBIDDEN)
-
-        issue_description = str(request.data.get('issue_description', '')).strip()
-        if not issue_description:
-            return Response({'error': 'issue_description is required'}, status=status.HTTP_400_BAD_REQUEST)
-
-        complaint_against = booking.request.provider
-        if complaint_against is None and booking.request.shop and booking.request.shop.shop_owner:
-            complaint_against = booking.request.shop.shop_owner.account
-        if complaint_against is None:
-            return Response({'error': 'No provider found to file dispute against'}, status=status.HTTP_400_BAD_REQUEST)
-
-        issue_picture = request.FILES.get('issue_picture')
+        no_show_reason = str(request.data.get('reason') or '').strip() or 'Client reported mechanic no-show'
 
         with transaction.atomic():
-            dispute = DisputeBooking.objects.create(
+            booking = (
+                Booking.objects.select_for_update()
+                .select_related(
+                    'request',
+                    'request__client',
+                    'request__provider',
+                    'request__service_location',
+                )
+                .get(id=booking_id, request__client=account.client)
+            )
+
+            if booking.request.request_type != Request.Type.EMERGENCY:
+                return Response(
+                    {'error': 'Report no-show is only available for emergency bookings'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if booking.status == Booking.Status.CANCELLED:
+                return Response({'error': 'Booking already cancelled'}, status=status.HTTP_400_BAD_REQUEST)
+
+            if booking.status not in [Booking.Status.ACCEPTED, Booking.Status.ON_THE_WAY]:
+                return Response(
+                    {'error': 'No-show can only be reported while booking is accepted or on_the_way'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            previous_provider = booking.request.provider
+            if previous_provider is None:
+                return Response({'error': 'No assigned mechanic found'}, status=status.HTTP_400_BAD_REQUEST)
+
+            emergency = getattr(booking.request, 'emergencyrequest', None)
+            if emergency is None:
+                return Response({'error': 'Emergency request details not found'}, status=status.HTTP_400_BAD_REQUEST)
+
+            booking.status = Booking.Status.CANCELLED
+            booking.save(update_fields=['status', 'updated_at'])
+
+            CancelBooking.objects.get_or_create(
                 booking=booking,
-                complainer=account,
-                complaint_against=complaint_against,
-                issue_description=issue_description,
-                issue_picture=issue_picture,
-                status=DisputeBooking.Status.ACTIVE,
+                defaults={
+                    'cancelled_by': account,
+                    'reason': no_show_reason,
+                },
             )
 
-            booking.dispute_status = Booking.DisputeState.ACTIVE
-            booking.save(update_fields=['dispute_status', 'updated_at'])
+            AccountWarning.objects.create(
+                issuer=account,
+                receiver=previous_provider,
+                reason_warning=(
+                    f"{no_show_reason}. "
+                    f"Emergency booking #{booking.id} was cancelled due to reported no-show."
+                ),
+            )
 
-            provider_account = booking.request.provider
-            if provider_account is not None and hasattr(provider_account, 'mechanic'):
-                provider_account.mechanic.is_locked = True
-                provider_account.mechanic.save(update_fields=['is_locked'])
+            try:
+                mechanic_profile = previous_provider.mechanic
+                if mechanic_profile.status != Mechanic.WorkStatus.AVAILABLE:
+                    mechanic_profile.status = Mechanic.WorkStatus.AVAILABLE
+                    mechanic_profile.save(update_fields=['status', 'updated_at'])
+            except Exception:
+                pass
 
-        _broadcast_booking_action(booking, 'booking.disputed', 'A dispute has been filed for this booking')
+            replacement_request = Request.objects.create(
+                client=booking.request.client,
+                provider=None,
+                request_type=Request.Type.EMERGENCY,
+                service_location=booking.request.service_location,
+                vehicle_type=booking.request.vehicle_type,
+                vehicle_brand=booking.request.vehicle_brand,
+                vehicle_model=booking.request.vehicle_model,
+            )
 
-        return Response(
-            {
-                'message': 'Dispute created successfully',
-                'dispute': {
-                    'id': dispute.id,
-                    'booking_id': dispute.booking_id,
-                    'status': dispute.status,
-                    'issue_description': dispute.issue_description,
-                    'issue_picture': dispute.issue_picture.url if dispute.issue_picture else None,
-                    'created_at': dispute.created_at.isoformat() if dispute.created_at else None,
-                },
-                'booking': {
-                    'id': booking.id,
-                    'status': booking.status,
-                    'dispute_status': booking.dispute_status,
-                },
-            },
-            status=status.HTTP_201_CREATED,
+            EmergencyRequest.objects.create(
+                request=replacement_request,
+                description=emergency.description,
+                concern_picture=emergency.concern_picture,
+            )
+
+        notify_booking_parties(
+            previous_provider.id,
+            account.id,
+            booking.id,
+            Booking.Status.CANCELLED,
+            'No-show reported. Booking cancelled and emergency search restarted.',
         )
-    except Account.DoesNotExist:
-        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
-    except Booking.DoesNotExist:
-        return Response({'error': 'Booking not found'}, status=status.HTTP_404_NOT_FOUND)
-    except Exception as e:
-        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-@api_view(['POST'])
-@permission_classes([AllowAny])
-def resolve_dispute(request, booking_id):
-    """Admin mediation endpoint for dispute transitions while keeping Booking.status untouched."""
-    account_id = request.session.get('account_id')
-    if not account_id:
-        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
-
-    try:
-        account = Account.objects.get(id=account_id)
-        if not hasattr(account, 'admin'):
-            return Response({'error': 'Only admins can resolve disputes'}, status=status.HTTP_403_FORBIDDEN)
-
-        booking = Booking.objects.select_related('request__provider').get(id=booking_id)
-        try:
-            dispute = booking.disputebooking
-        except DisputeBooking.DoesNotExist:
-            return Response({'error': 'No dispute found for this booking'}, status=status.HTTP_404_NOT_FOUND)
-
-        if booking.dispute_status != Booking.DisputeState.ACTIVE:
-            return Response({'error': 'Only active disputes can be processed'}, status=status.HTTP_400_BAD_REQUEST)
-
-        action = str(request.data.get('action', '')).strip().lower()
-        if action not in {'dismiss', 'voucher', 'request_payment'}:
-            return Response(
-                {'error': "action must be one of: dismiss, voucher, request_payment"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        resolution_notes = str(request.data.get('resolution_notes', '')).strip()
-
-        with transaction.atomic():
-            dispute.admin = account.admin
-            dispute.resolution_notes = resolution_notes
-
-            unlock_mechanic = False
-            if action == 'dismiss':
-                dispute.status = DisputeBooking.Status.RESOLVED_DISMISSED
-                booking.dispute_status = Booking.DisputeState.RESOLVED
-                dispute.resolved_at = timezone.now()
-                unlock_mechanic = True
-            elif action == 'voucher':
-                dispute.status = DisputeBooking.Status.RESOLVED_VOUCHER
-                booking.dispute_status = Booking.DisputeState.RESOLVED
-                dispute.resolved_at = timezone.now()
-            else:
-                dispute.status = DisputeBooking.Status.WAITING_FOR_MECHANIC_PAYMENT
-                dispute.resolved_at = None
-
-            dispute.save(update_fields=[
-                'admin',
-                'status',
-                'resolution_notes',
-                'amount_refunded',
-                'refund_receiver',
-                'resolved_at',
-            ])
-
-            booking.save(update_fields=['dispute_status', 'updated_at'])
-
-            provider_account = booking.request.provider
-            if unlock_mechanic and provider_account is not None and hasattr(provider_account, 'mechanic'):
-                provider_account.mechanic.is_locked = False
-                provider_account.mechanic.save(update_fields=['is_locked'])
-
-        ws_action = 'booking.dispute_payment_requested' if action == 'request_payment' else 'booking.dispute_resolved'
-        ws_message = 'Admin requested mechanic payment proof upload' if action == 'request_payment' else 'The dispute has been resolved'
-        _broadcast_booking_action(booking, ws_action, ws_message)
 
         return Response(
             {
-                'message': 'Dispute resolved successfully',
-                'dispute': {
-                    'id': dispute.id,
-                    'status': dispute.status,
-                    'resolution_notes': dispute.resolution_notes,
-                    'is_client_verified': dispute.is_client_verified,
-                    'refund_receipt_image': dispute.refund_receipt_image.url if dispute.refund_receipt_image else None,
-                    'amount_refunded': float(dispute.amount_refunded) if dispute.amount_refunded is not None else None,
-                    'resolved_at': dispute.resolved_at.isoformat() if dispute.resolved_at else None,
-                },
-                'booking': {
-                    'id': booking.id,
-                    'status': booking.status,
-                    'dispute_status': booking.dispute_status,
-                },
+                'message': 'No-show reported. We are now searching for a new mechanic.',
+                'cancelled_booking_id': booking.id,
+                'replacement_request_id': replacement_request.id,
             },
             status=status.HTTP_200_OK,
         )
+
     except Account.DoesNotExist:
         return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
     except Booking.DoesNotExist:
-        return Response({'error': 'Booking not found'}, status=status.HTTP_404_NOT_FOUND)
-    except Exception as e:
-        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-@api_view(['POST'])
-@permission_classes([AllowAny])
-def client_verify_refund(request, booking_id):
-    """Client confirms refund receipt and closes the dispute while unlocking mechanic."""
-    account_id = request.session.get('account_id')
-    if not account_id:
-        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
-
-    try:
-        account = Account.objects.get(id=account_id)
-        booking = Booking.objects.select_related('request__client__account', 'request__provider').get(id=booking_id)
-
-        if not booking.request.client or booking.request.client.account_id != account.id:
-            return Response({'error': 'Only the booking client can verify refund'}, status=status.HTTP_403_FORBIDDEN)
-
-        try:
-            dispute = booking.disputebooking
-        except DisputeBooking.DoesNotExist:
-            return Response({'error': 'No dispute found for this booking'}, status=status.HTTP_404_NOT_FOUND)
-
-        if dispute.status != DisputeBooking.Status.WAITING_FOR_CLIENT_VERIFICATION:
-            return Response(
-                {'error': 'Refund can only be verified when waiting for client verification'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        with transaction.atomic():
-            dispute.status = DisputeBooking.Status.RESOLVED_REFUNDED
-            dispute.is_client_verified = True
-            dispute.refund_receiver = account
-            dispute.resolved_at = timezone.now()
-            dispute.save(update_fields=['status', 'is_client_verified', 'refund_receiver', 'resolved_at'])
-
-            booking.dispute_status = Booking.DisputeState.RESOLVED
-            booking.save(update_fields=['dispute_status', 'updated_at'])
-
-            provider_account = booking.request.provider
-            if provider_account is not None and hasattr(provider_account, 'mechanic'):
-                provider_account.mechanic.is_locked = False
-                provider_account.mechanic.save(update_fields=['is_locked'])
-
-        _broadcast_booking_action(booking, 'booking.dispute_refund_verified', 'Client verified refund receipt')
-
-        return Response(
-            {
-                'message': 'Refund verified and dispute resolved',
-                'dispute': {
-                    'id': dispute.id,
-                    'status': dispute.status,
-                    'is_client_verified': dispute.is_client_verified,
-                    'resolved_at': dispute.resolved_at.isoformat() if dispute.resolved_at else None,
-                },
-                'booking': {
-                    'id': booking.id,
-                    'status': booking.status,
-                    'dispute_status': booking.dispute_status,
-                },
-            },
-            status=status.HTTP_200_OK,
-        )
-    except Account.DoesNotExist:
-        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
-    except Booking.DoesNotExist:
-        return Response({'error': 'Booking not found'}, status=status.HTTP_404_NOT_FOUND)
-    except Exception as e:
-        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-@api_view(['POST'])
-@permission_classes([AllowAny])
-def provide_refund_details(request, booking_id):
-    """Client provides refund destination details so mechanic knows where to send funds."""
-    account_id = request.session.get('account_id')
-    if not account_id:
-        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
-
-    try:
-        account = Account.objects.get(id=account_id)
-        booking = Booking.objects.select_related('request__client__account', 'request__provider').get(id=booking_id)
-
-        if not booking.request.client or booking.request.client.account_id != account.id:
-            return Response({'error': 'Only the booking client can provide refund details'}, status=status.HTTP_403_FORBIDDEN)
-
-        try:
-            dispute = booking.disputebooking
-        except DisputeBooking.DoesNotExist:
-            return Response({'error': 'No dispute found for this booking'}, status=status.HTTP_404_NOT_FOUND)
-
-        if booking.dispute_status != Booking.DisputeState.ACTIVE:
-            return Response({'error': 'Dispute is not active'}, status=status.HTTP_400_BAD_REQUEST)
-
-        current_status = str(dispute.status or '').lower()
-        if current_status not in {
-            DisputeBooking.Status.ACTIVE,
-            DisputeBooking.Status.WAITING_FOR_MECHANIC_PAYMENT,
-            DisputeBooking.Status.WAITING_FOR_CLIENT_VERIFICATION,
-        }:
-            return Response({'error': 'Dispute is already resolved'}, status=status.HTTP_400_BAD_REQUEST)
-
-        refund_method = str(request.data.get('refund_method', '')).strip().lower()
-        if refund_method not in {
-            DisputeBooking.RefundMethod.GCASH,
-            DisputeBooking.RefundMethod.MAYA,
-            DisputeBooking.RefundMethod.VOUCHER,
-        }:
-            return Response({'error': "refund_method must be one of: gcash, maya, voucher"}, status=status.HTTP_400_BAD_REQUEST)
-
-        account_number = str(request.data.get('account_number', '')).strip()
-
-        with transaction.atomic():
-            dispute.refund_method = refund_method
-
-            if refund_method == DisputeBooking.RefundMethod.VOUCHER:
-                dispute.refund_account_number = None
-                dispute.status = DisputeBooking.Status.RESOLVED_VOUCHER
-                dispute.resolved_at = timezone.now()
-                dispute.is_client_verified = True
-                dispute.refund_receiver = account
-
-                booking.dispute_status = Booking.DisputeState.RESOLVED
-                booking.save(update_fields=['dispute_status', 'updated_at'])
-
-                provider_account = booking.request.provider
-                if provider_account is not None and hasattr(provider_account, 'mechanic'):
-                    mechanic = provider_account.mechanic
-                    debt_amount = int(round(float(dispute.amount_refunded or booking.amount_fee or 0)))
-                    if debt_amount > 0:
-                        mechanic.tokens_balance = (mechanic.tokens_balance or 0) - debt_amount
-                        mechanic.save(update_fields=['tokens_balance'])
-                        TokenTransaction.objects.create(
-                            account=provider_account,
-                            tokens=-debt_amount,
-                            reason=f"Dispute voucher debt recovery (booking #{booking.id})",
-                            related_booking_id=booking.id,
-                        )
-
-                    mechanic.is_locked = False
-                    mechanic.save(update_fields=['is_locked'])
-
-                dispute.resolution_notes = (dispute.resolution_notes or '').strip()
-                if dispute.resolution_notes:
-                    dispute.resolution_notes += ' '
-                dispute.resolution_notes += f"Platform voucher issued for booking #{booking.id}."
-            else:
-                if not account_number:
-                    return Response(
-                        {'error': 'account_number is required for gcash/maya refunds'},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-
-                dispute.refund_account_number = account_number
-                dispute.status = DisputeBooking.Status.WAITING_FOR_MECHANIC_PAYMENT
-                dispute.resolved_at = None
-
-            dispute.save(update_fields=[
-                'refund_method',
-                'refund_account_number',
-                'status',
-                'resolved_at',
-                'is_client_verified',
-                'refund_receiver',
-                'resolution_notes',
-            ])
-
-        if refund_method == DisputeBooking.RefundMethod.VOUCHER:
-            _broadcast_booking_action(booking, 'booking.dispute_resolved_voucher', 'Dispute resolved via platform voucher fallback')
-            return Response(
-                {
-                    'message': 'Voucher fallback applied. Dispute resolved.',
-                    'dispute': {
-                        'id': dispute.id,
-                        'status': dispute.status,
-                        'refund_method': dispute.refund_method,
-                        'resolution_notes': dispute.resolution_notes,
-                    },
-                    'booking': {
-                        'id': booking.id,
-                        'status': booking.status,
-                        'dispute_status': booking.dispute_status,
-                    },
-                },
-                status=status.HTTP_200_OK,
-            )
-
-        _broadcast_booking_action(booking, 'booking.dispute_refund_details_submitted', 'Client submitted refund destination details')
-        return Response(
-            {
-                'message': 'Refund details submitted. Waiting for mechanic payment.',
-                'dispute': {
-                    'id': dispute.id,
-                    'status': dispute.status,
-                    'refund_method': dispute.refund_method,
-                    'refund_account_number': dispute.refund_account_number,
-                },
-                'booking': {
-                    'id': booking.id,
-                    'status': booking.status,
-                    'dispute_status': booking.dispute_status,
-                },
-            },
-            status=status.HTTP_200_OK,
-        )
-    except Account.DoesNotExist:
-        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
-    except Booking.DoesNotExist:
-        return Response({'error': 'Booking not found'}, status=status.HTTP_404_NOT_FOUND)
-    except Exception as e:
-        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def list_my_disputes(request):
-    """List disputes where current account is complainer or complaint target."""
-    account_id = request.session.get('account_id')
-    if not account_id:
-        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
-
-    try:
-        account = Account.objects.get(id=account_id)
-        disputes = (
-            DisputeBooking.objects.select_related('booking', 'complainer', 'complaint_against')
-            .filter(Q(complainer=account) | Q(complaint_against=account))
-            .order_by('-created_at')
-        )
-
-        results = []
-        for dispute in disputes:
-            results.append(
-                {
-                    'id': dispute.id,
-                    'booking_id': dispute.booking_id,
-                    'booking_status': dispute.booking.status,
-                    'booking_dispute_status': dispute.booking.dispute_status,
-                    'status': dispute.status,
-                    'issue_description': dispute.issue_description,
-                    'issue_picture': dispute.issue_picture.url if dispute.issue_picture else None,
-                    'complainer': {
-                        'id': dispute.complainer.id,
-                        'name': f"{dispute.complainer.firstname} {dispute.complainer.lastname}".strip(),
-                    },
-                    'complaint_against': {
-                        'id': dispute.complaint_against.id,
-                        'name': f"{dispute.complaint_against.firstname} {dispute.complaint_against.lastname}".strip(),
-                    },
-                    'resolution_notes': dispute.resolution_notes,
-                    'amount_refunded': float(dispute.amount_refunded) if dispute.amount_refunded is not None else None,
-                    'refund_method': dispute.refund_method,
-                    'refund_account_number': dispute.refund_account_number,
-                    'is_client_verified': dispute.is_client_verified,
-                    'refund_receipt_image': dispute.refund_receipt_image.url if dispute.refund_receipt_image else None,
-                    'created_at': dispute.created_at.isoformat() if dispute.created_at else None,
-                    'resolved_at': dispute.resolved_at.isoformat() if dispute.resolved_at else None,
-                }
-            )
-
-        return Response({'count': len(results), 'results': results}, status=status.HTTP_200_OK)
-    except Account.DoesNotExist:
-        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'error': 'Booking not found or you do not have permission'}, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -1035,7 +576,6 @@ def _serialize_single_booking(booking, viewer_account=None):
     booking_data = {
         'id': booking.id,
         'status': booking.status,
-        'dispute_status': booking.dispute_status,
         'amount_fee': float(booking.amount_fee),
         'convenience_fee': float(booking.convenience_fee) if getattr(booking, 'convenience_fee', None) is not None else None,
         'traffic_surcharge': float(booking.traffic_surcharge) if getattr(booking, 'traffic_surcharge', None) is not None else None,
@@ -1127,7 +667,7 @@ def _serialize_single_booking(booking, viewer_account=None):
             'completed_at': rework.completed_at.isoformat() if rework.completed_at else None,
         }
     
-    if hasattr(booking, 'disputebooking'):
+    elif booking.status == 'disputed' and hasattr(booking, 'disputebooking'):
         dispute = booking.disputebooking
         booking_data['dispute_details'] = {
             'complainer': {
@@ -1140,14 +680,8 @@ def _serialize_single_booking(booking, viewer_account=None):
             },
             'issue_description': dispute.issue_description,
             'issue_picture': dispute.issue_picture.url if dispute.issue_picture else None,
-            'mechanic_defense_description': dispute.mechanic_defense_description,
-            'mechanic_defense_picture': dispute.mechanic_defense_picture.url if dispute.mechanic_defense_picture else None,
-            'refund_receipt_image': dispute.refund_receipt_image.url if dispute.refund_receipt_image else None,
             'resolution_notes': dispute.resolution_notes,
             'dispute_status': dispute.status,
-            'refund_method': dispute.refund_method,
-            'refund_account_number': dispute.refund_account_number,
-            'is_client_verified': dispute.is_client_verified,
             'amount_refunded': float(dispute.amount_refunded) if dispute.amount_refunded else None,
             'created_at': dispute.created_at.isoformat(),
             'resolved_at': dispute.resolved_at.isoformat() if dispute.resolved_at else None,
@@ -1807,196 +1341,4 @@ def client_pay_booking(request, booking_id):
         {'error': 'Deprecated endpoint. Use /bookings/payments/initiate/ instead.'},
         status=status.HTTP_410_GONE,
     )
-
-
-class ReportNoShowView(APIView):
-    permission_classes = [AllowAny]
-
-    def post(self, request, booking_id):
-        account_id = request.session.get('account_id')
-        if not account_id:
-            return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
-
-        try:
-            account = Account.objects.select_related('client').get(id=account_id)
-        except Account.DoesNotExist:
-            return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        if not hasattr(account, 'client'):
-            return Response({'error': 'Only clients can report a no-show'}, status=status.HTTP_403_FORBIDDEN)
-
-        try:
-            booking = Booking.objects.select_related(
-                'request',
-                'request__client',
-                'request__provider',
-                'request__service_location',
-                'request__broadcast_request',
-            ).get(id=booking_id)
-        except Booking.DoesNotExist:
-            return Response({'error': 'Booking not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        if booking.request.client_id != account.client.id:
-            return Response({'error': 'You can only report your own bookings'}, status=status.HTTP_403_FORBIDDEN)
-
-        if booking.status not in {Booking.Status.ACCEPTED, Booking.Status.ON_THE_WAY}:
-            return Response(
-                {'error': 'No-show reporting is only allowed while booking is accepted or on_the_way'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Gate 1: Time gate -> fee_locked_at + eta_minutes + 15 minutes
-        if not booking.fee_locked_at or booking.eta_minutes is None:
-            return Response(
-                {'error': 'Too early to report no-show'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        now = timezone.now()
-        grace_deadline = booking.fee_locked_at + timedelta(minutes=int(booking.eta_minutes) + 15)
-        if now < grace_deadline:
-            return Response(
-                {'error': 'Too early to report no-show'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Gate 2: Geo-fence -> reject if mechanic within 200m of service location
-        service_location = booking.request.service_location
-        if (
-            service_location
-            and service_location.latitude is not None
-            and service_location.longitude is not None
-        ):
-            mechanic_location = MechanicLocation.objects.filter(booking=booking).first()
-            if mechanic_location is not None:
-                distance_m = _haversine_meters(
-                    float(mechanic_location.latitude),
-                    float(mechanic_location.longitude),
-                    float(service_location.latitude),
-                    float(service_location.longitude),
-                )
-                if distance_m < 200:
-                    return Response(
-                        {'error': 'Mechanic is arriving'},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-
-        original_request = booking.request
-        rescue_service_ids, rescue_add_on_ids = _collect_rescue_services_and_addons(original_request, booking)
-        rescue_description = _build_rescue_description(original_request, booking)
-
-        concern_picture = None
-        if hasattr(original_request, 'broadcast_request') and original_request.broadcast_request is not None:
-            concern_picture = original_request.broadcast_request.concern_picture
-        elif hasattr(original_request, 'customrequest') and original_request.customrequest is not None:
-            concern_picture = original_request.customrequest.concern_picture
-        elif hasattr(original_request, 'emergencyrequest') and original_request.emergencyrequest is not None:
-            concern_picture = original_request.emergencyrequest.concern_picture
-
-        rescue_latitude = None
-        rescue_longitude = None
-        if service_location and service_location.latitude is not None and service_location.longitude is not None:
-            rescue_latitude = service_location.latitude
-            rescue_longitude = service_location.longitude
-        elif hasattr(original_request, 'broadcast_request') and original_request.broadcast_request is not None:
-            rescue_latitude = original_request.broadcast_request.latitude
-            rescue_longitude = original_request.broadcast_request.longitude
-
-        if rescue_latitude is None or rescue_longitude is None:
-            return Response(
-                {'error': 'Cannot auto-rescue booking without a valid location'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        penalty_applied_until = None
-        offense_count = None
-
-        with transaction.atomic():
-            booking.status = Booking.Status.CANCELLED
-            booking.save(update_fields=['status', 'updated_at'])
-
-            CancelBooking.objects.update_or_create(
-                booking=booking,
-                defaults={
-                    'cancelled_by': account,
-                    'reason': 'Client reported no-show. Auto-rescue broadcast created.',
-                },
-            )
-
-            # Penalty tiers:
-            # 1st offense -> 2h lock, 2nd -> 24h lock, 3rd+ -> 30 days lock.
-            try:
-                mechanic = None
-                if original_request.provider_id:
-                    mechanic = Mechanic.objects.select_for_update().filter(account_id=original_request.provider_id).first()
-
-                if mechanic is not None:
-                    offense_count = (mechanic.no_show_count or 0) + 1
-                    mechanic.no_show_count = offense_count
-
-                    if offense_count == 1:
-                        lock_duration = timedelta(hours=2)
-                    elif offense_count == 2:
-                        lock_duration = timedelta(hours=24)
-                    else:
-                        lock_duration = timedelta(days=30)
-
-                    penalty_applied_until = now + lock_duration
-                    mechanic.cooldown_until = penalty_applied_until
-                    mechanic.is_locked = True
-                    mechanic.save(update_fields=['no_show_count', 'cooldown_until', 'is_locked', 'updated_at'])
-            except Exception:
-                logger.exception('Failed to apply no-show penalty for booking %s', booking.id)
-
-            new_request = Request.objects.create(
-                client=original_request.client,
-                request_type=Request.Type.BROADCAST,
-                service_location=original_request.service_location,
-                vehicle_type=original_request.vehicle_type,
-                vehicle_brand=original_request.vehicle_brand,
-                vehicle_model=original_request.vehicle_model,
-            )
-
-            new_broadcast = BroadcastRequest.objects.create(
-                request=new_request,
-                description=rescue_description,
-                concern_picture=concern_picture,
-                latitude=rescue_latitude,
-                longitude=rescue_longitude,
-                search_radius_km=10,
-                expires_at=now + timedelta(minutes=15),
-                status=BroadcastRequest.Status.SEARCHING,
-            )
-
-            if rescue_service_ids:
-                new_broadcast.services.set(rescue_service_ids)
-
-            for add_on_id in rescue_add_on_ids:
-                BroadcastRequestAddOn.objects.get_or_create(
-                    broadcast_request=new_broadcast,
-                    service_add_on_id=add_on_id,
-                )
-
-        try:
-            _broadcast_booking_action(
-                booking,
-                'cancelled_no_show',
-                'Booking cancelled due to no-show report and auto-rescue started.',
-            )
-        except Exception:
-            pass
-
-        response_payload = {
-            'message': 'No-show reported. Auto-rescue broadcast created.',
-            'booking_id': booking.id,
-            'broadcast_request_id': new_broadcast.id,
-            'request_id': new_request.id,
-        }
-
-        if offense_count is not None:
-            response_payload['mechanic_no_show_count'] = offense_count
-        if penalty_applied_until is not None:
-            response_payload['mechanic_cooldown_until'] = penalty_applied_until.isoformat()
-
-        return Response(response_payload, status=status.HTTP_201_CREATED)
 

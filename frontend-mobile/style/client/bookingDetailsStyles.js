@@ -340,6 +340,31 @@ export const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
   },
+  noShowWarningText: {
+    fontSize: 13,
+    color: '#E0A8A8',
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  noShowButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#C62828',
+    borderRadius: 10,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#E53935',
+  },
+  noShowButtonDisabled: {
+    opacity: 0.65,
+  },
+  noShowButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
   // Info Grid
   infoGrid: {
     gap: 10,

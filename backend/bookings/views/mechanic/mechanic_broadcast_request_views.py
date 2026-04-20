@@ -22,6 +22,19 @@ from services.pricing_utils import (
 )
 
 
+# Active roadside cap scaffold.
+# Keep this commented in accept flow for now to avoid limits during testing.
+ACTIVE_ROADSIDE_JOB_CAP = 3
+ACTIVE_ROADSIDE_BOOKING_STATUSES = [
+    Booking.Status.ACCEPTED,
+    Booking.Status.ON_THE_WAY,
+    Booking.Status.ACTIVE,
+    Booking.Status.PAUSED,
+    Booking.Status.FINISHED,
+    Booking.Status.PENDING_PAYMENT,
+]
+
+
 def _haversine_km(lat1, lon1, lat2, lon2):
     radius_km = 6371.0
     lat1_rad = math.radians(float(lat1))
@@ -176,6 +189,19 @@ def accept_broadcast_request(request, broadcast_id):
                 return Response({
                     'error': 'Cannot accept your own broadcast request'
                 }, status=status.HTTP_403_FORBIDDEN)
+
+            # Enforce active roadside assignment cap (disabled for testing).
+            # active_roadside_jobs = Booking.objects.filter(
+            #     request__provider_id=account.id,
+            #     request__request_type=Request.Type.BROADCAST,
+            #     status__in=ACTIVE_ROADSIDE_BOOKING_STATUSES,
+            # ).count()
+            # if active_roadside_jobs >= ACTIVE_ROADSIDE_JOB_CAP:
+            #     return Response({
+            #         'error': 'Active roadside job limit reached',
+            #         'limit': ACTIVE_ROADSIDE_JOB_CAP,
+            #         'active_jobs': active_roadside_jobs,
+            #     }, status=status.HTTP_403_FORBIDDEN)
             
             # Create or update the offer for this mechanic
             # Re-lock mechanic row to avoid token race conditions
