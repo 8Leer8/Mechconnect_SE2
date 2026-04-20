@@ -20,11 +20,18 @@ type WalletSectionProps = {
   creditsSource?: CreditsSource;
   /** Route when tapping Add (default: mechanic credits screen). */
   addHref?: Href;
+  /** Show Add button (defaults to hidden for shop-owner). */
+  showAddButton?: boolean;
 };
 
-export default function WalletSection({ creditsSource = 'mechanic', addHref = '/mechanic/wallet' }: WalletSectionProps) {
+export default function WalletSection({
+  creditsSource = 'mechanic',
+  addHref = '/mechanic/wallet',
+  showAddButton,
+}: WalletSectionProps) {
   const [balance, setBalance] = useState<number | null>(null);
   const router = useRouter();
+  const canShowAdd = showAddButton ?? true;
 
   useEffect(() => {
     let mounted = true;
@@ -53,10 +60,12 @@ export default function WalletSection({ creditsSource = 'mechanic', addHref = '/
         <ThemedText style={styles.label}>Credit Balance</ThemedText>
         <ThemedText style={styles.amount}>{`${balance ?? 0} credits`}</ThemedText>
       </View>
-      <TouchableOpacity style={styles.addBtn} onPress={() => router.push(addHref)} activeOpacity={0.7}>
-        <FontAwesome name="plus" size={11} color="#fff" />
-        <ThemedText style={styles.addBtnText}>Add</ThemedText>
-      </TouchableOpacity>
+      {canShowAdd && (
+        <TouchableOpacity style={styles.addBtn} onPress={() => router.push(addHref)} activeOpacity={0.7}>
+          <FontAwesome name="plus" size={11} color="#fff" />
+          <ThemedText style={styles.addBtnText}>Add</ThemedText>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }

@@ -1,6 +1,5 @@
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
-import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -9,7 +8,6 @@ import WalletBadge from '@/components/wallet-badge';
 
 /** Tab route stays `main/shop`; label in tabs is Map. Placeholder until real map is wired. */
 export default function ShopOwnerMapPlaceholder() {
-  const router = useRouter();
   const insets = useSafeAreaInsets();
   const topPad = Math.max(insets.top, 12) + 8;
 
@@ -22,7 +20,6 @@ export default function ShopOwnerMapPlaceholder() {
         </View>
         <WalletBadge
           creditsSource="shop-owner"
-          onPress={() => router.push('/mechanic/wallet')}
         />
       </View>
 
