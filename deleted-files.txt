@@ -1,0 +1,17 @@
+ WARN  Route "./client/booking/disputedbooking.tsx" is missing the required default export. Ensure a React component is exported as default.
+ WARN  Route "./client/booking/reworkedbooking.tsx" is missing the required default export. Ensure a React component is exported as default.
+ WARN  Route "./client/forms/cancellationform.tsx" is missing the required default export. Ensure a React component is exported as default.
+ WARN  Route "./client/forms/disputeform.tsx" is missing the required default export. Ensure a React component is exported as default.
+ WARN  Route "./client/forms/rescheduleform.tsx" is missing the required default export. Ensure a React component is exported as default.
+ WARN  Route "./client/forms/reworkform.tsx" is missing the required default export. Ensure a React component is exported as default.
+ WARN  Route "./client/others/about.tsx" is missing the required default export. Ensure a React component is exported as default.
+ WARN  Route "./client/others/termsregulation.tsx" is missing the required default export. Ensure a React component is exported as default.
+ WARN  Route "./client/payment/checkout.tsx" is missing the required default export. Ensure a React component is exported as default.
+ WARN  Route "./client/payment/checkoutdetail.tsx" is missing the required default export. Ensure a React component is exported as default.
+ WARN  Route "./client/profile/accountsetting.tsx" is missing the required default export. Ensure a React component is exported as default.
+ WARN  Route "./client/profile/notification.tsx" is missing the required default export. Ensure a React component is exported as default.
+ WARN  Route "./client/request/custom/mechaniccustomrequest.tsx" is missing the required default export. Ensure a React component is exported as default.       
+ WARN  Route "./client/request/custom/shopcustomrequest.tsx" is missing the required default export. Ensure a React component is exported as default.
+ WARN  Route "./client/request/emergency/emergencyrequest.tsx" is missing the required default export. Ensure a React component is exported as default.
+ WARN  Route "./client/request/main_request_form/LocationContext.tsx" is missing the required default export. Ensure a React component is exported as default.  
+ WARN  Route "./client/shop/shopserviceprofile.tsx" is missing the required default export. Ensure a React component is exported as default.
