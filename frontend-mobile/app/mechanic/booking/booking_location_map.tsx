@@ -690,10 +690,6 @@ export default function BookingLocationMapScreen() {
       const bookingData = await fetchBooking();
       const bookingStatus = String(bookingData?.status || '');
 
-      console.log('BOOKING DATA:', JSON.stringify(bookingData, null, 2));
-      console.log('SERVICE LOCATION:', bookingData?.service_location);
-      console.log('REQUEST:', bookingData?.request);
-
       setBooking(bookingData);
       setStatus(bookingStatus);
 
