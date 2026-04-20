@@ -60,6 +60,14 @@ interface AvailableSpecialty {
   description: string;
 }
 
+interface MyAddon {
+  id: number;
+  service_id: number;
+  name: string;
+  description?: string;
+  price: number;
+}
+
 const SOURCE_TYPE_OPTIONS = [
   { value: 'certification', label: 'Certification' },
   { value: 'license', label: 'License' },
@@ -102,6 +110,14 @@ export default function ProfileScreen() {
   const [updatingId, setUpdatingId] = useState<number | null>(null);
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
   const [logoutLoading, setLogoutLoading] = useState(false);
+  const [serviceAddons, setServiceAddons] = useState<Record<number, MyAddon[]>>({});
+  const [loadingServiceAddons, setLoadingServiceAddons] = useState(false);
+  const [addonModalVisible, setAddonModalVisible] = useState(false);
+  const [selectedAddonService, setSelectedAddonService] = useState<MyService | null>(null);
+  const [addonName, setAddonName] = useState('');
+  const [addonPrice, setAddonPrice] = useState('');
+  const [addonDescription, setAddonDescription] = useState('');
+  const [submittingAddon, setSubmittingAddon] = useState(false);
 
   const fetchProfile = useCallback(async () => {
     try {
@@ -172,9 +188,63 @@ export default function ProfileScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      fetchMyServices();
       fetchMySpecialties();
-    }, [fetchMySpecialties]),
+    }, [fetchMyServices, fetchMySpecialties]),
   );
+
+  const fetchMyServiceAddons = useCallback(async () => {
+    if (!myServices.length) {
+      setServiceAddons({});
+      return;
+    }
+
+    setLoadingServiceAddons(true);
+    try {
+      const results: Array<[number, MyAddon[]]> = await Promise.all(
+        myServices.map(async (service) => {
+          try {
+            const res = await fetch(`${API_URL}/services/mechanic/my-addons/?service_id=${service.id}`, {
+              method: 'GET',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+            });
+
+            if (!res.ok) {
+              return [service.id, []];
+            }
+
+            const data = await res.json();
+            const addOns: MyAddon[] = (data.add_ons || []).map((addon: any) => ({
+              id: addon.id,
+              service_id: service.id,
+              name: addon.name,
+              description: addon.description || '',
+              price: Number(addon.price || 0),
+            }));
+
+            return [service.id, addOns];
+          } catch {
+            return [service.id, []];
+          }
+        }),
+      );
+
+      const nextServiceAddons: Record<number, MyAddon[]> = {};
+      results.forEach(([serviceId, addOns]) => {
+        nextServiceAddons[serviceId] = addOns;
+      });
+      setServiceAddons(nextServiceAddons);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingServiceAddons(false);
+    }
+  }, [myServices]);
+
+  useEffect(() => {
+    fetchMyServiceAddons();
+  }, [fetchMyServiceAddons]);
 
   const openAddModal = useCallback(async () => {
     setAddModalVisible(true);
@@ -195,6 +265,104 @@ export default function ProfileScreen() {
       console.error(e);
     }
   }, [myServices]);
+
+  const resetAddonForm = useCallback(() => {
+    setAddonName('');
+    setAddonPrice('');
+    setAddonDescription('');
+    setSubmittingAddon(false);
+  }, []);
+
+  const openAddAddonModal = useCallback(() => {
+    resetAddonForm();
+    setSelectedAddonService(null);
+    setAddonModalVisible(true);
+  }, [resetAddonForm]);
+
+  const selectAddonService = useCallback((service: MyService) => {
+    setSelectedAddonService(service);
+    setAddonName('');
+    setAddonPrice('');
+    setAddonDescription('');
+  }, []);
+
+  const addAddon = async () => {
+    if (!selectedAddonService) {
+      showNotification({ type: 'error', message: 'Please select a service first.' });
+      return;
+    }
+
+    const price = parseFloat(addonPrice || '0');
+    if (!addonName.trim()) {
+      showNotification({ type: 'error', message: 'Please enter an add-on name' });
+      return;
+    }
+    if (isNaN(price) || price < 0) {
+      showNotification({ type: 'error', message: 'Please enter a valid price' });
+      return;
+    }
+
+    setSubmittingAddon(true);
+    try {
+      const res = await fetch(`${API_URL}/services/mechanic/my-addons/add/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          service_id: selectedAddonService.id,
+          name: addonName.trim(),
+          description: addonDescription.trim(),
+          price,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({})) as any;
+      if (!res.ok) {
+        showNotification({ type: 'error', message: data.error || 'Failed to add add-on' });
+        return;
+      }
+
+      await fetchMyServiceAddons();
+      setAddonName('');
+      setAddonPrice('');
+      setAddonDescription('');
+      showNotification({ type: 'success', message: data.message || 'Add-on added' });
+    } catch (e) {
+      showNotification({ type: 'error', message: 'Failed to add add-on' });
+    } finally {
+      setSubmittingAddon(false);
+    }
+  };
+
+  const removeAddon = async (addon: MyAddon) => {
+    const ok = await confirm({
+      type: 'danger',
+      title: 'Remove Add-on',
+      message: `Remove "${addon.name}" from your add-ons?`,
+      confirmText: 'Remove',
+      cancelText: 'Keep',
+    });
+    if (!ok) return;
+    try {
+      const res = await fetch(`${API_URL}/services/mechanic/my-addons/remove/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ service_add_on_id: addon.id }),
+      });
+
+      const data = await res.json().catch(() => ({})) as any;
+      if (!res.ok) {
+        showNotification({ type: 'error', message: data.error || 'Failed to remove add-on' });
+        return;
+      }
+
+      await fetchMyServiceAddons();
+      showNotification({ type: 'success', message: data.message || 'Add-on removed' });
+    } catch (e) {
+      showNotification({ type: 'error', message: 'Failed to remove add-on' });
+    }
+  };
 
   const openAddSpecialtyModal = useCallback(async () => {
     setSpecialtyModalVisible(true);
@@ -622,6 +790,18 @@ export default function ProfileScreen() {
           )}
         </View>
 
+        {/* Add-ons */}
+        <View style={styles.section}>
+          <TouchableOpacity style={styles.menuItem} onPress={openAddAddonModal}>
+            <FontAwesome name="tags" size={20} color="#FF8C00" />
+            <View style={styles.serviceInfo}>
+              <ThemedText style={styles.menuText}>My addons</ThemedText>
+              <ThemedText style={styles.availableDesc}>Pick a service first, then add extras</ThemedText>
+            </View>
+            <FontAwesome name="chevron-right" size={16} color="#8E8E93" />
+          </TouchableOpacity>
+        </View>
+
         {/* Services I offer - connected to backend */}
         <View style={styles.section}>
           <View style={styles.sectionRow}>
@@ -724,6 +904,217 @@ export default function ProfileScreen() {
                   </TouchableOpacity>
                 ))
               )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* My addons modal */}
+      <Modal
+        visible={addonModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => {
+          setAddonModalVisible(false);
+          setSelectedAddonService(null);
+          resetAddonForm();
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalBox, { height: '92%', paddingBottom: 10 }]}>
+            <View style={styles.modalHeader}>
+              <TouchableOpacity
+                onPress={() => {
+                  setAddonModalVisible(false);
+                  setSelectedAddonService(null);
+                  resetAddonForm();
+                }}
+                style={styles.backBtn}
+              >
+                <FontAwesome name="times" size={18} color="#FF8C00" />
+              </TouchableOpacity>
+              <ThemedText style={styles.modalTitle}>My addons</ThemedText>
+              <View style={{ width: 22 }} />
+            </View>
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={{ padding: 16, paddingBottom: 64 }}
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.proofSection}>
+                <ThemedText style={styles.proofLabel}>Select a service first</ThemedText>
+                {myServices.length === 0 ? (
+                  <View style={styles.addonEmptyCard}>
+                    <FontAwesome name="wrench" size={24} color="#555" />
+                    <ThemedText style={styles.emptyText}>No services yet</ThemedText>
+                    <ThemedText style={styles.emptySubtext}>
+                      Add a service in Services I offer before creating add-ons.
+                    </ThemedText>
+                  </View>
+                ) : (
+                  <View style={{ gap: 8 }}>
+                    {myServices.map((service) => {
+                      const isSelected = selectedAddonService?.id === service.id;
+
+                      return (
+                        <TouchableOpacity
+                          key={service.id}
+                          style={[
+                            styles.availableRow,
+                            isSelected && { borderColor: '#FF8C00', backgroundColor: 'rgba(255, 140, 0, 0.12)' },
+                          ]}
+                          onPress={() => selectAddonService(service)}
+                        >
+                          <View style={styles.availableInfo}>
+                            <ThemedText style={styles.availableName}>{service.name}</ThemedText>
+                            <ThemedText style={styles.availableDesc} numberOfLines={2}>
+                              {service.description || 'No description'}
+                            </ThemedText>
+                          </View>
+                          <FontAwesome
+                            name={isSelected ? 'check-circle' : 'chevron-right'}
+                            size={16}
+                            color={isSelected ? '#FF8C00' : '#8E8E93'}
+                          />
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+
+              {selectedAddonService ? (
+                <View style={styles.serviceDetailCard}>
+                  <ThemedText style={styles.serviceDetailName}>{selectedAddonService.name}</ThemedText>
+                  <ThemedText style={styles.serviceDetailInfo}>
+                    Add the extra details for this service below.
+                  </ThemedText>
+                </View>
+              ) : null}
+
+              {selectedAddonService ? (
+                <>
+                  <View style={styles.priceInputSection}>
+                    <ThemedText style={styles.priceLabel}>Add-on name</ThemedText>
+                    <TextInput
+                      style={styles.addonTextInput}
+                      value={addonName}
+                      onChangeText={setAddonName}
+                      placeholder="Add-on name"
+                      placeholderTextColor="#8E8E93"
+                    />
+                  </View>
+
+                  <View style={styles.priceInputSection}>
+                    <ThemedText style={styles.priceLabel}>Price</ThemedText>
+                    <View style={styles.priceInputWrapper}>
+                      <ThemedText style={styles.currencySymbol}>₱</ThemedText>
+                      <TextInput
+                        style={styles.priceInput}
+                        value={addonPrice}
+                        onChangeText={setAddonPrice}
+                        keyboardType="decimal-pad"
+                        placeholder="0.00"
+                        placeholderTextColor="#555"
+                      />
+                    </View>
+                  </View>
+
+                  <View style={styles.priceInputSection}>
+                    <ThemedText style={styles.priceLabel}>Description (optional)</ThemedText>
+                    <TextInput
+                      style={styles.addonTextArea}
+                      value={addonDescription}
+                      onChangeText={setAddonDescription}
+                      placeholder="Short description"
+                      placeholderTextColor="#8E8E93"
+                      multiline
+                      numberOfLines={3}
+                      textAlignVertical="top"
+                    />
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.addServiceBtn, submittingAddon && styles.addServiceBtnDisabled]}
+                    onPress={addAddon}
+                    disabled={submittingAddon}
+                  >
+                    {submittingAddon ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <ThemedText style={styles.addServiceBtnText}>Save Add-on</ThemedText>
+                    )}
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <View style={styles.addonEmptyCard}>
+                  <FontAwesome name="info-circle" size={24} color="#555" />
+                  <ThemedText style={styles.emptyText}>Choose a service to continue</ThemedText>
+                  <ThemedText style={styles.emptySubtext}>
+                    Add-on name and price will appear after you select a service.
+                  </ThemedText>
+                </View>
+              )}
+
+              <View style={styles.proofSection}>
+                <ThemedText style={styles.proofLabel}>Saved add-ons</ThemedText>
+                {loadingServiceAddons ? (
+                  <View style={styles.addonEmptyCard}>
+                    <ActivityIndicator size="small" color="#FF8C00" />
+                    <ThemedText style={styles.emptyText}>Loading add-ons...</ThemedText>
+                  </View>
+                ) : myServices.length === 0 ? (
+                  <View style={styles.addonEmptyCard}>
+                    <FontAwesome name="plus-square-o" size={24} color="#555" />
+                    <ThemedText style={styles.emptyText}>No add-ons yet</ThemedText>
+                    <ThemedText style={styles.emptySubtext}>
+                      Your saved add-ons will appear here.
+                    </ThemedText>
+                  </View>
+                ) : (
+                  myServices.map((service) => {
+                    const addOns = serviceAddons[service.id] || [];
+
+                    return (
+                      <View key={`service-addon-${service.id}`} style={styles.addonGroupCard}>
+                        <View style={styles.addonGroupHeader}>
+                          <View style={styles.addonGroupHeaderText}>
+                            <ThemedText style={styles.addonGroupTitle}>{service.name}</ThemedText>
+                            <ThemedText style={styles.addonGroupSubtitle}>Saved add-ons</ThemedText>
+                          </View>
+                        </View>
+
+                        {addOns.length === 0 ? (
+                          <View style={styles.addonEmptyCard}>
+                            <FontAwesome name="plus-square-o" size={24} color="#555" />
+                            <ThemedText style={styles.emptyText}>No add-ons yet</ThemedText>
+                            <ThemedText style={styles.emptySubtext}>
+                              Add one under {service.name.toLowerCase()}.
+                            </ThemedText>
+                          </View>
+                        ) : (
+                          addOns.map((addon) => (
+                            <View key={addon.id} style={styles.addonItemCard}>
+                              <View style={styles.serviceInfo}>
+                                <ThemedText style={styles.serviceName}>{addon.name}</ThemedText>
+                                <ThemedText style={styles.servicePrice}>₱{addon.price}</ThemedText>
+                                {addon.description ? (
+                                  <ThemedText style={styles.specialtyDesc}>{addon.description}</ThemedText>
+                                ) : null}
+                              </View>
+                              <View style={styles.serviceActions}>
+                                <TouchableOpacity onPress={() => removeAddon(addon)} style={styles.removeBtn}>
+                                  <FontAwesome name="times-circle" size={20} color="#FF3B30" />
+                                </TouchableOpacity>
+                              </View>
+                            </View>
+                          ))
+                        )}
+                      </View>
+                    );
+                  })
+                )}
+              </View>
             </ScrollView>
           </View>
         </View>

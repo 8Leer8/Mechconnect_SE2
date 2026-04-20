@@ -23,33 +23,29 @@ export default function RootLayout() {
     const errorUtils = globalAny?.ErrorUtils;
     const previousRejectionHandler = globalAny?.onunhandledrejection;
 
-    if (typeof previousRejectionHandler !== 'undefined') {
-      globalAny.onunhandledrejection = (event: any) => {
-        const reason = event?.reason;
-        const message =
-          reason instanceof Error
-            ? reason.message
-            : typeof reason === 'string'
-              ? reason
-              : String(reason ?? '');
+    globalAny.onunhandledrejection = (event: any) => {
+      const reason = event?.reason;
+      const message =
+        reason instanceof Error
+          ? reason.message
+          : typeof reason === 'string'
+            ? reason
+            : String(reason ?? '');
 
-        if (message.toLowerCase().includes(keepAwakeErrorText)) {
-          event?.preventDefault?.();
-          console.warn('[dev] Ignored keep-awake activation failure.');
-          return;
-        }
+      if (message.toLowerCase().includes(keepAwakeErrorText)) {
+        event?.preventDefault?.();
+        console.warn('[dev] Ignored keep-awake activation failure.');
+        return;
+      }
 
-        if (typeof previousRejectionHandler === 'function') {
-          previousRejectionHandler(event);
-        }
-      };
-    }
+      if (typeof previousRejectionHandler === 'function') {
+        previousRejectionHandler(event);
+      }
+    };
 
     if (!errorUtils?.getGlobalHandler || !errorUtils?.setGlobalHandler) {
       return () => {
-        if (typeof previousRejectionHandler !== 'undefined') {
-          globalAny.onunhandledrejection = previousRejectionHandler;
-        }
+        globalAny.onunhandledrejection = previousRejectionHandler;
       };
     }
 
@@ -68,9 +64,7 @@ export default function RootLayout() {
 
     return () => {
       errorUtils.setGlobalHandler(defaultHandler);
-      if (typeof previousRejectionHandler !== 'undefined') {
-        globalAny.onunhandledrejection = previousRejectionHandler;
-      }
+      globalAny.onunhandledrejection = previousRejectionHandler;
     };
   }, []);
 

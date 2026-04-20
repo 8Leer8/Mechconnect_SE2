@@ -1,8 +1,11 @@
 """
 Mechanic profile management:
 - Services offered by the logged-in mechanic (list, add, remove, update price)
+- Service add-ons owned by the logged-in mechanic (list, add, remove)
 - Specialties owned by the logged-in mechanic (list, add, remove)
 """
+from decimal import Decimal, InvalidOperation
+
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
@@ -10,7 +13,7 @@ from rest_framework.permissions import AllowAny
 from django.utils import timezone
 
 from users.models import Account
-from ..models import Service, MechanicService, Specialty, MechanicSpecialty
+from ..models import Service, ServiceAddOn, MechanicService, Specialty, MechanicSpecialty
 from MainBackend.storage_utils import get_media_url
 
 
@@ -35,6 +38,13 @@ def _get_mechanic(request):
             status=status.HTTP_403_FORBIDDEN,
         )
     return account.mechanic, None
+
+
+def _parse_decimal(value):
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
 
 
 @api_view(["GET"])
@@ -263,6 +273,165 @@ def update_my_service_price(request):
             {"error": str(e)},
             status=status.HTTP_400_BAD_REQUEST,
         )
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def list_my_service_addons(request):
+    """
+    List add-ons for a mechanic-owned service offering.
+    Query params: ?service_id=<int>
+    """
+    mechanic, err = _get_mechanic(request)
+    if err:
+        return err
+
+    service_id = request.query_params.get("service_id")
+    if service_id is None:
+        return Response(
+            {"error": "service_id is required"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        service_id = int(service_id)
+    except (TypeError, ValueError):
+        return Response(
+            {"error": "service_id must be an integer"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Mechanics can only manage add-ons for services they currently offer.
+    if not MechanicService.objects.filter(mechanic=mechanic, service_id=service_id).exists():
+        return Response(
+            {"error": "Service not offered by your account"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    add_ons = ServiceAddOn.objects.filter(service_id=service_id, mechanic=mechanic).order_by("name")
+    data = [
+        {
+            "id": addon.id,
+            "name": addon.name,
+            "description": addon.description,
+            "price": float(addon.price),
+        }
+        for addon in add_ons
+    ]
+
+    return Response({"add_ons": data, "count": len(data)}, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def add_my_service_addon(request):
+    """
+    Create a mechanic-owned ServiceAddOn row.
+    Body: { service_id, name, description, price }
+    """
+    mechanic, err = _get_mechanic(request)
+    if err:
+        return err
+
+    service_id = request.data.get("service_id")
+    name = request.data.get("name")
+    description = request.data.get("description", "")
+    price = request.data.get("price")
+
+    if service_id is None or name is None or price is None:
+        return Response(
+            {"error": "service_id, name, and price are required"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        service_id = int(service_id)
+    except (TypeError, ValueError):
+        return Response({"error": "service_id must be an integer"}, status=status.HTTP_400_BAD_REQUEST)
+
+    name = str(name).strip()
+    if not name:
+        return Response({"error": "name cannot be empty"}, status=status.HTTP_400_BAD_REQUEST)
+
+    description = str(description or "").strip()
+    if not description:
+        description = ""
+
+    parsed_price = _parse_decimal(price)
+    if parsed_price is None:
+        return Response({"error": "price must be a valid number"}, status=status.HTTP_400_BAD_REQUEST)
+    if parsed_price < 0:
+        return Response({"error": "Price cannot be negative"}, status=status.HTTP_400_BAD_REQUEST)
+
+    if not MechanicService.objects.filter(mechanic=mechanic, service_id=service_id).exists():
+        return Response(
+            {"error": "Service not offered by your account"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    try:
+        service = Service.objects.get(id=service_id)
+    except Service.DoesNotExist:
+        return Response({"error": "Service not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    if ServiceAddOn.objects.filter(mechanic=mechanic, service=service, name__iexact=name).exists():
+        return Response(
+            {"error": "Add-on with this name already exists for this service"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    add_on = ServiceAddOn.objects.create(
+        mechanic=mechanic,
+        service=service,
+        name=name,
+        description=description,
+        price=parsed_price,
+    )
+
+    return Response(
+        {
+            "message": "Add-on added",
+            "add_on": {
+                "id": add_on.id,
+                "name": add_on.name,
+                "description": add_on.description,
+                "price": float(add_on.price),
+            },
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(["POST", "DELETE"])
+@permission_classes([AllowAny])
+def remove_my_service_addon(request):
+    """
+    Remove a mechanic-owned ServiceAddOn row.
+    Body: { service_add_on_id } or query: ?service_add_on_id=
+    """
+    mechanic, err = _get_mechanic(request)
+    if err:
+        return err
+
+    service_add_on_id = request.data.get("service_add_on_id") or request.query_params.get("service_add_on_id")
+    if service_add_on_id is None:
+        return Response({"error": "service_add_on_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        service_add_on_id = int(service_add_on_id)
+    except (TypeError, ValueError):
+        return Response({"error": "service_add_on_id must be an integer"}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        add_on = ServiceAddOn.objects.get(id=service_add_on_id)
+    except ServiceAddOn.DoesNotExist:
+        return Response({"error": "Add-on not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    if add_on.mechanic_id != mechanic.id:
+        return Response({"error": "Add-on does not belong to your account"}, status=status.HTTP_403_FORBIDDEN)
+
+    add_on.delete()
+    return Response({"message": "Add-on removed", "service_add_on_id": service_add_on_id}, status=status.HTTP_200_OK)
 
 
 @api_view(["GET"])

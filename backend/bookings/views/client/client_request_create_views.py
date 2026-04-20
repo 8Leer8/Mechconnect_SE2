@@ -3,6 +3,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django.utils import timezone
+from django.db.models import Q
 from datetime import timedelta
 
 import json
@@ -250,6 +251,30 @@ def create_mechanic_direct_request(request):
         except MechanicService.DoesNotExist:
             return Response({'error': 'Selected mechanic does not offer this service'}, status=status.HTTP_400_BAD_REQUEST)
 
+        if isinstance(add_on_ids, str):
+            try:
+                add_on_ids = json.loads(add_on_ids)
+            except json.JSONDecodeError:
+                add_on_ids = []
+
+        if not isinstance(add_on_ids, list):
+            add_on_ids = []
+
+        resolved_add_ons = []
+        for add_on_id in add_on_ids:
+            try:
+                add_on = ServiceAddOn.objects.get(
+                    id=add_on_id,
+                    service=service,
+                    mechanic=provider.mechanic,
+                )
+            except ServiceAddOn.DoesNotExist:
+                return Response(
+                    {'error': 'One or more selected add-ons are not available for this mechanic'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            resolved_add_ons.append(add_on)
+
         service_location = ServiceLocation.objects.create(
             street_name=service_location_data.get('street_name', ''),
             subdivision_village=service_location_data.get('subdivision_village'),
@@ -276,19 +301,13 @@ def create_mechanic_direct_request(request):
         )
 
         total_amount = float(mechanic_service.price)
-        if not isinstance(add_on_ids, list):
-            add_on_ids = []
 
-        for add_on_id in add_on_ids:
-            try:
-                add_on = ServiceAddOn.objects.get(id=add_on_id, service=service, shop__isnull=True)
-                DirectRequestAddOn.objects.create(
-                    request=new_request,
-                    service_add_on=add_on,
-                )
-                total_amount += float(add_on.price)
-            except ServiceAddOn.DoesNotExist:
-                continue
+        for add_on in resolved_add_ons:
+            DirectRequestAddOn.objects.create(
+                request=new_request,
+                service_add_on=add_on,
+            )
+            total_amount += float(add_on.price)
 
         return Response({
             'message': 'Direct request created successfully',
@@ -342,7 +361,7 @@ def get_mechanics(request):
 @permission_classes([AllowAny])
 def get_mechanic_services(request, mechanic_id):
     """
-    Get services offered by a specific mechanic with their add-ons.
+    Get services offered by a specific mechanic with their mechanic-owned add-ons.
     """
     try:
         mechanic = Mechanic.objects.get(account__id=mechanic_id)
@@ -351,7 +370,7 @@ def get_mechanic_services(request, mechanic_id):
         services_data = []
         for ms in mechanic_services:
             service = ms.service
-            add_ons = ServiceAddOn.objects.filter(service=service, shop__isnull=True)
+            add_ons = ServiceAddOn.objects.filter(service=service, mechanic=mechanic).order_by('name')
             add_ons_data = [
                 {
                     'id': addon.id,
@@ -383,8 +402,9 @@ def get_service_addons(request, service_id):
     """
     Get add-ons for a specific service.
     Optional query params:
-    - provider_id: when set to a shop owner account id, returns add-ons owned by that shop.
-      Without provider_id, only global (shop-less) add-ons are returned.
+        - provider_id: when set to a mechanic account id, returns mechanic-owned add-ons only.
+            When set to a shop owner account id, returns add-ons owned by that shop only.
+      Without provider_id, only legacy global add-ons are returned.
     """
     try:
         service = Service.objects.get(id=service_id)
@@ -398,12 +418,16 @@ def get_service_addons(request, service_id):
                 return Response({'error': 'provider_id must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
 
             try:
-                shop_owner = ShopOwner.objects.select_related('shop').get(account__id=provider_id)
-                add_ons = add_ons.filter(shop=shop_owner.shop)
-            except ShopOwner.DoesNotExist:
-                return Response({'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
+                mechanic = Mechanic.objects.get(account__id=provider_id)
+                add_ons = add_ons.filter(mechanic=mechanic)
+            except Mechanic.DoesNotExist:
+                try:
+                    shop_owner = ShopOwner.objects.select_related('shop').get(account__id=provider_id)
+                    add_ons = add_ons.filter(shop=shop_owner.shop)
+                except ShopOwner.DoesNotExist:
+                    return Response({'error': 'Provider not found'}, status=status.HTTP_404_NOT_FOUND)
         else:
-            add_ons = add_ons.filter(shop__isnull=True)
+            add_ons = add_ons.filter(shop__isnull=True, mechanic__isnull=True)
 
         category_name = service.category.name if service.category else None
 
