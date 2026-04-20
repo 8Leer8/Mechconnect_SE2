@@ -9,21 +9,45 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { cn } from "@/lib/utils";
 import { PaginationControls } from "@/components/common/PaginationControls";
-import { fetchAdminDisputes } from "@/services/adminDataService";
+import { DisputeDetailView } from "@/components/disputes/DisputeDetailView";
+import { fetchAdminDisputes, resolveAdminDispute } from "@/services/adminDataService";
 
-const filters = ["All", "Open", "Under Review", "Resolved"];
+const STATUS_TABS = [
+  { key: "pending", label: "Pending" },
+  { key: "under_review", label: "Under Review" },
+  { key: "resolve", label: "Resolve" },
+];
 const ITEMS_PER_PAGE = 10;
 
-function toApiStatus(filter) {
-  if (filter === "Open") {
-    return "pending";
+function isOpenStatus(status) {
+  const value = String(status || "").toLowerCase();
+  return [
+    "active",
+    "under_admin_review",
+    "waiting_for_mechanic_payment",
+    "waiting_for_client_verification",
+  ].includes(value);
+}
+
+function isResolvedStatus(status) {
+  return String(status || "").toLowerCase().includes("resolved");
+}
+
+function toActionPayload(actionType) {
+  if (actionType === "dismiss_dispute") {
+    return { action: "dismiss" };
   }
-  if (filter === "Resolved") {
-    return "solved";
+  if (actionType === "uphold_claim_require_refund") {
+    return { action: "request_payment" };
   }
-  return undefined;
+  if (actionType === "mechanic_unresponsive_issue_voucher") {
+    return { action: "voucher" };
+  }
+  if (actionType === "force_verify_receipt") {
+    return { action: "force_verify" };
+  }
+  return { action: "dismiss" };
 }
 
 function formatDate(value) {
@@ -38,10 +62,14 @@ function formatDate(value) {
 }
 
 export function DisputeCenterPage() {
-  const [activeFilter, setActiveFilter] = useState("All");
+  const [activeFilter, setActiveFilter] = useState("pending");
   const [disputes, setDisputes] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [selectedDispute, setSelectedDispute] = useState(null);
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [isSubmittingAction, setIsSubmittingAction] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
@@ -50,8 +78,7 @@ export function DisputeCenterPage() {
       setLoadError("");
 
       try {
-        const status = toApiStatus(activeFilter);
-        const data = await fetchAdminDisputes({ status, limit: 200 });
+        const data = await fetchAdminDisputes({ limit: 200 });
         setDisputes(data?.results || []);
       } catch (error) {
         setLoadError(error.message || "Failed to load disputes.");
@@ -61,14 +88,99 @@ export function DisputeCenterPage() {
     }
 
     loadDisputes();
-  }, [activeFilter]);
+  }, []);
+
+  const tabCounts = useMemo(() => {
+    const pending = disputes.filter((item) => {
+      const status = String(item.status || "").toLowerCase();
+      return [
+        "active",
+        "waiting_for_mechanic_payment",
+        "waiting_for_client_verification",
+      ].includes(status);
+    }).length;
+    const underReview = disputes.filter(
+      (item) => String(item.status || "").toLowerCase() === "under_admin_review",
+    ).length;
+    const resolved = disputes.filter((item) => isResolvedStatus(item.status)).length;
+
+    return {
+      pending,
+      under_review: underReview,
+      resolve: resolved,
+    };
+  }, [disputes]);
 
   const visibleDisputes = useMemo(() => {
-    if (activeFilter !== "Under Review") {
-      return disputes;
+    if (activeFilter === "pending") {
+      return disputes.filter((item) => {
+        const status = String(item.status || "").toLowerCase();
+        return [
+          "active",
+          "waiting_for_mechanic_payment",
+          "waiting_for_client_verification",
+        ].includes(status);
+      });
     }
-    return disputes.filter((item) => item.status === "pending");
+    if (activeFilter === "under_review") {
+      return disputes.filter((item) => String(item.status || "").toLowerCase() === "under_admin_review");
+    }
+    if (activeFilter === "resolve") {
+      return disputes.filter((item) => isResolvedStatus(item.status));
+    }
+    return disputes;
   }, [activeFilter, disputes]);
+
+  async function handleAdminAction(caseId, actionType) {
+    setActionError("");
+    setIsSubmittingAction(true);
+
+    try {
+      const payload = toActionPayload(actionType);
+      const response = await resolveAdminDispute(caseId, payload);
+      const nextStatus = response?.dispute?.status;
+      const resolvedAt = response?.dispute?.resolved_at || null;
+
+      setDisputes((previous) =>
+        previous.map((item) => {
+          if (item.id !== caseId) return item;
+          return {
+            ...item,
+            status: nextStatus || item.status,
+            resolved_at: resolvedAt,
+            updated_at: new Date().toISOString(),
+          };
+        }),
+      );
+
+      setSelectedDispute((previous) => {
+        if (!previous || previous.id !== caseId) return previous;
+        return {
+          ...previous,
+          status: nextStatus || previous.status,
+          resolved_at: resolvedAt,
+          updated_at: new Date().toISOString(),
+        };
+      });
+    } catch (error) {
+      setActionError(error.message || "Failed to apply dispute action.");
+      throw error;
+    } finally {
+      setIsSubmittingAction(false);
+    }
+  }
+
+  function openDetail(dispute) {
+    setActionError("");
+    setSelectedDispute(dispute);
+    setIsDetailOpen(true);
+  }
+
+  function closeDetail() {
+    setIsDetailOpen(false);
+    setSelectedDispute(null);
+    setActionError("");
+  }
 
   const totalPages = useMemo(
     () => Math.max(Math.ceil(visibleDisputes.length / ITEMS_PER_PAGE), 1),
@@ -104,25 +216,21 @@ export function DisputeCenterPage() {
         </Card>
 
         <div className="flex flex-wrap gap-2">
-          {filters.map((filter) => (
+          {STATUS_TABS.map((tab) => (
             <button
-              key={filter}
+              key={tab.key}
               type="button"
               onClick={() => {
-                setActiveFilter(filter);
+                setActiveFilter(tab.key);
                 setCurrentPage(1);
               }}
+              className={`rounded-lg border px-3 py-1.5 text-sm transition ${
+                activeFilter === tab.key
+                  ? "border-primary/40 bg-primary/10 text-primary"
+                  : "border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground"
+              }`}
             >
-              <Badge
-                className={cn(
-                  "cursor-pointer px-3 py-1.5",
-                  activeFilter === filter
-                    ? "bg-[#FF8C00] text-white hover:bg-[#e67e00]"
-                    : "bg-[#1A1C1E] text-[#9BA1A6] hover:bg-[#2A2C2E]",
-                )}
-              >
-                {filter}
-              </Badge>
+              {tab.label} ({isLoading ? "..." : tabCounts[tab.key]})
             </button>
           ))}
         </div>
@@ -159,10 +267,10 @@ export function DisputeCenterPage() {
                   <p className="mt-1 text-sm text-muted-foreground">{dispute.issue_description}</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant={dispute.status === "pending" ? "secondary" : "outline"} className="capitalize">
+                  <Badge variant={isOpenStatus(dispute.status) ? "secondary" : "outline"} className="capitalize">
                     {dispute.status}
                   </Badge>
-                  <Button size="sm" disabled>Review Case</Button>
+                  <Button size="sm" onClick={() => openDetail(dispute)}>Review Case</Button>
                 </div>
               </CardContent>
               </Card>
@@ -178,6 +286,20 @@ export function DisputeCenterPage() {
           )}
         </div>
       </div>
+
+      <DisputeDetailView
+        isOpen={isDetailOpen}
+        dispute={selectedDispute}
+        onClose={closeDetail}
+        onAdminAction={handleAdminAction}
+        isSubmitting={isSubmittingAction}
+      />
+
+      {actionError ? (
+        <div className="fixed bottom-4 right-4 z-[70] max-w-sm rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-400">
+          {actionError}
+        </div>
+      ) : null}
     </AdminLayout>
   );
 }

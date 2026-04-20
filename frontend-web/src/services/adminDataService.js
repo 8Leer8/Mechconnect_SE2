@@ -49,6 +49,13 @@ export function fetchAdminDisputes(params = {}) {
   return request(withQuery("/admin/bookings/disputes/", params));
 }
 
+export function resolveAdminDispute(disputeId, payload) {
+  return request(`/admin/bookings/disputes/${disputeId}/resolve/`, {
+    method: "POST",
+    body: payload,
+  });
+}
+
 export function fetchAdminServices(params = {}) {
   return request(withQuery("/admin/services/list/", params));
 }

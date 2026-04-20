@@ -1,7 +1,9 @@
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, parser_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from rest_framework.views import APIView
 from django.conf import settings
 from django.utils import timezone
 from datetime import timedelta
@@ -17,6 +19,7 @@ from ...models import (
     DirectRequest,
     DirectRequestAddOn,
     ActiveBooking,
+    DisputeBooking,
     CompleteBooking,
     Receipt,
     CancelBooking,
@@ -569,9 +572,11 @@ def mechanic_resume_job(request, booking_id):
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
 def mechanic_finish_job(request, booking_id):
     """
-    Mechanic finishes the job. Sets Booking.status = FINISHED.
+    Mechanic finishes the job and moves booking to pending payment.
+    Requires an after-service photo as a prerequisite to protect both parties.
     """
     account, err = _get_mechanic_account(request)
     if err:
@@ -584,6 +589,30 @@ def mechanic_finish_job(request, booking_id):
 
     if booking.status != Booking.Status.ACTIVE:
         return Response({"error": "Booking must be in 'active' status to finish the job."}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        active_booking = ActiveBooking.objects.get(booking=booking)
+    except ActiveBooking.DoesNotExist:
+        return Response(
+            {"error": "Active booking details not found. Start the job first."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Accept optional multipart image upload in the same request.
+    uploaded_after_photo = request.FILES.get("after_picture_service")
+    if uploaded_after_photo is not None:
+        active_booking.after_picture_service = uploaded_after_photo
+        active_booking.save(update_fields=["after_picture_service"])
+
+    # Validation gate: do not allow status transition until after-service photo exists.
+    if not active_booking.after_picture_service:
+        return Response(
+            {
+                "error": "after_picture_service is required before finishing the job.",
+                "code": "after_photo_required",
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
     # Finalize payable total before entering pending payment so payment summary and charge targets stay consistent.
     try:
@@ -712,6 +741,189 @@ def mechanic_payment_received(request, booking_id):
     )
 
     return Response({"message": "Payment received. Ready to mark as complete.", "booking_id": booking.id, "status": booking.status}, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
+def mechanic_upload_dispute_receipt(request, booking_id):
+    """Mechanic uploads refund proof, then dispute waits for client verification."""
+    account, err = _get_mechanic_account(request)
+    if err:
+        return err
+
+    try:
+        booking = _get_accessible_booking(account, booking_id)
+    except Booking.DoesNotExist:
+        return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        dispute = booking.disputebooking
+    except DisputeBooking.DoesNotExist:
+        return Response({"error": "No dispute found for this booking"}, status=status.HTTP_404_NOT_FOUND)
+
+    if booking.dispute_status != Booking.DisputeState.ACTIVE:
+        return Response({"error": "Dispute is not active"}, status=status.HTTP_400_BAD_REQUEST)
+
+    allowed_states = {
+        DisputeBooking.Status.ACTIVE,
+        DisputeBooking.Status.WAITING_FOR_MECHANIC_PAYMENT,
+    }
+    if dispute.status not in allowed_states:
+        return Response(
+            {"error": "Dispute is not waiting for mechanic payment proof"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    refund_receipt_image = request.FILES.get("refund_receipt_image")
+    if refund_receipt_image is None:
+        return Response({"error": "refund_receipt_image is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+    resolution_notes = str(request.data.get("resolution_notes", "")).strip()
+
+    with transaction.atomic():
+        dispute.refund_receipt_image = refund_receipt_image
+        dispute.resolution_notes = resolution_notes or dispute.resolution_notes
+        dispute.status = DisputeBooking.Status.WAITING_FOR_CLIENT_VERIFICATION
+        dispute.save(update_fields=["refund_receipt_image", "resolution_notes", "status"])
+
+    try:
+        channel_layer = get_channel_layer()
+        if channel_layer is not None:
+            payload = {
+                "type": "booking_update",
+                "action": "booking.dispute_receipt_uploaded",
+                "booking_id": booking.id,
+                "status": booking.status,
+                "dispute_status": booking.dispute_status,
+                "message": "Mechanic uploaded refund proof",
+            }
+            targets = {
+                account.id,
+                booking.request.client.account_id,
+                booking.request.provider_id,
+            }
+            for target in targets:
+                if target:
+                    async_to_sync(channel_layer.group_send)(f"user_{target}", payload)
+    except Exception:
+        pass
+
+    return Response(
+        {
+            "message": "Refund receipt uploaded. Waiting for client verification.",
+            "dispute": {
+                "id": dispute.id,
+                "status": dispute.status,
+                "refund_receipt_image": dispute.refund_receipt_image.url if dispute.refund_receipt_image else None,
+            },
+            "booking": {
+                "id": booking.id,
+                "status": booking.status,
+                "dispute_status": booking.dispute_status,
+            },
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+class SubmitDisputeDefenseView(APIView):
+    permission_classes = [AllowAny]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def post(self, request, booking_id):
+        """Mechanic submits defense text + evidence photo for admin review."""
+        account, err = _get_mechanic_account(request)
+        if err:
+            return err
+
+        try:
+            booking = _get_accessible_booking(account, booking_id)
+        except Booking.DoesNotExist:
+            return Response(
+                {"error": "Booking not found or you do not have permission to update it"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            dispute = booking.disputebooking
+        except DisputeBooking.DoesNotExist:
+            return Response({"error": "No dispute found for this booking"}, status=status.HTTP_404_NOT_FOUND)
+
+        if booking.dispute_status != Booking.DisputeState.ACTIVE:
+            return Response({"error": "Dispute is not active"}, status=status.HTTP_400_BAD_REQUEST)
+
+        allowed_states = {
+            DisputeBooking.Status.ACTIVE,
+            DisputeBooking.Status.WAITING_FOR_MECHANIC_PAYMENT,
+        }
+        if dispute.status not in allowed_states:
+            return Response(
+                {"error": "Dispute is not eligible for defense submission"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        defense_description = str(request.data.get("defense_description", "")).strip()
+        defense_picture = request.FILES.get("defense_picture")
+
+        if not defense_description:
+            return Response({"error": "defense_description is required"}, status=status.HTTP_400_BAD_REQUEST)
+        if defense_picture is None:
+            return Response({"error": "defense_picture is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            dispute.mechanic_defense_description = defense_description
+            dispute.mechanic_defense_picture = defense_picture
+            dispute.status = DisputeBooking.Status.UNDER_ADMIN_REVIEW
+            dispute.resolution_notes = (dispute.resolution_notes or "").strip() or None
+            dispute.save(
+                update_fields=[
+                    "mechanic_defense_description",
+                    "mechanic_defense_picture",
+                    "status",
+                    "resolution_notes",
+                ]
+            )
+
+        try:
+            channel_layer = get_channel_layer()
+            if channel_layer is not None:
+                payload = {
+                    "type": "booking_update",
+                    "action": "booking.dispute_defense_submitted",
+                    "booking_id": booking.id,
+                    "status": booking.status,
+                    "dispute_status": booking.dispute_status,
+                    "message": "Mechanic submitted dispute defense for admin review",
+                }
+                targets = {
+                    account.id,
+                    booking.request.client.account_id,
+                    booking.request.provider_id,
+                }
+                for target in targets:
+                    if target:
+                        async_to_sync(channel_layer.group_send)(f"user_{target}", payload)
+        except Exception:
+            pass
+
+        return Response(
+            {
+                "message": "Defense submitted. Dispute is now under admin review.",
+                "dispute": {
+                    "id": dispute.id,
+                    "status": dispute.status,
+                    "mechanic_defense_description": dispute.mechanic_defense_description,
+                    "mechanic_defense_picture": dispute.mechanic_defense_picture.url if dispute.mechanic_defense_picture else None,
+                },
+                "booking": {
+                    "id": booking.id,
+                    "status": booking.status,
+                    "dispute_status": booking.dispute_status,
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 
@@ -1060,6 +1272,18 @@ def _get_mechanic_account(request):
             status=status.HTTP_403_FORBIDDEN,
         )
     return account, None
+
+
+def _reject_if_mechanic_locked(account):
+    if getattr(account.mechanic, 'is_locked', False):
+        return Response(
+            {
+                'error': 'Your account is locked due to an active dispute. Resolve it before accepting new jobs.',
+                'code': 'mechanic_locked',
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return None
 
 
 
@@ -1473,7 +1697,7 @@ def list_mechanic_bookings(request):
             reworked_count = bookings_queryset.filter(
                 Q(status="reworked") | Q(backjob__isnull=False)
             ).count()
-            disputed_count = bookings_queryset.filter(status="disputed").count()
+            disputed_count = bookings_queryset.filter(dispute_status=Booking.DisputeState.ACTIVE).count()
 
             # Ensure pending tab count includes backjobs
             return Response(
@@ -1623,7 +1847,7 @@ def list_mechanic_bookings(request):
     reworked_count = bookings_queryset.filter(
         Q(status="reworked") | Q(backjob__isnull=False)
     ).count()
-    disputed_count = bookings_queryset.filter(status="disputed").count()
+    disputed_count = bookings_queryset.filter(dispute_status=Booking.DisputeState.ACTIVE).count()
     # Include backjob bookings in the pending count, but only those not yet accepted (reworked)
     pending_count = _count_pending_direct_requests(account) + Booking.objects.filter(request__provider=account, backjob__status=Booking.Status.REWORKED).count()
 
@@ -1709,6 +1933,10 @@ def mechanic_accept_direct_request(request, request_id):
     account, err = _get_mechanic_account(request)
     if err:
         return err
+
+    lock_err = _reject_if_mechanic_locked(account)
+    if lock_err:
+        return lock_err
 
     if getattr(account.mechanic, "is_working_for_shop", False):
         return Response(
@@ -1868,6 +2096,10 @@ def mechanic_accept_emergency_request(request, request_id):
     account, err = _get_mechanic_account(request)
     if err:
         return err
+
+    lock_err = _reject_if_mechanic_locked(account)
+    if lock_err:
+        return lock_err
 
     try:
         req = Request.objects.get(id=request_id, request_type="emergency")

@@ -40,7 +40,7 @@ class MechanicSerializer(serializers.ModelSerializer):
         model = Mechanic
         fields = [
             'profile_photo', 'contact_number', 'bio', 'average_rating',
-            'is_working_for_shop', 'status', 'shop_id', 'shop_name'
+            'is_working_for_shop', 'status', 'is_locked', 'shop_id', 'shop_name'
         ]
     
     def get_shop_name(self, obj):

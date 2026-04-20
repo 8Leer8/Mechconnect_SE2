@@ -81,12 +81,23 @@ class Booking(models.Model):
         PARTIALLY_PAID = "partially_paid"
         FULLY_PAID = "fully_paid"
 
+    class DisputeState(models.TextChoices):
+        NONE = "none"
+        ACTIVE = "active"
+        RESOLVED = "resolved"
+
     request = models.OneToOneField(Request, on_delete=models.CASCADE)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
     payment_status = models.CharField(
         max_length=20,
         choices=PaymentStatus.choices,
         default=PaymentStatus.UNPAID,
+    )
+    dispute_status = models.CharField(
+        max_length=20,
+        choices=DisputeState.choices,
+        default=DisputeState.NONE,
+        help_text="Parallel dispute lifecycle state; does not replace booking status",
     )
     amount_fee = models.DecimalField(max_digits=10, decimal_places=2)
     distance_km = models.DecimalField(
@@ -148,10 +159,19 @@ class ReworkBooking(models.Model):
     completed_at = models.DateTimeField(null=True, blank=True)
 
 class DisputeBooking(models.Model):
+    class RefundMethod(models.TextChoices):
+        GCASH = "gcash"
+        MAYA = "maya"
+        VOUCHER = "voucher"
+
     class Status(models.TextChoices):
-        PENDING = "pending"
-        SOLVED = "solved"
-        REFUNDED = "refunded"
+        ACTIVE = "active"
+        UNDER_ADMIN_REVIEW = "under_admin_review"
+        WAITING_FOR_MECHANIC_PAYMENT = "waiting_for_mechanic_payment"
+        WAITING_FOR_CLIENT_VERIFICATION = "waiting_for_client_verification"
+        RESOLVED_REFUNDED = "resolved_refunded"
+        RESOLVED_DISMISSED = "resolved_dismissed"
+        RESOLVED_VOUCHER = "resolved_voucher"
 
     booking = models.OneToOneField(Booking, on_delete=models.CASCADE)
     complainer = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="complaints_made")
@@ -159,8 +179,14 @@ class DisputeBooking(models.Model):
     admin = models.ForeignKey(Admin, on_delete=models.CASCADE, null=True, blank=True)
     issue_description = models.TextField()
     issue_picture = models.ImageField(upload_to='bookings/disputes/', null=True, blank=True)
+    mechanic_defense_description = models.TextField(null=True, blank=True)
+    mechanic_defense_picture = models.ImageField(upload_to='bookings/disputes/defense/', null=True, blank=True)
+    refund_receipt_image = models.ImageField(upload_to='bookings/disputes/refunds/', null=True, blank=True)
+    refund_method = models.CharField(max_length=20, choices=RefundMethod.choices, null=True, blank=True)
+    refund_account_number = models.CharField(max_length=50, null=True, blank=True)
     resolution_notes = models.TextField(null=True, blank=True)
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    status = models.CharField(max_length=50, choices=Status.choices, default=Status.ACTIVE)
+    is_client_verified = models.BooleanField(default=False)
     amount_refunded = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     refund_receiver = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="refunds", null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

@@ -3,6 +3,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django.db.models import Prefetch, Q
+from django.db import transaction
 from django.utils import timezone
 import logging
 
@@ -11,11 +12,53 @@ from ...models import (
     ReworkBooking, DisputeBooking, CompleteBooking, Receipt, BroadcastOffer, PaymentInstallment, Quotation, RequestAssignment
 )
 from ...serializers import BookingSerializer, BookingPaymentSerializer
-from users.models import Account, Mechanic, MechanicReview
+from users.models import Account, Mechanic, MechanicReview, TokenTransaction
 from notification.models import Notification
 
 
 logger = logging.getLogger(__name__)
+
+
+def _broadcast_booking_action(booking, action, message):
+    """Broadcast booking websocket action to all involved account groups."""
+    try:
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+
+        channel_layer = get_channel_layer()
+        if channel_layer is None:
+            return
+
+        participant_ids = set()
+        try:
+            if booking.request and booking.request.client and booking.request.client.account_id:
+                participant_ids.add(booking.request.client.account_id)
+        except Exception:
+            pass
+        try:
+            if booking.request and booking.request.provider_id:
+                participant_ids.add(booking.request.provider_id)
+        except Exception:
+            pass
+        try:
+            if booking.request and booking.request.shop and booking.request.shop.shop_owner and booking.request.shop.shop_owner.account_id:
+                participant_ids.add(booking.request.shop.shop_owner.account_id)
+        except Exception:
+            pass
+
+        payload = {
+            'type': 'booking_update',
+            'action': action,
+            'booking_id': booking.id,
+            'status': booking.status,
+            'dispute_status': booking.dispute_status,
+            'message': message,
+        }
+
+        for account_id in participant_ids:
+            async_to_sync(channel_layer.group_send)(f'user_{account_id}', payload)
+    except Exception:
+        logger.exception('Failed to broadcast booking action %s for booking %s', action, getattr(booking, 'id', None))
 
 
 def _to_money(value):
@@ -407,6 +450,454 @@ def submit_mechanic_review(request, booking_id):
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def create_dispute(request, booking_id):
+    """Create a dispute without changing Booking.status (decoupled dispute state)."""
+    account_id = request.session.get('account_id')
+    if not account_id:
+        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        account = Account.objects.get(id=account_id)
+        booking = Booking.objects.select_related(
+            'request__client__account',
+            'request__provider',
+            'request__shop__shop_owner',
+        ).get(id=booking_id)
+
+        allowed_statuses = {Booking.Status.PENDING_PAYMENT, Booking.Status.COMPLETED}
+        if booking.status not in allowed_statuses:
+            return Response(
+                {'error': 'Disputes are allowed only for pending_payment or completed bookings'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if booking.dispute_status == Booking.DisputeState.ACTIVE:
+            return Response({'error': 'An active dispute already exists for this booking'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not booking.request.client or booking.request.client.account_id != account.id:
+            return Response({'error': 'Only the booking client can file a dispute'}, status=status.HTTP_403_FORBIDDEN)
+
+        issue_description = str(request.data.get('issue_description', '')).strip()
+        if not issue_description:
+            return Response({'error': 'issue_description is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        complaint_against = booking.request.provider
+        if complaint_against is None and booking.request.shop and booking.request.shop.shop_owner:
+            complaint_against = booking.request.shop.shop_owner.account
+        if complaint_against is None:
+            return Response({'error': 'No provider found to file dispute against'}, status=status.HTTP_400_BAD_REQUEST)
+
+        issue_picture = request.FILES.get('issue_picture')
+
+        with transaction.atomic():
+            dispute = DisputeBooking.objects.create(
+                booking=booking,
+                complainer=account,
+                complaint_against=complaint_against,
+                issue_description=issue_description,
+                issue_picture=issue_picture,
+                status=DisputeBooking.Status.ACTIVE,
+            )
+
+            booking.dispute_status = Booking.DisputeState.ACTIVE
+            booking.save(update_fields=['dispute_status', 'updated_at'])
+
+            provider_account = booking.request.provider
+            if provider_account is not None and hasattr(provider_account, 'mechanic'):
+                provider_account.mechanic.is_locked = True
+                provider_account.mechanic.save(update_fields=['is_locked'])
+
+        _broadcast_booking_action(booking, 'booking.disputed', 'A dispute has been filed for this booking')
+
+        return Response(
+            {
+                'message': 'Dispute created successfully',
+                'dispute': {
+                    'id': dispute.id,
+                    'booking_id': dispute.booking_id,
+                    'status': dispute.status,
+                    'issue_description': dispute.issue_description,
+                    'issue_picture': dispute.issue_picture.url if dispute.issue_picture else None,
+                    'created_at': dispute.created_at.isoformat() if dispute.created_at else None,
+                },
+                'booking': {
+                    'id': booking.id,
+                    'status': booking.status,
+                    'dispute_status': booking.dispute_status,
+                },
+            },
+            status=status.HTTP_201_CREATED,
+        )
+    except Account.DoesNotExist:
+        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Booking.DoesNotExist:
+        return Response({'error': 'Booking not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def resolve_dispute(request, booking_id):
+    """Admin mediation endpoint for dispute transitions while keeping Booking.status untouched."""
+    account_id = request.session.get('account_id')
+    if not account_id:
+        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        account = Account.objects.get(id=account_id)
+        if not hasattr(account, 'admin'):
+            return Response({'error': 'Only admins can resolve disputes'}, status=status.HTTP_403_FORBIDDEN)
+
+        booking = Booking.objects.select_related('request__provider').get(id=booking_id)
+        try:
+            dispute = booking.disputebooking
+        except DisputeBooking.DoesNotExist:
+            return Response({'error': 'No dispute found for this booking'}, status=status.HTTP_404_NOT_FOUND)
+
+        if booking.dispute_status != Booking.DisputeState.ACTIVE:
+            return Response({'error': 'Only active disputes can be processed'}, status=status.HTTP_400_BAD_REQUEST)
+
+        action = str(request.data.get('action', '')).strip().lower()
+        if action not in {'dismiss', 'voucher', 'request_payment'}:
+            return Response(
+                {'error': "action must be one of: dismiss, voucher, request_payment"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        resolution_notes = str(request.data.get('resolution_notes', '')).strip()
+
+        with transaction.atomic():
+            dispute.admin = account.admin
+            dispute.resolution_notes = resolution_notes
+
+            unlock_mechanic = False
+            if action == 'dismiss':
+                dispute.status = DisputeBooking.Status.RESOLVED_DISMISSED
+                booking.dispute_status = Booking.DisputeState.RESOLVED
+                dispute.resolved_at = timezone.now()
+                unlock_mechanic = True
+            elif action == 'voucher':
+                dispute.status = DisputeBooking.Status.RESOLVED_VOUCHER
+                booking.dispute_status = Booking.DisputeState.RESOLVED
+                dispute.resolved_at = timezone.now()
+            else:
+                dispute.status = DisputeBooking.Status.WAITING_FOR_MECHANIC_PAYMENT
+                dispute.resolved_at = None
+
+            dispute.save(update_fields=[
+                'admin',
+                'status',
+                'resolution_notes',
+                'amount_refunded',
+                'refund_receiver',
+                'resolved_at',
+            ])
+
+            booking.save(update_fields=['dispute_status', 'updated_at'])
+
+            provider_account = booking.request.provider
+            if unlock_mechanic and provider_account is not None and hasattr(provider_account, 'mechanic'):
+                provider_account.mechanic.is_locked = False
+                provider_account.mechanic.save(update_fields=['is_locked'])
+
+        ws_action = 'booking.dispute_payment_requested' if action == 'request_payment' else 'booking.dispute_resolved'
+        ws_message = 'Admin requested mechanic payment proof upload' if action == 'request_payment' else 'The dispute has been resolved'
+        _broadcast_booking_action(booking, ws_action, ws_message)
+
+        return Response(
+            {
+                'message': 'Dispute resolved successfully',
+                'dispute': {
+                    'id': dispute.id,
+                    'status': dispute.status,
+                    'resolution_notes': dispute.resolution_notes,
+                    'is_client_verified': dispute.is_client_verified,
+                    'refund_receipt_image': dispute.refund_receipt_image.url if dispute.refund_receipt_image else None,
+                    'amount_refunded': float(dispute.amount_refunded) if dispute.amount_refunded is not None else None,
+                    'resolved_at': dispute.resolved_at.isoformat() if dispute.resolved_at else None,
+                },
+                'booking': {
+                    'id': booking.id,
+                    'status': booking.status,
+                    'dispute_status': booking.dispute_status,
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
+    except Account.DoesNotExist:
+        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Booking.DoesNotExist:
+        return Response({'error': 'Booking not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def client_verify_refund(request, booking_id):
+    """Client confirms refund receipt and closes the dispute while unlocking mechanic."""
+    account_id = request.session.get('account_id')
+    if not account_id:
+        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        account = Account.objects.get(id=account_id)
+        booking = Booking.objects.select_related('request__client__account', 'request__provider').get(id=booking_id)
+
+        if not booking.request.client or booking.request.client.account_id != account.id:
+            return Response({'error': 'Only the booking client can verify refund'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            dispute = booking.disputebooking
+        except DisputeBooking.DoesNotExist:
+            return Response({'error': 'No dispute found for this booking'}, status=status.HTTP_404_NOT_FOUND)
+
+        if dispute.status != DisputeBooking.Status.WAITING_FOR_CLIENT_VERIFICATION:
+            return Response(
+                {'error': 'Refund can only be verified when waiting for client verification'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            dispute.status = DisputeBooking.Status.RESOLVED_REFUNDED
+            dispute.is_client_verified = True
+            dispute.refund_receiver = account
+            dispute.resolved_at = timezone.now()
+            dispute.save(update_fields=['status', 'is_client_verified', 'refund_receiver', 'resolved_at'])
+
+            booking.dispute_status = Booking.DisputeState.RESOLVED
+            booking.save(update_fields=['dispute_status', 'updated_at'])
+
+            provider_account = booking.request.provider
+            if provider_account is not None and hasattr(provider_account, 'mechanic'):
+                provider_account.mechanic.is_locked = False
+                provider_account.mechanic.save(update_fields=['is_locked'])
+
+        _broadcast_booking_action(booking, 'booking.dispute_refund_verified', 'Client verified refund receipt')
+
+        return Response(
+            {
+                'message': 'Refund verified and dispute resolved',
+                'dispute': {
+                    'id': dispute.id,
+                    'status': dispute.status,
+                    'is_client_verified': dispute.is_client_verified,
+                    'resolved_at': dispute.resolved_at.isoformat() if dispute.resolved_at else None,
+                },
+                'booking': {
+                    'id': booking.id,
+                    'status': booking.status,
+                    'dispute_status': booking.dispute_status,
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
+    except Account.DoesNotExist:
+        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Booking.DoesNotExist:
+        return Response({'error': 'Booking not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def provide_refund_details(request, booking_id):
+    """Client provides refund destination details so mechanic knows where to send funds."""
+    account_id = request.session.get('account_id')
+    if not account_id:
+        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        account = Account.objects.get(id=account_id)
+        booking = Booking.objects.select_related('request__client__account', 'request__provider').get(id=booking_id)
+
+        if not booking.request.client or booking.request.client.account_id != account.id:
+            return Response({'error': 'Only the booking client can provide refund details'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            dispute = booking.disputebooking
+        except DisputeBooking.DoesNotExist:
+            return Response({'error': 'No dispute found for this booking'}, status=status.HTTP_404_NOT_FOUND)
+
+        if booking.dispute_status != Booking.DisputeState.ACTIVE:
+            return Response({'error': 'Dispute is not active'}, status=status.HTTP_400_BAD_REQUEST)
+
+        current_status = str(dispute.status or '').lower()
+        if current_status not in {
+            DisputeBooking.Status.ACTIVE,
+            DisputeBooking.Status.WAITING_FOR_MECHANIC_PAYMENT,
+            DisputeBooking.Status.WAITING_FOR_CLIENT_VERIFICATION,
+        }:
+            return Response({'error': 'Dispute is already resolved'}, status=status.HTTP_400_BAD_REQUEST)
+
+        refund_method = str(request.data.get('refund_method', '')).strip().lower()
+        if refund_method not in {
+            DisputeBooking.RefundMethod.GCASH,
+            DisputeBooking.RefundMethod.MAYA,
+            DisputeBooking.RefundMethod.VOUCHER,
+        }:
+            return Response({'error': "refund_method must be one of: gcash, maya, voucher"}, status=status.HTTP_400_BAD_REQUEST)
+
+        account_number = str(request.data.get('account_number', '')).strip()
+
+        with transaction.atomic():
+            dispute.refund_method = refund_method
+
+            if refund_method == DisputeBooking.RefundMethod.VOUCHER:
+                dispute.refund_account_number = None
+                dispute.status = DisputeBooking.Status.RESOLVED_VOUCHER
+                dispute.resolved_at = timezone.now()
+                dispute.is_client_verified = True
+                dispute.refund_receiver = account
+
+                booking.dispute_status = Booking.DisputeState.RESOLVED
+                booking.save(update_fields=['dispute_status', 'updated_at'])
+
+                provider_account = booking.request.provider
+                if provider_account is not None and hasattr(provider_account, 'mechanic'):
+                    mechanic = provider_account.mechanic
+                    debt_amount = int(round(float(dispute.amount_refunded or booking.amount_fee or 0)))
+                    if debt_amount > 0:
+                        mechanic.tokens_balance = (mechanic.tokens_balance or 0) - debt_amount
+                        mechanic.save(update_fields=['tokens_balance'])
+                        TokenTransaction.objects.create(
+                            account=provider_account,
+                            tokens=-debt_amount,
+                            reason=f"Dispute voucher debt recovery (booking #{booking.id})",
+                            related_booking_id=booking.id,
+                        )
+
+                    mechanic.is_locked = False
+                    mechanic.save(update_fields=['is_locked'])
+
+                dispute.resolution_notes = (dispute.resolution_notes or '').strip()
+                if dispute.resolution_notes:
+                    dispute.resolution_notes += ' '
+                dispute.resolution_notes += f"Platform voucher issued for booking #{booking.id}."
+            else:
+                if not account_number:
+                    return Response(
+                        {'error': 'account_number is required for gcash/maya refunds'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                dispute.refund_account_number = account_number
+                dispute.status = DisputeBooking.Status.WAITING_FOR_MECHANIC_PAYMENT
+                dispute.resolved_at = None
+
+            dispute.save(update_fields=[
+                'refund_method',
+                'refund_account_number',
+                'status',
+                'resolved_at',
+                'is_client_verified',
+                'refund_receiver',
+                'resolution_notes',
+            ])
+
+        if refund_method == DisputeBooking.RefundMethod.VOUCHER:
+            _broadcast_booking_action(booking, 'booking.dispute_resolved_voucher', 'Dispute resolved via platform voucher fallback')
+            return Response(
+                {
+                    'message': 'Voucher fallback applied. Dispute resolved.',
+                    'dispute': {
+                        'id': dispute.id,
+                        'status': dispute.status,
+                        'refund_method': dispute.refund_method,
+                        'resolution_notes': dispute.resolution_notes,
+                    },
+                    'booking': {
+                        'id': booking.id,
+                        'status': booking.status,
+                        'dispute_status': booking.dispute_status,
+                    },
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        _broadcast_booking_action(booking, 'booking.dispute_refund_details_submitted', 'Client submitted refund destination details')
+        return Response(
+            {
+                'message': 'Refund details submitted. Waiting for mechanic payment.',
+                'dispute': {
+                    'id': dispute.id,
+                    'status': dispute.status,
+                    'refund_method': dispute.refund_method,
+                    'refund_account_number': dispute.refund_account_number,
+                },
+                'booking': {
+                    'id': booking.id,
+                    'status': booking.status,
+                    'dispute_status': booking.dispute_status,
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
+    except Account.DoesNotExist:
+        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Booking.DoesNotExist:
+        return Response({'error': 'Booking not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def list_my_disputes(request):
+    """List disputes where current account is complainer or complaint target."""
+    account_id = request.session.get('account_id')
+    if not account_id:
+        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        account = Account.objects.get(id=account_id)
+        disputes = (
+            DisputeBooking.objects.select_related('booking', 'complainer', 'complaint_against')
+            .filter(Q(complainer=account) | Q(complaint_against=account))
+            .order_by('-created_at')
+        )
+
+        results = []
+        for dispute in disputes:
+            results.append(
+                {
+                    'id': dispute.id,
+                    'booking_id': dispute.booking_id,
+                    'booking_status': dispute.booking.status,
+                    'booking_dispute_status': dispute.booking.dispute_status,
+                    'status': dispute.status,
+                    'issue_description': dispute.issue_description,
+                    'issue_picture': dispute.issue_picture.url if dispute.issue_picture else None,
+                    'complainer': {
+                        'id': dispute.complainer.id,
+                        'name': f"{dispute.complainer.firstname} {dispute.complainer.lastname}".strip(),
+                    },
+                    'complaint_against': {
+                        'id': dispute.complaint_against.id,
+                        'name': f"{dispute.complaint_against.firstname} {dispute.complaint_against.lastname}".strip(),
+                    },
+                    'resolution_notes': dispute.resolution_notes,
+                    'amount_refunded': float(dispute.amount_refunded) if dispute.amount_refunded is not None else None,
+                    'refund_method': dispute.refund_method,
+                    'refund_account_number': dispute.refund_account_number,
+                    'is_client_verified': dispute.is_client_verified,
+                    'refund_receipt_image': dispute.refund_receipt_image.url if dispute.refund_receipt_image else None,
+                    'created_at': dispute.created_at.isoformat() if dispute.created_at else None,
+                    'resolved_at': dispute.resolved_at.isoformat() if dispute.resolved_at else None,
+                }
+            )
+
+        return Response({'count': len(results), 'results': results}, status=status.HTTP_200_OK)
+    except Account.DoesNotExist:
+        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 def _serialize_bookings(bookings_queryset, viewer_account=None):
     """Helper function to serialize a queryset of bookings"""
     bookings_data = []
@@ -447,6 +938,7 @@ def _serialize_single_booking(booking, viewer_account=None):
     booking_data = {
         'id': booking.id,
         'status': booking.status,
+        'dispute_status': booking.dispute_status,
         'amount_fee': float(booking.amount_fee),
         'convenience_fee': float(booking.convenience_fee) if getattr(booking, 'convenience_fee', None) is not None else None,
         'traffic_surcharge': float(booking.traffic_surcharge) if getattr(booking, 'traffic_surcharge', None) is not None else None,
@@ -538,7 +1030,7 @@ def _serialize_single_booking(booking, viewer_account=None):
             'completed_at': rework.completed_at.isoformat() if rework.completed_at else None,
         }
     
-    elif booking.status == 'disputed' and hasattr(booking, 'disputebooking'):
+    if hasattr(booking, 'disputebooking'):
         dispute = booking.disputebooking
         booking_data['dispute_details'] = {
             'complainer': {
@@ -551,8 +1043,14 @@ def _serialize_single_booking(booking, viewer_account=None):
             },
             'issue_description': dispute.issue_description,
             'issue_picture': dispute.issue_picture.url if dispute.issue_picture else None,
+            'mechanic_defense_description': dispute.mechanic_defense_description,
+            'mechanic_defense_picture': dispute.mechanic_defense_picture.url if dispute.mechanic_defense_picture else None,
+            'refund_receipt_image': dispute.refund_receipt_image.url if dispute.refund_receipt_image else None,
             'resolution_notes': dispute.resolution_notes,
             'dispute_status': dispute.status,
+            'refund_method': dispute.refund_method,
+            'refund_account_number': dispute.refund_account_number,
+            'is_client_verified': dispute.is_client_verified,
             'amount_refunded': float(dispute.amount_refunded) if dispute.amount_refunded else None,
             'created_at': dispute.created_at.isoformat(),
             'resolved_at': dispute.resolved_at.isoformat() if dispute.resolved_at else None,

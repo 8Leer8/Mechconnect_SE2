@@ -21,6 +21,7 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL;
 interface Booking {
   id: number;
   status: string;
+  dispute_status?: string;
   amount_fee: number;
   booked_at: string;
   request: {
@@ -42,6 +43,9 @@ interface Booking {
     barangay: string;
     city_municipality: string;
   } | null;
+  dispute_details?: {
+    dispute_status?: string;
+  } | null;
 }
 
 interface GroupedBookings {
@@ -53,9 +57,41 @@ interface GroupedBookings {
   total_earnings: number;
 }
 
+interface MechanicBookingsResponse {
+  bookings?: Booking[];
+}
+
+interface ProfilePayload {
+  full_name?: string;
+  firstname?: string;
+  lastname?: string;
+}
+
+interface ProfileDetailsResponse {
+  profile?: ProfilePayload;
+}
+
+interface MyDisputeItem {
+  booking_id: number;
+  booking_dispute_status?: string;
+  status?: string;
+}
+
+interface MyDisputesResponse {
+  results?: MyDisputeItem[];
+}
+
 export default function HomeScreen() {
+  const ACTIVE_DISPUTE_STATUSES = new Set([
+    'active',
+    'under_admin_review',
+    'waiting_for_mechanic_payment',
+    'waiting_for_client_verification',
+  ]);
+
   const [activeJobs, setActiveJobs] = useState<Booking[]>([]);
   const [pendingRequests, setPendingRequests] = useState<Booking[]>([]);
+  const [activeDisputeBookingId, setActiveDisputeBookingId] = useState<number | null>(null);
   const [stats, setStats] = useState<GroupedBookings | null>(null);
   const [mechanicName, setMechanicName] = useState<string>('Mechanic');
   const [loading, setLoading] = useState(true);
@@ -67,40 +103,53 @@ export default function HomeScreen() {
     try {
       setError(null);
 
-      const opts = { method: 'GET', credentials: 'include' as RequestCredentials, headers: { 'Content-Type': 'application/json' } };
+      const opts = { method: 'GET', credentials: 'include' as const, headers: { 'Content-Type': 'application/json' } };
 
       // All 4 requests in one round-trip; the no-status stats call now returns total_earnings
       // via a single SQL Sum aggregate — no need for a separate heavy fetch.
-      const [acceptedRes, onGoingRes, pendingRes, statsRes, profileRes] = await Promise.all([
+      const [acceptedRes, onGoingRes, pendingRes, disputesRes, statsRes, profileRes] = await Promise.all([
         fetch(`${API_URL}/bookings/mechanic/bookings/?status=accepted&page_size=5`, opts),
         fetch(`${API_URL}/bookings/mechanic/bookings/?status=on_going&page_size=5`, opts),
         fetch(`${API_URL}/bookings/mechanic/bookings/?status=pending&page_size=5`, opts),
+        fetch(`${API_URL}/bookings/disputes/my/`, opts),
         fetch(`${API_URL}/bookings/mechanic/bookings/`, opts),
         fetch(`${API_URL}/users/profile/details/`, opts),
       ]);
 
-      const [acceptedData, onGoingData, pendingData, statsData, profileData] = await Promise.all([
-        acceptedRes.ok ? acceptedRes.json() : Promise.resolve(null),
-        onGoingRes.ok ? onGoingRes.json() : Promise.resolve(null),
-        pendingRes.ok ? pendingRes.json() : Promise.resolve(null),
-        statsRes.ok ? statsRes.json() : Promise.resolve(null),
-        profileRes.ok ? profileRes.json() : Promise.resolve(null),
+      const [acceptedData, onGoingData, pendingData, disputesData, statsData, profileData] = await Promise.all([
+        acceptedRes.ok ? acceptedRes.json() : Promise.resolve({} as MechanicBookingsResponse),
+        onGoingRes.ok ? onGoingRes.json() : Promise.resolve({} as MechanicBookingsResponse),
+        pendingRes.ok ? pendingRes.json() : Promise.resolve({} as MechanicBookingsResponse),
+        disputesRes.ok ? disputesRes.json() : Promise.resolve({} as MyDisputesResponse),
+        statsRes.ok ? statsRes.json() : Promise.resolve({} as GroupedBookings),
+        profileRes.ok ? profileRes.json() : Promise.resolve({} as ProfileDetailsResponse),
       ]);
 
       // Merge accepted + on_going, sort newest first, cap at 5
-      const accepted: Booking[] = acceptedData?.bookings ?? [];
-      const onGoing: Booking[] = onGoingData?.bookings ?? [];
+      const accepted: Booking[] = (acceptedData as MechanicBookingsResponse)?.bookings ?? [];
+      const onGoing: Booking[] = (onGoingData as MechanicBookingsResponse)?.bookings ?? [];
       const merged = [...accepted, ...onGoing]
         .sort((a, b) => new Date(b.booked_at).getTime() - new Date(a.booked_at).getTime())
         .slice(0, 5);
       setActiveJobs(merged);
 
-      setPendingRequests(pendingData?.bookings ?? []);
+      setPendingRequests((pendingData as MechanicBookingsResponse)?.bookings ?? []);
 
-      if (statsData) setStats(statsData);
+      const disputeItems = (disputesData as MyDisputesResponse)?.results ?? [];
+      const activeDispute = disputeItems.find((item) => {
+        const flow = String(item.status || 'none').toLowerCase();
+        const bookingFlow = String(item.booking_dispute_status || 'none').toLowerCase();
+        return ACTIVE_DISPUTE_STATUSES.has(flow) || bookingFlow === 'active';
+      }) || null;
+      setActiveDisputeBookingId(activeDispute?.booking_id ?? null);
 
-      if (profileData) {
-        const p = profileData.profile || profileData;
+      if (statsData && typeof statsData === 'object') {
+        setStats(statsData as GroupedBookings);
+      }
+
+      if (profileData && typeof profileData === 'object') {
+        const parsedProfile = profileData as ProfileDetailsResponse | ProfilePayload;
+        const p: ProfilePayload = (parsedProfile as ProfileDetailsResponse).profile || (parsedProfile as ProfilePayload);
         const n = p?.full_name || `${p?.firstname || ''} ${p?.lastname || ''}`.trim();
         if (n) setMechanicName(n);
       }
@@ -212,6 +261,35 @@ export default function HomeScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF8C00" />
         }
       >
+        {activeDisputeBookingId ? (
+          <TouchableOpacity
+            onPress={() => router.push({
+              pathname: '/mechanic/disputes/[id]',
+              params: { id: String(activeDisputeBookingId) },
+            })}
+            activeOpacity={0.85}
+            style={{
+              marginHorizontal: 16,
+              marginBottom: 12,
+              borderRadius: 12,
+              borderWidth: 1,
+              borderColor: '#FF4D4D',
+              backgroundColor: '#7A1212',
+              paddingHorizontal: 12,
+              paddingVertical: 12,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 10,
+            }}
+          >
+            <FontAwesome name="warning" size={18} color="#FFD8D8" />
+            <ThemedText style={{ flex: 1, color: '#FFD8D8', fontWeight: '700', fontSize: 13, lineHeight: 18 }}>
+              Account Locked: You have an active dispute that requires immediate attention.
+            </ThemedText>
+            <FontAwesome name="chevron-right" size={14} color="#FFD8D8" />
+          </TouchableOpacity>
+        ) : null}
+
         {/* Wallet Section */}
         <WalletSection />
 

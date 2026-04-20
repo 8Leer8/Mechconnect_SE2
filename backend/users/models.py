@@ -124,6 +124,10 @@ class Mechanic(models.Model):
     is_working_for_shop = models.BooleanField(default=False)
     shop = models.ForeignKey('shops.Shop', on_delete=models.SET_NULL, null=True, blank=True, related_name='mechanics')
     status = models.CharField(max_length=20, choices=WorkStatus.choices, default=WorkStatus.AVAILABLE)
+    is_locked = models.BooleanField(
+        default=False,
+        help_text="When true, mechanic is blocked from accepting new jobs",
+    )
     payout_method = models.CharField(
         max_length=10,
         choices=[('gcash', 'GCash'), ('maya', 'Maya')],

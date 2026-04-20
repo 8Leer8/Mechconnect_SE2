@@ -3,6 +3,7 @@ import { View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl }
 import { router, useLocalSearchParams } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { FontAwesome } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { styles } from '@/style/mechanic/bookingsStyles';
@@ -14,6 +15,7 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL;
 interface Booking {
   id: number;
   status: string;
+  dispute_status?: 'none' | 'active' | 'resolved' | string;
   amount_fee: number;
   booked_at: string;
   request: {
@@ -28,6 +30,9 @@ interface Booking {
   } | null;
   active_details?: {
     is_job_done: boolean;
+  };
+  dispute_details?: {
+    dispute_status?: string;
   };
 }
 
@@ -63,6 +68,16 @@ type MechanicCountsResponse = {
   total_count: number;
 };
 
+type ProfileDetailsResponse = {
+  profile?: {
+    current_role_profile?: {
+      mechanic?: {
+        is_locked?: boolean;
+      };
+    };
+  };
+};
+
 export default function MechanicShopJobsScreen() {
   const { tab } = useLocalSearchParams<{ tab?: string }>();
   const [activeTab, setActiveTab] = useState<TabType>((tab as TabType) || 'all');
@@ -75,6 +90,8 @@ export default function MechanicShopJobsScreen() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
+  const [mechanicLocked, setMechanicLocked] = useState(false);
+  const [receiptUploadingBookingId, setReceiptUploadingBookingId] = useState<number | null>(null);
   const { lastMessage } = useWebSocketContext();
   const pageSize = 5;
 
@@ -163,10 +180,27 @@ export default function MechanicShopJobsScreen() {
     }
   }, [activeTab, currentPage, fetchCounts]);
 
+  const fetchMechanicLockState = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_URL}/users/profile/details/`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) return;
+      const data = (await response.json()) as ProfileDetailsResponse;
+      const locked = Boolean(data?.profile?.current_role_profile?.mechanic?.is_locked);
+      setMechanicLocked(locked);
+    } catch {
+      // non-blocking state fetch
+    }
+  }, []);
+
   const fetchData = useCallback(() => {
     fetchJobs();
     fetchCounts();
-  }, [fetchJobs, fetchCounts]);
+    fetchMechanicLockState();
+  }, [fetchJobs, fetchCounts, fetchMechanicLockState]);
 
   useFocusEffect(
     useCallback(() => {
@@ -202,6 +236,10 @@ export default function MechanicShopJobsScreen() {
   };
 
   const handleAcceptPending = async (requestId: number) => {
+    if (mechanicLocked) {
+      setError('You must resolve your active dispute to continue working.');
+      return;
+    }
     try {
       setActionLoadingId(requestId);
       const response = await fetch(
@@ -246,6 +284,54 @@ export default function MechanicShopJobsScreen() {
       setError(err.message || 'Failed to decline request');
     } finally {
       setActionLoadingId(null);
+    }
+  };
+
+  const handleUploadRefundReceipt = async (bookingId: number) => {
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (permission.status !== 'granted') {
+        setError('Gallery permission is required to upload refund receipt.');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.9,
+      });
+
+      if (result.canceled || !result.assets?.[0]?.uri) return;
+
+      const photoUri = result.assets[0].uri;
+      const fileName = photoUri.split('/').pop() || `refund-${bookingId}.jpg`;
+      const ext = fileName.split('.').pop()?.toLowerCase();
+      const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+
+      const formData = new FormData();
+      formData.append('refund_receipt_image', {
+        uri: photoUri,
+        name: fileName,
+        type: mime,
+      } as any);
+
+      setReceiptUploadingBookingId(bookingId);
+      const response = await fetch(`${API_URL}/bookings/mechanic/bookings/${bookingId}/disputes/upload-receipt/`, {
+        method: 'POST',
+        credentials: 'include',
+        body: formData as any,
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error((payload as any)?.error || 'Failed to upload refund receipt');
+      }
+
+      await fetchData();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to upload refund receipt');
+    } finally {
+      setReceiptUploadingBookingId(null);
     }
   };
 
@@ -393,6 +479,15 @@ export default function MechanicShopJobsScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF8C00" />
         }
       >
+        {mechanicLocked ? (
+          <View style={styles.lockBanner}>
+            <FontAwesome name="lock" size={14} color="#FF3B30" />
+            <ThemedText style={styles.lockBannerText}>
+              You must resolve your active dispute to continue working.
+            </ThemedText>
+          </View>
+        ) : null}
+
         {loading && !refreshing ? (
           <SkeletonBookingList />
         ) : error ? (
@@ -436,6 +531,15 @@ export default function MechanicShopJobsScreen() {
                   }
                 }}
               >
+                {activeTab === 'completed' && String(booking.dispute_status || 'none').toLowerCase() === 'active' ? (
+                  <View style={styles.disputeBanner}>
+                    <FontAwesome name="warning" size={13} color="#FF3B30" />
+                    <ThemedText style={styles.disputeBannerText}>
+                      Active Dispute: Account functions limited until resolved.
+                    </ThemedText>
+                  </View>
+                ) : null}
+
                 <View style={styles.cardTopRow}>
                   <View style={styles.cardTopLeft}>
                     <View style={[styles.statusIconCircle, { backgroundColor: `${getStatusColor(booking.status)}20` }]}>
@@ -481,14 +585,14 @@ export default function MechanicShopJobsScreen() {
                       <TouchableOpacity
                         style={styles.declineBtn}
                         onPress={() => handleDeclinePending(booking.request.id)}
-                        disabled={actionLoadingId === booking.request.id}
+                        disabled={actionLoadingId === booking.request.id || mechanicLocked}
                       >
                         <ThemedText style={styles.declineBtnText}>Decline</ThemedText>
                       </TouchableOpacity>
                       <TouchableOpacity
-                        style={styles.acceptBtn}
+                        style={[styles.acceptBtn, mechanicLocked ? styles.acceptBtnDisabled : null]}
                         onPress={() => handleAcceptPending(booking.request.id)}
-                        disabled={actionLoadingId === booking.request.id}
+                        disabled={actionLoadingId === booking.request.id || mechanicLocked}
                       >
                         {actionLoadingId === booking.request.id ? (
                           <ActivityIndicator size="small" color="#fff" />
@@ -522,6 +626,27 @@ export default function MechanicShopJobsScreen() {
                     <ThemedText style={styles.jobDoneText}>Job marked as done</ThemedText>
                   </View>
                 )}
+
+                {String(booking.dispute_details?.dispute_status || '').toLowerCase() === 'waiting_for_mechanic_payment' ? (
+                  <View style={styles.jobDoneBanner}>
+                    <FontAwesome name="money" size={14} color="#FFD60A" />
+                    <ThemedText style={[styles.jobDoneText, { color: '#FFD60A' }]}>Refund receipt required by admin</ThemedText>
+                    <TouchableOpacity
+                      style={styles.uploadReceiptBtn}
+                      onPress={() => handleUploadRefundReceipt(booking.id)}
+                      disabled={receiptUploadingBookingId === booking.id}
+                    >
+                      {receiptUploadingBookingId === booking.id ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <>
+                          <FontAwesome name="upload" size={11} color="#fff" />
+                          <ThemedText style={styles.uploadReceiptBtnText}>Upload Receipt</ThemedText>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
               </TouchableOpacity>
             ))}
           </View>

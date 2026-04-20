@@ -1,10 +1,13 @@
 from django.db.models import Q
+from django.db import transaction
+from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import status
 
 from ...models import Request, Booking, DisputeBooking, BroadcastRequest, BroadcastOffer
 from users.permissions import IsAdmin
+from users.models import Account
 
 
 def _to_int(value, default):
@@ -17,13 +20,19 @@ def _to_int(value, default):
 @api_view(['GET'])
 @permission_classes([IsAdmin])
 def admin_booking_overview(request):
+    unresolved_statuses = [
+        DisputeBooking.Status.ACTIVE,
+        DisputeBooking.Status.UNDER_ADMIN_REVIEW,
+        DisputeBooking.Status.WAITING_FOR_MECHANIC_PAYMENT,
+        DisputeBooking.Status.WAITING_FOR_CLIENT_VERIFICATION,
+    ]
     data = {
         'requests_total': Request.objects.count(),
         'bookings_total': Booking.objects.count(),
         'active_bookings': Booking.objects.filter(status=Booking.Status.ACTIVE).count(),
         'completed_bookings': Booking.objects.filter(status=Booking.Status.COMPLETED).count(),
-        'disputed_bookings': Booking.objects.filter(status=Booking.Status.DISPUTED).count(),
-        'pending_disputes': DisputeBooking.objects.filter(status=DisputeBooking.Status.PENDING).count(),
+        'disputed_bookings': Booking.objects.filter(dispute_status=Booking.DisputeState.ACTIVE).count(),
+        'pending_disputes': DisputeBooking.objects.filter(status__in=unresolved_statuses).count(),
         'broadcast_searching': BroadcastRequest.objects.filter(status=BroadcastRequest.Status.SEARCHING).count(),
         'broadcast_offers_total': BroadcastOffer.objects.count(),
     }
@@ -44,9 +53,13 @@ def admin_list_disputes(request):
     q = request.GET.get('q')
 
     if status_filter in {
-        DisputeBooking.Status.PENDING,
-        DisputeBooking.Status.SOLVED,
-        DisputeBooking.Status.REFUNDED,
+        DisputeBooking.Status.ACTIVE,
+        DisputeBooking.Status.UNDER_ADMIN_REVIEW,
+        DisputeBooking.Status.WAITING_FOR_MECHANIC_PAYMENT,
+        DisputeBooking.Status.WAITING_FOR_CLIENT_VERIFICATION,
+        DisputeBooking.Status.RESOLVED_REFUNDED,
+        DisputeBooking.Status.RESOLVED_DISMISSED,
+        DisputeBooking.Status.RESOLVED_VOUCHER,
     }:
         queryset = queryset.filter(status=status_filter)
 
@@ -67,8 +80,12 @@ def admin_list_disputes(request):
                 'booking_id': dispute.booking_id,
                 'status': dispute.status,
                 'issue_description': dispute.issue_description,
+                'issue_picture': dispute.issue_picture.url if dispute.issue_picture else None,
                 'complainer': dispute.complainer.username,
                 'complaint_against': dispute.complaint_against.username,
+                'mechanic_defense_description': dispute.mechanic_defense_description,
+                'mechanic_defense_picture': dispute.mechanic_defense_picture.url if dispute.mechanic_defense_picture else None,
+                'refund_receipt_image': dispute.refund_receipt_image.url if dispute.refund_receipt_image else None,
                 'amount_refunded': dispute.amount_refunded,
                 'created_at': dispute.created_at,
                 'resolved_at': dispute.resolved_at,
@@ -76,6 +93,121 @@ def admin_list_disputes(request):
         )
 
     return Response({'count': len(results), 'results': results}, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([IsAdmin])
+def admin_resolve_dispute(request, dispute_id):
+    """Admin mediation decision: dismiss, voucher fallback, request payment proof, or force verify receipt."""
+    try:
+        dispute = DisputeBooking.objects.select_related('booking', 'booking__request__provider').get(id=dispute_id)
+    except DisputeBooking.DoesNotExist:
+        return Response({'error': 'Dispute not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    booking = dispute.booking
+    if booking.dispute_status != Booking.DisputeState.ACTIVE:
+        return Response({'error': 'Dispute is not active'}, status=status.HTTP_400_BAD_REQUEST)
+
+    action = str(request.data.get('action', '')).strip().lower()
+    if action not in {'dismiss', 'voucher', 'request_payment', 'force_verify'}:
+        return Response({'error': "action must be one of: dismiss, voucher, request_payment, force_verify"}, status=status.HTTP_400_BAD_REQUEST)
+
+    resolution_notes = str(request.data.get('resolution_notes', '')).strip()
+
+    authenticated_account = getattr(request, 'user', None)
+    if not getattr(authenticated_account, 'is_authenticated', False):
+        authenticated_account = None
+
+    account_id = request.session.get('account_id') or getattr(authenticated_account, 'id', None)
+    if not account_id:
+        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        if authenticated_account is not None and getattr(authenticated_account, 'id', None) == account_id:
+            admin_account = authenticated_account
+        else:
+            admin_account = Account.objects.get(id=account_id)
+
+        if not hasattr(admin_account, 'admin'):
+            return Response({'error': 'Only admins can resolve disputes'}, status=status.HTTP_403_FORBIDDEN)
+    except Account.DoesNotExist:
+        return Response({'error': 'Admin account not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    with transaction.atomic():
+        dispute.admin = admin_account.admin
+        dispute.resolution_notes = resolution_notes
+
+        unlock_mechanic = False
+        if action == 'dismiss':
+            dispute.status = DisputeBooking.Status.RESOLVED_DISMISSED
+            dispute.resolved_at = timezone.now()
+            booking.dispute_status = Booking.DisputeState.RESOLVED
+            unlock_mechanic = True
+        elif action == 'voucher':
+            dispute.status = DisputeBooking.Status.RESOLVED_VOUCHER
+            dispute.resolved_at = timezone.now()
+            booking.dispute_status = Booking.DisputeState.RESOLVED
+        elif action == 'force_verify':
+            dispute.status = DisputeBooking.Status.RESOLVED_REFUNDED
+            dispute.resolved_at = timezone.now()
+            dispute.is_client_verified = True
+            booking.dispute_status = Booking.DisputeState.RESOLVED
+            unlock_mechanic = True
+        else:
+            dispute.status = DisputeBooking.Status.WAITING_FOR_MECHANIC_PAYMENT
+            dispute.resolved_at = None
+
+        dispute_update_fields = ['admin', 'resolution_notes', 'status', 'resolved_at']
+        if action == 'force_verify':
+            dispute_update_fields.append('is_client_verified')
+
+        dispute.save(update_fields=dispute_update_fields)
+        booking.save(update_fields=['dispute_status', 'updated_at'])
+
+        provider = booking.request.provider
+        if unlock_mechanic and provider is not None and hasattr(provider, 'mechanic'):
+            provider.mechanic.is_locked = False
+            provider.mechanic.save(update_fields=['is_locked'])
+
+    try:
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+
+        channel_layer = get_channel_layer()
+        if channel_layer is not None:
+            payload = {
+                'type': 'booking_update',
+                'action': 'booking.dispute_payment_requested' if action == 'request_payment' else 'booking.dispute_resolved',
+                'booking_id': booking.id,
+                'status': booking.status,
+                'dispute_status': booking.dispute_status,
+                'message': 'Admin updated dispute status',
+            }
+            targets = {
+                booking.request.client.account_id if booking.request and booking.request.client else None,
+                booking.request.provider_id if booking.request else None,
+            }
+            for target in targets:
+                if target:
+                    async_to_sync(channel_layer.group_send)(f'user_{target}', payload)
+    except Exception:
+        pass
+
+    return Response(
+        {
+            'message': 'Dispute decision applied',
+            'dispute': {
+                'id': dispute.id,
+                'status': dispute.status,
+                'resolved_at': dispute.resolved_at.isoformat() if dispute.resolved_at else None,
+            },
+            'booking': {
+                'id': booking.id,
+                'dispute_status': booking.dispute_status,
+            },
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 @api_view(['GET'])
