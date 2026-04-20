@@ -9,6 +9,8 @@ urlpatterns = [
     path('mechanics/', views.list_shop_mechanics, name='list_shop_mechanics'),
     path('mechanics/add/', views.add_mechanic_to_shop, name='add_mechanic_to_shop'),
     path('mechanics/search/', views.search_available_mechanics, name='search_available_mechanics'),
+    path('mechanics/set-active/', views.set_shop_mechanic_active, name='set_shop_mechanic_active'),
+    path('mechanics/remove/', views.remove_mechanic_from_shop, name='remove_mechanic_from_shop'),
 ]
 
 #Admin Urls

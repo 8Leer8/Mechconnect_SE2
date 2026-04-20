@@ -21,6 +21,7 @@ class Shop(models.Model):
 class ShopMechanic(models.Model):
     shop = models.ForeignKey(Shop, on_delete=models.CASCADE)
     mechanic = models.ForeignKey(Mechanic, on_delete=models.CASCADE)
+    is_active = models.BooleanField(default=True)
     date_joined = models.DateTimeField(auto_now_add=True)
 
 class ShopDocument(models.Model):

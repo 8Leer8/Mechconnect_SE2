@@ -4,6 +4,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { SkeletonDashboard } from '@/components/skeletons/SkeletonLoaders';
+import WalletSection from '@/components/wallet-section';
 
 const { width } = Dimensions.get('window');
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -81,6 +82,7 @@ export default function ShopOwnerHome() {
               <ThemedText style={styles.shopName}>{dashboardData?.shop_name || 'Loading...'}</ThemedText>
             </View>
           </View>
+          <WalletSection creditsSource="shop-owner" />
           <SkeletonDashboard />
         </ScrollView>
       </ThemedView>
@@ -97,6 +99,7 @@ export default function ShopOwnerHome() {
               <ThemedText style={styles.shopName}>Dashboard</ThemedText>
             </View>
           </View>
+          <WalletSection creditsSource="shop-owner" />
           <View style={[styles.errorContainer, { marginTop: 40 }]}>
             <View style={styles.errorIconWrap}>
               <FontAwesome name="exclamation-triangle" size={36} color="#FF3B30" />
@@ -140,6 +143,8 @@ export default function ShopOwnerHome() {
             </View>
           )}
         </View>
+
+        <WalletSection creditsSource="shop-owner" />
 
         {/* Stats Grid - 2x2 */}
         <View style={styles.statsSection}>

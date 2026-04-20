@@ -2,12 +2,27 @@ import React, { useEffect, useState } from 'react';
 import { View, TouchableOpacity, StyleSheet } from 'react-native';
 import { ThemedText } from './themed-text';
 import { FontAwesome } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import { eventBus } from '@/utils/eventBus';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
-export default function WalletSection() {
+export type CreditsSource = 'mechanic' | 'shop-owner';
+
+function walletUrl(source: CreditsSource) {
+  return source === 'shop-owner'
+    ? `${API_URL}/users/shop-owner/wallet/`
+    : `${API_URL}/users/mechanic/wallet/`;
+}
+
+type WalletSectionProps = {
+  /** Which backend wallet to read (default: mechanic). */
+  creditsSource?: CreditsSource;
+  /** Route when tapping Add (default: mechanic credits screen). */
+  addHref?: Href;
+};
+
+export default function WalletSection({ creditsSource = 'mechanic', addHref = '/mechanic/wallet' }: WalletSectionProps) {
   const [balance, setBalance] = useState<number | null>(null);
   const router = useRouter();
 
@@ -15,7 +30,7 @@ export default function WalletSection() {
     let mounted = true;
     async function load() {
       try {
-        const res = await fetch(`${API_URL}/users/mechanic/wallet/`, { credentials: 'include' });
+        const res = await fetch(walletUrl(creditsSource), { credentials: 'include' });
         if (!res.ok) return;
         const data = await res.json();
         if (!mounted) return;
@@ -27,7 +42,7 @@ export default function WalletSection() {
     load();
     const off = eventBus.on('walletChanged', () => load());
     return () => { mounted = false; off(); };
-  }, []);
+  }, [creditsSource]);
 
   return (
     <View style={styles.card}>
@@ -36,9 +51,9 @@ export default function WalletSection() {
       </View>
       <View style={styles.info}>
         <ThemedText style={styles.label}>Credit Balance</ThemedText>
-        <ThemedText style={styles.amount}>{balance === null ? '...' : `${balance} credits`}</ThemedText>
+        <ThemedText style={styles.amount}>{`${balance ?? 0} credits`}</ThemedText>
       </View>
-      <TouchableOpacity style={styles.addBtn} onPress={() => router.push('/mechanic/wallet')} activeOpacity={0.7}>
+      <TouchableOpacity style={styles.addBtn} onPress={() => router.push(addHref)} activeOpacity={0.7}>
         <FontAwesome name="plus" size={11} color="#fff" />
         <ThemedText style={styles.addBtnText}>Add</ThemedText>
       </TouchableOpacity>

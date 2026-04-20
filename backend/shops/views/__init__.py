@@ -9,5 +9,7 @@ __all__ = [
     'list_shop_mechanics',
     'add_mechanic_to_shop',
     'search_available_mechanics',
+    'set_shop_mechanic_active',
+    'remove_mechanic_from_shop',
     'get_shop_profile',
 ]

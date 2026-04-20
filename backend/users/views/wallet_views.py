@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from decimal import Decimal, InvalidOperation
 
-from ..models import Account, Mechanic, TokenPurchase
+from ..models import Account, Mechanic, ShopOwner, TokenPurchase
 from services.pricing_utils import get_token_pricing
 
 
@@ -36,6 +36,31 @@ def mechanic_wallet(request):
         return Response({'error': 'Mechanic profile not found'}, status=status.HTTP_404_NOT_FOUND)
 
     return Response({'tokens_balance': mechanic.tokens_balance}, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def shop_owner_wallet(request):
+    """Return credits balance for the shop owner tab.
+
+    Shop-owner credits are independent from mechanic wallet for now, so default is always 0
+    until dedicated shop-owner top-up is implemented.
+    """
+    account_id = request.session.get('account_id')
+    if not account_id:
+        return Response({'error': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        account = Account.objects.get(id=account_id)
+    except Account.DoesNotExist:
+        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        ShopOwner.objects.get(account=account)
+    except ShopOwner.DoesNotExist:
+        return Response({'error': 'Shop owner profile not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    return Response({'tokens_balance': 0}, status=status.HTTP_200_OK)
 
 
 @api_view(['POST'])

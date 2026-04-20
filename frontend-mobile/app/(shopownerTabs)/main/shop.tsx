@@ -1,20 +1,29 @@
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
+import WalletBadge from '@/components/wallet-badge';
 
 /** Tab route stays `main/shop`; label in tabs is Map. Placeholder until real map is wired. */
 export default function ShopOwnerMapPlaceholder() {
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const topPad = Math.max(insets.top, 12) + 8;
 
   return (
     <ThemedView style={styles.container}>
       <View style={[styles.header, { paddingTop: topPad }]}>
-        <ThemedText style={styles.title}>Map</ThemedText>
-        <ThemedText style={styles.subtitle}>Find shops and jobs on the map — coming soon</ThemedText>
+        <View style={styles.headerLeft}>
+          <ThemedText style={styles.title}>Map</ThemedText>
+          <ThemedText style={styles.subtitle}>Find shops and jobs on the map — coming soon</ThemedText>
+        </View>
+        <WalletBadge
+          creditsSource="shop-owner"
+          onPress={() => router.push('/mechanic/wallet')}
+        />
       </View>
 
       <View style={styles.mapCard}>
@@ -74,6 +83,14 @@ const styles = StyleSheet.create({
   },
   header: {
     marginBottom: 16,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  headerLeft: {
+    flex: 1,
+    minWidth: 0,
   },
   title: {
     fontSize: 26,

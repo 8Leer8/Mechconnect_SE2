@@ -9,6 +9,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/client/mechanicProfileStyles';
 import { getImageUrl } from '@/lib/imageUtils';
 import { SkeletonDetailPage } from '@/components/skeletons/SkeletonLoaders';
+import { useNotification } from '@/hooks/useNotification';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -75,10 +76,13 @@ interface MechanicProfile {
 export default function MechanicProfileScreen() {
   const router = useRouter();
   const pathname = usePathname();
-  const { mechanicId, id, distance_km } = useLocalSearchParams<{
+  const { showNotification } = useNotification();
+  const { mechanicId, id, distance_km, source, member_active } = useLocalSearchParams<{
     mechanicId?: string;
     id?: string;
     distance_km?: string;
+    source?: string;
+    member_active?: string;
   }>();
   const resolvedMechanicId = mechanicId || id;
   const isMountedRef = useRef(true);
@@ -86,6 +90,8 @@ export default function MechanicProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [memberActive, setMemberActive] = useState<boolean>(member_active !== 'false');
+  const [actionLoading, setActionLoading] = useState<'toggle' | 'remove' | null>(null);
 
   useEffect(() => {
     return () => {
@@ -161,6 +167,7 @@ export default function MechanicProfileScreen() {
   };
 
   const showDirectRequest = !pathname.includes('/_direct-request');
+  const isShopOwnerView = source === 'shop_owner';
 
   const handleDirectRequest = () => {
     const providerAccountId = profile?.account_id || profile?.id;
@@ -247,6 +254,62 @@ export default function MechanicProfileScreen() {
         distance_km: typeof distance_km === 'string' ? distance_km : undefined,
       },
     });
+  };
+
+  const handleDeactivate = async () => {
+    if (!profile || actionLoading) return;
+    setActionLoading('toggle');
+    try {
+      const nextActive = !memberActive;
+      const res = await fetch(`${API_URL}/shops/mechanics/set-active/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mechanic_id: profile.id,
+          is_active: nextActive,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showNotification({ type: 'error', message: data?.error || 'Failed to update mechanic status' });
+        return;
+      }
+      setMemberActive(Boolean(data?.assignment_active ?? nextActive));
+      await fetchMechanicProfile(true);
+      showNotification({
+        type: 'success',
+        message: nextActive ? 'Mechanic activated successfully' : 'Mechanic deactivated successfully',
+      });
+    } catch {
+      showNotification({ type: 'error', message: 'Failed to update mechanic status' });
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleRemove = async () => {
+    if (!profile || actionLoading) return;
+    setActionLoading('remove');
+    try {
+      const res = await fetch(`${API_URL}/shops/mechanics/remove/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mechanic_id: profile.id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showNotification({ type: 'error', message: data?.error || 'Failed to remove mechanic' });
+        return;
+      }
+      showNotification({ type: 'success', message: 'Mechanic removed from shop' });
+      handleBack();
+    } catch {
+      showNotification({ type: 'error', message: 'Failed to remove mechanic' });
+    } finally {
+      setActionLoading(null);
+    }
   };
 
   useFocusEffect(
@@ -362,16 +425,43 @@ export default function MechanicProfileScreen() {
             </View>
           </View>
 
-          {/* Direct Request Button */}
+          {/* Action Buttons */}
           {showDirectRequest && (
-            <TouchableOpacity
-              style={styles.directRequestBtn}
-              activeOpacity={0.7}
-              onPress={handleDirectRequest}
-            >
-              <FontAwesome name="paper-plane" size={16} color="#fff" />
-              <ThemedText style={styles.directRequestText}>Send Direct Request</ThemedText>
-            </TouchableOpacity>
+            isShopOwnerView ? (
+              <View style={styles.shopOwnerActionsRow}>
+                <TouchableOpacity
+                  style={styles.deactivateBtn}
+                  activeOpacity={0.7}
+                  onPress={handleDeactivate}
+                  disabled={actionLoading !== null}
+                >
+                  <FontAwesome name={memberActive ? 'pause' : 'play'} size={14} color="#fff" />
+                  <ThemedText style={styles.actionBtnText}>
+                    {actionLoading === 'toggle' ? 'Updating...' : memberActive ? 'Deactivate' : 'Activate'}
+                  </ThemedText>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.removeBtn}
+                  activeOpacity={0.7}
+                  onPress={handleRemove}
+                  disabled={actionLoading !== null}
+                >
+                  <FontAwesome name="trash" size={14} color="#fff" />
+                  <ThemedText style={styles.actionBtnText}>
+                    {actionLoading === 'remove' ? 'Removing...' : 'Remove'}
+                  </ThemedText>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.directRequestBtn}
+                activeOpacity={0.7}
+                onPress={handleDirectRequest}
+              >
+                <FontAwesome name="paper-plane" size={16} color="#fff" />
+                <ThemedText style={styles.directRequestText}>Send Direct Request</ThemedText>
+              </TouchableOpacity>
+            )
           )}
         </View>
 
@@ -430,39 +520,6 @@ export default function MechanicProfileScreen() {
             </View>
           </View>
         )}
-
-        {/* Services */}
-        <View style={styles.section}>
-          <ThemedText style={styles.sectionTitle}>
-            Services Offered {profile.services?.length > 0 && `(${profile.services.length})`}
-          </ThemedText>
-          {profile.services && profile.services.length > 0 ? (
-            profile.services.map((svc) => (
-              <View key={svc.id} style={styles.serviceCard}>
-                <View style={styles.serviceTop}>
-                  <View style={styles.serviceIconCircle}>
-                    <FontAwesome name="wrench" size={16} color="#FF8C00" />
-                  </View>
-                  <View style={styles.serviceInfo}>
-                    <ThemedText style={styles.serviceName}>{svc.service_name}</ThemedText>
-                    {svc.service_category && (
-                      <ThemedText style={styles.serviceCategory}>{svc.service_category}</ThemedText>
-                    )}
-                  </View>
-                  <ThemedText style={styles.servicePrice}>₱{parseFloat(svc.price).toFixed(2)}</ThemedText>
-                </View>
-                {svc.service_description && (
-                  <ThemedText style={styles.serviceDesc}>{svc.service_description}</ThemedText>
-                )}
-              </View>
-            ))
-          ) : (
-            <View style={styles.emptyCard}>
-              <FontAwesome name="wrench" size={28} color="#555" />
-              <ThemedText style={styles.emptyText}>No services listed</ThemedText>
-            </View>
-          )}
-        </View>
 
         {/* Reviews */}
         <View style={styles.section}>

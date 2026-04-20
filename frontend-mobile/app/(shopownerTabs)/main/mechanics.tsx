@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, ScrollView, RefreshControl, ActivityIndicator, TouchableOpacity, TextInput, Modal, Image } from 'react-native';
 import { FontAwesome } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { getImageUrl } from '@/lib/imageUtils';
@@ -23,6 +24,7 @@ interface Mechanic {
   average_rating: number;
   status: string;
   is_working_for_shop: boolean;
+  assignment_active?: boolean;
   date_joined?: string;
   current_shop?: string | null;
 }
@@ -51,7 +53,7 @@ export default function ShopOwnerMechanics() {
   const fetchMechanics = async () => {
     try {
       setError(null);
-      const response = await fetch(`${API_URL}/shops/mechanics/`, {
+      const response = await fetch(`${API_URL}/shops/mechanics/?include_inactive=true`, {
         method: 'GET',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -257,6 +259,18 @@ export default function ShopOwnerMechanics() {
                       {mechanic.status === 'available' ? 'Available' : 'Working'}
                     </ThemedText>
                   </View>
+                  <TouchableOpacity
+                    style={styles.detailsButton}
+                    activeOpacity={0.8}
+                    onPress={() =>
+                      router.push(
+                        `/client/mechanic/mechanicprofile?mechanicId=${mechanic.id}&source=shop_owner&member_active=${mechanic.assignment_active ? 'true' : 'false'}`
+                      )
+                    }
+                  >
+                    <ThemedText style={styles.detailsButtonText}>Details</ThemedText>
+                    <FontAwesome name="chevron-right" size={12} color="#FF8C00" />
+                  </TouchableOpacity>
                 </View>
 
                 {mechanic.date_joined && (
@@ -574,6 +588,24 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666',
     marginTop: 6,
+  },
+  detailsButton: {
+    marginLeft: 'auto',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#FF8C0015',
+    borderWidth: 1,
+    borderColor: '#FF8C0030',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  detailsButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FF8C00',
   },
   modalOverlay: {
     flex: 1,

@@ -55,6 +55,7 @@ urlpatterns = [
     path('register-mechanic/', views.register_mechanic, name='register_mechanic'),
     path('register-shop-owner/', views.register_shop_owner, name='register_shop_owner'),
     # Mechanic wallet endpoints
+    path('shop-owner/wallet/', views.shop_owner_wallet, name='shop_owner_wallet'),
     path('mechanic/wallet/', views.mechanic_wallet, name='mechanic_wallet'),
     path('mechanic/wallet/topup/', views.mechanic_wallet_topup, name='mechanic_wallet_topup'),
     path('mechanic/wallet/token-pricing/', views.get_token_pricing_view, name='mechanic-wallet-token-pricing'),

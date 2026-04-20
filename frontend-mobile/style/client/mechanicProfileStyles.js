@@ -85,6 +85,32 @@ export const styles = StyleSheet.create({
     elevation: 4,
   },
   directRequestText: { fontSize: 15, fontWeight: '700', color: '#fff' },
+  shopOwnerActionsRow: {
+    width: '100%',
+    flexDirection: 'row',
+    gap: 10,
+  },
+  deactivateBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#FF9500',
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  removeBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#FF3B30',
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  actionBtnText: { fontSize: 15, fontWeight: '700', color: '#fff' },
 
   // Sections
   section: { paddingHorizontal: 16, marginTop: 20 },
