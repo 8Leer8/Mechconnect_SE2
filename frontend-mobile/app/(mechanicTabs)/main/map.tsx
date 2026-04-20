@@ -7,6 +7,7 @@ import {
   RefreshControl,
   Modal,
   Image,
+  Switch,
   AppState,
   AppStateStatus,
   StyleSheet,
@@ -174,6 +175,7 @@ export default function MapScreen() {
   const [pricingConfig, setPricingConfig] = useState<PricingConfig>(DEFAULT_PRICING_CONFIG);
   const [mapInitFailed, setMapInitFailed] = useState(false);
   const [mapInitMessage, setMapInitMessage] = useState('Failed to load map location.');
+  const [broadcastFetchEnabled, setBroadcastFetchEnabled] = useState(true);
 
   const [region, setRegion] = useState<{
     latitude: number;
@@ -200,24 +202,45 @@ export default function MapScreen() {
 
   useFocusEffect(
     React.useCallback(() => {
-      if (userLocationRef.current) {
+      if (broadcastFetchEnabled && userLocationRef.current) {
         fetchBroadcasts(true);
       }
-    }, [])
+    }, [broadcastFetchEnabled])
   );
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
       if (nextState === 'active') {
         fetchPricingConfig();
-        if (userLocationRef.current) {
+        if (broadcastFetchEnabled && userLocationRef.current) {
           fetchBroadcasts(true);
         }
         fetchTokensBalance();
       }
     });
     return () => { subscription.remove(); };
-  }, []);
+  }, [broadcastFetchEnabled]);
+
+  useEffect(() => {
+    if (!broadcastFetchEnabled) {
+      setBroadcasts([]);
+      setModalVisible(false);
+      setSelectedBroadcast(null);
+      setRouteCoords([]);
+      setRouteLoading(false);
+      setRouteError(null);
+      setTrafficData(null);
+      setFeeData(null);
+      cachedRouteData.current = null;
+      lastFetchedBroadcastId.current = null;
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+    if (userLocationRef.current) {
+      fetchBroadcasts(true);
+    }
+  }, [broadcastFetchEnabled]);
 
   useEffect(() => {
     const timer = setInterval(() => { setCurrentTime(Date.now()); }, 5000);
@@ -229,6 +252,7 @@ export default function MapScreen() {
   const setCurrentUserLocation = (location: { latitude: number; longitude: number }) => {
     userLocationRef.current = location;
     setUserLocation(location);
+    if (!broadcastFetchEnabled) return;
     if (!lastBroadcastFetchLocationRef.current) {
       lastBroadcastFetchLocationRef.current = location;
       fetchBroadcasts(true);
@@ -503,12 +527,22 @@ export default function MapScreen() {
   };
 
   const onRefresh = () => {
+    if (!broadcastFetchEnabled) {
+      setRefreshing(false);
+      return;
+    }
     setRefreshing(true);
     if (userLocationRef.current) fetchBroadcasts(true);
     else { setRefreshing(false); void initializeMap(); }
   };
 
   const fetchBroadcasts = async (silent = false) => {
+    if (!broadcastFetchEnabled) {
+      setBroadcasts([]);
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
     try {
       if (!silent) setLoading(true);
       setError(null);
@@ -649,10 +683,16 @@ export default function MapScreen() {
             <FontAwesome name="map-marker" size={16} color="#FF8C00" />
             <ThemedText style={styles.mapStatsText}>{filteredBroadcasts.length} jobs nearby</ThemedText>
           </View>
-          {broadcasts.length > 0 && (
+          {broadcastFetchEnabled && broadcasts.length > 0 && (
             <View style={[styles.mapStats, { backgroundColor: '#34C75990', marginTop: 8 }]}>
               <FontAwesome name="volume-up" size={14} color="#34C759" />
               <ThemedText style={styles.mapStatsText}>{broadcasts.length} broadcast{broadcasts.length !== 1 ? 's' : ''}</ThemedText>
+            </View>
+          )}
+          {!broadcastFetchEnabled && (
+            <View style={[styles.mapStats, { backgroundColor: '#8E8E9345', marginTop: 8 }]}>
+              <FontAwesome name="pause-circle" size={14} color="#B0B0B0" />
+              <ThemedText style={styles.mapStatsText}>Broadcast listening is off</ThemedText>
             </View>
           )}
         </View>
@@ -666,10 +706,27 @@ export default function MapScreen() {
       </View>
 
       <View style={styles.jobListContainer}>
-        <ThemedText style={styles.jobListTitle}>Available Jobs</ThemedText>
+        <View style={styles.jobListHeaderRow}>
+          <ThemedText style={styles.jobListTitle}>Available Jobs</ThemedText>
+          <View style={styles.broadcastSwitchContainer}>
+            <ThemedText style={styles.broadcastSwitchText}>Auto-fetch</ThemedText>
+            <Switch
+              value={broadcastFetchEnabled}
+              onValueChange={setBroadcastFetchEnabled}
+              trackColor={{ false: '#3A3C3E', true: '#34C759' }}
+              thumbColor="#fff"
+            />
+          </View>
+        </View>
         <ScrollView style={styles.jobList} showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF8C00" />}>
-          {loading && !refreshing ? (
+          {!broadcastFetchEnabled ? (
+            <View style={styles.emptyContainer}>
+              <FontAwesome name="pause-circle" size={64} color="#8E8E93" />
+              <ThemedText style={styles.emptyText}>Broadcast requests are paused</ThemedText>
+              <ThemedText style={styles.emptySubtext}>Turn on auto-fetch broadcasts from the map switch to receive nearby jobs again</ThemedText>
+            </View>
+          ) : loading && !refreshing ? (
             <SkeletonMapJobList />
           ) : error ? (
             <View style={styles.errorContainer}>
