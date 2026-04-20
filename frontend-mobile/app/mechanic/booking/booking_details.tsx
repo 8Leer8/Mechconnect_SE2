@@ -639,7 +639,6 @@ export default function BookingDetailScreen() {
 
       if (!response.ok) throw new Error('Failed to fetch booking details');
       const data = await response.json() as any;
-      console.log('FULL BOOKING DATA:', JSON.stringify(data, null, 2));
       const bookingData = data.booking || data;
       setBooking(bookingData);
       const currentStatus = bookingData.status;

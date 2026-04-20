@@ -235,8 +235,9 @@ export default function MechanicDirectRequestScreen() {
 			}
 
 			try {
+				const providerQuery = selectedProviderId ? `?provider_id=${selectedProviderId}` : '';
 				const response = await fetch(
-					`${API_URL}/bookings/direct/services/${selectedServiceId}/addons/`,
+					`${API_URL}/bookings/direct/services/${selectedServiceId}/addons/${providerQuery}`,
 					{ credentials: 'include' }
 				);
 				if (cancelled) return;
@@ -259,7 +260,7 @@ export default function MechanicDirectRequestScreen() {
 		return () => {
 			cancelled = true;
 		};
-	}, [selectedServiceId]);
+	}, [selectedServiceId, selectedProviderId]);
 
 	useFocusEffect(
 		React.useCallback(() => {
