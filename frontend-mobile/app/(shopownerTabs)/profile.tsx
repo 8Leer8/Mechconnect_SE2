@@ -489,7 +489,7 @@ export default function ShopOwnerProfileScreen() {
             onPress={() => router.push('/shopowner/others/edit-profile')}
           >
             <FontAwesome name="pencil" size={14} color="#FF8C00" />
-            <ThemedText style={clientProfileStyles.editBtnText}>Edit Profile</ThemedText>
+            <ThemedText style={clientProfileStyles.editBtnText}>Edit Shop Profile</ThemedText>
           </TouchableOpacity>
         </View>
 
