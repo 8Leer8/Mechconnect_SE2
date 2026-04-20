@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
+  Image,
   View,
   TouchableOpacity,
   ScrollView,
@@ -20,6 +21,7 @@ import { useNotification } from '@/hooks/useNotification';
 import { useConfirmation } from '@/hooks/useConfirmation';
 import { ConfirmationModal } from '@/components/ui/ConfirmationModal';
 import { SkeletonProfile } from '@/components/skeletons/SkeletonLoaders';
+import { getImageUrl } from '@/lib/imageUtils';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -82,6 +84,7 @@ export default function ProfileScreen() {
   const { showNotification } = useNotification();
   const { confirm } = useConfirmation();
   const [name, setName] = useState<string>('Mechanic');
+  const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [myServices, setMyServices] = useState<MyService[]>([]);
@@ -130,7 +133,9 @@ export default function ProfileScreen() {
         const data = await res.json();
         const p = data.profile || data;
         const n = p?.full_name || `${p?.firstname || ''} ${p?.lastname || ''}`.trim();
+        const mechanicProfile = p?.current_role_profile?.mechanic || null;
         if (n) setName(n);
+        setProfilePhotoUrl(mechanicProfile?.profile_photo || mechanicProfile?.profile_photo_url || null);
       }
     } catch (e) {
       console.error(e);
@@ -730,9 +735,16 @@ export default function ProfileScreen() {
         }
       >
         <View style={styles.header}>
-          <View style={styles.avatarPlaceholder}>
-            <FontAwesome name="user" size={36} color="#8E8E93" />
-          </View>
+          {profilePhotoUrl ? (
+            <Image
+              source={{ uri: getImageUrl(profilePhotoUrl) || profilePhotoUrl }}
+              style={{ width: 72, height: 72, borderRadius: 36, marginBottom: 12 }}
+            />
+          ) : (
+            <View style={styles.avatarPlaceholder}>
+              <FontAwesome name="user" size={36} color="#8E8E93" />
+            </View>
+          )}
           <ThemedText style={styles.name}>{name}</ThemedText>
           <ThemedText style={styles.subtitle}>Mechanic profile</ThemedText>
         </View>
