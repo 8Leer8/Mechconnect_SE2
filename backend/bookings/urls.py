@@ -58,6 +58,7 @@ urlpatterns = [
     path('payments/webhook/', payment_views.paymongo_webhook, name='payments-webhook'),
     path('bookings/<int:booking_id>/quotation/accept/', views.client_accept_quotation, name='client-accept-quotation'),
     path('bookings/<int:booking_id>/quotation/reject/', views.client_reject_quotation, name='client-reject-quotation'),
+    path('bookings/<int:booking_id>/report-no-show/', views.ReportNoShowView.as_view(), name='report-no-show'),
     # Live mechanic location (GET for client polling, POST for mechanic pushing GPS)
     path('bookings/<int:booking_id>/mechanic-location/', views.mechanic_location_view, name='mechanic-location'),
 

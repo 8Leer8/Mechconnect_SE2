@@ -2,14 +2,18 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
+from rest_framework.views import APIView
 from django.db.models import Prefetch, Q
 from django.db import transaction
 from django.utils import timezone
+from datetime import timedelta
+from math import atan2, cos, radians, sin, sqrt
 import logging
 
 from ...models import (
     Booking, Request, ActiveBooking, CancelBooking,
-    ReworkBooking, DisputeBooking, CompleteBooking, Receipt, BroadcastOffer, PaymentInstallment, Quotation, RequestAssignment
+    ReworkBooking, DisputeBooking, CompleteBooking, Receipt, BroadcastOffer, PaymentInstallment, Quotation, RequestAssignment,
+    BroadcastRequest, BroadcastRequestAddOn, DirectRequestAddOn, MechanicLocation
 )
 from ...serializers import BookingSerializer, BookingPaymentSerializer
 from users.models import Account, Mechanic, MechanicReview, TokenTransaction
@@ -66,6 +70,99 @@ def _to_money(value):
 
     amount = Decimal(value or 0)
     return amount.quantize(Decimal('0.01'))
+
+
+def _haversine_meters(lat1, lon1, lat2, lon2):
+    """Return great-circle distance between two coordinates in meters."""
+    earth_radius_m = 6_371_000
+
+    d_lat = radians(lat2 - lat1)
+    d_lon = radians(lon2 - lon1)
+    a = sin(d_lat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(d_lon / 2) ** 2
+    c = 2 * atan2(sqrt(a), sqrt(1 - a))
+    return earth_radius_m * c
+
+
+def _collect_rescue_services_and_addons(original_request, booking):
+    """Collect service and add-on IDs to clone into an auto-rescue broadcast."""
+    service_ids = set()
+    add_on_ids = set()
+
+    # Direct request source of truth
+    if hasattr(original_request, 'directrequest') and original_request.directrequest is not None:
+        direct_request = original_request.directrequest
+        if direct_request.service_id:
+            service_ids.add(direct_request.service_id)
+
+        for add_on in DirectRequestAddOn.objects.filter(request=original_request).values_list('service_add_on_id', flat=True):
+            if add_on:
+                add_on_ids.add(add_on)
+
+    # Existing broadcast source of truth
+    if hasattr(original_request, 'broadcast_request') and original_request.broadcast_request is not None:
+        broadcast = original_request.broadcast_request
+        service_ids.update(list(broadcast.services.values_list('id', flat=True)))
+        add_on_ids.update(
+            list(
+                BroadcastRequestAddOn.objects.filter(broadcast_request=broadcast).values_list(
+                    'service_add_on_id', flat=True
+                )
+            )
+        )
+
+    # Custom request fallback via latest quotation selections
+    try:
+        quotation = booking.quotation
+        quote_items = quotation.items.exclude(status=Quotation.Status.REJECTED)
+        for item in quote_items:
+            if item.service_id:
+                service_ids.add(item.service_id)
+            if item.service_add_on_id:
+                add_on_ids.add(item.service_add_on_id)
+    except Exception:
+        pass
+
+    return list(service_ids), list(add_on_ids)
+
+
+def _build_rescue_description(original_request, booking):
+    """Build a sensible rescue description from the original request payload."""
+    if hasattr(original_request, 'broadcast_request') and original_request.broadcast_request is not None:
+        description = (original_request.broadcast_request.description or '').strip()
+        if description:
+            return description
+
+    if hasattr(original_request, 'customrequest') and original_request.customrequest is not None:
+        description = (original_request.customrequest.description or '').strip()
+        if description:
+            return description
+
+    if hasattr(original_request, 'emergencyrequest') and original_request.emergencyrequest is not None:
+        description = (original_request.emergencyrequest.description or '').strip()
+        if description:
+            return description
+
+    if hasattr(original_request, 'directrequest') and original_request.directrequest is not None:
+        try:
+            service_name = original_request.directrequest.service.name
+            if service_name:
+                return f"Auto-rescue no-show for {service_name}"
+        except Exception:
+            pass
+
+    try:
+        quotation = booking.quotation
+        names = [
+            item.service.name
+            for item in quotation.items.select_related('service').exclude(service=None)
+            if item.service and item.service.name
+        ]
+        if names:
+            return f"Auto-rescue no-show for {', '.join(sorted(set(names)))}"
+    except Exception:
+        pass
+
+    return "Client reported a mechanic no-show."
 
 
 def _build_booking_payment_summary(booking):
@@ -1710,4 +1807,196 @@ def client_pay_booking(request, booking_id):
         {'error': 'Deprecated endpoint. Use /bookings/payments/initiate/ instead.'},
         status=status.HTTP_410_GONE,
     )
+
+
+class ReportNoShowView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request, booking_id):
+        account_id = request.session.get('account_id')
+        if not account_id:
+            return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        try:
+            account = Account.objects.select_related('client').get(id=account_id)
+        except Account.DoesNotExist:
+            return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not hasattr(account, 'client'):
+            return Response({'error': 'Only clients can report a no-show'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            booking = Booking.objects.select_related(
+                'request',
+                'request__client',
+                'request__provider',
+                'request__service_location',
+                'request__broadcast_request',
+            ).get(id=booking_id)
+        except Booking.DoesNotExist:
+            return Response({'error': 'Booking not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if booking.request.client_id != account.client.id:
+            return Response({'error': 'You can only report your own bookings'}, status=status.HTTP_403_FORBIDDEN)
+
+        if booking.status not in {Booking.Status.ACCEPTED, Booking.Status.ON_THE_WAY}:
+            return Response(
+                {'error': 'No-show reporting is only allowed while booking is accepted or on_the_way'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Gate 1: Time gate -> fee_locked_at + eta_minutes + 15 minutes
+        if not booking.fee_locked_at or booking.eta_minutes is None:
+            return Response(
+                {'error': 'Too early to report no-show'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        now = timezone.now()
+        grace_deadline = booking.fee_locked_at + timedelta(minutes=int(booking.eta_minutes) + 15)
+        if now < grace_deadline:
+            return Response(
+                {'error': 'Too early to report no-show'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Gate 2: Geo-fence -> reject if mechanic within 200m of service location
+        service_location = booking.request.service_location
+        if (
+            service_location
+            and service_location.latitude is not None
+            and service_location.longitude is not None
+        ):
+            mechanic_location = MechanicLocation.objects.filter(booking=booking).first()
+            if mechanic_location is not None:
+                distance_m = _haversine_meters(
+                    float(mechanic_location.latitude),
+                    float(mechanic_location.longitude),
+                    float(service_location.latitude),
+                    float(service_location.longitude),
+                )
+                if distance_m < 200:
+                    return Response(
+                        {'error': 'Mechanic is arriving'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+        original_request = booking.request
+        rescue_service_ids, rescue_add_on_ids = _collect_rescue_services_and_addons(original_request, booking)
+        rescue_description = _build_rescue_description(original_request, booking)
+
+        concern_picture = None
+        if hasattr(original_request, 'broadcast_request') and original_request.broadcast_request is not None:
+            concern_picture = original_request.broadcast_request.concern_picture
+        elif hasattr(original_request, 'customrequest') and original_request.customrequest is not None:
+            concern_picture = original_request.customrequest.concern_picture
+        elif hasattr(original_request, 'emergencyrequest') and original_request.emergencyrequest is not None:
+            concern_picture = original_request.emergencyrequest.concern_picture
+
+        rescue_latitude = None
+        rescue_longitude = None
+        if service_location and service_location.latitude is not None and service_location.longitude is not None:
+            rescue_latitude = service_location.latitude
+            rescue_longitude = service_location.longitude
+        elif hasattr(original_request, 'broadcast_request') and original_request.broadcast_request is not None:
+            rescue_latitude = original_request.broadcast_request.latitude
+            rescue_longitude = original_request.broadcast_request.longitude
+
+        if rescue_latitude is None or rescue_longitude is None:
+            return Response(
+                {'error': 'Cannot auto-rescue booking without a valid location'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        penalty_applied_until = None
+        offense_count = None
+
+        with transaction.atomic():
+            booking.status = Booking.Status.CANCELLED
+            booking.save(update_fields=['status', 'updated_at'])
+
+            CancelBooking.objects.update_or_create(
+                booking=booking,
+                defaults={
+                    'cancelled_by': account,
+                    'reason': 'Client reported no-show. Auto-rescue broadcast created.',
+                },
+            )
+
+            # Penalty tiers:
+            # 1st offense -> 2h lock, 2nd -> 24h lock, 3rd+ -> 30 days lock.
+            try:
+                mechanic = None
+                if original_request.provider_id:
+                    mechanic = Mechanic.objects.select_for_update().filter(account_id=original_request.provider_id).first()
+
+                if mechanic is not None:
+                    offense_count = (mechanic.no_show_count or 0) + 1
+                    mechanic.no_show_count = offense_count
+
+                    if offense_count == 1:
+                        lock_duration = timedelta(hours=2)
+                    elif offense_count == 2:
+                        lock_duration = timedelta(hours=24)
+                    else:
+                        lock_duration = timedelta(days=30)
+
+                    penalty_applied_until = now + lock_duration
+                    mechanic.cooldown_until = penalty_applied_until
+                    mechanic.is_locked = True
+                    mechanic.save(update_fields=['no_show_count', 'cooldown_until', 'is_locked', 'updated_at'])
+            except Exception:
+                logger.exception('Failed to apply no-show penalty for booking %s', booking.id)
+
+            new_request = Request.objects.create(
+                client=original_request.client,
+                request_type=Request.Type.BROADCAST,
+                service_location=original_request.service_location,
+                vehicle_type=original_request.vehicle_type,
+                vehicle_brand=original_request.vehicle_brand,
+                vehicle_model=original_request.vehicle_model,
+            )
+
+            new_broadcast = BroadcastRequest.objects.create(
+                request=new_request,
+                description=rescue_description,
+                concern_picture=concern_picture,
+                latitude=rescue_latitude,
+                longitude=rescue_longitude,
+                search_radius_km=10,
+                expires_at=now + timedelta(minutes=15),
+                status=BroadcastRequest.Status.SEARCHING,
+            )
+
+            if rescue_service_ids:
+                new_broadcast.services.set(rescue_service_ids)
+
+            for add_on_id in rescue_add_on_ids:
+                BroadcastRequestAddOn.objects.get_or_create(
+                    broadcast_request=new_broadcast,
+                    service_add_on_id=add_on_id,
+                )
+
+        try:
+            _broadcast_booking_action(
+                booking,
+                'cancelled_no_show',
+                'Booking cancelled due to no-show report and auto-rescue started.',
+            )
+        except Exception:
+            pass
+
+        response_payload = {
+            'message': 'No-show reported. Auto-rescue broadcast created.',
+            'booking_id': booking.id,
+            'broadcast_request_id': new_broadcast.id,
+            'request_id': new_request.id,
+        }
+
+        if offense_count is not None:
+            response_payload['mechanic_no_show_count'] = offense_count
+        if penalty_applied_until is not None:
+            response_payload['mechanic_cooldown_until'] = penalty_applied_until.isoformat()
+
+        return Response(response_payload, status=status.HTTP_201_CREATED)
 

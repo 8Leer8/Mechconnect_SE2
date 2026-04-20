@@ -128,6 +128,15 @@ class Mechanic(models.Model):
         default=False,
         help_text="When true, mechanic is blocked from accepting new jobs",
     )
+    no_show_count = models.PositiveIntegerField(
+        default=0,
+        help_text="Total no-show violations recorded for anti-abuse penalties",
+    )
+    cooldown_until = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Mechanic cannot accept jobs until this timestamp",
+    )
     payout_method = models.CharField(
         max_length=10,
         choices=[('gcash', 'GCash'), ('maya', 'Maya')],
