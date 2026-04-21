@@ -199,6 +199,7 @@ export default function ClientBookingDetailScreen() {
   const [ratingPromptDismissed, setRatingPromptDismissed] = useState(false);
   const [showActionMenu, setShowActionMenu] = useState(false);
   const [showDisputeModal, setShowDisputeModal] = useState(false);
+  const [reportingNoShow, setReportingNoShow] = useState(false);
   const [disputeReason, setDisputeReason] = useState('');
   const [disputeImage, setDisputeImage] = useState<string | null>(null);
   const [refundMethod, setRefundMethod] = useState<'gcash' | 'maya' | 'voucher'>('gcash');
@@ -991,6 +992,10 @@ export default function ClientBookingDetailScreen() {
     (booking.status === 'completed' || booking.status === 'pending_payment') &&
     String(booking.dispute_status || 'none').toLowerCase() === 'none';
 
+  const isNoShowEligible =
+    (booking.status === 'accepted' || booking.status === 'on_the_way') &&
+    !reportingNoShow;
+
   const handleOpenDisputeForm = () => {
     setShowActionMenu(false);
     if (!isDisputeEligible) {
@@ -998,6 +1003,62 @@ export default function ClientBookingDetailScreen() {
       return;
     }
     setShowDisputeModal(true);
+  };
+
+  const handleReportNoShow = () => {
+    setShowActionMenu(false);
+    if (!isNoShowEligible) {
+      Alert.alert('No-Show unavailable', 'This booking is not eligible for no-show reporting right now.');
+      return;
+    }
+
+    Alert.alert(
+      'Report Mechanic No-Show',
+      'This will cancel the current booking, apply anti-abuse checks, and create an auto-rescue broadcast request. Continue?',
+      [
+        { text: 'Not now', style: 'cancel' },
+        {
+          text: 'Report No-Show',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setReportingNoShow(true);
+              const response = await fetch(`${API_URL}/bookings/bookings/${booking.id}/report-no-show/`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+              });
+
+              const data = await response.json().catch(() => ({} as any));
+              if (!response.ok) {
+                throw new Error((data as any)?.error || 'Unable to report no-show');
+              }
+
+              fetchBookingDetail(true);
+
+              const rescueId = Number((data as any)?.broadcast_request_id || 0);
+              Alert.alert(
+                'No-Show Reported',
+                rescueId > 0
+                  ? `Auto-rescue broadcast #${rescueId} was created.`
+                  : 'Auto-rescue broadcast was created.',
+                [
+                  {
+                    text: 'View Requests',
+                    onPress: () => router.push('/(clientTabs)/main/request' as any),
+                  },
+                  { text: 'Stay here', style: 'cancel' },
+                ]
+              );
+            } catch (err: any) {
+              Alert.alert('No-Show Error', err?.message || 'Unable to report no-show');
+            } finally {
+              setReportingNoShow(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleSubmitDispute = async () => {
@@ -1174,6 +1235,30 @@ export default function ClientBookingDetailScreen() {
             >
               <FontAwesome name="flag" size={14} color="#FF8C00" />
               <ThemedText style={{ color: '#ECEDEE', marginLeft: 10, fontWeight: '600' }}>Report / File Dispute</ThemedText>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                paddingHorizontal: 14,
+                paddingVertical: 12,
+                borderTopWidth: 1,
+                borderTopColor: '#2A2C2E',
+                opacity: isNoShowEligible ? 1 : 0.45,
+              }}
+              activeOpacity={0.8}
+              onPress={handleReportNoShow}
+              disabled={!isNoShowEligible}
+            >
+              {reportingNoShow ? (
+                <ActivityIndicator size="small" color="#FF6B5C" />
+              ) : (
+                <FontAwesome name="exclamation-triangle" size={14} color="#FF6B5C" />
+              )}
+              <ThemedText style={{ color: '#ECEDEE', marginLeft: 10, fontWeight: '600' }}>
+                Report Mechanic No-Show
+              </ThemedText>
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
