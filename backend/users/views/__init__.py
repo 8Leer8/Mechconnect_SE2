@@ -42,6 +42,8 @@ __all__ = [
     'list_mechanics',
     'get_mechanic_profile',
     'shop_owner_wallet',
+    'shop_owner_wallet_transactions',
+    'shop_owner_wallet_topup',
     'mechanic_wallet',
     'mechanic_wallet_transactions',
     'mechanic_wallet_topup',

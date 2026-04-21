@@ -10,6 +10,18 @@ import CreditsEWalletModal from '@/components/payment/CreditsEWalletModal';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
+const MECHANIC_WALLET = {
+  balance: () => `${API_URL}/users/mechanic/wallet/`,
+  transactions: () => `${API_URL}/users/mechanic/wallet/transactions/`,
+  topup: () => `${API_URL}/users/mechanic/wallet/topup/`,
+};
+
+const SHOP_OWNER_WALLET = {
+  balance: () => `${API_URL}/users/shop-owner/wallet/`,
+  transactions: () => `${API_URL}/users/shop-owner/wallet/transactions/`,
+  topup: () => `${API_URL}/users/shop-owner/wallet/topup/`,
+};
+
 type TokenPricingData = {
   base_token_price: number;
   min_token_purchase: number;
@@ -97,15 +109,14 @@ export default function WalletScreen() {
   useEffect(() => {
     fetchTokenPricing();
     fetchTransactions();
-  }, []);
+  }, [shopOwnerCreditsView]);
 
   async function fetchBalance() {
-    if (shopOwnerCreditsView) {
-      setBalance(0);
-      return;
-    }
     try {
-      const res = await fetch(`${API_URL}/users/mechanic/wallet/`, { credentials: 'include' });
+      const res = await fetch(
+        shopOwnerCreditsView ? SHOP_OWNER_WALLET.balance() : MECHANIC_WALLET.balance(),
+        { credentials: 'include' }
+      );
       if (!res.ok) return;
       const data = await res.json();
       setBalance(data.tokens_balance ?? 0);
@@ -135,7 +146,10 @@ export default function WalletScreen() {
 
   async function fetchTransactions() {
     try {
-      const res = await fetch(`${API_URL}/users/mechanic/wallet/transactions/`, { credentials: 'include' });
+      const res = await fetch(
+        shopOwnerCreditsView ? SHOP_OWNER_WALLET.transactions() : MECHANIC_WALLET.transactions(),
+        { credentials: 'include' }
+      );
       if (!res.ok) return;
       const data = await res.json();
       const normalized = Array.isArray(data.transactions)
@@ -153,10 +167,9 @@ export default function WalletScreen() {
   }
 
   async function topUp(pkg: { tokens: number; price: number }, method: 'gcash' | 'maya') {
-    if (shopOwnerCreditsView) return;
     try {
       setTopUpLoading(pkg.tokens);
-      const res = await fetch(`${API_URL}/users/mechanic/wallet/topup/`, {
+      const res = await fetch(shopOwnerCreditsView ? SHOP_OWNER_WALLET.topup() : MECHANIC_WALLET.topup(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -202,7 +215,7 @@ export default function WalletScreen() {
         <View style={styles.headerCenter}>
           <ThemedText style={styles.headerTitle}>Credits</ThemedText>
           <ThemedText style={styles.headerSubtitle}>
-            {shopOwnerCreditsView ? 'Shop owner credits (preview)' : 'Manage your credits'}
+            {shopOwnerCreditsView ? 'Manage your shop credits' : 'Manage your credits'}
           </ThemedText>
         </View>
         <TouchableOpacity style={styles.refreshBtn} onPress={fetchBalance}>
@@ -240,7 +253,7 @@ export default function WalletScreen() {
                 key={pkg.tokens}
                 style={styles.packageCard}
                 onPress={() => openPaymentMethodModal(pkg)}
-                disabled={topUpLoading !== null || shopOwnerCreditsView}
+                disabled={topUpLoading !== null}
                 activeOpacity={0.7}
               >
                 <View style={styles.packageIconCircle}>

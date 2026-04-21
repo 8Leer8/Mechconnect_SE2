@@ -56,6 +56,8 @@ urlpatterns = [
     path('register-shop-owner/', views.register_shop_owner, name='register_shop_owner'),
     # Mechanic wallet endpoints
     path('shop-owner/wallet/', views.shop_owner_wallet, name='shop_owner_wallet'),
+    path('shop-owner/wallet/transactions/', views.shop_owner_wallet_transactions, name='shop_owner_wallet_transactions'),
+    path('shop-owner/wallet/topup/', views.shop_owner_wallet_topup, name='shop_owner_wallet_topup'),
     path('mechanic/wallet/', views.mechanic_wallet, name='mechanic_wallet'),
     path('mechanic/wallet/transactions/', views.mechanic_wallet_transactions, name='mechanic_wallet_transactions'),
     path('mechanic/wallet/topup/', views.mechanic_wallet_topup, name='mechanic_wallet_topup'),

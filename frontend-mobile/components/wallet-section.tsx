@@ -37,11 +37,6 @@ export default function WalletSection({
     let mounted = true;
     async function load() {
       try {
-        if (creditsSource === 'shop-owner') {
-          if (!mounted) return;
-          setBalance(0);
-          return;
-        }
         const res = await fetch(walletUrl(creditsSource), { credentials: 'include' });
         if (!res.ok) return;
         const data = await res.json();

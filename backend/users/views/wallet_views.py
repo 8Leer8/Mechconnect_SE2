@@ -14,51 +14,13 @@ def get_token_pricing_view(request):
     return Response(get_token_pricing())
 
 
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def mechanic_wallet(request):
-    """Return the current mechanic's token balance.
-
-    Uses session `account_id` to identify the account and mechanic.
-    """
-    account_id = request.session.get('account_id')
-    if not account_id:
-        return Response({'error': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
-
-    try:
-        account = Account.objects.get(id=account_id)
-    except Account.DoesNotExist:
-        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
-
-    try:
-        mechanic = Mechanic.objects.get(account=account)
-    except Mechanic.DoesNotExist:
-        return Response({'error': 'Mechanic profile not found'}, status=status.HTTP_404_NOT_FOUND)
-
-    return Response({'tokens_balance': mechanic.tokens_balance}, status=status.HTTP_200_OK)
-
-
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def mechanic_wallet_transactions(request):
-    """Return recent mechanic token purchase transactions."""
-    account_id = request.session.get('account_id')
-    if not account_id:
-        return Response({'error': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
-
-    try:
-        account = Account.objects.get(id=account_id)
-        Mechanic.objects.get(account=account)
-    except (Account.DoesNotExist, Mechanic.DoesNotExist):
-        return Response({'error': 'Mechanic not found'}, status=status.HTTP_404_NOT_FOUND)
-
+def _token_purchases_for_account(account):
     purchases = (
         TokenPurchase.objects
         .filter(account=account)
         .order_by('-purchased_at')[:50]
     )
-
-    transactions = [
+    return [
         {
             'id': purchase.id,
             'tokens': purchase.tokens_amount,
@@ -70,46 +32,9 @@ def mechanic_wallet_transactions(request):
         for purchase in purchases
     ]
 
-    return Response({'transactions': transactions}, status=status.HTTP_200_OK)
 
-
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def shop_owner_wallet(request):
-    """Return credits balance for the shop owner tab.
-
-    Shop-owner credits are independent from mechanic wallet for now, so default is always 0
-    until dedicated shop-owner top-up is implemented.
-    """
-    account_id = request.session.get('account_id')
-    if not account_id:
-        return Response({'error': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
-
-    try:
-        account = Account.objects.get(id=account_id)
-    except Account.DoesNotExist:
-        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
-
-    try:
-        ShopOwner.objects.get(account=account)
-    except ShopOwner.DoesNotExist:
-        return Response({'error': 'Shop owner profile not found'}, status=status.HTTP_404_NOT_FOUND)
-
-    return Response({'tokens_balance': 0}, status=status.HTTP_200_OK)
-
-
-@api_view(['POST'])
-@permission_classes([AllowAny])
-def mechanic_wallet_topup(request):
-    """Top-up mechanic tokens (development helper).
-
-    Expects JSON: { "tokens": 10, "price": 1.99, "payment_method": "gcash"|"maya" }
-    Creates a TokenPurchase record with status 'completed' and increments balance.
-    """
-    account_id = request.session.get('account_id')
-    if not account_id:
-        return Response({'error': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
-
+def _parse_topup_body(request):
+    """Validate top-up JSON. Returns (tokens, computed_price, base_token_price, raw_method) or a Response error."""
     try:
         tokens = int(request.data.get('tokens', 0))
     except (TypeError, ValueError):
@@ -166,13 +91,111 @@ def mechanic_wallet_topup(request):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+    return tokens, computed_price, base_token_price, raw_method
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def mechanic_wallet(request):
+    """Return the current mechanic's token balance.
+
+    Uses session `account_id` to identify the account and mechanic.
+    """
+    account_id = request.session.get('account_id')
+    if not account_id:
+        return Response({'error': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        account = Account.objects.get(id=account_id)
+    except Account.DoesNotExist:
+        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        mechanic = Mechanic.objects.get(account=account)
+    except Mechanic.DoesNotExist:
+        return Response({'error': 'Mechanic profile not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    return Response({'tokens_balance': mechanic.tokens_balance}, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def mechanic_wallet_transactions(request):
+    """Return recent mechanic token purchase transactions."""
+    account_id = request.session.get('account_id')
+    if not account_id:
+        return Response({'error': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        account = Account.objects.get(id=account_id)
+        Mechanic.objects.get(account=account)
+    except (Account.DoesNotExist, Mechanic.DoesNotExist):
+        return Response({'error': 'Mechanic not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    return Response({'transactions': _token_purchases_for_account(account)}, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def shop_owner_wallet(request):
+    """Return credits balance for the logged-in shop owner."""
+    account_id = request.session.get('account_id')
+    if not account_id:
+        return Response({'error': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        account = Account.objects.get(id=account_id)
+    except Account.DoesNotExist:
+        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        shop_owner = ShopOwner.objects.get(account=account)
+    except ShopOwner.DoesNotExist:
+        return Response({'error': 'Shop owner profile not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    return Response({'tokens_balance': shop_owner.tokens_balance}, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def shop_owner_wallet_transactions(request):
+    """Return recent shop owner token purchase transactions (same TokenPurchase ledger as mechanics)."""
+    account_id = request.session.get('account_id')
+    if not account_id:
+        return Response({'error': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        account = Account.objects.get(id=account_id)
+        ShopOwner.objects.get(account=account)
+    except (Account.DoesNotExist, ShopOwner.DoesNotExist):
+        return Response({'error': 'Shop owner not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    return Response({'transactions': _token_purchases_for_account(account)}, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def mechanic_wallet_topup(request):
+    """Top-up mechanic tokens (development helper).
+
+    Expects JSON: { "tokens": 10, "price": 1.99, "payment_method": "gcash"|"maya" }
+    Creates a TokenPurchase record with status 'completed' and increments balance.
+    """
+    account_id = request.session.get('account_id')
+    if not account_id:
+        return Response({'error': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    parsed = _parse_topup_body(request)
+    if isinstance(parsed, Response):
+        return parsed
+    tokens, computed_price, base_token_price, raw_method = parsed
+
     try:
         account = Account.objects.get(id=account_id)
         mechanic = Mechanic.objects.get(account=account)
     except (Account.DoesNotExist, Mechanic.DoesNotExist):
         return Response({'error': 'Mechanic not found'}, status=status.HTTP_404_NOT_FOUND)
 
-    # Create a TokenPurchase record for auditing
     purchase = TokenPurchase.objects.create(
         account=account,
         tokens_amount=tokens,
@@ -181,13 +204,60 @@ def mechanic_wallet_topup(request):
         status='completed',
     )
 
-    # Increment mechanic balance
     mechanic.tokens_balance = mechanic.tokens_balance + tokens
     mechanic.save(update_fields=['tokens_balance'])
 
     return Response(
         {
             'tokens_balance': mechanic.tokens_balance,
+            'token_price': float(base_token_price),
+            'charged_price': float(computed_price),
+            'purchase': {
+                'id': purchase.id,
+                'tokens': purchase.tokens_amount,
+                'price': float(purchase.price),
+                'payment_method': purchase.payment_method,
+                'status': purchase.status,
+                'time': purchase.purchased_at,
+            },
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def shop_owner_wallet_topup(request):
+    """Top-up shop owner credits (same pricing rules as mechanic wallet)."""
+    account_id = request.session.get('account_id')
+    if not account_id:
+        return Response({'error': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    parsed = _parse_topup_body(request)
+    if isinstance(parsed, Response):
+        return parsed
+    tokens, computed_price, base_token_price, raw_method = parsed
+
+    try:
+        account = Account.objects.get(id=account_id)
+        shop_owner = ShopOwner.objects.get(account=account)
+    except (Account.DoesNotExist, ShopOwner.DoesNotExist):
+        return Response({'error': 'Shop owner not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    purchase = TokenPurchase.objects.create(
+        account=account,
+        tokens_amount=tokens,
+        price=computed_price,
+        payment_method=raw_method,
+        status='completed',
+    )
+
+    shop_owner.tokens_balance = shop_owner.tokens_balance + tokens
+    shop_owner.save(update_fields=['tokens_balance'])
+
+    return Response(
+        {
+            'tokens_balance': shop_owner.tokens_balance,
             'token_price': float(base_token_price),
             'charged_price': float(computed_price),
             'purchase': {
