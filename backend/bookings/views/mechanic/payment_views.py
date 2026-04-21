@@ -21,6 +21,7 @@ from pricing.models import PricingConfiguration
 from users.models import Account
 
 from ...models import Booking, PaymentInstallment, PaymentQRToken, PaymentTransaction, Quotation, Receipt
+from ...backjob_utils import booking_has_backjob
 
 
 logger = logging.getLogger(__name__)
@@ -39,11 +40,13 @@ def _build_paymongo_redirect_urls():
 
 
 def _is_payment_open(booking):
+    if booking_has_backjob(booking):
+        return False
     return booking.status in PAYMENT_OPEN_STATUSES
 
 
 def _is_initial_stage_only(booking):
-    return booking.status == Booking.Status.ACCEPTED
+    return booking.status == Booking.Status.ACCEPTED and not booking_has_backjob(booking)
 
 
 def _get_authenticated_account(request):
@@ -280,6 +283,9 @@ def _build_installment_plan(booking, use_initial_payment=False, initial_payment_
 
 
 def _ensure_installments_for_booking(booking, use_initial_payment=False, initial_payment_amount=None):
+    if booking_has_backjob(booking):
+        return False
+
     # Respect an existing installment plan unless caller explicitly asks to seed initial/final.
     existing_qs = PaymentInstallment.objects.filter(booking=booking)
     if existing_qs.exists() and not use_initial_payment and initial_payment_amount is None:
@@ -335,6 +341,15 @@ def _ensure_installments_for_booking(booking, use_initial_payment=False, initial
 
 
 def _get_payment_summary(booking):
+    if booking_has_backjob(booking):
+        return {
+            "total_amount": 0.0,
+            "total_paid": 0.0,
+            "remaining_balance": 0.0,
+            "fully_paid": True,
+            "payment_status": Booking.PaymentStatus.FULLY_PAID,
+        }
+
     _sync_booking_payable_total(booking)
     _sync_pending_installments_to_total(booking)
     total_amount = _to_money(booking.amount_fee)
@@ -434,6 +449,15 @@ def _finalize_payment_success(
     paid_at = paid_at or timezone.now()
     method = str(method or "qr").lower().strip() or "qr"
     reference = str(external_reference).strip() if external_reference else None
+
+    if booking_has_backjob(booking):
+        summary = _get_payment_summary(booking)
+        return {
+            "installment": None,
+            "summary": summary,
+            "fully_paid": True,
+            "duplicate": True,
+        }
 
     with transaction.atomic():
         booking = Booking.objects.select_for_update().get(id=booking.id)
@@ -958,6 +982,9 @@ def initiate_payment(request):
 
     if booking.request.client.account_id != account.id:
         return Response({"error": "Unauthorized"}, status=403)
+
+    if booking_has_backjob(booking):
+        return Response({"error": "Backjob bookings are free of charge"}, status=400)
 
     use_initial_payment = bool(request.data.get("use_initial_payment", False))
     initial_payment_amount = request.data.get("initial_payment_amount")

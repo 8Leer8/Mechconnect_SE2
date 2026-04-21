@@ -21,7 +21,7 @@ import PriceSummarySheet from '@/components/PriceSummarySheet';
 import { useNotification } from '@/hooks/useNotification';
 import { usePricing } from '@/hooks/usePricing';
 import { reverseGeocodeAddress } from '@/lib/locationAddress';
-import { useLocation } from '../main_request_form/LocationContext';
+import { useLocation } from '@/context/LocationContext';
 import { styles } from '@/style/client/mechanicDirectRequestStyles';
 import { calculateBroadcastFee, FeeBreakdown } from '@/utils/trafficutils';
 import { AddressFields, geocodeAddressFields, haversineDistance } from '@/utils/geocodeAddress';
@@ -235,8 +235,9 @@ export default function MechanicDirectRequestScreen() {
 			}
 
 			try {
+				const providerQuery = selectedProviderId ? `?provider_id=${selectedProviderId}` : '';
 				const response = await fetch(
-					`${API_URL}/bookings/direct/services/${selectedServiceId}/addons/`,
+					`${API_URL}/bookings/direct/services/${selectedServiceId}/addons/${providerQuery}`,
 					{ credentials: 'include' }
 				);
 				if (cancelled) return;
@@ -259,7 +260,7 @@ export default function MechanicDirectRequestScreen() {
 		return () => {
 			cancelled = true;
 		};
-	}, [selectedServiceId]);
+	}, [selectedServiceId, selectedProviderId]);
 
 	useFocusEffect(
 		React.useCallback(() => {

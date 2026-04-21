@@ -10,6 +10,7 @@ import { styles } from '@/style/mechanic/bookingsStyles';
 import WalletBadge from '@/components/wallet-badge';
 import { SkeletonBookingList } from '@/components/skeletons/SkeletonLoaders';
 import { useWebSocketContext } from '@/context/WebSocketContext';
+import { canOpenBookingChat } from '@/lib/bookingAccess';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -620,14 +621,14 @@ export default function BookingsScreen() {
                         <ThemedText style={styles.detailsBtnText}>Details</ThemedText>
                         <FontAwesome name="chevron-right" size={11} color="#FF8C00" />
                       </TouchableOpacity>
-                      { (booking as any).has_backjob && !((booking as any).backjob && (booking as any).backjob.status === 'accepted') && (
+                      {canOpenBookingChat(booking) ? (
                         <TouchableOpacity
                           style={styles.chatBtn}
                           onPress={() => router.push({ pathname: '/chat/booking_chat', params: { bookingId: String(booking.id) } })}
                         >
                           <ThemedText style={styles.chatBtnText}>Open Chat</ThemedText>
                         </TouchableOpacity>
-                      )}
+                      ) : null}
                     </View>
                   ) : null}
                 </View>

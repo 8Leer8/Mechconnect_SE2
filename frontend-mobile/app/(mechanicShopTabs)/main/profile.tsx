@@ -222,6 +222,15 @@ export default function MechanicShopProfileScreen() {
         <View style={styles.section}>
           <TouchableOpacity 
             style={styles.menuItem} 
+            onPress={() => router.push('/mechanic/others/edit-profile')}
+          >
+            <FontAwesome name="pencil" size={20} color="#FF8C00" />
+            <ThemedText style={styles.menuText}>Edit Profile</ThemedText>
+            <FontAwesome name="chevron-right" size={16} color="#8E8E93" />
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={styles.menuItem} 
             onPress={() => router.push('/(auth)/switchAccount/switchPage')}
           >
             <FontAwesome name="exchange" size={20} color="#FF8C00" />

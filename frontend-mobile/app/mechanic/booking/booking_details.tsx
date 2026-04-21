@@ -16,6 +16,7 @@ import { SkeletonDetailPage } from '@/components/skeletons/SkeletonLoaders';
 import * as Location from 'expo-location';
 import { Image } from 'expo-image';
 import { CashQRDisplayModal, PendingPaymentModal } from '@/components/payment';
+import { bookingHasBackjob, canOpenBookingChat } from '@/lib/bookingAccess';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -603,7 +604,9 @@ export default function BookingDetailScreen() {
             break;
           case 'booking.pending_payment':
           case 'pending_payment':
-            setShowPendingPayment(true);
+            if (!bookingHasBackjob(booking)) {
+              setShowPendingPayment(true);
+            }
             break;
           default:
             break;
@@ -618,14 +621,14 @@ export default function BookingDetailScreen() {
     } catch (e) {
       // ignore
     }
-  }, [lastMessage, bookingId]);
+  }, [lastMessage, bookingId, booking?.has_backjob, booking?.backjob?.status]);
 
   useEffect(() => {
     if (booking?.status === 'completed') {
       setShowCashQR(false);
       setShowPendingPayment(false);
     }
-  }, [booking?.status]);
+  }, [booking?.status, booking?.has_backjob, booking?.backjob?.status]);
 
   const fetchBookingDetail = useCallback(async () => {
     if (!bookingId) return;
@@ -639,7 +642,6 @@ export default function BookingDetailScreen() {
 
       if (!response.ok) throw new Error('Failed to fetch booking details');
       const data = await response.json() as any;
-      console.log('FULL BOOKING DATA:', JSON.stringify(data, null, 2));
       const bookingData = data.booking || data;
       setBooking(bookingData);
       const currentStatus = bookingData.status;
@@ -836,7 +838,13 @@ export default function BookingDetailScreen() {
         throw new Error(parseApiErrorMessage(err, 'Failed to complete booking'));
       }
       // refresh booking
+      setShowPendingPayment(false);
+      setShowCashQR(false);
       await fetchBookingDetail();
+      showNotification({
+        type: 'success',
+        message: bookingHasBackjob(booking) ? 'Backjob completed.' : 'Booking completed.',
+      });
     } catch (err: any) {
       showNotification({ type: 'error', message: err.message || 'Failed to mark booking as complete' });
     } finally {
@@ -1101,7 +1109,7 @@ export default function BookingDetailScreen() {
       }
 
       setShowAfterServicePhotoModal(false);
-      showNotification({ type: 'success', message: 'Job finished. Pending payment.' });
+      showNotification({ type: 'success', message: bookingHasBackjob(booking) ? 'Backjob completed.' : 'Job finished. Pending payment.' });
       await fetchBookingDetail();
     } catch (err: any) {
       showNotification({ type: 'error', message: err.message || 'Failed to finish job' });
@@ -1369,15 +1377,22 @@ export default function BookingDetailScreen() {
 
   const paymentSummary = booking.payment_summary || {};
   const summaryTotalAmount = Math.max(0, Number((paymentSummary as any).total_amount ?? booking.amount_fee ?? 0));
-  const totalAmount = Math.max(0, Math.max(totalFee, summaryTotalAmount));
+  const hasBackjob = bookingHasBackjob(booking);
+  const totalAmount = hasBackjob ? 0 : Math.max(0, Math.max(totalFee, summaryTotalAmount));
   const totalPaid = Number(paymentSummary.total_paid || 0);
-  const remainingBalance = Math.max(0, totalAmount - totalPaid);
-  const paymentStatus = totalPaid >= totalAmount && totalAmount > 0
+  const remainingBalance = hasBackjob ? 0 : Math.max(0, totalAmount - totalPaid);
+  const paymentStatus = hasBackjob || totalAmount <= 0
+    ? 'fully_paid'
+    : totalPaid >= totalAmount && totalAmount > 0
     ? 'fully_paid'
     : (totalPaid > 0 ? 'partially_paid' : 'unpaid');
-  const paymentProgressPct = totalAmount > 0
+  const paymentProgressPct = hasBackjob
+    ? 100
+    : totalAmount > 0
     ? Math.min(100, Math.max(0, (totalPaid / totalAmount) * 100))
     : 0;
+  const showPendingPaymentFlow = booking.status === 'pending_payment' && !hasBackjob;
+  const showBackjobCompletionFlow = hasBackjob && booking.status === 'pending_payment';
 
   const getPaymentStatusColor = (status: string) => {
     switch (status) {
@@ -1672,7 +1687,7 @@ export default function BookingDetailScreen() {
         )}
 
         {/* Finished: Accept payment (server) */}
-        {booking.status === 'finished' && (
+        {booking.status === 'finished' && !hasBackjob && (
           <View style={styles.actionButtonWrapper}>
             <TouchableOpacity
               style={[styles.actionButton, styles.paymentReceivedButton, paymentReceivedLoading && styles.actionButtonDisabled]}
@@ -1692,7 +1707,7 @@ export default function BookingDetailScreen() {
         )}
 
         {/* Pending payment: proceed to payment modal + go back */}
-        {booking.status === 'pending_payment' && (
+        {showPendingPaymentFlow && (
           <View style={{ width: '100%' }}>
             <View style={{ marginTop: 12 }}>
               <TouchableOpacity
@@ -1753,6 +1768,33 @@ export default function BookingDetailScreen() {
             </View>
           </View>
         )}
+
+        {showBackjobCompletionFlow && (
+          <View style={{ width: '100%' }}>
+            <View style={{ marginTop: 12 }}>
+              <View style={styles.noteBox}>
+                <ThemedText style={styles.noteText}>Backjob is free of charge. Mark it completed instead of collecting payment.</ThemedText>
+              </View>
+            </View>
+
+            <View style={{ marginTop: 12 }}>
+              <TouchableOpacity
+                style={[styles.finishLargeButton, { backgroundColor: '#34C759' }]}
+                onPress={handleCompleteBooking}
+                disabled={transitioning || completing}
+              >
+                {completing ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <FontAwesome name="check" size={18} color="#fff" />
+                    <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Mark Backjob Completed</ThemedText>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
       </View>
 
       <ScrollView
@@ -1785,7 +1827,9 @@ export default function BookingDetailScreen() {
           <View style={styles.statusInfo}>
             <View style={styles.statusBadgeRow}>
               <View style={[styles.statusBadge, { backgroundColor: getStatusColor(booking.status) }]}> 
-                <ThemedText style={styles.statusBadgeText}>{getStatusLabel(booking.status)}</ThemedText>
+                <ThemedText style={styles.statusBadgeText}>
+                  {showBackjobCompletionFlow ? 'Backjob Pending Completion' : getStatusLabel(booking.status)}
+                </ThemedText>
               </View>
               {(booking.status === 'active' || booking.status === 'paused') && booking.active_details?.started_at && (
                 <ThemedText style={styles.timerText}>{formatDuration(timer)}</ThemedText>
@@ -1855,22 +1899,24 @@ export default function BookingDetailScreen() {
         </View>
 
         {/* Chat Section */}
-        <TouchableOpacity
-          style={styles.sectionCard}
-          onPress={() => router.push({ pathname: '/chat/booking_chat', params: { bookingId: String(booking.id) } })}
-          activeOpacity={0.8}
-        >
-          <View style={styles.sectionHeader}>
-            <View style={[styles.sectionIcon, { backgroundColor: '#007AFF15' }]}> 
-              <FontAwesome name="comments" size={16} color="#007AFF" />
+        {canOpenBookingChat(booking) ? (
+          <TouchableOpacity
+            style={styles.sectionCard}
+            onPress={() => router.push({ pathname: '/chat/booking_chat', params: { bookingId: String(booking.id) } })}
+            activeOpacity={0.8}
+          >
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#007AFF15' }]}> 
+                <FontAwesome name="comments" size={16} color="#007AFF" />
+              </View>
+              <ThemedText style={styles.sectionTitle}>Chat with Client</ThemedText>
+              <FontAwesome name="chevron-right" size={16} color="#8E8E93" style={{ marginLeft: 'auto' }} />
             </View>
-            <ThemedText style={styles.sectionTitle}>Chat with Client</ThemedText>
-            <FontAwesome name="chevron-right" size={16} color="#8E8E93" style={{ marginLeft: 'auto' }} />
-          </View>
-          <View style={{ paddingVertical: 8 }}>
-            <ThemedText style={{ color: '#666' }}>Open the booking chat to message the client.</ThemedText>
-          </View>
-        </TouchableOpacity>
+            <View style={{ paddingVertical: 8 }}>
+              <ThemedText style={{ color: '#666' }}>Open the booking chat to message the client.</ThemedText>
+            </View>
+          </TouchableOpacity>
+        ) : null}
 
         {/* Payment method is shown below the Receipt card (moved there) */}
 
@@ -1987,7 +2033,11 @@ export default function BookingDetailScreen() {
                 <View style={[styles.progressBarFill, { width: `${paymentProgressPct}%` }]} />
               </View>
               <ThemedText style={styles.progressText}>{Math.round(paymentProgressPct)}% Paid</ThemedText>
-              <ThemedText style={[styles.noteText, { marginTop: 6, marginBottom: 8 }]}>Payment will be released to mechanic after job completion.</ThemedText>
+              <ThemedText style={[styles.noteText, { marginTop: 6, marginBottom: 8 }]}>
+                {hasBackjob
+                  ? 'Backjob is free of charge. No payment is due.'
+                  : 'Payment will be released to mechanic after job completion.'}
+              </ThemedText>
               <View style={styles.receiptDivider} />
             </View>
 
@@ -2331,7 +2381,7 @@ export default function BookingDetailScreen() {
         
       </ScrollView>
       <PendingPaymentModal
-        visible={showPendingPayment && booking.status === 'pending_payment'}
+        visible={showPendingPayment && showPendingPaymentFlow}
         bookingId={booking.id}
         amount={remainingBalance}
         onClose={() => setShowPendingPayment(false)}
@@ -2347,7 +2397,7 @@ export default function BookingDetailScreen() {
       />
 
       <CashQRDisplayModal
-        visible={showCashQR && booking.status === 'pending_payment'}
+        visible={showCashQR && showPendingPaymentFlow}
         bookingId={booking.id}
         amount={remainingBalance}
         onClose={() => setShowCashQR(false)}

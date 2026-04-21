@@ -40,6 +40,41 @@ def mechanic_wallet(request):
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
+def mechanic_wallet_transactions(request):
+    """Return recent mechanic token purchase transactions."""
+    account_id = request.session.get('account_id')
+    if not account_id:
+        return Response({'error': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        account = Account.objects.get(id=account_id)
+        Mechanic.objects.get(account=account)
+    except (Account.DoesNotExist, Mechanic.DoesNotExist):
+        return Response({'error': 'Mechanic not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    purchases = (
+        TokenPurchase.objects
+        .filter(account=account)
+        .order_by('-purchased_at')[:50]
+    )
+
+    transactions = [
+        {
+            'id': purchase.id,
+            'tokens': purchase.tokens_amount,
+            'price': float(purchase.price),
+            'payment_method': (purchase.payment_method or '').lower() or None,
+            'status': purchase.status,
+            'time': purchase.purchased_at,
+        }
+        for purchase in purchases
+    ]
+
+    return Response({'transactions': transactions}, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
 def shop_owner_wallet(request):
     """Return credits balance for the shop owner tab.
 
@@ -68,7 +103,7 @@ def shop_owner_wallet(request):
 def mechanic_wallet_topup(request):
     """Top-up mechanic tokens (development helper).
 
-    Expects JSON: { "tokens": 10, "price": 1.99 }
+    Expects JSON: { "tokens": 10, "price": 1.99, "payment_method": "gcash"|"maya" }
     Creates a TokenPurchase record with status 'completed' and increments balance.
     """
     account_id = request.session.get('account_id')
@@ -82,6 +117,10 @@ def mechanic_wallet_topup(request):
 
     if tokens <= 0:
         return Response({'error': 'Invalid token amount'}, status=status.HTTP_400_BAD_REQUEST)
+
+    raw_method = str(request.data.get('payment_method', 'gcash')).strip().lower()
+    if raw_method not in {'gcash', 'maya'}:
+        return Response({'error': 'Invalid payment method'}, status=status.HTTP_400_BAD_REQUEST)
 
     token_pricing = get_token_pricing()
     token_packages = token_pricing.get('token_packages') or []
@@ -134,7 +173,13 @@ def mechanic_wallet_topup(request):
         return Response({'error': 'Mechanic not found'}, status=status.HTTP_404_NOT_FOUND)
 
     # Create a TokenPurchase record for auditing
-    TokenPurchase.objects.create(account=account, tokens_amount=tokens, price=computed_price, status='completed')
+    purchase = TokenPurchase.objects.create(
+        account=account,
+        tokens_amount=tokens,
+        price=computed_price,
+        payment_method=raw_method,
+        status='completed',
+    )
 
     # Increment mechanic balance
     mechanic.tokens_balance = mechanic.tokens_balance + tokens
@@ -145,6 +190,14 @@ def mechanic_wallet_topup(request):
             'tokens_balance': mechanic.tokens_balance,
             'token_price': float(base_token_price),
             'charged_price': float(computed_price),
+            'purchase': {
+                'id': purchase.id,
+                'tokens': purchase.tokens_amount,
+                'price': float(purchase.price),
+                'payment_method': purchase.payment_method,
+                'status': purchase.status,
+                'time': purchase.purchased_at,
+            },
         },
         status=status.HTTP_200_OK,
     )

@@ -6,7 +6,7 @@ import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
-import { useLocation } from './LocationContext';
+import { useLocation } from '@/context/LocationContext';
 import { styles } from '@/style/client/broadcastRequestStyles';
 import { useNotification } from '@/hooks/useNotification';
 import VehicleTypeModal from '@/components/VehicleTypeModal';
