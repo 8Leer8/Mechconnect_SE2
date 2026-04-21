@@ -21,6 +21,7 @@ import {
   type QRScanResult,
 } from '@/components/payment';
 import MechanicRatingModal from '@/components/booking/MechanicRatingModal';
+import ReportNoShowModal from '@/components/booking/ReportNoShowModal';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -199,6 +200,7 @@ export default function ClientBookingDetailScreen() {
   const [showActionMenu, setShowActionMenu] = useState(false);
   const [showDisputeModal, setShowDisputeModal] = useState(false);
   const [reportingNoShow, setReportingNoShow] = useState(false);
+  const [showReportNoShowModal, setShowReportNoShowModal] = useState(false);
   const [disputeReason, setDisputeReason] = useState('');
   const [disputeImage, setDisputeImage] = useState<string | null>(null);
   const [refundMethod, setRefundMethod] = useState<'gcash' | 'maya' | 'voucher'>('gcash');
@@ -1004,54 +1006,45 @@ export default function ClientBookingDetailScreen() {
       Alert.alert('No-Show unavailable', 'This booking is not eligible for no-show reporting right now.');
       return;
     }
+    setShowReportNoShowModal(true);
+  };
 
-    Alert.alert(
-      'Report Mechanic No-Show',
-      'This will cancel the current booking, apply anti-abuse checks, and create an auto-rescue broadcast request. Continue?',
-      [
-        { text: 'Not now', style: 'cancel' },
-        {
-          text: 'Report No-Show',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              setReportingNoShow(true);
-              const response = await fetch(`${API_URL}/bookings/bookings/${booking.id}/report-no-show/`, {
-                method: 'POST',
-                credentials: 'include',
-                headers: { 'Content-Type': 'application/json' },
-              });
+  const handleConfirmReportNoShow = async () => {
+    try {
+      setReportingNoShow(true);
+      const response = await fetch(`${API_URL}/bookings/bookings/${booking.id}/report-no-show/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
 
-              const data = await response.json().catch(() => ({} as any));
-              if (!response.ok) {
-                throw new Error((data as any)?.error || 'Unable to report no-show');
-              }
+      const data = await response.json().catch(() => ({} as any));
+      if (!response.ok) {
+        throw new Error((data as any)?.error || 'Unable to report no-show');
+      }
 
-              fetchBookingDetail(true);
+      setShowReportNoShowModal(false);
+      fetchBookingDetail(true);
 
-              const rescueId = Number((data as any)?.broadcast_request_id || 0);
-              Alert.alert(
-                'No-Show Reported',
-                rescueId > 0
-                  ? `Auto-rescue broadcast #${rescueId} was created.`
-                  : 'Auto-rescue broadcast was created.',
-                [
-                  {
-                    text: 'View Requests',
-                    onPress: () => router.push('/(clientTabs)/main/request' as any),
-                  },
-                  { text: 'Stay here', style: 'cancel' },
-                ]
-              );
-            } catch (err: any) {
-              Alert.alert('No-Show Error', err?.message || 'Unable to report no-show');
-            } finally {
-              setReportingNoShow(false);
-            }
+      const rescueId = Number((data as any)?.broadcast_request_id || 0);
+      Alert.alert(
+        'No-Show Reported',
+        rescueId > 0
+          ? `Auto-rescue broadcast #${rescueId} was created.`
+          : 'Auto-rescue broadcast was created.',
+        [
+          {
+            text: 'View Requests',
+            onPress: () => router.push('/(clientTabs)/main/request' as any),
           },
-        },
-      ]
-    );
+          { text: 'Stay here', style: 'cancel' },
+        ]
+      );
+    } catch (err: any) {
+      Alert.alert('No-Show Error', err?.message || 'Unable to report no-show');
+    } finally {
+      setReportingNoShow(false);
+    }
   };
 
   const handleSubmitDispute = async () => {
@@ -1256,6 +1249,13 @@ export default function ClientBookingDetailScreen() {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      <ReportNoShowModal
+        visible={showReportNoShowModal}
+        loading={reportingNoShow}
+        onCancel={() => setShowReportNoShowModal(false)}
+        onConfirm={handleConfirmReportNoShow}
+      />
 
       <Modal visible={showDisputeModal} transparent animationType="slide" onRequestClose={() => setShowDisputeModal(false)}>
         <View style={styles.modalOverlay}>

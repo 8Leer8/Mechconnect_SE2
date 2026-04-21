@@ -1845,15 +1845,20 @@ class ReportNoShowView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Gate 1: Time gate -> fee_locked_at + eta_minutes + 15 minutes
-        if not booking.fee_locked_at or booking.eta_minutes is None:
+        now = timezone.now()
+        # Gate 1: Time gate.
+        # Primary rule: fee_locked_at + eta_minutes + 15 minutes.
+        # Fallback for accepted bookings (before mechanic starts travel): booked_at + 30 minutes.
+        if booking.fee_locked_at and booking.eta_minutes is not None:
+            grace_deadline = booking.fee_locked_at + timedelta(minutes=int(booking.eta_minutes) + 15)
+        elif booking.status == Booking.Status.ACCEPTED and booking.booked_at:
+            grace_deadline = booking.booked_at + timedelta(minutes=30)
+        else:
             return Response(
                 {'error': 'Too early to report no-show'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        now = timezone.now()
-        grace_deadline = booking.fee_locked_at + timedelta(minutes=int(booking.eta_minutes) + 15)
         if now < grace_deadline:
             return Response(
                 {'error': 'Too early to report no-show'},
