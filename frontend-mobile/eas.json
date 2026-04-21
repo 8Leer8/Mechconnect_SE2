@@ -9,7 +9,10 @@
       "distribution": "internal"
     },
     "preview": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://mechconnectse2-production-621a.up.railway.app/api"
+      }
     },
     "production": {
       "autoIncrement": true

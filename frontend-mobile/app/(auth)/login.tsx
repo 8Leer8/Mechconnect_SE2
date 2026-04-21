@@ -33,11 +33,22 @@ interface ActiveRoleResponse {
   roles?: string[];
 }
 
+interface ProfileDetailsResponse {
+  profile?: {
+    current_role_profile?: {
+      mechanic?: {
+        is_working_for_shop?: boolean;
+      };
+    };
+  };
+}
+
 export default function LoginScreen() {
   const router = useRouter();
   const [username, setUsername]       = useState('');
   const [password, setPassword]       = useState('');
   const [loading, setLoading]         = useState(false);
+  const [agreedToPolicies, setAgreedToPolicies] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [usernameFocused, setUsernameFocused] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
@@ -57,6 +68,10 @@ export default function LoginScreen() {
     }
     if (!password) {
       showToast('Please enter your password.');
+      return;
+    }
+    if (!agreedToPolicies) {
+      showToast('Please agree to the Terms & Conditions and Privacy Policy.');
       return;
     }
     if (!API_URL) {
@@ -107,7 +122,7 @@ export default function LoginScreen() {
               headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
             });
             if (profileResponse.ok) {
-              const profileData = await profileResponse.json();
+              const profileData = await profileResponse.json() as ProfileDetailsResponse;
               const mechanicProfile = profileData.profile?.current_role_profile?.mechanic;
               router.replace(mechanicProfile?.is_working_for_shop
                 ? '/(mechanicShopTabs)/main/home'
@@ -211,10 +226,34 @@ export default function LoginScreen() {
             <Text style={s.forgotText}>Forgot Password?</Text>
           </TouchableOpacity>
 
+          <View style={s.termsWrap}>
+            <TouchableOpacity
+              style={s.checkboxButton}
+              onPress={() => setAgreedToPolicies(prev => !prev)}
+              disabled={loading}
+            >
+              <Feather
+                name={agreedToPolicies ? 'check-square' : 'square'}
+                size={16}
+                color={agreedToPolicies ? ORANGE : MUTED}
+              />
+            </TouchableOpacity>
+            <View style={s.termsTextWrap}>
+              <Text style={s.termsText}>I agree to the </Text>
+              <TouchableOpacity disabled={loading} onPress={() => router.push('./terms' as any)}>
+                <Text style={s.termsLink}>Terms &amp; Conditions</Text>
+              </TouchableOpacity>
+              <Text style={s.termsText}> and the </Text>
+              <TouchableOpacity disabled={loading} onPress={() => router.push('./privacy' as any)}>
+                <Text style={s.termsLink}>Privacy Policy</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
           <TouchableOpacity
-            style={[s.button, loading && s.buttonDisabled]}
+            style={[s.button, (loading || !agreedToPolicies) && s.buttonDisabled]}
             onPress={handleLogin}
-            disabled={loading}
+            disabled={loading || !agreedToPolicies}
           >
             {loading
               ? <ActivityIndicator color="#fff" />
@@ -272,6 +311,31 @@ const s = StyleSheet.create({
 
   forgotRow: { alignItems: 'flex-end', marginTop: 8, marginBottom: 20 },
   forgotText: { fontSize: 12, fontWeight: '400', color: ORANGE },
+
+  termsWrap: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+  },
+  checkboxButton: {
+    marginTop: 1,
+    marginRight: 8,
+  },
+  termsTextWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    flex: 1,
+  },
+  termsText: {
+    fontSize: 12,
+    fontWeight: '400',
+    color: MUTED,
+  },
+  termsLink: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: ORANGE,
+  },
 
   button: {
     height: 42,
