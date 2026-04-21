@@ -20,7 +20,9 @@ import {
   QRScannerModal,
   type QRScanResult,
 } from '@/components/payment';
+import ReportNoShowModal from '@/components/booking/ReportNoShowModal';
 import MechanicRatingModal from '@/components/booking/MechanicRatingModal';
+import { bookingHasBackjob, canOpenBookingChat } from '@/lib/bookingAccess';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
