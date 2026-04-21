@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from bookings.models import RequestAssignment
+from bookings.backjob_utils import booking_allows_chat
 
 
 def evaluate_booking_chat_access(booking, account) -> Dict[str, Any]:
@@ -15,6 +16,13 @@ def evaluate_booking_chat_access(booking, account) -> Dict[str, Any]:
     - role: chat role label for UI/logic
     """
     if booking is None or account is None:
+        return {
+            "is_participant": False,
+            "can_send": False,
+            "role": "none",
+        }
+
+    if not booking_allows_chat(booking):
         return {
             "is_participant": False,
             "can_send": False,

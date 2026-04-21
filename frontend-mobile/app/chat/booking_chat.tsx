@@ -17,6 +17,7 @@ export default function BookingChatScreen() {
   const [conversationData, setConversationData] = useState<any | null>(null);
   const [canSendMessages, setCanSendMessages] = useState(true);
   const [myChatRole, setMyChatRole] = useState<string | null>(null);
+  const [chatAccessDenied, setChatAccessDenied] = useState(false);
   const [loading, setLoading] = useState(true);
   const [conversationId, setConversationId] = useState<number | null>(null);
   const [messages, setMessages] = useState<any[]>([]);
@@ -119,6 +120,15 @@ export default function BookingChatScreen() {
       if (!res.ok) {
         const text = await res.text().catch(() => null);
         console.warn('conversation create failed', res.status, text);
+        if (res.status === 403) {
+          setConversationData(null);
+          setConversationId(null);
+          setMessages([]);
+          setCanSendMessages(false);
+          setMyChatRole('none');
+          setChatAccessDenied(true);
+          return;
+        }
         throw new Error('Failed to get/create conversation');
       }
       const data = await res.json();
@@ -126,6 +136,7 @@ export default function BookingChatScreen() {
       setConversationData(data);
       setCanSendMessages(Boolean(data?.can_send ?? false));
       setMyChatRole(data?.my_chat_role || null);
+      setChatAccessDenied(data?.my_chat_role === 'none' && !data?.is_participant);
     } catch (e) {
       console.warn(e);
     } finally {
@@ -148,11 +159,22 @@ export default function BookingChatScreen() {
         credentials: 'include',
         headers,
       });
-      if (!res.ok) return;
+      if (!res.ok) {
+        if (res.status === 403) {
+          setConversationData(null);
+          setConversationId(null);
+          setMessages([]);
+          setCanSendMessages(false);
+          setMyChatRole('none');
+          setChatAccessDenied(true);
+        }
+        return;
+      }
       const data = await res.json();
       setConversationData(data);
       setCanSendMessages(Boolean(data?.can_send ?? false));
       setMyChatRole(data?.my_chat_role || null);
+      setChatAccessDenied(data?.my_chat_role === 'none' && !data?.is_participant);
       if (data?.id && data.id !== conversationId) {
         setConversationId(data.id);
       }
@@ -1020,6 +1042,33 @@ export default function BookingChatScreen() {
       {loading ? (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
           <ActivityIndicator color="#FF8C00" />
+        </View>
+      ) : chatAccessDenied ? (
+        <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 20 }}>
+          <View
+            style={{
+              backgroundColor: '#151718',
+              borderRadius: 18,
+              borderWidth: 1,
+              borderColor: '#2A2C2E',
+              padding: 20,
+              alignItems: 'center',
+            }}
+          >
+            <FontAwesome name="ban" size={28} color="#FF8C00" />
+            <ThemedText style={{ color: '#ECEDEE', fontSize: 20, fontWeight: '800', marginTop: 12 }}>
+              Chat unavailable
+            </ThemedText>
+            <ThemedText style={{ color: '#8E8E93', textAlign: 'center', marginTop: 8, lineHeight: 20 }}>
+              This booking is closed to chat unless there is a live backjob in progress.
+            </ThemedText>
+            <TouchableOpacity
+              style={{ marginTop: 18, backgroundColor: '#FF8C00', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12 }}
+              onPress={() => router.back()}
+            >
+              <ThemedText style={{ color: '#111214', fontWeight: '700' }}>Go back</ThemedText>
+            </TouchableOpacity>
+          </View>
         </View>
       ) : (
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={80}>

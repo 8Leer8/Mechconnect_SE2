@@ -20,7 +20,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import WalletBadge from '@/components/wallet-badge';
 import { eventBus } from '@/utils/eventBus';
-import { getDistanceKm } from '@/app/client/request/main_request_form/LocationContext';
+import { getDistanceKm } from '@/context/LocationContext';
 import { styles } from '@/style/mechanic/mapStyles';
 import { getImageUrl } from '@/lib/imageUtils';
 import { useNotification } from '@/hooks/useNotification';

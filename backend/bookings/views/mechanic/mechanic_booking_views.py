@@ -28,6 +28,7 @@ from ...models import (
     RequestAssignment,
 )
 from ...models import Quotation, QuotationItem
+from ...backjob_utils import booking_has_backjob
 from users.models import Account
 from services.models import MechanicService
 from ..client.client_booking_views import _serialize_bookings, _serialize_single_booking
@@ -612,6 +613,66 @@ def mechanic_finish_job(request, booking_id):
                 "code": "after_photo_required",
             },
             status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if booking_has_backjob(booking):
+        now = timezone.now()
+        complete, created = CompleteBooking.objects.get_or_create(
+            booking=booking,
+            defaults={"total_amount": 0, "notes": "Backjob completed"},
+        )
+        if not created:
+            complete.total_amount = 0
+            complete.notes = "Backjob completed"
+            complete.save(update_fields=["total_amount", "notes"])
+
+        booking.status = Booking.Status.COMPLETED
+        booking.payment_status = Booking.PaymentStatus.FULLY_PAID
+        booking.amount_fee = Decimal("0.00")
+        booking.completed_at = now
+        booking.save(update_fields=["status", "payment_status", "amount_fee", "completed_at", "updated_at"])
+
+        try:
+            if hasattr(booking, "activebooking"):
+                booking.activebooking.is_job_done = True
+                booking.activebooking.save(update_fields=["is_job_done"])
+        except Exception:
+            pass
+
+        Receipt.objects.filter(booking=booking).delete()
+        PaymentInstallment.objects.filter(booking=booking).delete()
+
+        notify_booking_parties(
+            account.id,
+            booking.request.client.account_id,
+            booking.id,
+            booking.status,
+            "Backjob completed",
+        )
+
+        try:
+            from channels.layers import get_channel_layer
+            from asgiref.sync import async_to_sync
+
+            channel_layer = get_channel_layer()
+            payload = {
+                "type": "booking_update",
+                "action": "booking.completed",
+                "booking_id": booking.id,
+                "status": booking.status,
+                "amount": 0,
+                "message": "Backjob completed",
+            }
+            targets = {account.id, booking.request.client.account_id}
+            for target in targets:
+                if target and channel_layer:
+                    async_to_sync(channel_layer.group_send)(f"user_{target}", payload)
+        except Exception:
+            pass
+
+        return Response(
+            {"message": "Backjob completed.", "booking_id": booking.id, "status": booking.status},
+            status=status.HTTP_200_OK,
         )
 
     # Finalize payable total before entering pending payment so payment summary and charge targets stay consistent.
@@ -2179,7 +2240,7 @@ def mechanic_complete_booking(request, booking_id):
         )
 
     # Block manual completion while payment is pending/unconfirmed.
-    if booking.status == Booking.Status.PENDING_PAYMENT:
+    if booking.status == Booking.Status.PENDING_PAYMENT and not booking_has_backjob(booking):
         return Response(
             {
                 "error": "Cannot complete booking. Payment is pending confirmation."
@@ -2187,22 +2248,26 @@ def mechanic_complete_booking(request, booking_id):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    try:
-        receipt = booking.receipt
-        if not receipt.payment_received:
-            return Response(
-                {
-                    "error": "Cannot complete booking. Payment has not been confirmed yet."
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-    except Receipt.DoesNotExist:
-        pass
+    if not booking_has_backjob(booking):
+        try:
+            receipt = booking.receipt
+            if not receipt.payment_received:
+                return Response(
+                    {
+                        "error": "Cannot complete booking. Payment has not been confirmed yet."
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        except Receipt.DoesNotExist:
+            pass
 
     total_amount = request.data.get("total_amount")
     notes = request.data.get("notes", "")
 
-    if total_amount is not None:
+    if booking_has_backjob(booking):
+        total_amount = 0.0
+        notes = notes or "Backjob completed"
+    elif total_amount is not None:
         try:
             total_amount = float(total_amount)
         except (TypeError, ValueError):
@@ -2227,24 +2292,31 @@ def mechanic_complete_booking(request, booking_id):
     booking.status = Booking.Status.COMPLETED
     booking.amount_fee = total_amount
     booking.completed_at = now
-    booking.save(update_fields=["status", "amount_fee", "completed_at", "updated_at"])
+    if booking_has_backjob(booking):
+        booking.payment_status = Booking.PaymentStatus.FULLY_PAID
+        booking.save(update_fields=["status", "amount_fee", "completed_at", "updated_at", "payment_status"])
+        Receipt.objects.filter(booking=booking).delete()
+        PaymentInstallment.objects.filter(booking=booking).delete()
+    else:
+        booking.save(update_fields=["status", "amount_fee", "completed_at", "updated_at"])
 
     if hasattr(booking, "activebooking"):
         booking.activebooking.is_job_done = True
         booking.activebooking.save(update_fields=["is_job_done"])
 
     data = _serialize_single_booking(booking)
+    completion_message = "Backjob completed" if booking_has_backjob(booking) else "Your booking has been completed"
 
     notify_booking_parties(
         account.id,
         booking.request.client.account_id,
         booking.id,
         booking.status,
-        "Your booking has been completed",
+        completion_message,
     )
 
     return Response(
-        {"message": "Booking completed", "booking": data},
+        {"message": completion_message, "booking": data},
         status=status.HTTP_200_OK,
     )
 

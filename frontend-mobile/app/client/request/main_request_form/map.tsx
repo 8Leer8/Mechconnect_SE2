@@ -22,7 +22,7 @@ import { ThemedText } from '@/components/themed-text';
 import { useNotification } from '@/hooks/useNotification';
 import { reverseGeocodeAddress } from '@/lib/locationAddress';
 import { styles } from '@/style/client/broadcastLocationPickerStyles';
-import { useLocation } from './LocationContext';
+import { useLocation } from '@/context/LocationContext';
 
 const MIN_RADIUS_KM = 1;
 const MAX_RADIUS_KM = 50;

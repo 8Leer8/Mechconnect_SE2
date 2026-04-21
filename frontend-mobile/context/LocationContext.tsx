@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useMemo, ReactNode } from 'react';
+import React, { createContext, useContext, useMemo, useState, ReactNode } from 'react';
 
 interface LocationData {
   latitude: number;
@@ -28,7 +28,6 @@ export function LocationProvider({ children }: { children: ReactNode }) {
   const [selectedLocation, setSelectedLocation] = useState<LocationData | null>(null);
   const [mechanicLocation, setMechanicLocation] = useState<MechanicLocation | null>(null);
 
-  // Memoize context value to prevent re-renders on every parent render
   const value = useMemo(
     () => ({ selectedLocation, setSelectedLocation, mechanicLocation, setMechanicLocation }),
     [selectedLocation, mechanicLocation]
@@ -49,18 +48,12 @@ export function useLocation() {
   return context;
 }
 
-// ---- Distance & Pricing Helpers ----
-
-/**
- * Calculate distance between two coordinates using Haversine formula
- * @returns distance in kilometers
- */
 export function getDistanceKm(
   a: { latitude: number; longitude: number },
   b: { latitude: number; longitude: number }
 ): number {
   const toRad = (v: number) => (v * Math.PI) / 180;
-  const R = 6371; // Earth radius in km
+  const R = 6371;
   const dLat = toRad(b.latitude - a.latitude);
   const dLon = toRad(b.longitude - a.longitude);
 
@@ -74,14 +67,6 @@ export function getDistanceKm(
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
-/**
- * Calculate estimated price: service minimum price + distance charge
- * Distance charge: 10 pesos per km based on actual distance
- * @param distanceKm - actual distance in km
- * @param serviceMinimumPrice - base service price
- * @param perKmRate - rate per km (default 10 pesos)
- * @returns total estimated price
- */
 export function getEstimatedPrice(
   distanceKm: number,
   serviceMinimumPrice: number,

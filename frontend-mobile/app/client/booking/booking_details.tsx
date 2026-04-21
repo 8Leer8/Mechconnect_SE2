@@ -21,6 +21,7 @@ import {
   type QRScanResult,
 } from '@/components/payment';
 import MechanicRatingModal from '@/components/booking/MechanicRatingModal';
+import { bookingHasBackjob, canOpenBookingChat } from '@/lib/bookingAccess';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -658,7 +659,7 @@ export default function ClientBookingDetailScreen() {
       if (!bid || !resolvedBookingId) return;
       if (bid === Number(resolvedBookingId)) {
         const action = String(lastMessage.action || '').toLowerCase();
-        if (action === 'booking.pending_payment') {
+        if (action === 'booking.pending_payment' && !bookingHasBackjob(booking)) {
           setShowPaymentModal(true);
         }
         if (action === 'payment.completed') {
@@ -670,7 +671,7 @@ export default function ClientBookingDetailScreen() {
     } catch (e) {
       // ignore
     }
-  }, [lastMessage, resolvedBookingId, fetchBookingDetail]);
+  }, [lastMessage, resolvedBookingId, fetchBookingDetail, booking?.has_backjob, booking?.backjob?.status]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -678,11 +679,11 @@ export default function ClientBookingDetailScreen() {
   };
 
   useEffect(() => {
-    if (booking?.status === 'pending_payment') {
+    if (booking?.status === 'pending_payment' && !bookingHasBackjob(booking)) {
       setUseInitialPayment(false);
       setShowPaymentModal(true);
     }
-  }, [booking?.status]);
+  }, [booking?.status, booking?.has_backjob, booking?.backjob?.status]);
 
   const getStatusLabel = (status: string) => {
     switch (status) {
@@ -783,7 +784,7 @@ export default function ClientBookingDetailScreen() {
   };
 
   const openChatWithMechanic = () => {
-    if (!booking) return;
+    if (!booking || !canOpenBookingChat(booking)) return;
     router.push({ pathname: '/chat/booking_chat', params: { bookingId: String(booking.id) } });
     setBackjobModalVisible(false);
   };
@@ -801,7 +802,8 @@ export default function ClientBookingDetailScreen() {
     const canChooseInitialPayment =
       isBookedState &&
       paymentStatus === 'unpaid' &&
-      !hasPaidInstallment;
+      !hasPaidInstallment &&
+      !bookingHasBackjob(booking);
 
     if (!canChooseInitialPayment && useInitialPayment) {
       setUseInitialPayment(false);
@@ -885,6 +887,7 @@ export default function ClientBookingDetailScreen() {
   const totalPaid = Number(paymentSummary.total_paid || 0);
   const summaryTotalAmount = Math.max(0, Number((paymentSummary as any).total_amount ?? booking.amount_fee ?? 0));
   const summaryPaymentStatus = String(paymentSummary.payment_status || 'unpaid').toLowerCase();
+  const hasBackjob = bookingHasBackjob(booking);
   const hasPaidInstallment = installments.some(
     (item) => String(item.status || '').toLowerCase() === 'paid'
   );
@@ -892,10 +895,11 @@ export default function ClientBookingDetailScreen() {
   const canChooseInitialPayment =
     isBookedState &&
     summaryPaymentStatus === 'unpaid' &&
-    !hasPaidInstallment;
+    !hasPaidInstallment &&
+    !hasBackjob;
   const isPayableTotalLive = booking.status !== 'pending_payment';
 
-  const payableTotal = Math.max(0, Math.max(totalFee, summaryTotalAmount));
+  const payableTotal = hasBackjob ? 0 : Math.max(0, Math.max(totalFee, summaryTotalAmount));
   const fallbackInitialAmount = payableTotal * selectedInitialPaymentPercentage;
   const fallbackInitialRemaining = Math.max(0, payableTotal - fallbackInitialAmount);
   const pendingInitial = installments.find((item) => String(item.installment_type || '').toLowerCase() === 'initial');
@@ -903,7 +907,9 @@ export default function ClientBookingDetailScreen() {
   const initialPreviewAmount = pendingInitial ? Number(pendingInitial.amount || 0) : fallbackInitialAmount;
   const _remainingAfterInitialPreview = pendingFinal ? Number(pendingFinal.amount || 0) : fallbackInitialRemaining;
   const remainingBalance = Math.max(0, payableTotal - totalPaid);
-  const paymentStatus = totalPaid >= payableTotal && payableTotal > 0
+  const paymentStatus = hasBackjob || payableTotal <= 0
+    ? 'fully_paid'
+    : totalPaid >= payableTotal && payableTotal > 0
     ? 'fully_paid'
     : (totalPaid > 0 ? 'partially_paid' : 'unpaid');
 
@@ -938,6 +944,7 @@ export default function ClientBookingDetailScreen() {
   const modalAmountToPay = booking.status === 'pending_payment'
     ? remainingBalance
     : totalAmount;
+  const showPaymentCTA = !hasBackjob && (booking.status === 'pending_payment' || isBookedState);
   const mechanicReviewMeta = booking.mechanic_review || {};
   const existingMechanicReview = mechanicReviewMeta.review || null;
   const canRateMechanic =
@@ -1369,7 +1376,7 @@ export default function ClientBookingDetailScreen() {
         style={styles.scrollView}
         contentContainerStyle={[
           styles.scrollContent,
-          (booking.status === 'pending_payment' || isBookedState) ? styles.scrollContentWithFloatingAction : null,
+          showPaymentCTA ? styles.scrollContentWithFloatingAction : null,
         ]}
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -1447,10 +1454,10 @@ export default function ClientBookingDetailScreen() {
         )}
 
         {/* Chat Section */}
-        {booking.provider && (
+        {booking.provider && canOpenBookingChat(booking) ? (
           <TouchableOpacity
             style={styles.sectionCard}
-            onPress={() => router.push({ pathname: '/chat/booking_chat', params: { bookingId: String(booking.id) } })}
+            onPress={openChatWithMechanic}
             activeOpacity={0.8}
           >
             <View style={styles.sectionHeader}>
@@ -1464,7 +1471,7 @@ export default function ClientBookingDetailScreen() {
               <ThemedText style={{ color: '#666' }}>Open the booking chat to message the mechanic.</ThemedText>
             </View>
           </TouchableOpacity>
-        )}
+        ) : null}
 
         {/* Shop Information */}
         {booking.shop && (
@@ -1618,7 +1625,11 @@ export default function ClientBookingDetailScreen() {
                 </View>
               ) : null}
 
-              <ThemedText style={[styles.noteText, { marginTop: 6, marginBottom: 8 }]}>Payment will be released to mechanic after job completion.</ThemedText>
+              <ThemedText style={[styles.noteText, { marginTop: 6, marginBottom: 8 }]}>
+                {hasBackjob
+                  ? 'Backjob is free of charge. No payment is due.'
+                  : 'Payment will be released to mechanic after job completion.'}
+              </ThemedText>
               <View style={styles.receiptDivider} />
             </View>
 
@@ -1628,10 +1639,12 @@ export default function ClientBookingDetailScreen() {
                   <FontAwesome name="clock-o" size={12} color="#C89B55" />
                   <ThemedText style={styles.pendingHintText}>Pending quotation changes are waiting for your response.</ThemedText>
                 </View>
-                <TouchableOpacity style={styles.pendingHintActionButton} onPress={openChatWithMechanic}>
-                  <FontAwesome name="comments" size={12} color="#111214" />
-                  <ThemedText style={styles.pendingHintActionText}>Review in Chat</ThemedText>
-                </TouchableOpacity>
+                {canOpenBookingChat(booking) ? (
+                  <TouchableOpacity style={styles.pendingHintActionButton} onPress={openChatWithMechanic}>
+                    <FontAwesome name="comments" size={12} color="#111214" />
+                    <ThemedText style={styles.pendingHintActionText}>Review in Chat</ThemedText>
+                  </TouchableOpacity>
+                ) : null}
               </View>
             ) : null}
 
@@ -2158,7 +2171,7 @@ export default function ClientBookingDetailScreen() {
 
       </ScrollView>
 
-      {(booking.status === 'pending_payment' || isBookedState) && (
+      {showPaymentCTA && (
         <View style={styles.actionButtonsContainer}>
           <TouchableOpacity style={styles.finishLargeButton} onPress={() => setShowPaymentModal(true)}>
             <FontAwesome name="credit-card" size={16} color="#fff" style={{ marginRight: 8 }} />
@@ -2170,7 +2183,7 @@ export default function ClientBookingDetailScreen() {
       )}
 
       <PaymentMethodModal
-        visible={showPaymentModal && (booking.status === 'pending_payment' || isBookedState)}
+        visible={showPaymentModal && showPaymentCTA}
         bookingId={booking.id}
         totalAmount={modalAmountToPay}
         allowInitialPayment={canChooseInitialPayment}
@@ -2195,7 +2208,7 @@ export default function ClientBookingDetailScreen() {
       />
 
       <EWalletOptionsModal
-        visible={showEWalletModal}
+        visible={showEWalletModal && !hasBackjob}
         bookingId={booking.id}
         totalAmount={modalAmountToPay}
         allowInitialPayment={canChooseInitialPayment}
@@ -2210,7 +2223,7 @@ export default function ClientBookingDetailScreen() {
       />
 
       <QRScannerModal
-        visible={showQRScanner}
+        visible={showQRScanner && !hasBackjob}
         bookingId={booking.id}
         onClose={() => setShowQRScanner(false)}
         onScanSuccess={(data) => {
@@ -2222,7 +2235,7 @@ export default function ClientBookingDetailScreen() {
       />
 
       <QRConfirmationModal
-        visible={showQRConfirm}
+        visible={showQRConfirm && !hasBackjob}
         scanData={qrScanData}
         token={scannedToken}
         onConfirm={() => {
@@ -2237,7 +2250,7 @@ export default function ClientBookingDetailScreen() {
       />
 
       <PaymentSuccessModal
-        visible={showSuccess}
+        visible={showSuccess && !hasBackjob}
         bookingId={booking.id}
         amount={currentPaymentAmount}
         paymentMethod={paymentMethod}

@@ -6,7 +6,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
-import { getDistanceKm } from '@/app/client/request/main_request_form/LocationContext';
+import { getDistanceKm } from '@/context/LocationContext';
 // @ts-ignore
 import { styles } from '@/style/mechanic/emergencyLocationMapStyles.js';
 

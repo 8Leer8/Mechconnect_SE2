@@ -9,7 +9,7 @@ import { ThemedText } from '@/components/themed-text';
 import { useNotification } from '@/hooks/useNotification';
 import { reverseGeocodeAddress } from '@/lib/locationAddress';
 import { styles } from '@/style/client/directRequestMapStyles';
-import { useLocation } from '../main_request_form/LocationContext';
+import { useLocation } from '@/context/LocationContext';
 
 export default function DirectRequestMapScreen() {
   const { showNotification } = useNotification();

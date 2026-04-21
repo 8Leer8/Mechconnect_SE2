@@ -12,6 +12,7 @@ from ...models import (
     ReworkBooking, DisputeBooking, CompleteBooking, Receipt, BroadcastOffer, PaymentInstallment, Quotation, RequestAssignment
 )
 from ...serializers import BookingSerializer, BookingPaymentSerializer
+from ...backjob_utils import booking_has_backjob
 from users.models import Account, Mechanic, MechanicReview, TokenTransaction
 from notification.models import Notification
 
@@ -69,6 +70,15 @@ def _to_money(value):
 
 
 def _build_booking_payment_summary(booking):
+    if booking_has_backjob(booking):
+        return {
+            'payment_status': Booking.PaymentStatus.FULLY_PAID,
+            'total_amount': 0.0,
+            'total_paid': 0.0,
+            'remaining_balance': 0.0,
+            'installments': [],
+        }
+
     total_amount = _to_money(booking.amount_fee)
 
     quotation = getattr(booking, 'quotation', None)
