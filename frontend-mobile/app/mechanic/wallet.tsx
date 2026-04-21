@@ -1,11 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-<<<<<<< HEAD
-import { View, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-=======
 import { View, TouchableOpacity, ScrollView, ActivityIndicator, Alert } from 'react-native';
-import { Stack, useRouter } from 'expo-router';
->>>>>>> ee528f494555be7021a90e3603d4723d1ee6af88
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -53,11 +48,11 @@ function buildFallbackTokenPackages(minTokens: number, maxTokens: number, baseTo
   }));
 }
 
-<<<<<<< HEAD
 function paramIsTruthy(value: string | string[] | undefined): boolean {
   const v = Array.isArray(value) ? value[0] : value;
   return v === '1' || v === 'true';
-=======
+}
+
 function getMethodMeta(method: WalletTransaction['payment_method']) {
   if (method === 'gcash') return { icon: 'mobile', color: '#4DA3FF', label: 'GCASH' };
   if (method === 'maya') return { icon: 'credit-card', color: '#21D4A0', label: 'MAYA' };
@@ -70,7 +65,6 @@ function getStatusMeta(rawStatus: string) {
   if (status === 'pending') return { label: 'Pending', style: styles.statusPending, textStyle: styles.statusPendingText };
   if (status === 'failed') return { label: 'Failed', style: styles.statusFailed, textStyle: styles.statusFailedText };
   return { label: status || 'Unknown', style: styles.statusPending, textStyle: styles.statusPendingText };
->>>>>>> ee528f494555be7021a90e3603d4723d1ee6af88
 }
 
 export default function WalletScreen() {
@@ -139,10 +133,6 @@ export default function WalletScreen() {
     } catch (e) {}
   }
 
-<<<<<<< HEAD
-  async function topUp(pkg: { tokens: number; price: number }) {
-    if (shopOwnerCreditsView) return;
-=======
   async function fetchTransactions() {
     try {
       const res = await fetch(`${API_URL}/users/mechanic/wallet/transactions/`, { credentials: 'include' });
@@ -163,7 +153,7 @@ export default function WalletScreen() {
   }
 
   async function topUp(pkg: { tokens: number; price: number }, method: 'gcash' | 'maya') {
->>>>>>> ee528f494555be7021a90e3603d4723d1ee6af88
+    if (shopOwnerCreditsView) return;
     try {
       setTopUpLoading(pkg.tokens);
       const res = await fetch(`${API_URL}/users/mechanic/wallet/topup/`, {
@@ -249,13 +239,8 @@ export default function WalletScreen() {
               <TouchableOpacity
                 key={pkg.tokens}
                 style={styles.packageCard}
-<<<<<<< HEAD
-                onPress={() => topUp(pkg)}
-                disabled={topUpLoading !== null || shopOwnerCreditsView}
-=======
                 onPress={() => openPaymentMethodModal(pkg)}
-                disabled={topUpLoading !== null}
->>>>>>> ee528f494555be7021a90e3603d4723d1ee6af88
+                disabled={topUpLoading !== null || shopOwnerCreditsView}
                 activeOpacity={0.7}
               >
                 <View style={styles.packageIconCircle}>

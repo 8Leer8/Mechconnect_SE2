@@ -774,7 +774,6 @@ export default function MapScreen() {
                       <FontAwesome name="clock-o" size={14} color="#FF8C00" />
                       <ThemedText style={styles.timerText}>{getTimeRemaining(broadcast.expires_at)}</ThemedText>
                     </View>
-<<<<<<< HEAD
                     <TouchableOpacity
                       style={styles.acceptButton}
                       onPress={() => handleViewAndAccept(broadcast)}
@@ -782,10 +781,6 @@ export default function MapScreen() {
                       <ThemedText style={styles.acceptText}>
                         {isShopOwnerMap ? 'View details' : 'View & Accept'}
                       </ThemedText>
-=======
-                    <TouchableOpacity style={styles.acceptButton} onPress={() => handleViewAndAccept(broadcast)}>
-                      <ThemedText style={styles.acceptText}>View & Accept</ThemedText>
->>>>>>> ee528f494555be7021a90e3603d4723d1ee6af88
                       <FontAwesome name="arrow-right" size={12} color="#fff" />
                     </TouchableOpacity>
                   </View>
@@ -1007,13 +1002,10 @@ export default function MapScreen() {
                       <ThemedText style={[sx.tokensLabel, ms.label]}>Balance</ThemedText>
                       <ThemedText style={[sx.tokensValue, ms.value]}>{tokensBalance ?? '--'}</ThemedText>
                     </View>
-<<<<<<< HEAD
                     {hasInsufficientTokens && !isShopOwnerMap && (
-                      <ThemedText style={sx.tokensWarning}>Insufficient credits. Please top up to accept this job.</ThemedText>
-=======
-                    {hasInsufficientTokens && (
-                      <ThemedText style={[sx.tokensWarning, ms.warning]}>Insufficient credits. Please top up to accept this job.</ThemedText>
->>>>>>> ee528f494555be7021a90e3603d4723d1ee6af88
+                      <ThemedText style={[sx.tokensWarning, ms.warning]}>
+                        Insufficient credits. Please top up to accept this job.
+                      </ThemedText>
                     )}
                   </View>
                 </>
@@ -1022,15 +1014,11 @@ export default function MapScreen() {
 
             <View style={styles.modalFooter}>
               <TouchableOpacity
-<<<<<<< HEAD
                 style={[
                   styles.modalAcceptButton,
                   accepting && styles.modalAcceptButtonDisabled,
                   (hasInsufficientTokens || isShopOwnerMap) ? styles.modalAcceptButtonDisabled : null,
                 ]}
-=======
-                style={[styles.modalAcceptButton, accepting && styles.modalAcceptButtonDisabled, hasInsufficientTokens ? styles.modalAcceptButtonDisabled : null]}
->>>>>>> ee528f494555be7021a90e3603d4723d1ee6af88
                 onPress={handleAcceptBroadcast}
                 disabled={accepting || hasInsufficientTokens || isShopOwnerMap}
               >

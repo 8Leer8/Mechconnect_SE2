@@ -12,7 +12,8 @@ import logging
 
 from ...models import (
     Booking, Request, ActiveBooking, CancelBooking,
-    ReworkBooking, DisputeBooking, CompleteBooking, Receipt, BroadcastOffer, PaymentInstallment, Quotation, RequestAssignment
+    ReworkBooking, DisputeBooking, CompleteBooking, Receipt, BroadcastOffer, PaymentInstallment, Quotation, RequestAssignment,
+    BroadcastRequest, BroadcastRequestAddOn, DirectRequestAddOn, MechanicLocation
 )
 from ...serializers import BookingSerializer, BookingPaymentSerializer
 from ...backjob_utils import booking_has_backjob
