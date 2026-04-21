@@ -53,6 +53,8 @@ def evaluate_booking_chat_access(booking, account) -> Dict[str, Any]:
     except Exception:
         pass
 
+    has_assignments = RequestAssignment.objects.filter(request=booking.request).exists()
+
     # Assigned mechanics: lead can send; assistants are view-only.
     assignment = RequestAssignment.objects.filter(
         request=booking.request,
@@ -64,6 +66,15 @@ def evaluate_booking_chat_access(booking, account) -> Dict[str, Any]:
             "is_participant": True,
             "can_send": bool(is_lead),
             "role": "lead_mechanic" if is_lead else "assistant_mechanic",
+        }
+
+    # Legacy fallback for old flows that still rely on request.provider only.
+    # If assignments exist, only assigned mechanics should participate.
+    if has_assignments:
+        return {
+            "is_participant": False,
+            "can_send": False,
+            "role": "none",
         }
 
     # Legacy fallback: request provider can send.

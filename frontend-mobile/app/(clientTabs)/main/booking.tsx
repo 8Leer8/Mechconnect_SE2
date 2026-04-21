@@ -79,17 +79,6 @@ export default function BookingScreen() {
     }
   }, [tab]);
 
-  const fetchHomeData = async () => {
-    try {
-      await fetch(`${API_URL}/bookings/home/`, {
-        method: 'GET',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
-    } catch (_) {
-      // Home refresh is best-effort for realtime consistency
-    }
-  };
 
   const fetchBookings = async () => {
     try {
@@ -120,7 +109,6 @@ export default function BookingScreen() {
 
   const fetchData = useCallback(() => {
     fetchBookings();
-    fetchHomeData();
   }, [activeTab, currentPage]);
 
   useFocusEffect(

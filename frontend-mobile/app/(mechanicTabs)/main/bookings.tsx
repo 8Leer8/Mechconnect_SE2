@@ -112,24 +112,6 @@ export default function BookingsScreen() {
     }
   }, [tab]);
 
-  const fetchHomeData = async () => {
-    try {
-      await Promise.all([
-        fetch(`${API_URL}/bookings/mechanic/bookings/`, {
-          method: 'GET',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        }),
-        fetch(`${API_URL}/users/profile/details/`, {
-          method: 'GET',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        }),
-      ]);
-    } catch (_) {
-      // Home refresh is best-effort for realtime consistency
-    }
-  };
 
   const fetchCounts = async () => {
     try {
@@ -225,7 +207,6 @@ export default function BookingsScreen() {
   const fetchData = useCallback(() => {
     fetchBookings();
     fetchCounts();
-    fetchHomeData();
   }, [activeTab, currentPage]);
 
   useFocusEffect(

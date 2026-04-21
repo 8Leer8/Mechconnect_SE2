@@ -434,15 +434,31 @@ def shopowner_decline_custom_request(request, request_id):
 
 def _shopowner_bookings_queryset(account):
     """Base queryset for all bookings where shop = this shopowner's shop."""
-    shop = account.shopowner.shop
+    try:
+        shop = account.shopowner.shop
+    except Exception:
+        shop = None
+
+    # Include:
+    # 1) requests directly owned by this shop owner account,
+    # 2) requests linked to this shop,
+    # 3) broadcast-accepted requests where provider is a mechanic in this shop.
+    #
+    # This keeps shop-owner Jobs aligned with mechanic-side visibility while
+    # still scoped to the shop owner context.
+    owner_scope = Q(request__provider=account)
+    if shop is not None:
+        owner_scope = owner_scope | Q(request__shop=shop) | Q(request__provider__mechanic__shop=shop)
+
     return (
-        Booking.objects.filter(request__shop=shop)
+        Booking.objects.filter(owner_scope)
         .select_related(
             "request",
             "request__client",
             "request__client__account",
             "request__shop",
             "request__service_location",
+            "request__provider",
         )
         .prefetch_related(
             Prefetch("activebooking", queryset=ActiveBooking.objects.all()),
@@ -465,7 +481,8 @@ def list_shopowner_bookings(request):
     List bookings for the logged-in shop owner.
 
     Query params:
-      ?status=accepted|on_the_way|active|paused|finished|pending_payment|completed|cancelled|reworked|disputed
+      ?status=all|on_going|accepted|on_the_way|active|paused|finished|pending_payment|completed|cancelled|reworked|disputed
+      ?page=<int>&page_size=<int>
     If omitted → grouped response with counts.
     """
     account, err = _get_shopowner_account(request)
@@ -474,10 +491,12 @@ def list_shopowner_bookings(request):
 
     qs = _shopowner_bookings_queryset(account)
     status_filter = request.query_params.get("status")
+    page = int(request.query_params.get("page", 1))
+    page_size = int(request.query_params.get("page_size", 10))
 
     if status_filter:
         valid = [
-            "accepted", "on_the_way", "active", "paused", "finished",
+            "all", "on_going", "accepted", "on_the_way", "active", "paused", "finished",
             "pending_payment", "completed", "cancelled", "reworked", "disputed",
         ]
         sf = status_filter.lower()
@@ -486,12 +505,55 @@ def list_shopowner_bookings(request):
                 {"error": f"Invalid status. Must be one of: {', '.join(valid)}"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if sf == "active":
+        if sf == "all":
+            filtered = qs
+        elif sf == "on_going":
+            filtered = qs.filter(status__in=["on_the_way", "active", "paused"])
+        elif sf == "active":
             filtered = qs.filter(status__in=["active", "paused"])
         else:
             filtered = qs.filter(status=sf)
-        data = _serialize_bookings(filtered)
-        return Response({"status": sf, "bookings": data, "count": len(data)})
+
+        total_count = filtered.count()
+        total_pages = (total_count + page_size - 1) // page_size if page_size > 0 else 0
+        start_index = (page - 1) * page_size
+        end_index = start_index + page_size
+        paginated = filtered[start_index:end_index]
+        data = _serialize_bookings(paginated)
+
+        payload = {
+            "status": sf,
+            "bookings": data,
+            "count": len(data),
+            "total_count": total_count,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": total_pages,
+            "has_next": page < total_pages,
+            "has_previous": page > 1,
+        }
+
+        # Keep parity with mechanic list so frontend can render badges from one call.
+        if sf == "all":
+            accepted_count = qs.filter(status="accepted").count()
+            on_the_way_count = qs.filter(status="on_the_way").count()
+            active_count = qs.filter(status__in=["active", "paused"]).count()
+            completed_count = qs.filter(status="completed").count()
+            cancelled_count = qs.filter(status="cancelled").count()
+            reworked_count = qs.filter(status="reworked").count()
+            disputed_count = qs.filter(dispute_status=Booking.DisputeState.ACTIVE).count()
+            payload["tab_counts"] = {
+                "pending": 0,
+                "accepted": accepted_count,
+                "on_the_way": on_the_way_count,
+                "active": active_count,
+                "completed": completed_count,
+                "cancelled": cancelled_count,
+                "reworked": reworked_count,
+                "disputed": disputed_count,
+            }
+
+        return Response(payload)
 
     # Grouped response
     groups = {}

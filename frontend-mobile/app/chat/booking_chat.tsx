@@ -219,6 +219,8 @@ export default function BookingChatScreen() {
 
   const canOpenQuotationEditor = useMemo(() => {
     if (!canSendMessages) return false;
+    if (myChatRole === 'assistant_mechanic' || myChatRole === 'client') return false;
+    if (myChatRole === 'shop_owner') return false;
     if (isAssignedMechanicForBooking) return true;
     if (!accountId) return false;
     return messages.some((m: any) => {
@@ -229,7 +231,9 @@ export default function BookingChatScreen() {
         return false;
       }
     });
-  }, [canSendMessages, isAssignedMechanicForBooking, accountId, messages]);
+  }, [canSendMessages, myChatRole, isAssignedMechanicForBooking, accountId, messages]);
+
+  const canRequestQuotation = canSendMessages && myChatRole === 'shop_owner';
 
   useEffect(() => {
     if (!bookingId || !accountId) {
@@ -528,6 +532,33 @@ export default function BookingChatScreen() {
       setText('');
     } catch (e) {
       console.warn(e);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const requestQuotationFromChat = async () => {
+    if (!conversationId) return;
+    setSending(true);
+    try {
+      const headers: any = { 'Content-Type': 'application/json' };
+      try {
+        const token = await AsyncStorage.getItem('auth_token');
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+      } catch (e) {}
+      const res = await fetch(`${API_URL}/chat/${conversationId}/messages/`, {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+        body: JSON.stringify({ content: 'Please provide or update the quotation for this booking.' }),
+      });
+      if (!res.ok) throw new Error('Failed to request quotation');
+      const m = await res.json();
+      forceFollowNextUpdateRef.current = true;
+      setMessages(prev => [...prev, m]);
+      Alert.alert('Requested', 'Quotation request sent to the lead mechanic.');
+    } catch (e) {
+      Alert.alert('Error', 'Unable to request quotation right now.');
     } finally {
       setSending(false);
     }
@@ -1139,6 +1170,12 @@ export default function BookingChatScreen() {
                   <TouchableOpacity style={styles.optionRow} onPress={() => { setShowOptionsModal(false); openQuotationEditor(); }}>
                     <FontAwesome name="file-text-o" size={14} color="#FFB357" />
                     <ThemedText style={styles.optionText}>Add or Edit Quotation</ThemedText>
+                  </TouchableOpacity>
+                ) : null}
+                {canRequestQuotation ? (
+                  <TouchableOpacity style={styles.optionRow} onPress={() => { setShowOptionsModal(false); requestQuotationFromChat(); }}>
+                    <FontAwesome name="file-text-o" size={14} color="#FFB357" />
+                    <ThemedText style={styles.optionText}>Request Quotation</ThemedText>
                   </TouchableOpacity>
                 ) : null}
               </View>
