@@ -38,6 +38,17 @@ interface Booking {
 
 type TabType = 'all' | 'pending' | 'booked' | 'on_going' | 'completed' | 'cancelled' | 'reworked' | 'disputed';
 
+const JOB_TAB_LABELS: Record<TabType, string> = {
+  all: 'All',
+  pending: 'Pending',
+  booked: 'Booked',
+  on_going: 'On Going',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+  reworked: 'Reworked',
+  disputed: 'Disputed',
+};
+
 type MechanicPaginatedResponse = {
   bookings: Booking[];
   count: number;
@@ -73,6 +84,7 @@ type ProfileDetailsResponse = {
     current_role_profile?: {
       mechanic?: {
         is_locked?: boolean;
+        is_working_for_shop?: boolean;
       };
     };
   };
@@ -92,15 +104,26 @@ export default function MechanicShopJobsScreen() {
   const [totalCount, setTotalCount] = useState(0);
   const [mechanicLocked, setMechanicLocked] = useState(false);
   const [receiptUploadingBookingId, setReceiptUploadingBookingId] = useState<number | null>(null);
+  const [isShopMechanic, setIsShopMechanic] = useState(false);
   const { lastMessage } = useWebSocketContext();
   const pageSize = 5;
 
   useEffect(() => {
-    if (tab && tab !== activeTab) {
-      setActiveTab(tab as TabType);
+    if (!tab) return;
+    const normalized =
+      isShopMechanic && tab === 'pending' ? 'booked' : (tab as TabType);
+    if (normalized !== activeTab) {
+      setActiveTab(normalized);
       setCurrentPage(1);
     }
-  }, [tab, activeTab]);
+  }, [tab, activeTab, isShopMechanic]);
+
+  useEffect(() => {
+    if (isShopMechanic && activeTab === 'pending') {
+      setActiveTab('booked');
+      setCurrentPage(1);
+    }
+  }, [isShopMechanic, activeTab]);
 
   const fetchCounts = useCallback(async () => {
     try {
@@ -189,8 +212,9 @@ export default function MechanicShopJobsScreen() {
       });
       if (!response.ok) return;
       const data = (await response.json()) as ProfileDetailsResponse;
-      const locked = Boolean(data?.profile?.current_role_profile?.mechanic?.is_locked);
-      setMechanicLocked(locked);
+      const m = data?.profile?.current_role_profile?.mechanic;
+      setMechanicLocked(Boolean(m?.is_locked));
+      setIsShopMechanic(Boolean(m?.is_working_for_shop));
     } catch {
       // non-blocking state fetch
     }
@@ -350,6 +374,9 @@ export default function MechanicShopJobsScreen() {
   };
 
   const getStatusLabel = (status: string) => {
+    if (isShopMechanic && status === 'pending') {
+      return 'Booked';
+    }
     switch (status) {
       case 'accepted': return 'Booked';
       case 'active': return 'On Going';
@@ -415,7 +442,9 @@ export default function MechanicShopJobsScreen() {
     return `${Math.floor(seconds / 86400)}d ago`;
   };
 
-  const tabs: TabType[] = ['all', 'pending', 'booked', 'on_going', 'completed', 'cancelled', 'reworked', 'disputed'];
+  const tabs: TabType[] = isShopMechanic
+    ? ['all', 'booked', 'on_going', 'completed', 'cancelled', 'reworked', 'disputed']
+    : ['all', 'pending', 'booked', 'on_going', 'completed', 'cancelled', 'reworked', 'disputed'];
 
   return (
     <ThemedView style={styles.container}>
@@ -423,7 +452,9 @@ export default function MechanicShopJobsScreen() {
         <View>
           <ThemedText style={styles.headerTitle}>Jobs</ThemedText>
           <ThemedText style={styles.headerSubtitle}>
-            {totalCount > 0 ? totalCount : bookings.length} {activeTab === 'all' ? 'total' : activeTab} job{(totalCount > 0 ? totalCount : bookings.length) !== 1 ? 's' : ''}
+            {totalCount > 0 ? totalCount : bookings.length}{' '}
+            {activeTab === 'all' ? 'total' : JOB_TAB_LABELS[activeTab]?.toLowerCase() || activeTab} job
+            {(totalCount > 0 ? totalCount : bookings.length) !== 1 ? 's' : ''}
           </ThemedText>
         </View>
         <TouchableOpacity style={styles.refreshButton} onPress={onRefresh}>
@@ -457,7 +488,7 @@ export default function MechanicShopJobsScreen() {
                 style={{ marginRight: 6 }}
               />
               <ThemedText style={[styles.tabText, isActive && styles.activeTabText]}>
-                {tabKey === 'all' ? 'All' : tabKey.charAt(0).toUpperCase() + tabKey.slice(1)}
+                {JOB_TAB_LABELS[tabKey]}
               </ThemedText>
               {count > 0 && activeTab === 'all' && (
                 <View style={[styles.tabCount, isActive && styles.activeTabCount]}>
@@ -503,11 +534,17 @@ export default function MechanicShopJobsScreen() {
             <View style={styles.emptyIconCircle}>
               <FontAwesome name={getTabIcon(activeTab)} size={40} color="#555" />
             </View>
-            <ThemedText style={styles.emptyText}>No {activeTab === 'all' ? '' : activeTab + ' '}jobs</ThemedText>
+            <ThemedText style={styles.emptyText}>
+              No {activeTab === 'all' ? '' : `${JOB_TAB_LABELS[activeTab].toLowerCase()} `}jobs
+            </ThemedText>
             <ThemedText style={styles.emptySubtext}>
-              {activeTab === 'on_going' ? 'Active jobs will appear here' :
-               activeTab === 'pending' ? 'Client requests will appear here' :
-               `No ${activeTab} jobs yet`}
+              {activeTab === 'on_going'
+                ? 'Active jobs will appear here'
+                : activeTab === 'pending'
+                ? 'Client requests will appear here'
+                : activeTab === 'booked' && isShopMechanic
+                ? 'Jobs the shop has accepted and assigned to you appear here until you start travel.'
+                : `No ${JOB_TAB_LABELS[activeTab]} jobs yet`}
             </ThemedText>
           </View>
         ) : (

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -38,8 +38,16 @@ function buildFallbackTokenPackages(minTokens: number, maxTokens: number, baseTo
   }));
 }
 
+function paramIsTruthy(value: string | string[] | undefined): boolean {
+  const v = Array.isArray(value) ? value[0] : value;
+  return v === '1' || v === 'true';
+}
+
 export default function WalletScreen() {
   const router = useRouter();
+  const { shop_owner: shopOwnerParam } = useLocalSearchParams<{ shop_owner?: string | string[] }>();
+  const shopOwnerCreditsView = paramIsTruthy(shopOwnerParam);
+
   const [balance, setBalance] = useState<number | null>(null);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [topUpLoading, setTopUpLoading] = useState<number | null>(null);
@@ -58,10 +66,17 @@ export default function WalletScreen() {
 
   useEffect(() => {
     fetchBalance();
+  }, [shopOwnerCreditsView]);
+
+  useEffect(() => {
     fetchTokenPricing();
   }, []);
 
   async function fetchBalance() {
+    if (shopOwnerCreditsView) {
+      setBalance(0);
+      return;
+    }
     try {
       const res = await fetch(`${API_URL}/users/mechanic/wallet/`, { credentials: 'include' });
       if (!res.ok) return;
@@ -92,6 +107,7 @@ export default function WalletScreen() {
   }
 
   async function topUp(pkg: { tokens: number; price: number }) {
+    if (shopOwnerCreditsView) return;
     try {
       setTopUpLoading(pkg.tokens);
       const res = await fetch(`${API_URL}/users/mechanic/wallet/topup/`, {
@@ -124,7 +140,9 @@ export default function WalletScreen() {
         </TouchableOpacity>
         <View style={styles.headerCenter}>
           <ThemedText style={styles.headerTitle}>Credits</ThemedText>
-          <ThemedText style={styles.headerSubtitle}>Manage your credits</ThemedText>
+          <ThemedText style={styles.headerSubtitle}>
+            {shopOwnerCreditsView ? 'Shop owner credits (preview)' : 'Manage your credits'}
+          </ThemedText>
         </View>
         <TouchableOpacity style={styles.refreshBtn} onPress={fetchBalance}>
           <FontAwesome name="refresh" size={18} color="#FF8C00" />
@@ -139,7 +157,9 @@ export default function WalletScreen() {
           </View>
           <ThemedText style={styles.balanceLabel}>Credit Balance</ThemedText>
           <ThemedText style={styles.balanceValue}>{balance === null ? '...' : balance}</ThemedText>
-          <ThemedText style={styles.balanceSub}>Available credits</ThemedText>
+          <ThemedText style={styles.balanceSub}>
+            {shopOwnerCreditsView ? 'Available shop credits' : 'Available credits'}
+          </ThemedText>
         </View>
 
         {/* Buy Credits */}
@@ -159,7 +179,7 @@ export default function WalletScreen() {
                 key={pkg.tokens}
                 style={styles.packageCard}
                 onPress={() => topUp(pkg)}
-                disabled={topUpLoading !== null}
+                disabled={topUpLoading !== null || shopOwnerCreditsView}
                 activeOpacity={0.7}
               >
                 <View style={styles.packageIconCircle}>

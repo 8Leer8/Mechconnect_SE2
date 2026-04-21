@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, ScrollView, RefreshControl, Dimensions } from 'react-native';
+import { StyleSheet, View, ScrollView, RefreshControl, Dimensions, TouchableOpacity } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -43,14 +43,25 @@ export default function ShopOwnerHome() {
         headers: { 'Content-Type': 'application/json' },
       });
 
+      const payload = (await response.json().catch(() => ({}))) as DashboardData & { error?: string };
+
       if (!response.ok) {
-        throw new Error('Failed to fetch dashboard data');
+        const serverMsg =
+          typeof payload?.error === 'string' && payload.error.trim()
+            ? payload.error
+            : `Could not load dashboard (HTTP ${response.status})`;
+        throw new Error(serverMsg);
       }
 
-      const data = await response.json() as DashboardData;
-      setDashboardData(data);
+      setDashboardData(payload as DashboardData);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load dashboard');
+      const message =
+        err instanceof Error
+          ? err.message
+          : typeof err === 'string'
+            ? err
+            : 'Network error — check API URL and that the server is running.';
+      setError(message);
       console.error('Dashboard error:', err);
     } finally {
       setLoading(false);
@@ -82,7 +93,11 @@ export default function ShopOwnerHome() {
               <ThemedText style={styles.shopName}>{dashboardData?.shop_name || 'Loading...'}</ThemedText>
             </View>
           </View>
-          <WalletSection creditsSource="shop-owner" />
+          <WalletSection
+            creditsSource="shop-owner"
+            showAddButton
+            addHref="/mechanic/wallet?shop_owner=1"
+          />
           <SkeletonDashboard />
         </ScrollView>
       </ThemedView>
@@ -99,12 +114,28 @@ export default function ShopOwnerHome() {
               <ThemedText style={styles.shopName}>Dashboard</ThemedText>
             </View>
           </View>
-          <WalletSection creditsSource="shop-owner" />
+          <WalletSection
+            creditsSource="shop-owner"
+            showAddButton
+            addHref="/mechanic/wallet?shop_owner=1"
+          />
           <View style={[styles.errorContainer, { marginTop: 40 }]}>
             <View style={styles.errorIconWrap}>
               <FontAwesome name="exclamation-triangle" size={36} color="#FF3B30" />
             </View>
-            <ThemedText style={[styles.errorText, { fontSize: 18, fontWeight: '700' }]}>{error || 'Unable to load dashboard'}</ThemedText>
+            <ThemedText style={[styles.errorText, { fontSize: 16, fontWeight: '600', textAlign: 'center' }]}>
+              {error || 'Unable to load dashboard'}
+            </ThemedText>
+            <TouchableOpacity
+              style={styles.retryBtn}
+              onPress={() => {
+                setLoading(true);
+                fetchDashboardData();
+              }}
+              activeOpacity={0.8}
+            >
+              <ThemedText style={styles.retryBtnText}>Retry</ThemedText>
+            </TouchableOpacity>
           </View>
         </ScrollView>
       </ThemedView>
@@ -144,7 +175,11 @@ export default function ShopOwnerHome() {
           )}
         </View>
 
-        <WalletSection creditsSource="shop-owner" />
+        <WalletSection
+          creditsSource="shop-owner"
+          showAddButton
+          addHref="/mechanic/wallet?shop_owner=1"
+        />
 
         {/* Stats Grid - 2x2 */}
         <View style={styles.statsSection}>
@@ -330,6 +365,18 @@ const styles = StyleSheet.create({
     backgroundColor: '#FF3B3018',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  retryBtn: {
+    marginTop: 8,
+    backgroundColor: '#FF8C00',
+    paddingHorizontal: 28,
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  retryBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 15,
   },
   // ─── Header Section ───
   header: {

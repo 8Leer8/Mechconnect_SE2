@@ -31,12 +31,17 @@ export default function WalletSection({
 }: WalletSectionProps) {
   const [balance, setBalance] = useState<number | null>(null);
   const router = useRouter();
-  const canShowAdd = showAddButton ?? true;
+  const canShowAdd = showAddButton ?? creditsSource !== 'shop-owner';
 
   useEffect(() => {
     let mounted = true;
     async function load() {
       try {
+        if (creditsSource === 'shop-owner') {
+          if (!mounted) return;
+          setBalance(0);
+          return;
+        }
         const res = await fetch(walletUrl(creditsSource), { credentials: 'include' });
         if (!res.ok) return;
         const data = await res.json();

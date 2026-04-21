@@ -32,6 +32,7 @@ interface Booking {
     id: number;
     type: string;
     created_at: string;
+    assigned_mechanics?: { id: number; role: string }[];
   };
   provider?: { id: number; name: string; email: string } | null;
   service_location?: {
@@ -371,6 +372,33 @@ export default function ShopOwnerJobsScreen() {
     return map[s] || 'circle';
   };
 
+  const hasRequestAssignments = (b: Booking) => {
+    const am = b.request?.assigned_mechanics;
+    return Array.isArray(am) && am.length > 0;
+  };
+
+  /** Accepted tab: still `accepted` in API, but show "Assigned" once mechanics are linked. */
+  const getCardStatusLabel = (b: Booking) => {
+    if (activeTab === 'accepted' && b.status === 'accepted' && hasRequestAssignments(b)) {
+      return 'Assigned';
+    }
+    return getStatusLabel(b.status);
+  };
+
+  const getCardStatusColor = (b: Booking) => {
+    if (activeTab === 'accepted' && b.status === 'accepted' && hasRequestAssignments(b)) {
+      return '#34C759';
+    }
+    return getStatusColor(b.status);
+  };
+
+  const getCardStatusIcon = (b: Booking) => {
+    if (activeTab === 'accepted' && b.status === 'accepted' && hasRequestAssignments(b)) {
+      return 'users';
+    }
+    return getStatusIcon(b.status);
+  };
+
   const formatDate = (d: string) =>
     new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
@@ -439,6 +467,21 @@ export default function ShopOwnerJobsScreen() {
         return;
       }
       setAssignments((prev) => [...prev, data as Assignment]);
+      const row = data as Assignment;
+      setBookings((prev) =>
+        prev.map((booking) => {
+          if (booking.request.id !== assignRequestId) return booking;
+          const am = booking.request.assigned_mechanics || [];
+          if (am.some((x) => x.id === row.id)) return booking;
+          return {
+            ...booking,
+            request: {
+              ...booking.request,
+              assigned_mechanics: [...am, { id: row.id, role: row.role }],
+            },
+          };
+        })
+      );
     } catch {
       showNotification({ type: 'error', message: 'Network error' });
     } finally {
@@ -459,6 +502,20 @@ export default function ShopOwnerJobsScreen() {
         return;
       }
       setAssignments((prev) => prev.filter((a) => a.id !== assignmentId));
+      setBookings((prev) =>
+        prev.map((booking) => {
+          if (booking.request.id !== assignRequestId) return booking;
+          const am = booking.request.assigned_mechanics;
+          if (!am?.length) return booking;
+          return {
+            ...booking,
+            request: {
+              ...booking.request,
+              assigned_mechanics: am.filter((x) => x.id !== assignmentId),
+            },
+          };
+        })
+      );
     } catch {
       showNotification({ type: 'error', message: 'Network error' });
     }
@@ -752,7 +809,7 @@ export default function ShopOwnerJobsScreen() {
                       </View>
                     </View>
 
-                    <View style={styles.cardFooter}>
+                    <View style={styles.pendingRequestFooter}>
                       <View style={styles.footerActions}>
                         <TouchableOpacity
                           style={[styles.assignBtn, { backgroundColor: '#2A2A2A' }]}
@@ -786,6 +843,19 @@ export default function ShopOwnerJobsScreen() {
                           )}
                         </TouchableOpacity>
                       </View>
+                      <TouchableOpacity
+                        style={[styles.assignBtn, { backgroundColor: '#FF8C0015' }]}
+                        onPress={() =>
+                          router.push({
+                            pathname: '/shopowner/request_details',
+                            params: { requestId: String(r.id) },
+                          })
+                        }
+                        activeOpacity={0.7}
+                      >
+                        <ThemedText style={[styles.assignBtnText, { color: '#FF8C00' }]}>Details</ThemedText>
+                        <FontAwesome name="chevron-right" size={11} color="#FF8C00" />
+                      </TouchableOpacity>
                     </View>
                   </View>
                 ))}
@@ -844,13 +914,13 @@ export default function ShopOwnerJobsScreen() {
               <View key={b.id} style={styles.card}>
                 <View style={styles.cardTop}>
                   <View style={styles.cardTopLeft}>
-                    <View style={[styles.statusDot, { backgroundColor: getStatusColor(b.status) + '25' }]}>
-                      <FontAwesome name={getStatusIcon(b.status)} size={15} color={getStatusColor(b.status)} />
+                    <View style={[styles.statusDot, { backgroundColor: getCardStatusColor(b) + '25' }]}>
+                      <FontAwesome name={getCardStatusIcon(b)} size={15} color={getCardStatusColor(b)} />
                     </View>
                     <View>
                       <View style={styles.statusRow}>
-                        <View style={[styles.statusBadge, { backgroundColor: getStatusColor(b.status) }]}>
-                          <ThemedText style={styles.statusLabel}>{getStatusLabel(b.status)}</ThemedText>
+                        <View style={[styles.statusBadge, { backgroundColor: getCardStatusColor(b) }]}>
+                          <ThemedText style={styles.statusLabel}>{getCardStatusLabel(b)}</ThemedText>
                         </View>
                         <ThemedText style={styles.bookingId}>#{b.id}</ThemedText>
                       </View>
@@ -933,13 +1003,13 @@ export default function ShopOwnerJobsScreen() {
                 {/* Top row */}
                 <View style={styles.cardTop}>
                   <View style={styles.cardTopLeft}>
-                    <View style={[styles.statusDot, { backgroundColor: getStatusColor(b.status) + '25' }]}>
-                      <FontAwesome name={getStatusIcon(b.status)} size={15} color={getStatusColor(b.status)} />
+                    <View style={[styles.statusDot, { backgroundColor: getCardStatusColor(b) + '25' }]}>
+                      <FontAwesome name={getCardStatusIcon(b)} size={15} color={getCardStatusColor(b)} />
                     </View>
                     <View>
                       <View style={styles.statusRow}>
-                        <View style={[styles.statusBadge, { backgroundColor: getStatusColor(b.status) }]}>
-                          <ThemedText style={styles.statusLabel}>{getStatusLabel(b.status)}</ThemedText>
+                        <View style={[styles.statusBadge, { backgroundColor: getCardStatusColor(b) }]}>
+                          <ThemedText style={styles.statusLabel}>{getCardStatusLabel(b)}</ThemedText>
                         </View>
                         <ThemedText style={styles.bookingId}>#{b.id}</ThemedText>
                       </View>
@@ -997,8 +1067,7 @@ export default function ShopOwnerJobsScreen() {
                       <FontAwesome name="chevron-right" size={11} color="#FF8C00" />
                     </TouchableOpacity>
 
-                    {activeTab === 'on_going' ? null : (
-                      // Assign Mechanics button — available for non-terminal statuses outside On Going tab
+                    {activeTab === 'on_going' || activeTab === 'all' ? null : (
                       ['accepted', 'on_the_way', 'active', 'paused'].includes(b.status) && (
                         <TouchableOpacity
                           style={styles.assignBtn}
@@ -1294,6 +1363,18 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: '#2A2A2A',
+  },
+  /** Pending request row: Decline / Accept left, Details bottom-right */
+  pendingRequestFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    alignSelf: 'stretch',
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#2A2A2A',
+    gap: 8,
   },
   amount: { fontSize: 18, fontWeight: '700', color: '#FF9500' },
   footerActions: { flexDirection: 'row', gap: 8 },

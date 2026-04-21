@@ -8,7 +8,7 @@ from django.utils import timezone
 import logging
 
 from ...models import (
-    Booking, Request, ActiveBooking, CancelBooking,
+    Booking, Request, ActiveBooking, CancelBooking, 
     ReworkBooking, DisputeBooking, CompleteBooking, Receipt, BroadcastOffer, PaymentInstallment, Quotation, RequestAssignment
 )
 from ...serializers import BookingSerializer, BookingPaymentSerializer

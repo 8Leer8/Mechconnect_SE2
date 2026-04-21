@@ -26,6 +26,11 @@ export default function WalletBadge({ onPress, creditsSource = 'mechanic' }: Wal
     let mounted = true;
     async function load() {
       try {
+        if (creditsSource === 'shop-owner') {
+          if (!mounted) return;
+          setBalance(0);
+          return;
+        }
         const res = await fetch(walletUrl(creditsSource), {
           credentials: 'include',
         });

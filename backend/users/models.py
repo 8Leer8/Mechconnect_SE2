@@ -201,6 +201,7 @@ class ShopOwner(models.Model):
         help_text="GCash or Maya number for receiving payouts",
     )
     owns_shop = models.BooleanField(default=False)
+    tokens_balance = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     def __str__(self):

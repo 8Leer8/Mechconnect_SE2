@@ -130,11 +130,8 @@ def assign_mechanic(request, request_id):
         role=role,
     )
 
-    # If there is an accepted booking for this request, move it to on_the_way so it appears in On Going tab
+    # Keep booking in ACCEPTED until a mechanic starts travel (shop mechanic "Booked" tab).
     booking = Booking.objects.filter(request=req).first()
-    if booking and booking.status == Booking.Status.ACCEPTED:
-        booking.status = Booking.Status.ON_THE_WAY
-        booking.save(update_fields=["status"])
 
     booking_label = f"#{booking.id}" if booking else "this booking"
     _notify_assignment_change(

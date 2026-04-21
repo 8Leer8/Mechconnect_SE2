@@ -170,7 +170,7 @@ export default function BookingsScreen() {
       let statusQuery: string;
       if (activeTab === 'all') statusQuery = 'all';
       else if (activeTab === 'booked') statusQuery = 'accepted';
-      else if (activeTab === 'on_going') statusQuery = 'on_the_way';
+      else if (activeTab === 'on_going') statusQuery = 'on_going';
       else if (activeTab === 'reworked') statusQuery = 'reworked';
       else statusQuery = activeTab;
 

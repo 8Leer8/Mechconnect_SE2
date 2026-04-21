@@ -15,7 +15,7 @@ import * as Location from 'expo-location';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
-import { router, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, usePathname } from 'expo-router';
 import WalletBadge from '@/components/wallet-badge';
 import { eventBus } from '@/utils/eventBus';
 import { getDistanceKm } from '@/app/client/request/main_request_form/LocationContext';
@@ -138,6 +138,8 @@ export default function MapScreen() {
   const markerTapRef = useRef<Record<number, number>>({});
   const lastBroadcastFetchLocationRef = useRef<{ latitude: number; longitude: number } | null>(null);
   const { showNotification } = useNotification();
+  const pathname = usePathname();
+  const isShopOwnerMap = pathname.includes('(shopownerTabs)');
 
   const [broadcasts, setBroadcasts] = useState<BroadcastRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -243,6 +245,10 @@ export default function MapScreen() {
   };
 
   const fetchTokensBalance = async () => {
+    if (isShopOwnerMap) {
+      setTokensBalance(0);
+      return;
+    }
     try {
       const res = await fetch(`${API_URL}/users/mechanic/wallet/`, { credentials: 'include' });
       if (!res.ok) return;
@@ -955,7 +961,10 @@ export default function MapScreen() {
           <TouchableOpacity style={styles.locationButton}>
             <FontAwesome name="crosshairs" size={20} color="#fff" />
           </TouchableOpacity>
-          <WalletBadge onPress={() => router.push('/mechanic/wallet')} />
+          <WalletBadge
+            creditsSource={isShopOwnerMap ? 'shop-owner' : 'mechanic'}
+            onPress={isShopOwnerMap ? undefined : () => router.push('/mechanic/wallet')}
+          />
         </View>
       </View>
 
@@ -1143,7 +1152,9 @@ export default function MapScreen() {
                       style={styles.acceptButton}
                       onPress={() => handleViewAndAccept(broadcast)}
                     >
-                      <ThemedText style={styles.acceptText}>View & Accept</ThemedText>
+                      <ThemedText style={styles.acceptText}>
+                        {isShopOwnerMap ? 'View details' : 'View & Accept'}
+                      </ThemedText>
                       <FontAwesome name="arrow-right" size={12} color="#fff" />
                     </TouchableOpacity>
                   </View>
@@ -1406,7 +1417,7 @@ export default function MapScreen() {
                       <ThemedText style={sx.tokensLabel}>Balance</ThemedText>
                       <ThemedText style={sx.tokensValue}>{tokensBalance ?? '--'}</ThemedText>
                     </View>
-                    {hasInsufficientTokens && (
+                    {hasInsufficientTokens && !isShopOwnerMap && (
                       <ThemedText style={sx.tokensWarning}>Insufficient credits. Please top up to accept this job.</ThemedText>
                     )}
                   </View>
@@ -1420,13 +1431,18 @@ export default function MapScreen() {
                 style={[
                   styles.modalAcceptButton,
                   accepting && styles.modalAcceptButtonDisabled,
-                  hasInsufficientTokens ? styles.modalAcceptButtonDisabled : null,
+                  (hasInsufficientTokens || isShopOwnerMap) ? styles.modalAcceptButtonDisabled : null,
                 ]}
                 onPress={handleAcceptBroadcast}
-                disabled={accepting || hasInsufficientTokens}
+                disabled={accepting || hasInsufficientTokens || isShopOwnerMap}
               >
                 {accepting ? (
                   <ActivityIndicator color="#fff" />
+                ) : isShopOwnerMap ? (
+                  <>
+                    <FontAwesome name="info-circle" size={18} color="#fff" />
+                    <ThemedText style={styles.modalAcceptText}>Mechanics can accept this job</ThemedText>
+                  </>
                 ) : (
                   <>
                     <FontAwesome name="check" size={18} color="#fff" />
