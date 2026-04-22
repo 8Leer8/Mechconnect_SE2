@@ -2,12 +2,82 @@ from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 import logging
 
+from notification.models import Notification
+from users.models import Account
+
 
 logger = logging.getLogger(__name__)
 
 
+def _notification_title_for_booking_status(booking_status, message=None):
+    status_key = str(booking_status or '').strip().lower()
+    title_map = {
+        'accepted': 'Booking Accepted',
+        'on_the_way': 'Booking On The Way',
+        'at_location': 'Booking Arrived',
+        'diagnosing': 'Booking Diagnosing',
+        'active': 'Booking Active',
+        'paused': 'Booking Paused',
+        'finished': 'Booking Finished',
+        'completed': 'Booking Completed',
+        'pending_payment': 'Payment Pending',
+        'cancelled': 'Booking Cancelled',
+        'reworked': 'Booking Reworked',
+        'disputed': 'Booking Disputed',
+        'rejected': 'Booking Rejected',
+    }
+
+    if status_key in title_map:
+        return title_map[status_key]
+
+    if status_key:
+        return f"Booking {status_key.replace('_', ' ').title()}"
+
+    return 'Booking Update' if message else 'Notification'
+
+
+def _resolve_target_role(account_id):
+    try:
+        participant_account = Account.objects.get(id=account_id)
+        if hasattr(participant_account, 'client'):
+            return 'client'
+        if hasattr(participant_account, 'mechanic'):
+            return 'mechanic'
+        if hasattr(participant_account, 'shopowner'):
+            return 'shopowner'
+    except Exception:
+        pass
+
+    return None
+
+
+def _create_booking_notification(account_id, booking_id, booking_status, message, action=None):
+    payload = {
+        'booking_id': booking_id,
+        'status': booking_status,
+    }
+    if action:
+        payload['action'] = action
+
+    target_role = _resolve_target_role(account_id)
+    if target_role:
+        payload['target_role'] = target_role
+
+    Notification.objects.create(
+        receiver_id=account_id,
+        title=_notification_title_for_booking_status(booking_status, message),
+        message=message,
+        payload=payload,
+    )
+
+
 def notify_user(account_id, booking_id, booking_status, message):
     """Send a booking_update message to a user's WebSocket channel group."""
+    try:
+        _create_booking_notification(account_id, booking_id, booking_status, message)
+    except Exception:
+        logger.exception('Failed to create notification for account %s', account_id)
+
     channel_layer = get_channel_layer()
     if channel_layer is None:
         return
@@ -24,18 +94,9 @@ def notify_user(account_id, booking_id, booking_status, message):
 
 def notify_booking_parties(mechanic_account_id, client_account_id, booking_id, booking_status, message):
     """Broadcast booking_update to both mechanic and client personal groups."""
+    participant_ids = {mechanic_account_id, client_account_id}
+
     channel_layer = get_channel_layer()
-    if channel_layer is None:
-        return
-
-    event = {
-        "type": "booking_update",
-        "booking_id": booking_id,
-        "status": booking_status,
-        "message": message,
-    }
-
-    # Also notify the shop owner associated with this booking (so the shop owner Jobs UI updates).
     shop_owner_account_id = None
     try:
         # Local import to avoid circulars at module import time.
@@ -53,8 +114,27 @@ def notify_booking_parties(mechanic_account_id, client_account_id, booking_id, b
     except Exception:
         shop_owner_account_id = None
 
-    targets = {mechanic_account_id, client_account_id, shop_owner_account_id}
-    for account_id in targets:
+    participant_ids.add(shop_owner_account_id)
+
+    for account_id in participant_ids:
+        if not account_id:
+            continue
+        try:
+            _create_booking_notification(account_id, booking_id, booking_status, message)
+        except Exception:
+            logger.exception('Failed to create notification for account %s', account_id)
+
+    if channel_layer is None:
+        return
+
+    event = {
+        "type": "booking_update",
+        "booking_id": booking_id,
+        "status": booking_status,
+        "message": message,
+    }
+
+    for account_id in participant_ids:
         if not account_id:
             continue
         async_to_sync(channel_layer.group_send)(f"user_{account_id}", event)

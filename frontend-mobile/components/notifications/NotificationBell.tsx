@@ -25,7 +25,7 @@ interface NotificationBellProps {
   iconColor?: string;
 }
 
-const PAGE_SIZE = 8;
+const PREVIEW_PAGE_SIZE = 4;
 
 function getBookingPath(role?: string | null) {
   switch (role) {
@@ -52,8 +52,8 @@ export default function NotificationBell({ iconColor = '#FF8C00' }: Notification
   const loadNotifications = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetchNotifications({ page: 1, pageSize: PAGE_SIZE });
-      setRecentNotifications(response.results || []);
+      const response = await fetchNotifications({ page: 1, pageSize: PREVIEW_PAGE_SIZE });
+      setRecentNotifications((response.results || []).slice(0, PREVIEW_PAGE_SIZE));
       setUnreadCount(response.unread_count || 0);
     } catch {
       setRecentNotifications([]);
