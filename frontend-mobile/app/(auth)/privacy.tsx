@@ -6,11 +6,9 @@ import {
   Text,
   Image,
   StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Feather } from '@expo/vector-icons';
+import GenTopNav from '../../components/gen/GenTopNav';
 
 export const options = { headerShown: false } as const;
 
@@ -18,17 +16,9 @@ export default function PrivacyScreen() {
   const router = useRouter();
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
-    >
+    <View style={styles.container}>
+      <GenTopNav title="Privacy Policy" />
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-        <View style={styles.headerRow}>
-          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-            <Feather name="chevron-left" size={20} color="#FF8C00" />
-          </TouchableOpacity>
-        </View>
-
         <View style={styles.logoRow}>
           <Image source={require('@/assets/images/logo_main.png')} style={styles.logo} />
           <Text style={styles.title}>Privacy Policy</Text>
@@ -66,7 +56,7 @@ export default function PrivacyScreen() {
           <Text style={styles.buttonText}>Accept and Continue</Text>
         </TouchableOpacity>
       </ScrollView>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -78,19 +68,8 @@ const styles = StyleSheet.create({
   scroll: {
     flexGrow: 1,
     paddingHorizontal: 24,
-    paddingTop: 64,
+    paddingTop: 24,
     paddingBottom: 24,
-  },
-  headerRow: {
-    marginBottom: 18,
-  },
-  backButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: '#16171A',
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   logoRow: {
     alignItems: 'flex-start',
@@ -103,14 +82,14 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   title: {
-    fontSize: 24,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '600',
     color: '#ECEDEE',
     marginBottom: 6,
   },
   tagline: {
-    fontSize: 14,
-    fontWeight: '400',
+    fontSize: 12,
+    fontWeight: '300',
     color: '#8E8E93',
     marginBottom: 20,
   },
@@ -123,8 +102,8 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   sectionTitle: {
-    fontSize: 15,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '600',
     color: '#ECEDEE',
     marginBottom: 8,
   },
@@ -139,11 +118,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#FF8C00',
     borderRadius: 10,
     paddingVertical: 12,
+    height: 42,
+    justifyContent: 'center',
     alignItems: 'center',
   },
   buttonText: {
     color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });
