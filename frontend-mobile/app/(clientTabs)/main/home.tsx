@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {View, ScrollView, TouchableOpacity, RefreshControl, Dimensions, Animated, Image} from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -10,6 +10,7 @@ import EmergencyModal from '@/components/EmergencyModal';
 import { SkeletonClientHome } from '@/components/skeletons/SkeletonLoaders';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import { getImageUrl } from '@/lib/imageUtils';
+import { useLocation } from '@/context/LocationContext';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const screenWidth = Dimensions.get('window').width;
@@ -166,6 +167,8 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [showEmergencyModal, setShowEmergencyModal] = useState(false);
   const { lastMessage } = useWebSocketContext();
+  const { selectedLocation, setSelectedLocation } = useLocation();
+  const params = useLocalSearchParams<{ openEmergency?: string; emLat?: string; emLng?: string; emAddr?: string }>();
 
   // Emergency button pulse animation
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -240,6 +243,38 @@ export default function HomeScreen() {
       fetchAllData();
     }
   }, [lastMessage]);
+
+  useEffect(() => {
+    // If user returns from map picker with a selected location,
+    // reopen the emergency modal so they can continue filling the form.
+    if (selectedLocation && !showEmergencyModal) {
+      setShowEmergencyModal(true);
+    }
+  }, [selectedLocation, showEmergencyModal]);
+
+  useEffect(() => {
+    if (params.emLat && params.emLng) {
+      const lat = Number(params.emLat);
+      const lng = Number(params.emLng);
+      if (!Number.isNaN(lat) && !Number.isNaN(lng)) {
+        const addr = typeof params.emAddr === 'string' ? decodeURIComponent(params.emAddr) : `${lat}, ${lng}`;
+        setSelectedLocation({
+          latitude: lat,
+          longitude: lng,
+          address: addr,
+          streetName: '',
+          city: '',
+          barangay: '',
+          radiusKm: 5,
+          radius_km: 5,
+        });
+      }
+    }
+
+    if (params.openEmergency === '1') {
+      setShowEmergencyModal(true);
+    }
+  }, [params.openEmergency, params.emLat, params.emLng, params.emAddr, setSelectedLocation]);
 
   const onRefresh = () => {
     setRefreshing(true);

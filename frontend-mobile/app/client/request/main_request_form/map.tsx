@@ -53,6 +53,7 @@ export default function MapScreen() {
   const initialLat = params.latitude ? parseFloat(params.latitude as string) : null;
   const initialLng = params.longitude ? parseFloat(params.longitude as string) : null;
   const initialRadius = params.radiusKm ? parseInt(params.radiusKm as string, 10) : RECOMMENDED_RADIUS_KM;
+  const returnTo = String(params.return_to || '');
 
   const [loading, setLoading] = useState(true);
   const [confirming, setConfirming] = useState(false);
@@ -360,7 +361,14 @@ export default function MapScreen() {
         radius_km: effectiveRadiusKm,
       };
       setSelectedLocation(locationData);
-      router.back();
+      if (returnTo === 'emergency') {
+        const encodedAddress = encodeURIComponent(parsed.address || '');
+        router.replace(
+          `/(clientTabs)/main/home?openEmergency=1&emLat=${circleCenter.latitude}&emLng=${circleCenter.longitude}&emAddr=${encodedAddress}`
+        );
+      } else {
+        router.back();
+      }
     } catch {
       showNotification({ type: 'error', message: 'Failed to confirm location' });
     } finally {

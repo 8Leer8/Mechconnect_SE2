@@ -162,6 +162,10 @@ export default function RegisterScreen() {
 
   const totalStages = 5;
 
+  // ── Password visibility ───────────────────────────────────────────────────
+  const [showPassword, setShowPassword]               = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
   // Email verification
   const [emailVerified, setEmailVerified]       = useState(false);
   const [verifiedEmail, setVerifiedEmail]       = useState('');
@@ -432,20 +436,41 @@ export default function RegisterScreen() {
         </>
       );
 
+      // ── Stage 3: Security (passwords with show/hide toggles) ──────────────
       case 3: return (
         <>
           <Text style={s.label}>Password <Text style={s.req}>*</Text></Text>
           <View style={s.inputWrapper}>
-            <TextInput style={s.input} placeholder="Enter password" placeholderTextColor={MUTED}
-              value={formData.password} onChangeText={v => updateField('password', v)}
-              secureTextEntry autoCapitalize="none" editable={!loading} />
+            <TextInput
+              style={s.input}
+              placeholder="Enter password"
+              placeholderTextColor={MUTED}
+              value={formData.password}
+              onChangeText={v => updateField('password', v)}
+              secureTextEntry={!showPassword}
+              autoCapitalize="none"
+              editable={!loading}
+            />
+            <TouchableOpacity style={s.eye} onPress={() => setShowPassword(p => !p)} activeOpacity={0.7}>
+              <Feather name={showPassword ? 'eye' : 'eye-off'} size={16} color={MUTED} />
+            </TouchableOpacity>
           </View>
           <Text style={s.hint}>Min 8 chars · 1 uppercase · 1 special character</Text>
           <Text style={[s.label, s.mt]}>Confirm Password <Text style={s.req}>*</Text></Text>
           <View style={s.inputWrapper}>
-            <TextInput style={s.input} placeholder="Re-enter password" placeholderTextColor={MUTED}
-              value={formData.confirm_password} onChangeText={v => updateField('confirm_password', v)}
-              secureTextEntry autoCapitalize="none" editable={!loading} />
+            <TextInput
+              style={s.input}
+              placeholder="Re-enter password"
+              placeholderTextColor={MUTED}
+              value={formData.confirm_password}
+              onChangeText={v => updateField('confirm_password', v)}
+              secureTextEntry={!showConfirmPassword}
+              autoCapitalize="none"
+              editable={!loading}
+            />
+            <TouchableOpacity style={s.eye} onPress={() => setShowConfirmPassword(p => !p)} activeOpacity={0.7}>
+              <Feather name={showConfirmPassword ? 'eye' : 'eye-off'} size={16} color={MUTED} />
+            </TouchableOpacity>
           </View>
         </>
       );

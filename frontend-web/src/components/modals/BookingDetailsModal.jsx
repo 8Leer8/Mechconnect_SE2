@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ExternalLink, X } from "lucide-react";
+import { ExternalLink, X, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { API_BASE_URL } from "@/config/env";
@@ -213,8 +213,8 @@ function ServicesSection({ servicesList }) {
   );
 }
 
-function VehicleSection({ vehicleType, vehicleBrand, vehicleModel }) {
-  if (!vehicleType && !vehicleBrand && !vehicleModel) {
+function VehicleSection({ vehicleInformation }) {
+  if (!vehicleInformation) {
     return (
       <div className="rounded-md border border-border/70 bg-card/60 px-3 py-2.5">
         <p className="text-xs font-semibold uppercase tracking-wide text-orange-300/80">Vehicle Information</p>
@@ -226,20 +226,165 @@ function VehicleSection({ vehicleType, vehicleBrand, vehicleModel }) {
   return (
     <div className="rounded-md border border-border/70 bg-card/60 px-3 py-2.5">
       <p className="text-xs font-semibold uppercase tracking-wide text-orange-300/80">Vehicle Information</p>
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        {vehicleType && (
-          <Badge variant="outline" className="border-cyan-500/40 bg-cyan-500/10 text-cyan-300">
-            {vehicleType}
-          </Badge>
-        )}
-        {vehicleBrand && (
-          <span className="text-sm text-muted-foreground">{vehicleBrand}</span>
-        )}
-        {vehicleModel && (
-          <span className="text-sm text-foreground">{vehicleModel}</span>
-        )}
-      </div>
+      <p className="mt-1 text-sm font-medium text-foreground">{vehicleInformation}</p>
     </div>
+  );
+}
+
+function PaymentDetails({ paymentBreakdown, quotationDetails, baseFee, booking, receiptInfo }) {
+  const [isQuotationOpen, setIsQuotationOpen] = useState(false);
+
+  const pb = paymentBreakdown || {};
+  const distanceKm = pb.distance_km || 0;
+  const distanceFee = distanceKm * 10; // 10 per km
+  const trafficFee = pb.traffic_surcharge || 0;
+  const convenienceFee = pb.convenience_fee_total || 0;
+  const totalFee = pb.total_fee || 0;
+  const serviceFee = pb.service_fee || (totalFee - convenienceFee);
+  const calculatedBaseFee = baseFee || (convenienceFee > 0 ? convenienceFee - distanceFee - trafficFee : 0);
+
+  // Bulletproof quotation data extraction
+  const rawQuotation = quotationDetails || booking?.quotation;
+  const hasQuotation = rawQuotation && rawQuotation.items && rawQuotation.items.length > 0;
+  const quotationTotal = rawQuotation?.total_amount || 0;
+  const quotationItemCount = rawQuotation?.items?.length || 0;
+
+  // Payment method from receipt info
+  const rawReceipt = receiptInfo || booking?.receipt_info;
+  const paymentMethod = rawReceipt?.payment_method;
+  const paymentReceived = rawReceipt?.payment_received;
+  const paidAt = rawReceipt?.paid_at;
+
+  // Format payment method label
+  const formatPaymentMethod = (method) => {
+    if (!method) return '—';
+    const labels = {
+      'cash': 'Cash',
+      'gcash': 'GCash',
+      'maya': 'Maya',
+      'online': 'Online Payment',
+    };
+    return labels[method] || method.charAt(0).toUpperCase() + method.slice(1);
+  };
+
+  // Hide if no payment data
+  if (!convenienceFee && !quotationTotal && !totalFee) {
+    return null;
+  }
+
+  return (
+    <section className="space-y-4 rounded-lg border border-border/70 bg-card/40 p-4">
+      <h4 className="text-sm font-semibold text-orange-400">Payment Details</h4>
+
+      {/* Payment Method Row */}
+      {paymentMethod && (
+        <div className="flex justify-between items-center py-2 border-b border-border/30">
+          <span className="text-sm text-muted-foreground">Payment Method</span>
+          <div className="flex items-center gap-2">
+            {paymentReceived && (
+              <Badge variant="outline" className="border-green-500/40 bg-green-500/10 text-green-400 text-xs">
+                Paid
+              </Badge>
+            )}
+            <span className="text-sm font-medium text-foreground">{formatPaymentMethod(paymentMethod)}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Fee Breakdown Rows */}
+      <div className="space-y-2">
+        {/* Base Fee */}
+        {calculatedBaseFee > 0 && (
+          <div className="flex justify-between items-center py-2 border-b border-border/30">
+            <span className="text-sm text-muted-foreground">Base Fee</span>
+            <span className="text-sm font-medium text-foreground">{formatCurrency(calculatedBaseFee)}</span>
+          </div>
+        )}
+
+        {/* Distance Fee */}
+        {distanceKm > 0 && (
+          <div className="flex justify-between items-center py-2 border-b border-border/30">
+            <span className="text-sm text-muted-foreground">Distance Fee ({distanceKm.toFixed(2)} km)</span>
+            <span className="text-sm font-medium text-foreground">{formatCurrency(distanceFee)}</span>
+          </div>
+        )}
+
+        {/* Traffic Fee */}
+        {trafficFee > 0 && (
+          <div className="flex justify-between items-center py-2 border-b border-border/30">
+            <span className="text-sm text-muted-foreground">Estimated Traffic Fee</span>
+            <span className="text-sm font-medium text-foreground">{formatCurrency(trafficFee)}</span>
+          </div>
+        )}
+
+        {/* Initial Service Fee (when no quotation exists yet) */}
+        {!hasQuotation && serviceFee > 0 && (
+          <div className="flex justify-between items-center py-2 border-b border-border/30">
+            <span className="text-sm text-muted-foreground">Initial Service Fee</span>
+            <span className="text-sm font-medium text-foreground">{formatCurrency(serviceFee)}</span>
+          </div>
+        )}
+
+        {/* Quotation Items Accordion */}
+        {hasQuotation && (
+          <div className="py-2 border-b border-border/30">
+            {/* Clickable Header */}
+            <button
+              type="button"
+              onClick={() => setIsQuotationOpen(!isQuotationOpen)}
+              className="w-full flex justify-between items-center py-2 px-2 rounded-md hover:bg-muted/50 transition-colors"
+            >
+              <span className="text-xs font-semibold uppercase tracking-wide text-orange-300/60">
+                Quotation Items ({quotationItemCount})
+              </span>
+              <span className="text-muted-foreground">
+                {isQuotationOpen ? (
+                  <ChevronUp className="size-4" />
+                ) : (
+                  <ChevronDown className="size-4" />
+                )}
+              </span>
+            </button>
+
+            {/* Collapsible Content */}
+            {isQuotationOpen && (
+              <div className="mt-2 p-2 rounded-md bg-card/40 border border-border/30">
+                <div className="space-y-2">
+                  {rawQuotation.items.map((item, index) => (
+                    <div key={index} className="flex justify-between items-start text-sm py-1 border-b border-border/20 last:border-b-0">
+                      <span className="text-muted-foreground flex-1 pr-2">{item.description || '—'}</span>
+                      <span className="text-foreground font-medium whitespace-nowrap">
+                        {item.quantity} × {formatCurrency(item.unit_price)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Quotation Estimated Total (always visible) */}
+            <div className="flex justify-between items-center mt-2 pt-2 border-t border-border/20 px-2">
+              <span className="text-xs font-medium text-orange-300/80">Quotation Estimated Total</span>
+              <span className="text-sm font-bold text-foreground">{formatCurrency(quotationTotal)}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Convenience Fee Total */}
+        {convenienceFee > 0 && (
+          <div className="flex justify-between items-center py-2 border-b border-border/30">
+            <span className="text-sm font-semibold text-orange-300/80">Convenience Fee Total</span>
+            <span className="text-sm font-bold text-foreground">{formatCurrency(convenienceFee)}</span>
+          </div>
+        )}
+
+        {/* Grand Total */}
+        <div className="flex justify-between items-center py-3 px-3 rounded-md bg-primary/10 border border-primary/30">
+          <span className="text-sm font-bold text-primary">Total Fee</span>
+          <span className="text-base font-bold text-primary">{formatCurrency(totalFee)}</span>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -376,7 +521,6 @@ export function BookingDetailsModal({ booking, onClose }) {
   const { latitude, longitude } = getBroadcastCoordinates(booking);
   const hasCoordinates = latitude !== null && longitude !== null;
   const { embedUrl, openUrl } = buildMapUrls(latitude, longitude);
-  const [selectedPayment, setSelectedPayment] = useState(null);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4" onClick={onClose}>
@@ -463,11 +607,7 @@ export function BookingDetailsModal({ booking, onClose }) {
                 </div>
 
                 {/* Vehicle Information Section */}
-                <VehicleSection
-                  vehicleType={booking.vehicle_type}
-                  vehicleBrand={booking.request?.vehicle_brand}
-                  vehicleModel={booking.request?.vehicle_model}
-                />
+                <VehicleSection vehicleInformation={booking.vehicle_information} />
 
                 {/* Services Section with Badges */}
                 <ServicesSection servicesList={booking.services_list} />
@@ -490,61 +630,19 @@ export function BookingDetailsModal({ booking, onClose }) {
                   requestType={booking.request_type}
                 />
 
-                {/* Payment selection for pending_payment bookings */}
-                {booking.status === 'pending_payment' && (
-                  <section className="space-y-3">
-                    <h4 className="text-sm font-semibold text-orange-400">Payment</h4>
-                    <div className="flex flex-col gap-2">
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedPayment('cash')}
-                          className={`flex-1 rounded-md border px-3 py-2 text-sm text-left ${selectedPayment === 'cash' ? 'border-amber-400' : 'border-border/70'}`}
-                        >
-                          <div className="font-semibold">Cash</div>
-                          <div className="text-xs text-muted-foreground">Pay the mechanic in person</div>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedPayment('online')}
-                          className={`flex-1 rounded-md border px-3 py-2 text-sm text-left ${selectedPayment === 'online' ? 'border-amber-400' : 'border-border/70'}`}
-                        >
-                          <div className="font-semibold">Online Payment</div>
-                          <div className="text-xs text-muted-foreground">Pay now with card or e-wallet</div>
-                        </button>
-                      </div>
-                      <div className="flex items-center justify-end">
-                        <Button
-                          type="button"
-                          onClick={async () => {
-                            if (!selectedPayment) return;
-                            try {
-                              await fetch(`${API_BASE_URL}/bookings/bookings/${booking.id}/pay/`, {
-                                method: 'PATCH',
-                                credentials: 'include',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ payment_method: selectedPayment }),
-                              });
-                              onClose();
-                            } catch (e) {
-                              // no-op for UI
-                            }
-                          }}
-                        >
-                          Confirm Payment Method
-                        </Button>
-                      </div>
-                    </div>
-                  </section>
-                )}
-
                 <section className="space-y-3">
                   <h4 className="text-sm font-semibold text-orange-400">Service Location</h4>
                   <LocationDetails location={booking.service_location} />
                 </section>
 
-                {/* Payment Breakdown */}
-                <PaymentBreakdown booking={booking} />
+                {/* Payment Details Section */}
+                <PaymentDetails
+                  paymentBreakdown={booking.payment_breakdown}
+                  quotationDetails={booking.quotation_details}
+                  baseFee={booking.base_fee}
+                  booking={booking}
+                  receiptInfo={booking.receipt_info}
+                />
               </section>
             </div>
           ) : (
@@ -575,11 +673,7 @@ export function BookingDetailsModal({ booking, onClose }) {
                 <h4 className="text-sm font-semibold text-orange-400">Request Details</h4>
 
                 {/* Vehicle Information Section */}
-                <VehicleSection
-                  vehicleType={booking.vehicle_type}
-                  vehicleBrand={booking.request?.vehicle_brand}
-                  vehicleModel={booking.request?.vehicle_model}
-                />
+                <VehicleSection vehicleInformation={booking.vehicle_information} />
 
                 {/* Services Section with Badges */}
                 <ServicesSection servicesList={booking.services_list} />
@@ -614,8 +708,14 @@ export function BookingDetailsModal({ booking, onClose }) {
                 <LocationDetails location={booking.service_location} />
               </section>
 
-              {/* Payment Breakdown */}
-              <PaymentBreakdown booking={booking} />
+              {/* Payment Details Section */}
+              <PaymentDetails
+                paymentBreakdown={booking.payment_breakdown}
+                quotationDetails={booking.quotation_details}
+                baseFee={booking.base_fee}
+                booking={booking}
+                receiptInfo={booking.receipt_info}
+              />
             </div>
           )}
         </div>
