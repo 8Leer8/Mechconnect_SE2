@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Modal, View, TouchableOpacity, FlatList, Image, ListRenderItem, RefreshControl } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Feather } from '@expo/vector-icons';
+import { Feather, FontAwesome } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { styles } from '@/style/client/discoverStyles';
 import { getImageUrl } from '@/lib/imageUtils';
@@ -66,14 +66,12 @@ export default function DiscoverScreen() {
   const [activeTab, setActiveTab] = useState<TabType>('mechanics');
   const [providerFilter, setProviderFilter] = useState<ProviderFilterType>('all');
   const [isFilterModalVisible, setIsFilterModalVisible] = useState(false);
-  const [showFilterSection, setShowFilterSection] = useState(true);
   const [mechanics, setMechanics] = useState<Mechanic[]>([]);
   const [shops, setShops] = useState<Shop[]>([]);
   const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const lastScrollOffset = useRef(0);
 
   const fetchData = useCallback(async (tab: TabType, force = false) => {
     try {
@@ -120,30 +118,10 @@ export default function DiscoverScreen() {
     fetchData(activeTab);
   }, [activeTab]);
 
-  useEffect(() => {
-    setShowFilterSection(true);
-    setIsFilterModalVisible(false);
-  }, [activeTab]);
-
   const onRefresh = () => {
     setRefreshing(true);
     fetchData(activeTab, true);
   };
-
-  const handleListScroll = useCallback((event: any) => {
-    const currentOffset = Number(event?.nativeEvent?.contentOffset?.y || 0);
-    const delta = currentOffset - lastScrollOffset.current;
-
-    if (currentOffset <= 0) {
-      setShowFilterSection(true);
-    } else if (delta > 8) {
-      setShowFilterSection(false);
-    } else if (delta < -8) {
-      setShowFilterSection(true);
-    }
-
-    lastScrollOffset.current = currentOffset;
-  }, []);
 
   const toggleFavorite = useCallback(async (providerType: 'mechanic' | 'shop', providerId: number) => {
     try {
@@ -301,9 +279,9 @@ export default function DiscoverScreen() {
             }}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
-            <Feather
-              name="heart"
-              size={16}
+            <FontAwesome
+              name={mechanic.is_favorited ? 'heart' : 'heart-o'}
+              size={15}
               color={mechanic.is_favorited ? '#FF5A5F' : '#8E8E93'}
             />
           </TouchableOpacity>
@@ -357,9 +335,9 @@ export default function DiscoverScreen() {
             }}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
-            <Feather
-              name="heart"
-              size={16}
+            <FontAwesome
+              name={shop.is_favorited ? 'heart' : 'heart-o'}
+              size={15}
               color={shop.is_favorited ? '#FF5A5F' : '#8E8E93'}
             />
           </TouchableOpacity>
@@ -511,7 +489,7 @@ export default function DiscoverScreen() {
         ))}
       </View>
 
-      {activeTab !== 'services' && showFilterSection ? (
+      {activeTab !== 'services' ? (
         <View style={styles.filterContainer}>
           <ThemedText style={styles.filterLabel}>Filter</ThemedText>
           <TouchableOpacity
@@ -528,8 +506,6 @@ export default function DiscoverScreen() {
       ) : null}
 
       <Modal
-        onScroll={handleListScroll}
-        scrollEventThrottle={16}
         transparent
         visible={isFilterModalVisible}
         animationType="fade"
