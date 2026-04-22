@@ -12,6 +12,7 @@ class Account(models.Model):
     username = models.CharField(max_length=50, unique=True)
     password = models.CharField(max_length=255)
     is_active = models.BooleanField(default=True)
+    deactivated_at = models.DateTimeField(null=True, blank=True)
     is_verified = models.BooleanField(default=False)
     last_login = models.DateTimeField(null=True, blank=True)
     last_active_role = models.CharField(

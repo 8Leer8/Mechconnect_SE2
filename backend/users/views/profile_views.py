@@ -11,6 +11,14 @@ from ..serializers import (
     VerifyCurrentPasswordSerializer,
     ChangeEmailSerializer,
 )
+from ..deactivation_utils import (
+    create_account_verification_code,
+    deactivate_account,
+    get_account_deactivation_blockers,
+    get_deactivation_deadline,
+    purge_expired_deactivated_account,
+    validate_account_verification_code,
+)
 
 
 def _get_authenticated_account(request):
@@ -22,7 +30,15 @@ def _get_authenticated_account(request):
     if not account_id:
         return None
 
-    return Account.objects.filter(id=account_id).first()
+    account = Account.objects.filter(id=account_id).first()
+    if not account:
+        return None
+
+    deleted, _deadline = purge_expired_deactivated_account(account)
+    if deleted or not account.is_active:
+        return None
+
+    return account
 
 
 @api_view(['GET'])
@@ -290,6 +306,86 @@ def verify_profile_password(request):
         }, status=status.HTTP_200_OK)
 
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def request_account_deactivation(request):
+    """
+    Start the account deactivation flow by verifying the current password and sending an OTP.
+    """
+    account = _get_authenticated_account(request)
+    if not account:
+        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    serializer = VerifyCurrentPasswordSerializer(
+        data=request.data,
+        context={'account': account},
+    )
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    blockers = get_account_deactivation_blockers(account)
+    if blockers:
+        return Response(
+            {
+                'error': 'Resolve the blocked items before deactivating your account.',
+                'blockers': blockers,
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    verification_payload = create_account_verification_code(
+        account,
+        subject='MechConnect - Deactivate Account Verification Code',
+    )
+
+    return Response(
+        {
+            'message': 'Verification code sent to your email.',
+            **verification_payload,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def confirm_account_deactivation(request):
+    """
+    Confirm account deactivation after password and email OTP verification.
+    """
+    account = _get_authenticated_account(request)
+    if not account:
+        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    serializer = VerifyCurrentPasswordSerializer(
+        data=request.data,
+        context={'account': account},
+    )
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    code = request.data.get('code')
+    verification, error = validate_account_verification_code(account, code)
+    if error:
+        return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
+
+    deactivate_account(account)
+    deactivation_deadline = get_deactivation_deadline(account)
+
+    if request.session.get('account_id'):
+        request.session.flush()
+
+    return Response(
+        {
+            'message': 'Account deactivated successfully.',
+            'email_verification_id': verification.id,
+            'deactivated_at': account.deactivated_at.isoformat() if account.deactivated_at else None,
+            'reactivate_by': deactivation_deadline.isoformat() if deactivation_deadline else None,
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 @api_view(['POST'])

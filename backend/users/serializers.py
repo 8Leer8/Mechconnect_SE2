@@ -348,13 +348,6 @@ class LoginSerializer(serializers.Serializer):
             self.logger.exception('Error checking password for username=%s: %s', username, str(e))
             raise serializers.ValidationError({"non_field_errors": "Server error during authentication"})
 
-        if not account.is_active:
-            raise serializers.ValidationError({"account": "Account is deactivated"})
-
-        # Update last login
-        account.last_login = timezone.now()
-        account.save()
-
         data['account'] = account
         return data
 

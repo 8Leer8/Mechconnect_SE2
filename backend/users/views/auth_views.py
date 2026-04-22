@@ -12,6 +12,7 @@ from ..models import Account, AccountRole, EmailVerification
 from ..serializers import (
     RegisterSerializer, LoginSerializer, AccountSerializer
 )
+from ..deactivation_utils import get_deactivation_deadline, purge_expired_deactivated_account
 import jwt
 from utils.email import build_verification_email_html, send_html_email, send_html_email_async
 
@@ -56,6 +57,42 @@ def login(request):
     serializer = LoginSerializer(data=request.data)
     if serializer.is_valid():
         account = serializer.validated_data['account']
+
+        deleted, deadline = purge_expired_deactivated_account(account)
+        if deleted:
+            return Response(
+                {
+                    'error': 'Your account was permanently deleted after the 30-day grace period.',
+                },
+                status=status.HTTP_410_GONE,
+            )
+
+        reactivate_account = str(request.data.get('reactivate_account', '')).lower() == 'true'
+
+        if not account.is_active:
+            if not account.deactivated_at:
+                return Response(
+                    {
+                        'error': 'Account is deactivated.',
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            deactivation_deadline = deadline or get_deactivation_deadline(account)
+            if not reactivate_account:
+                return Response(
+                    {
+                        'error': 'You have recently deactivated your account. Logging in will reactivate it again.',
+                        'requires_reactivation_confirmation': True,
+                        'deactivated_at': account.deactivated_at.isoformat() if account.deactivated_at else None,
+                        'reactivate_by': deactivation_deadline.isoformat() if deactivation_deadline else None,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+            account.is_active = True
+            account.deactivated_at = None
+            account.save(update_fields=['is_active', 'deactivated_at'])
         
         # Create session
         request.session['account_id'] = account.id
@@ -75,6 +112,9 @@ def login(request):
             request.session['active_role'] = roles[0]
         else:
             request.session['active_role'] = 'client'  # Default to client
+
+        account.last_login = timezone.now()
+        account.save(update_fields=['last_login'])
         
         # create JWT token to return for API/mobile clients
         try:
@@ -108,6 +148,46 @@ def token_login(request):
     serializer = LoginSerializer(data=request.data)
     if serializer.is_valid():
         account = serializer.validated_data['account']
+
+        deleted, deadline = purge_expired_deactivated_account(account)
+        if deleted:
+            return Response(
+                {
+                    'error': 'Your account was permanently deleted after the 30-day grace period.',
+                },
+                status=status.HTTP_410_GONE,
+            )
+
+        reactivate_account = str(request.data.get('reactivate_account', '')).lower() == 'true'
+
+        if not account.is_active:
+            if not account.deactivated_at:
+                return Response(
+                    {
+                        'error': 'Account is deactivated.',
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            deactivation_deadline = deadline or get_deactivation_deadline(account)
+            if not reactivate_account:
+                return Response(
+                    {
+                        'error': 'You have recently deactivated your account. Logging in will reactivate it again.',
+                        'requires_reactivation_confirmation': True,
+                        'deactivated_at': account.deactivated_at.isoformat() if account.deactivated_at else None,
+                        'reactivate_by': deactivation_deadline.isoformat() if deactivation_deadline else None,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+            account.is_active = True
+            account.deactivated_at = None
+            account.save(update_fields=['is_active', 'deactivated_at'])
+
+        account.last_login = timezone.now()
+        account.save(update_fields=['last_login'])
+
         # create token payload
         exp = datetime.utcnow() + timedelta(minutes=60)
         payload = {
@@ -162,6 +242,13 @@ def check_session(request):
             }, status=status.HTTP_401_UNAUTHORIZED)
         
         account = Account.objects.get(id=account_id)
+        deleted, _deadline = purge_expired_deactivated_account(account)
+        if deleted or not account.is_active:
+            request.session.flush()
+            return Response({
+                'authenticated': False
+            }, status=status.HTTP_401_UNAUTHORIZED)
+
         return Response({
             'authenticated': True,
             'account': AccountSerializer(account).data
