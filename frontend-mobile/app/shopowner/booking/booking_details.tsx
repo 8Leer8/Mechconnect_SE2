@@ -427,6 +427,45 @@ export default function ShopOwnerBookingDetailScreen() {
     return `${h}:${m}:${s}`;
   };
 
+  const locationText = (value?: string | null, fallback = 'Unavailable') => {
+    const text = String(value || '').trim();
+    if (!text) return fallback;
+    const normalized = text.toLowerCase();
+    if (normalized === 'emergency' || normalized === 'emergency location' || normalized === 'unknown barangay' || normalized === 'unknown city') {
+      return fallback;
+    }
+    return text;
+  };
+
+  const inferFromStreetAddress = (streetRaw?: string | null) => {
+    const streetText = String(streetRaw || '').trim();
+    if (!streetText.includes(',')) {
+      return { street: streetText, barangay: '', city: '' };
+    }
+    const parts = streetText
+      .split(',')
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (parts.length < 2) {
+      return { street: streetText, barangay: '', city: '' };
+    }
+
+    const primaryStreet = parts[0];
+    let barangay = '';
+    let city = '';
+    if (parts.length >= 3) {
+      if (/^brgy\.?\s|^barangay\s/i.test(parts[1])) {
+        barangay = parts[1];
+        city = parts[2];
+      } else {
+        city = parts[1];
+      }
+    } else {
+      city = parts[1];
+    }
+    return { street: primaryStreet, barangay, city };
+  };
+
   const getDisplayQuotation = () => {
     // Prefer server-saved quotation if available
     if (quotation && (quotation.items || []).length > 0) return quotation;
@@ -827,6 +866,17 @@ export default function ShopOwnerBookingDetailScreen() {
 
         {/* Service Location */}
         <View style={styles.sectionCard}>
+          {(() => {
+            const inferred = inferFromStreetAddress(booking.service_location?.street_name);
+            const fallbackStreet =
+              (booking.service_location as any)?.latitude != null && (booking.service_location as any)?.longitude != null
+                ? `${Number((booking.service_location as any).latitude).toFixed(6)}, ${Number((booking.service_location as any).longitude).toFixed(6)}`
+                : 'Unavailable';
+            const streetValue = locationText(inferred.street || booking.service_location?.street_name, fallbackStreet);
+            const barangayValue = locationText(booking.service_location?.barangay, locationText(inferred.barangay, 'Unavailable'));
+            const cityValue = locationText(booking.service_location?.city_municipality, locationText(inferred.city, 'Unavailable'));
+            return (
+              <>
           <View style={styles.sectionHeader}>
             <View style={[styles.sectionIcon, { backgroundColor: '#FF3B3015' }]}>
               <FontAwesome name="map-marker" size={16} color="#FF3B30" />
@@ -839,30 +889,30 @@ export default function ShopOwnerBookingDetailScreen() {
               <View style={styles.locationRow}>
                 <ThemedText style={styles.locationLabel}>Street</ThemedText>
                 <ThemedText style={styles.locationValue}>
-                  {booking.service_location.street_name}
+                  {streetValue}
                 </ThemedText>
               </View>
 
-              {booking.service_location.subdivision_village && (
+              {locationText(booking.service_location.subdivision_village, '') ? (
                 <View style={styles.locationRow}>
                   <ThemedText style={styles.locationLabel}>Subdivision</ThemedText>
                   <ThemedText style={styles.locationValue}>
-                    {booking.service_location.subdivision_village}
+                    {locationText(booking.service_location.subdivision_village)}
                   </ThemedText>
                 </View>
-              )}
+              ) : null}
 
               <View style={styles.locationRow}>
                 <ThemedText style={styles.locationLabel}>Barangay</ThemedText>
                 <ThemedText style={styles.locationValue}>
-                  {booking.service_location.barangay}
+                  {barangayValue}
                 </ThemedText>
               </View>
 
               <View style={styles.locationRow}>
                 <ThemedText style={styles.locationLabel}>City</ThemedText>
                 <ThemedText style={styles.locationValue}>
-                  {booking.service_location.city_municipality}
+                  {cityValue}
                 </ThemedText>
               </View>
 
@@ -881,6 +931,9 @@ export default function ShopOwnerBookingDetailScreen() {
               <ThemedText style={styles.noLocationText}>No location specified</ThemedText>
             </View>
           )}
+              </>
+            );
+          })()}
         </View>
 
         {/* Timeline */}

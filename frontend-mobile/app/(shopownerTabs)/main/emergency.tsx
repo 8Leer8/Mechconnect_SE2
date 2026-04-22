@@ -59,8 +59,21 @@ export default function ShopOwnerEmergencyScreen() {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
       });
-      if (!response.ok) throw new Error('Failed to fetch emergency requests');
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const backendMessage =
+          typeof data?.error === 'string' && data.error.trim()
+            ? data.error
+            : typeof data?.message === 'string' && data.message.trim()
+            ? data.message
+            : '';
+        if (response.status === 404) {
+          throw new Error(
+            backendMessage || 'Emergency endpoint not found. Please restart backend server and try again.'
+          );
+        }
+        throw new Error(backendMessage || `Failed to fetch emergency requests (${response.status})`);
+      }
       setRequests(data.emergency_requests || []);
     } catch (err: any) {
       setError(err?.message || 'Failed to fetch emergency requests');
@@ -99,7 +112,7 @@ export default function ShopOwnerEmergencyScreen() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ amount_fee: 0 }),
       });
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
       if (response.ok) {
         showNotification({
           type: 'success',
@@ -108,10 +121,22 @@ export default function ShopOwnerEmergencyScreen() {
         });
         fetchEmergencyRequests();
       } else {
-        showNotification({ type: 'error', message: data.error || 'Failed to accept emergency request' });
+        const backendMessage =
+          typeof data?.error === 'string' && data.error.trim()
+            ? data.error
+            : typeof data?.message === 'string' && data.message.trim()
+            ? data.message
+            : '';
+        showNotification({
+          type: 'error',
+          message: backendMessage || `Failed to accept emergency request (${response.status})`,
+        });
       }
-    } catch {
-      showNotification({ type: 'error', message: 'An error occurred while accepting the emergency request' });
+    } catch (err: any) {
+      showNotification({
+        type: 'error',
+        message: err?.message || 'An error occurred while accepting the emergency request',
+      });
     }
   };
 
@@ -135,6 +160,13 @@ export default function ShopOwnerEmergencyScreen() {
     <ThemedView style={styles.container}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
+          <TouchableOpacity
+            onPress={() => router.push('/main/shop')}
+            style={{ marginRight: 10 }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <FontAwesome name="chevron-left" size={18} color="#FF8C00" />
+          </TouchableOpacity>
           <View style={styles.emergencyIcon}>
             <FontAwesome name="exclamation-triangle" size={24} color="#FF3B30" />
           </View>

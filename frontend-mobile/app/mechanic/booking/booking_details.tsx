@@ -1464,6 +1464,45 @@ export default function BookingDetailScreen() {
     (booking.request as any)?.request_details?.vehicle_model ||
     (booking.request as any)?.request_details?.vehicle?.model ||
     null;
+  const locationText = (value?: string | null, fallback = 'Unavailable') => {
+    const text = String(value || '').trim();
+    if (!text) return fallback;
+    const normalized = text.toLowerCase();
+    if (normalized === 'emergency' || normalized === 'emergency location' || normalized === 'unknown barangay' || normalized === 'unknown city') {
+      return fallback;
+    }
+    return text;
+  };
+
+  const inferFromStreetAddress = (streetRaw?: string | null) => {
+    const streetText = String(streetRaw || '').trim();
+    if (!streetText.includes(',')) {
+      return { street: streetText, barangay: '', city: '' };
+    }
+    const parts = streetText
+      .split(',')
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (parts.length < 2) {
+      return { street: streetText, barangay: '', city: '' };
+    }
+
+    const primaryStreet = parts[0];
+    let barangay = '';
+    let city = '';
+    if (parts.length >= 3) {
+      if (/^brgy\.?\s|^barangay\s/i.test(parts[1])) {
+        barangay = parts[1];
+        city = parts[2];
+      } else {
+        city = parts[1];
+      }
+    } else {
+      city = parts[1];
+    }
+    return { street: primaryStreet, barangay, city };
+  };
+
   const displayServiceLocation = booking.service_location
     ? {
         ...booking.service_location,
@@ -1473,6 +1512,7 @@ export default function BookingDetailScreen() {
 
   const convenienceFeeTotal = convenienceBreakdown ? convenienceBreakdown.totalConvenienceFee : 0;
   const totalFee = convenienceFeeTotal + quotationEstimatedTotal;
+  const inferredStreetParts = inferFromStreetAddress(displayServiceLocation?.street_name);
 
   const acceptedByAssoc: Record<string, any> = {};
   const acceptedRows: any[] = [];
@@ -2244,27 +2284,32 @@ export default function BookingDetailScreen() {
                 <View style={styles.locationRow}>
                   <ThemedText style={styles.locationLabel}>Street</ThemedText>
                   <ThemedText style={styles.locationValue}>
-                    {displayServiceLocation.street_name}
+                    {locationText(
+                      inferredStreetParts.street || displayServiceLocation.street_name,
+                      displayServiceLocation.latitude != null && displayServiceLocation.longitude != null
+                        ? `${Number(displayServiceLocation.latitude).toFixed(6)}, ${Number(displayServiceLocation.longitude).toFixed(6)}`
+                        : 'Unavailable'
+                    )}
                   </ThemedText>
                 </View>
-                {displayServiceLocation.subdivision_village && (
+                {locationText(displayServiceLocation.subdivision_village, '') ? (
                   <View style={styles.locationRow}>
                     <ThemedText style={styles.locationLabel}>Subdivision</ThemedText>
                     <ThemedText style={styles.locationValue}>
-                      {displayServiceLocation.subdivision_village}
+                      {locationText(displayServiceLocation.subdivision_village)}
                     </ThemedText>
                   </View>
-                )}
+                ) : null}
                 <View style={styles.locationRow}>
                   <ThemedText style={styles.locationLabel}>Barangay</ThemedText>
                   <ThemedText style={styles.locationValue}>
-                    {displayServiceLocation.barangay}
+                    {locationText(displayServiceLocation.barangay, locationText(inferredStreetParts.barangay, 'Unavailable'))}
                   </ThemedText>
                 </View>
                 <View style={styles.locationRow}>
                   <ThemedText style={styles.locationLabel}>City</ThemedText>
                   <ThemedText style={styles.locationValue}>
-                    {displayServiceLocation.city_municipality}
+                    {locationText(displayServiceLocation.city_municipality, locationText(inferredStreetParts.city, 'Unavailable'))}
                   </ThemedText>
                 </View>
                 {displayServiceLocation.landmark && (

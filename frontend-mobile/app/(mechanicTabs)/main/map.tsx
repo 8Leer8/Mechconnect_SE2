@@ -17,7 +17,7 @@ import * as Location from 'expo-location';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
-import { router, useFocusEffect, usePathname } from 'expo-router';
+import { router, useFocusEffect, usePathname, useSegments } from 'expo-router';
 import WalletBadge from '@/components/wallet-badge';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import { eventBus } from '@/utils/eventBus';
@@ -160,7 +160,12 @@ export default function MapScreen() {
   const lastBroadcastFetchLocationRef = useRef<{ latitude: number; longitude: number } | null>(null);
   const { showNotification } = useNotification();
   const pathname = usePathname();
-  const isShopOwnerMap = pathname.includes('(shopownerTabs)') || pathname.includes('/main/shop');
+  const segments = useSegments();
+  const isShopOwnerMap =
+    pathname.includes('(shopownerTabs)') ||
+    pathname.includes('/main/shop') ||
+    segments.includes('(shopownerTabs)') ||
+    (segments.includes('main') && segments.includes('shop'));
 
   const [broadcasts, setBroadcasts] = useState<BroadcastRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -670,7 +675,7 @@ export default function MapScreen() {
           <ThemedText style={styles.headerTitle}>Nearby Jobs</ThemedText>
           {isShopOwnerMap && (
             <TouchableOpacity
-              onPress={() => router.push('/(shopownerTabs)/main/emergency')}
+              onPress={() => router.push('/main/emergency')}
               style={{
                 marginTop: 8,
                 alignSelf: 'flex-start',

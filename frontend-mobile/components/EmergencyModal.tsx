@@ -34,6 +34,8 @@ type EmergencyLocationData = {
   city_municipality?: string;
   landmark?: string;
 };
+
+const PLACEHOLDER_LOCATION_TEXT = new Set(['emergency', 'emergency location', 'unknown barangay', 'unknown city']);
 const EMPTY_DRAFT = {
   description: '',
   concernPictures: [] as string[],
@@ -155,16 +157,23 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
 
   const activeLocation = locationMode === 'pinned' && pinnedLocation ? pinnedLocation : autoLocation;
 
+  const cleanLocationText = (value?: string | null): string | undefined => {
+    const text = String(value || '').trim();
+    if (!text) return undefined;
+    if (PLACEHOLDER_LOCATION_TEXT.has(text.toLowerCase())) return undefined;
+    return text;
+  };
+
   const buildLocationDataFromGeocode = (
     latitude: number,
     longitude: number,
     result?: Location.LocationGeocodedAddress | null
   ): EmergencyLocationData => {
-    const streetName = result?.street || result?.name || '';
-    const subdivisionVillage = result?.district || result?.subregion || '';
-    const barangay = result?.district || result?.subregion || '';
-    const cityMunicipality = result?.city || result?.subregion || result?.region || '';
-    const landmark = result?.name || '';
+    const streetName = cleanLocationText(result?.street || result?.name || '');
+    const subdivisionVillage = cleanLocationText(result?.district || result?.subregion || '');
+    const barangay = cleanLocationText(result?.district || result?.subregion || '');
+    const cityMunicipality = cleanLocationText(result?.city || result?.subregion || result?.region || '');
+    const landmark = cleanLocationText(result?.name || '');
     const compactAddress = [streetName, barangay || cityMunicipality].filter(Boolean).join(', ');
 
     return {
@@ -199,13 +208,38 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
 
   useEffect(() => {
     if (!selectedLocation) return;
-    setPinnedLocation({
-      latitude: selectedLocation.latitude,
-      longitude: selectedLocation.longitude,
-      address: selectedLocation.address,
-    });
-    setLocationMode('pinned');
-    setSelectedLocation(null);
+
+    const applySelectedLocation = async () => {
+      const baseLocation: EmergencyLocationData = {
+        latitude: selectedLocation.latitude,
+        longitude: selectedLocation.longitude,
+        address: selectedLocation.address,
+      };
+
+      try {
+        const [reverseResult] = await Location.reverseGeocodeAsync({
+          latitude: selectedLocation.latitude,
+          longitude: selectedLocation.longitude,
+        });
+        const geocoded = buildLocationDataFromGeocode(
+          selectedLocation.latitude,
+          selectedLocation.longitude,
+          reverseResult
+        );
+        setPinnedLocation({
+          ...baseLocation,
+          ...geocoded,
+          address: geocoded.address || baseLocation.address,
+        });
+      } catch {
+        setPinnedLocation(baseLocation);
+      } finally {
+        setLocationMode('pinned');
+        setSelectedLocation(null);
+      }
+    };
+
+    applySelectedLocation();
   }, [visible, selectedLocation, setSelectedLocation]);
 
   useEffect(() => {
@@ -422,13 +456,22 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
         }
       }
 
+      const finalStreet =
+        cleanLocationText(resolvedLocationData.street_name) ||
+        cleanLocationText(resolvedLocationData.address) ||
+        `${activeLocation.latitude.toFixed(6)}, ${activeLocation.longitude.toFixed(6)}`;
+      const finalSubdivision = cleanLocationText(resolvedLocationData.subdivision_village);
+      const finalBarangay = cleanLocationText(resolvedLocationData.barangay) || 'Unavailable';
+      const finalCity = cleanLocationText(resolvedLocationData.city_municipality) || 'Unavailable';
+      const finalLandmark = cleanLocationText(resolvedLocationData.landmark);
+
       // Add location data
       const serviceLocationData = {
-        street_name: resolvedLocationData.street_name || resolvedLocationData.address || `${activeLocation.latitude}, ${activeLocation.longitude}`,
-        subdivision_village: resolvedLocationData.subdivision_village || undefined,
-        barangay: resolvedLocationData.barangay || 'Unknown Barangay',
-        city_municipality: resolvedLocationData.city_municipality || 'Unknown City',
-        landmark: resolvedLocationData.landmark || undefined,
+        street_name: finalStreet,
+        subdivision_village: finalSubdivision,
+        barangay: finalBarangay,
+        city_municipality: finalCity,
+        landmark: finalLandmark,
         latitude: activeLocation.latitude,
         longitude: activeLocation.longitude,
       };
