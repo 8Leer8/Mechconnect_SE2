@@ -678,6 +678,22 @@ export default function EditProfileScreen() {
         throw new Error(errMsg);
       }
 
+      const updatedProfile = payload?.profile as ProfileData | undefined;
+      if (updatedProfile) {
+        const roleProfiles = updatedProfile.current_role_profile || {};
+        const currentRoleProfile =
+          activeRole === 'mechanic'
+            ? roleProfiles.mechanic
+            : activeRole === 'shop_owner'
+              ? roleProfiles.shop_owner
+              : activeRole === 'admin'
+                ? roleProfiles.admin
+                : roleProfiles.client;
+
+        setProfilePhotoUri(currentRoleProfile?.profile_photo || null);
+        setServiceBannerUri(roleProfiles.shop_owner?.shop?.service_banner || null);
+      }
+
       showNotification({ type: 'success', message: 'Profile updated successfully.' });
       router.back();
     } catch (error) {
@@ -715,7 +731,15 @@ export default function EditProfileScreen() {
         <View style={styles.photoRow}>
           <TouchableOpacity style={styles.photoBox} onPress={() => pickImage('profile')}>
             {profilePhotoUri ? (
-              <Image source={{ uri: getImageUrl(profilePhotoUri) || profilePhotoUri }} style={styles.photo} />
+              <Image
+                source={{
+                  uri:
+                    profilePhotoUri?.startsWith('file://') || profilePhotoUri?.startsWith('content://')
+                      ? profilePhotoUri
+                      : getImageUrl(profilePhotoUri) ?? undefined,
+                }}
+                style={styles.photo}
+              />
             ) : (
               <View style={styles.photoPlaceholder}>
                 <FontAwesome name="user" size={24} color="#FF8C00" />
@@ -830,7 +854,15 @@ export default function EditProfileScreen() {
             <ThemedText style={styles.bannerLabel}>Service Banner</ThemedText>
             <TouchableOpacity style={styles.bannerBox} onPress={() => pickImage('banner')}>
               {serviceBannerUri ? (
-                <Image source={{ uri: getImageUrl(serviceBannerUri) || serviceBannerUri }} style={styles.banner} />
+                <Image
+                  source={{
+                    uri:
+                      serviceBannerUri?.startsWith('file://') || serviceBannerUri?.startsWith('content://')
+                        ? serviceBannerUri
+                        : getImageUrl(serviceBannerUri) ?? undefined,
+                  }}
+                  style={styles.banner}
+                />
               ) : (
                 <View style={styles.photoPlaceholder}>
                   <FontAwesome name="image" size={24} color="#FF8C00" />

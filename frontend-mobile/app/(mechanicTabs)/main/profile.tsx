@@ -193,9 +193,10 @@ export default function ProfileScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      fetchProfile();
       fetchMyServices();
       fetchMySpecialties();
-    }, [fetchMyServices, fetchMySpecialties]),
+    }, [fetchProfile, fetchMyServices, fetchMySpecialties]),
   );
 
   const fetchMyServiceAddons = useCallback(async () => {

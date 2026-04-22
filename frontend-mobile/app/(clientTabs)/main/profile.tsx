@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {View, ScrollView, TouchableOpacity, Image, RefreshControl, } from 'react-native';
 import { router } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -110,6 +111,12 @@ export default function ProfileScreen() {
   useEffect(() => {
     fetchProfileData();
   }, [fetchProfileData]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchProfileData();
+    }, [fetchProfileData]),
+  );
 
   const onRefresh = () => {
     setRefreshing(true);
