@@ -7,8 +7,10 @@ import { FontAwesome } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { SkeletonDetailPage } from '@/components/skeletons/SkeletonLoaders';
+import { Image } from 'expo-image';
 import { styles } from '@/style/mechanic/bookingDetailsStyles';
 import { canOpenBookingChat } from '@/lib/bookingAccess';
+import { fetchBookingChatPreview } from '@/lib/bookingChatPreview';
 import { useNotification } from '@/hooks/useNotification';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -51,6 +53,10 @@ interface BookingDetail {
     landmark?: string | null;
   } | null;
   active_details?: {
+    before_picture?: string | null;
+    after_picture?: string | null;
+    before_pictures?: string[];
+    after_pictures?: string[];
     is_job_done?: boolean;
     is_rescheduled?: boolean;
     started_at?: string | null;
@@ -96,6 +102,8 @@ export default function ShopOwnerBookingDetailScreen() {
   const [shopMechanics, setShopMechanics] = useState<ShopMechanic[]>([]);
   const [assignLoading, setAssignLoading] = useState(false);
   const [assigningId, setAssigningId] = useState<number | null>(null);
+  const [chatPreview, setChatPreview] = useState<string | null>(null);
+  const [viewerPhotoUri, setViewerPhotoUri] = useState<string | null>(null);
   const { showNotification } = useNotification();
   const { lastMessage } = useWebSocketContext();
 
@@ -146,6 +154,13 @@ export default function ShopOwnerBookingDetailScreen() {
     }
   }, [bookingId]);
 
+  const refreshChatPreview = useCallback(async () => {
+    if (!bookingId) return;
+    const res = await fetchBookingChatPreview(Number(bookingId));
+    if (!res) return;
+    setChatPreview(res.lastPreview);
+  }, [bookingId]);
+
   const loadAssignmentData = useCallback(async (requestId: number) => {
     try {
       const [mechRes, assignRes] = await Promise.all([
@@ -173,7 +188,7 @@ export default function ShopOwnerBookingDetailScreen() {
   }, []);
 
   const canManageAssignment = (status: string) =>
-    ['accepted', 'on_the_way', 'active', 'paused', 'reworked'].includes(status);
+    ['accepted', 'on_the_way', 'at_location', 'diagnosing', 'active', 'paused', 'reworked'].includes(status);
 
   const handleAssignMechanic = async (accountId: number, role: 'lead' | 'assistant') => {
     if (!booking?.request?.id) return;
@@ -242,6 +257,22 @@ export default function ShopOwnerBookingDetailScreen() {
   }, [fetchBookingDetail]);
 
   useEffect(() => {
+    if (!booking || !canOpenBookingChat(booking)) {
+      setChatPreview(null);
+      return;
+    }
+    refreshChatPreview();
+  }, [booking, refreshChatPreview]);
+
+  useEffect(() => {
+    if (!bookingId) return;
+    const id = setInterval(() => {
+      fetchBookingDetail(true);
+    }, 20000);
+    return () => clearInterval(id);
+  }, [bookingId, fetchBookingDetail]);
+
+  useEffect(() => {
     if (bookingId) fetchQuotation();
   }, [bookingId]);
 
@@ -277,6 +308,10 @@ export default function ShopOwnerBookingDetailScreen() {
         return 'On Going';
       case 'on_the_way':
         return 'On the Way';
+      case 'at_location':
+        return 'At Location';
+      case 'diagnosing':
+        return 'Diagnosing';
       case 'paused':
         return 'Paused';
       case 'finished':
@@ -306,6 +341,10 @@ export default function ShopOwnerBookingDetailScreen() {
         return '#FF8C00';
       case 'on_the_way':
         return '#007AFF';
+      case 'at_location':
+        return '#5AC8FA';
+      case 'diagnosing':
+        return '#AF52DE';
       case 'paused':
         return '#8E8E93';
       case 'finished':
@@ -335,6 +374,10 @@ export default function ShopOwnerBookingDetailScreen() {
         return 'play-circle';
       case 'on_the_way':
         return 'car';
+      case 'at_location':
+        return 'map-marker';
+      case 'diagnosing':
+        return 'search';
       case 'paused':
         return 'pause-circle';
       case 'finished':
@@ -646,7 +689,7 @@ export default function ShopOwnerBookingDetailScreen() {
         </View>
 
         {/* Chat Section */}
-        {booking.provider && canOpenBookingChat(booking) ? (
+        {canOpenBookingChat(booking) ? (
           <TouchableOpacity
             style={styles.sectionCard}
             onPress={() =>
@@ -658,13 +701,17 @@ export default function ShopOwnerBookingDetailScreen() {
               <View style={[styles.sectionIcon, { backgroundColor: '#007AFF15' }]}> 
                 <FontAwesome name="comments" size={16} color="#007AFF" />
               </View>
-              <ThemedText style={styles.sectionTitle}>Chat with Lead Mechanic</ThemedText>
+              <ThemedText style={styles.sectionTitle}>Chat with Client</ThemedText>
               <FontAwesome name="chevron-right" size={16} color="#8E8E93" style={{ marginLeft: 'auto' }} />
             </View>
             <View style={{ paddingVertical: 8 }}>
-              <ThemedText style={{ color: '#666' }}>
-                Open the booking chat to coordinate with the assigned team.
-              </ThemedText>
+              {chatPreview ? (
+                <ThemedText style={{ color: '#aaa' }} numberOfLines={3}>
+                  {chatPreview}
+                </ThemedText>
+              ) : (
+                <ThemedText style={{ color: '#666' }}>No messages yet. Tap to chat with the client.</ThemedText>
+              )}
             </View>
           </TouchableOpacity>
         ) : null}
@@ -698,7 +745,7 @@ export default function ShopOwnerBookingDetailScreen() {
                     }}
                   >
                     <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#fff' }}>
-                      {a.role === 'lead' ? 'Lead' : 'Assistant'}
+                      {a.role === 'lead' ? 'Lead Mechanic' : 'Assisting Mechanic'}
                     </ThemedText>
                   </View>
                 </View>
@@ -893,6 +940,8 @@ export default function ShopOwnerBookingDetailScreen() {
         {/* Quotation (read-only) */}
         {(booking.status === 'accepted' ||
           booking.status === 'on_the_way' ||
+          booking.status === 'at_location' ||
+          booking.status === 'diagnosing' ||
           booking.status === 'active') && (
           <View style={[styles.sectionCard]}>
             <View style={styles.sectionHeader}>
@@ -1054,6 +1103,57 @@ export default function ShopOwnerBookingDetailScreen() {
           </View>
         )}
 
+        {/* Before-Service Photos */}
+        {booking.active_details && (
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#4F8CFF15' }]}>
+                <FontAwesome name="camera" size={16} color="#4F8CFF" />
+              </View>
+              <ThemedText style={styles.sectionTitle}>Before-Service Photos</ThemedText>
+            </View>
+
+            {(
+              (booking.active_details.before_pictures && booking.active_details.before_pictures.length > 0) ||
+              booking.active_details.before_picture
+            ) ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingVertical: 8 }}>
+                {(booking.active_details.before_pictures && booking.active_details.before_pictures.length > 0
+                  ? booking.active_details.before_pictures
+                  : booking.active_details.before_picture
+                  ? [booking.active_details.before_picture]
+                  : []
+                ).map((uri, idx) => (
+                  <TouchableOpacity key={`${uri}-${idx}`} activeOpacity={0.85} onPress={() => setViewerPhotoUri(uri)}>
+                    <Image
+                      source={{ uri }}
+                      style={{ width: 220, height: 220, borderRadius: 12 }}
+                      contentFit="cover"
+                    />
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            ) : (
+              <View
+                style={{
+                  marginTop: 8,
+                  height: 140,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: '#2A2C2E',
+                  backgroundColor: '#111214',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                }}
+              >
+                <FontAwesome name="image" size={26} color="#6C6C70" />
+                <ThemedText style={{ color: '#8E8E93' }}>No before-service photos uploaded yet</ThemedText>
+              </View>
+            )}
+          </View>
+        )}
+
         {/* Completion Details */}
         {booking.status === 'completed' &&
           booking.completion_details && (
@@ -1191,6 +1291,19 @@ export default function ShopOwnerBookingDetailScreen() {
         <View style={{ height: 28 }} />
       </ScrollView>
 
+      <Modal visible={Boolean(viewerPhotoUri)} transparent animationType="fade" onRequestClose={() => setViewerPhotoUri(null)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' }}>
+          <TouchableOpacity style={{ position: 'absolute', top: 56, right: 20, zIndex: 2 }} onPress={() => setViewerPhotoUri(null)}>
+            <FontAwesome name="times-circle" size={30} color="#fff" />
+          </TouchableOpacity>
+          <TouchableOpacity style={{ width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center' }} activeOpacity={1} onPress={() => setViewerPhotoUri(null)}>
+            {viewerPhotoUri ? (
+              <Image source={{ uri: viewerPhotoUri }} style={{ width: '94%', height: '80%', borderRadius: 12 }} contentFit="contain" />
+            ) : null}
+          </TouchableOpacity>
+        </View>
+      </Modal>
+
       <Modal visible={assignModalVisible} animationType="slide" transparent>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'flex-end' }}>
           <View style={{ backgroundColor: '#1E1E1E', borderTopLeftRadius: 18, borderTopRightRadius: 18, maxHeight: '78%', padding: 16 }}>
@@ -1209,7 +1322,7 @@ export default function ShopOwnerBookingDetailScreen() {
                 >
                   <View>
                     <ThemedText>{a.mechanic.firstname} {a.mechanic.lastname}</ThemedText>
-                    <ThemedText style={{ color: '#888', fontSize: 12 }}>{a.role === 'lead' ? 'Lead' : 'Assistant'}</ThemedText>
+                    <ThemedText style={{ color: '#888', fontSize: 12 }}>{a.role === 'lead' ? 'Lead Mechanic' : 'Assisting Mechanic'}</ThemedText>
                   </View>
                   {assignLoading ? (
                     <ActivityIndicator size="small" color="#FF9500" />
@@ -1235,13 +1348,13 @@ export default function ShopOwnerBookingDetailScreen() {
                         style={{ backgroundColor: '#FF9500', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
                         onPress={() => handleAssignMechanic(m.account_id, 'lead')}
                       >
-                        <ThemedText style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Lead</ThemedText>
+                        <ThemedText style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Lead Mechanic</ThemedText>
                       </TouchableOpacity>
                       <TouchableOpacity
                         style={{ backgroundColor: '#34C759', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
                         onPress={() => handleAssignMechanic(m.account_id, 'assistant')}
                       >
-                        <ThemedText style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Assist</ThemedText>
+                        <ThemedText style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Assisting Mechanic</ThemedText>
                       </TouchableOpacity>
                     </View>
                   )}

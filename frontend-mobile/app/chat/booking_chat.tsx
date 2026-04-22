@@ -973,11 +973,11 @@ export default function BookingChatScreen() {
     const senderPhoto = getImageUrl(item?.sender?.profile_photo) || null;
     const senderRole = String(item?.sender?.chat_role || 'participant');
     const senderRoleLabelMap: Record<string, string> = {
-      lead_mechanic: 'Lead',
-      assistant_mechanic: 'Assistant',
-      shop_owner: 'Shop Owner',
+      lead_mechanic: 'Lead Mechanic',
+      assistant_mechanic: 'Assisting Mechanic',
+      shop_owner: 'Shopowner',
       client: 'Client',
-      provider_mechanic: 'Mechanic',
+      provider_mechanic: 'Lead Mechanic',
       participant: 'Participant',
       admin: 'Admin',
       none: 'Participant',
@@ -1241,7 +1241,7 @@ export default function BookingChatScreen() {
             <View style={styles.viewOnlyRow}>
               <FontAwesome name="eye" size={14} color="#F2B15C" />
               <ThemedText style={styles.viewOnlyText}>
-                View only ({myChatRole === 'assistant_mechanic' ? 'Assistant Mechanic' : 'Participant'}). You can read updates but cannot send messages for this booking.
+                View only ({myChatRole === 'assistant_mechanic' ? 'Assisting Mechanic' : 'Participant'}). You can read updates but cannot send messages for this booking.
               </ThemedText>
             </View>
           )}

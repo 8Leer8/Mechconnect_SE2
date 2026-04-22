@@ -173,7 +173,7 @@ export default function MechanicShopDashboardScreen() {
         const todays = bookings.filter((booking) => dateKey(booking.booked_at) === today);
         setTodayCount(todays.length);
 
-        const openStatuses = new Set(['accepted', 'on_the_way', 'active', 'paused', 'pending_payment']);
+        const openStatuses = new Set(['accepted', 'on_the_way', 'at_location', 'diagnosing', 'active', 'paused', 'pending_payment']);
         const nextOpen = bookings
           .filter((booking) => openStatuses.has(booking.status))
           .sort((a, b) => new Date(a.booked_at).getTime() - new Date(b.booked_at).getTime());
@@ -206,7 +206,7 @@ export default function MechanicShopDashboardScreen() {
 
   const completionRate = assignedCount > 0 ? Math.round((completedCount / assignedCount) * 100) : 0;
   const avgCompletedValue = completedCount > 0 ? totalEarnings / completedCount : 0;
-  const openStatuses = new Set(['accepted', 'on_the_way', 'active', 'paused', 'pending_payment']);
+  const openStatuses = new Set(['accepted', 'on_the_way', 'at_location', 'diagnosing', 'active', 'paused', 'pending_payment']);
   const upcomingJobs = allJobs.filter((job) => openStatuses.has(job.status)).length;
   const todayCompletedValue = allJobs
     .filter((job) => dateKey(job.booked_at) === dateKey(new Date().toISOString()) && job.status === 'completed')

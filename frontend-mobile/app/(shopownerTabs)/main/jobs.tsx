@@ -147,17 +147,10 @@ export default function ShopOwnerJobsScreen() {
     setCurrentPage(1);
   }, [activeTab]);
 
-  // Re-fetch when a WebSocket booking update arrives (e.g., lead mechanic starts/finishes job)
-  useEffect(() => {
-    if (lastMessage?.type === 'booking_update') {
-      if (activeTab === 'pending') fetchRequests();
-      else fetchBookings();
-    }
-  }, [lastMessage, activeTab, currentPage]);
-
-  const fetchBookings = async () => {
+  const fetchBookings = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = Boolean(options?.silent);
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       setError(null);
       const statusQuery =
         activeTab === 'all'
@@ -204,7 +197,11 @@ export default function ShopOwnerJobsScreen() {
         setCounts({
           all: data.total_count || 0,
           booked: data.tab_counts.accepted || 0,
-          on_going: (data.tab_counts.on_the_way || 0) + (data.tab_counts.active || 0),
+          on_going:
+            (data.tab_counts.on_the_way || 0) +
+            (data.tab_counts.at_location || 0) +
+            (data.tab_counts.diagnosing || 0) +
+            (data.tab_counts.active || 0),
           completed: data.tab_counts.completed || 0,
           cancelled: data.tab_counts.cancelled || 0,
           reworked: data.tab_counts.reworked || 0,
@@ -214,14 +211,15 @@ export default function ShopOwnerJobsScreen() {
     } catch (e: any) {
       setError(e.message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [activeTab, currentPage]);
 
-  const fetchRequests = async () => {
+  const fetchRequests = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = Boolean(options?.silent);
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       setError(null);
       const res = await fetch(`${API_URL}/bookings/shopowner/requests/`, {
         method: 'GET',
@@ -235,10 +233,19 @@ export default function ShopOwnerJobsScreen() {
       setError(e.message || 'Failed to fetch requests');
       setPendingRequests([]);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, []);
+
+  // Re-fetch when a WebSocket booking update arrives (e.g., lead mechanic starts/finishes job)
+  useEffect(() => {
+    if (!lastMessage) return;
+    const t = String(lastMessage.type || '').toLowerCase();
+    if (t !== 'booking_update') return;
+    if (activeTab === 'pending') fetchRequests({ silent: true });
+    else fetchBookings({ silent: true });
+  }, [lastMessage, activeTab, currentPage, fetchBookings, fetchRequests]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -250,19 +257,22 @@ export default function ShopOwnerJobsScreen() {
   };
 
   const fetchData = useCallback(() => {
-    if (activeTab === 'pending') fetchRequests();
-    else fetchBookings();
-  }, [activeTab, currentPage]);
+    if (activeTab === 'pending') fetchRequests({ silent: true });
+    else fetchBookings({ silent: true });
+  }, [activeTab, fetchBookings, fetchRequests]);
 
   useFocusEffect(
     useCallback(() => {
       fetchData();
+      const poll = setInterval(fetchData, 20000);
+      return () => clearInterval(poll);
     }, [fetchData])
   );
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    if (activeTab === 'pending') fetchRequests();
+    else fetchBookings();
+  }, [activeTab, currentPage, fetchBookings, fetchRequests]);
 
   // ── Status helpers ──
   const getStatusLabel = (s: string) => {
@@ -270,6 +280,8 @@ export default function ShopOwnerJobsScreen() {
       accepted: 'Booked',
       active: 'Active',
       on_the_way: 'On the Way',
+      at_location: 'At Location',
+      diagnosing: 'Diagnosing',
       paused: 'Paused',
       finished: 'Finished',
       pending_payment: 'Pending Payment',
@@ -286,6 +298,8 @@ export default function ShopOwnerJobsScreen() {
       accepted: '#00B8D9',
       active: '#FF8C00',
       on_the_way: '#007AFF',
+      at_location: '#5AC8FA',
+      diagnosing: '#AF52DE',
       paused: '#8E8E93',
       finished: '#34C759',
       pending_payment: '#FFD60A',
@@ -302,6 +316,8 @@ export default function ShopOwnerJobsScreen() {
       accepted: 'calendar-check-o',
       active: 'play-circle',
       on_the_way: 'car',
+      at_location: 'map-marker',
+      diagnosing: 'search',
       paused: 'pause-circle',
       finished: 'check-circle',
       pending_payment: 'money',
@@ -1110,7 +1126,7 @@ export default function ShopOwnerJobsScreen() {
                             ]}
                           >
                             <ThemedText style={styles.roleText}>
-                              {a.role === 'lead' ? 'Lead' : 'Assistant'}
+                              {a.role === 'lead' ? 'Lead Mechanic' : 'Assisting Mechanic'}
                             </ThemedText>
                           </View>
                         </View>
@@ -1144,13 +1160,13 @@ export default function ShopOwnerJobsScreen() {
                             style={styles.leadBtn}
                             onPress={() => handleAssignMechanic(m.account_id, 'lead')}
                           >
-                            <ThemedText style={styles.btnLabel}>Lead</ThemedText>
+                            <ThemedText style={styles.btnLabel}>Lead Mechanic</ThemedText>
                           </TouchableOpacity>
                           <TouchableOpacity
                             style={styles.assistBtn}
                             onPress={() => handleAssignMechanic(m.account_id, 'assistant')}
                           >
-                            <ThemedText style={styles.btnLabel}>Assist</ThemedText>
+                            <ThemedText style={styles.btnLabel}>Assisting Mechanic</ThemedText>
                           </TouchableOpacity>
                         </>
                       )}

@@ -1,13 +1,13 @@
 import { Stack } from 'expo-router';
 import React from 'react';
 
+/** Only list screens that match files in this folder (wrong names break navigation state). */
 export default function BookingLayout() {
   return (
-    <Stack>
-      <Stack.Screen name="index" options={{ headerShown: false }} />
-      <Stack.Screen name="quotation_edit" options={{ headerShown: false }} />
-      <Stack.Screen name="booking_location_map" options={{ headerShown: false }} />
-      <Stack.Screen name="booking_tracking_map" options={{ headerShown: false }} />
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="booking_details" />
+      <Stack.Screen name="quotation_edit" />
+      <Stack.Screen name="booking_location_map" />
     </Stack>
   );
 }

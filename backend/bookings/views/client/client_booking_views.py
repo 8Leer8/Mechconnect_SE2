@@ -317,15 +317,20 @@ def list_client_bookings(request):
         
         # Apply status filter if provided
         if status_filter:
-            valid_statuses = ['active', 'on_the_way', 'pending_payment', 'completed', 'cancelled', 'reworked', 'disputed']
+            valid_statuses = [
+                'active', 'on_the_way', 'at_location', 'diagnosing',
+                'pending_payment', 'completed', 'cancelled', 'reworked', 'disputed',
+            ]
             if status_filter.lower() not in valid_statuses:
                 return Response({
                     'error': f'Invalid status. Must be one of: {", ".join(valid_statuses)}'
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-            # For 'active' tab, merge 'accepted', 'active', 'on_the_way', and 'pending_payment' statuses
+            # For 'active' tab, merge in-progress statuses through payment pending
             if status_filter.lower() == 'active':
-                bookings_queryset = bookings_queryset.filter(status__in=['accepted', 'active', 'on_the_way', 'pending_payment'])
+                bookings_queryset = bookings_queryset.filter(status__in=[
+                    'accepted', 'active', 'on_the_way', 'at_location', 'diagnosing', 'pending_payment',
+                ])
             else:
                 bookings_queryset = bookings_queryset.filter(status=status_filter.lower())
 
@@ -355,8 +360,9 @@ def list_client_bookings(request):
         
         # If no filter, return bookings grouped by status (no pagination for grouped view)
         else:
-            # Merge 'accepted', 'active' and 'on_the_way' for the active group
-            active_bookings = bookings_queryset.filter(status__in=['accepted', 'active', 'on_the_way', 'pending_payment'])
+            active_bookings = bookings_queryset.filter(status__in=[
+                'accepted', 'active', 'on_the_way', 'at_location', 'diagnosing', 'pending_payment',
+            ])
             completed_bookings = bookings_queryset.filter(status='completed')
             cancelled_bookings = bookings_queryset.filter(status='cancelled')
             reworked_bookings = bookings_queryset.filter(status='reworked')
@@ -444,7 +450,10 @@ def get_booking_detail(request, booking_id):
         ).get(id=booking_id, request__client=client)
         
         # Ensure ActiveBooking exists for runtime details when booking is in a running/finished state
-        if booking.status in ['active', 'paused', 'pending_payment', 'finished', 'on_the_way']:
+        if booking.status in [
+            'active', 'paused', 'pending_payment', 'finished',
+            'on_the_way', 'at_location', 'diagnosing',
+        ]:
             try:
                 ActiveBooking.objects.get_or_create(booking=booking)
             except Exception:
@@ -1101,9 +1110,13 @@ def _serialize_single_booking(booking, viewer_account=None):
     # Add active booking runtime details when ActiveBooking exists
     if hasattr(booking, 'activebooking'):
         active = booking.activebooking
+        before_photos = [p.photo.url for p in active.photos.filter(photo_type="before").order_by("created_at") if p.photo]
+        after_photos = [p.photo.url for p in active.photos.filter(photo_type="after").order_by("created_at") if p.photo]
         booking_data['active_details'] = {
             'before_picture': active.before_picture_service.url if active.before_picture_service else None,
             'after_picture': active.after_picture_service.url if active.after_picture_service else None,
+            'before_pictures': before_photos,
+            'after_pictures': after_photos,
             'is_job_done': active.is_job_done,
             'is_rescheduled': active.is_rescheduled,
             'reason': active.reason,
@@ -1849,9 +1862,13 @@ class ReportNoShowView(APIView):
         if booking.request.client_id != account.client.id:
             return Response({'error': 'You can only report your own bookings'}, status=status.HTTP_403_FORBIDDEN)
 
-        if booking.status not in {Booking.Status.ACCEPTED, Booking.Status.ON_THE_WAY}:
+        if booking.status not in {
+            Booking.Status.ACCEPTED,
+            Booking.Status.ON_THE_WAY,
+            Booking.Status.AT_LOCATION,
+        }:
             return Response(
-                {'error': 'No-show reporting is only allowed while booking is accepted or on_the_way'},
+                {'error': 'No-show reporting is only allowed before the mechanic starts work with you (diagnosing or later).'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

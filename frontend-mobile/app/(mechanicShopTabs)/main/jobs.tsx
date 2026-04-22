@@ -381,6 +381,8 @@ export default function MechanicShopJobsScreen() {
       case 'accepted': return 'Booked';
       case 'active': return 'On Going';
       case 'on_the_way': return 'On the Way';
+      case 'at_location': return 'At Location';
+      case 'diagnosing': return 'Diagnosing';
       case 'paused': return 'Paused';
       case 'finished': return 'Finished';
       case 'pending_payment': return 'Pending Payment';
@@ -398,6 +400,8 @@ export default function MechanicShopJobsScreen() {
       case 'accepted': return 'calendar-check-o';
       case 'active': return 'play-circle';
       case 'on_the_way': return 'car';
+      case 'at_location': return 'map-marker';
+      case 'diagnosing': return 'search';
       case 'paused': return 'pause-circle';
       case 'finished': return 'check-circle';
       case 'pending_payment': return 'money';
@@ -415,6 +419,8 @@ export default function MechanicShopJobsScreen() {
       case 'accepted': return '#00B8D9';
       case 'active': return '#FF8C00';
       case 'on_the_way': return '#007AFF';
+      case 'at_location': return '#5AC8FA';
+      case 'diagnosing': return '#AF52DE';
       case 'paused': return '#8E8E93';
       case 'finished': return '#34C759';
       case 'pending_payment': return '#FFD60A';
@@ -558,6 +564,8 @@ export default function MechanicShopJobsScreen() {
                   if (
                     booking.status === 'active' ||
                     booking.status === 'on_the_way' ||
+                    booking.status === 'at_location' ||
+                    booking.status === 'diagnosing' ||
                     booking.status === 'paused' ||
                     booking.status === 'completed' ||
                     booking.status === 'reworked' ||
@@ -644,6 +652,8 @@ export default function MechanicShopJobsScreen() {
                   ) : (
                     booking.status === 'accepted' ||
                     booking.status === 'on_the_way' ||
+                    booking.status === 'at_location' ||
+                    booking.status === 'diagnosing' ||
                     booking.status === 'active' ||
                     booking.status === 'paused' ||
                     booking.status === 'completed' ||

@@ -26,6 +26,7 @@ from ...models import (
     MechanicLocation,
     PaymentInstallment,
     RequestAssignment,
+    ActiveBookingPhoto,
 )
 from ...models import Quotation, QuotationItem
 from ...backjob_utils import booking_has_backjob
@@ -186,7 +187,19 @@ def _get_accepted_offer_for_booking(booking):
     ).order_by('-responded_at', '-id').first()
 
 
-def _refresh_on_the_way_metrics(booking, mechanic_lat=None, mechanic_lng=None):
+def _clear_active_booking_started_for_revert(booking):
+    """Clear job timer fields when leaving ACTIVE (e.g. back to diagnosing)."""
+    try:
+        ab = ActiveBooking.objects.get(booking=booking)
+        ab.started_at = None
+        ab.paused_at = None
+        ab.total_pause_duration = timedelta(0)
+        ab.save(update_fields=["started_at", "paused_at", "total_pause_duration"])
+    except ActiveBooking.DoesNotExist:
+        pass
+
+
+def _refresh_on_the_way_metrics(booking, mechanic_lat=None, mechanic_lng=None, set_status=Booking.Status.ON_THE_WAY):
     accepted_offer = _get_accepted_offer_for_booking(booking)
     destination_lat, destination_lng = _get_booking_destination_coordinates(booking)
 
@@ -237,7 +250,7 @@ def _refresh_on_the_way_metrics(booking, mechanic_lat=None, mechanic_lng=None):
         traffic_surcharge = (distance_fee * surcharge_percent).quantize(Decimal('0.01'))
         convenience_fee = (BASE_FEE + distance_fee + traffic_surcharge).quantize(Decimal('0.01'))
 
-    booking.status = Booking.Status.ON_THE_WAY
+    booking.status = set_status
     booking.distance_km = distance_km if distance_km is not None else booking.distance_km
     booking.eta_minutes = eta_minutes if eta_minutes is not None else booking.eta_minutes
     booking.convenience_fee = convenience_fee if convenience_fee is not None else booking.convenience_fee
@@ -362,6 +375,77 @@ def mechanic_cancel_travel(request, booking_id):
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
+def mechanic_arrived(request, booking_id):
+    """
+    Mechanic arrived at the service location. on_the_way -> at_location.
+    """
+    account, err = _get_mechanic_account(request)
+    if err:
+        return err
+
+    try:
+        booking = _get_accessible_booking(account, booking_id)
+    except Booking.DoesNotExist:
+        return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
+
+    if booking.status != Booking.Status.ON_THE_WAY:
+        return Response({"error": "Booking must be in 'on_the_way' status to mark arrived."}, status=status.HTTP_400_BAD_REQUEST)
+
+    booking.status = Booking.Status.AT_LOCATION
+    booking.save(update_fields=["status"])
+
+    notify_booking_parties(
+        account.id,
+        booking.request.client.account_id,
+        booking.id,
+        booking.status,
+        "Mechanic has arrived at the location",
+    )
+
+    return Response(
+        {"message": "Marked as at location.", "booking_id": booking.id, "status": booking.status},
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def mechanic_start_diagnosing(request, booking_id):
+    """
+    Mechanic and client met; move to diagnosing. at_location -> diagnosing.
+    """
+    account, err = _get_mechanic_account(request)
+    if err:
+        return err
+
+    try:
+        booking = _get_accessible_booking(account, booking_id)
+    except Booking.DoesNotExist:
+        return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
+
+    if booking.status != Booking.Status.AT_LOCATION:
+        return Response({"error": "Booking must be in 'at_location' status to start diagnosing."}, status=status.HTTP_400_BAD_REQUEST)
+
+    booking.status = Booking.Status.DIAGNOSING
+    booking.save(update_fields=["status"])
+
+    notify_booking_parties(
+        account.id,
+        booking.request.client.account_id,
+        booking.id,
+        booking.status,
+        "Mechanic is diagnosing the vehicle with the client",
+    )
+
+    return Response(
+        {"message": "Diagnosing started.", "booking_id": booking.id, "status": booking.status},
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
 def mechanic_start_job(request, booking_id):
     """
     Mechanic starts the job. Sets Booking.status = ACTIVE.
@@ -375,13 +459,48 @@ def mechanic_start_job(request, booking_id):
     except Booking.DoesNotExist:
         return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
 
-    if booking.status not in [Booking.Status.ACCEPTED, Booking.Status.ON_THE_WAY]:
-        return Response({"error": "Booking must be in 'accepted' or 'on_the_way' status to start job."}, status=status.HTTP_400_BAD_REQUEST)
+    if booking.status != Booking.Status.DIAGNOSING:
+        return Response({"error": "Booking must be in 'diagnosing' status to start job."}, status=status.HTTP_400_BAD_REQUEST)
 
     # Make creation of ActiveBooking and status update atomic
     try:
         with transaction.atomic():
             active_booking, created = ActiveBooking.objects.get_or_create(booking=booking)
+            uploaded_before_photos = list(request.FILES.getlist("before_pictures"))
+            uploaded_single_before = request.FILES.get("before_picture_service")
+            if uploaded_single_before is not None:
+                uploaded_before_photos.append(uploaded_single_before)
+
+            has_existing_before = bool(active_booking.before_picture_service) or ActiveBookingPhoto.objects.filter(
+                active_booking=active_booking,
+                photo_type=ActiveBookingPhoto.PhotoType.BEFORE,
+            ).exists()
+
+            # First run only: require before photo(s) before starting the job.
+            if (not has_existing_before) and not uploaded_before_photos:
+                return Response(
+                    {
+                        "error": "before pictures are required before starting the job.",
+                        "code": "before_photo_required",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if uploaded_before_photos:
+                if not active_booking.before_picture_service:
+                    active_booking.before_picture_service = uploaded_before_photos[0]
+                    active_booking.save(update_fields=["before_picture_service"])
+                ActiveBookingPhoto.objects.bulk_create(
+                    [
+                        ActiveBookingPhoto(
+                            active_booking=active_booking,
+                            photo=photo_file,
+                            photo_type=ActiveBookingPhoto.PhotoType.BEFORE,
+                        )
+                        for photo_file in uploaded_before_photos
+                    ]
+                )
+
             if created or not active_booking.started_at:
                 active_booking.started_at = timezone.now()
                 active_booking.paused_at = None
@@ -411,7 +530,7 @@ def mechanic_start_job(request, booking_id):
 @permission_classes([AllowAny])
 def mechanic_cancel_job(request, booking_id):
     """
-    Mechanic cancels the job and reverts status to ON_THE_WAY.
+    Mechanic cancels the job and reverts status to diagnosing (still on site with client).
     """
     account, err = _get_mechanic_account(request)
     if err:
@@ -427,19 +546,22 @@ def mechanic_cancel_job(request, booking_id):
 
     mechanic_lat = _to_float(request.data.get('mechanic_latitude'))
     mechanic_lng = _to_float(request.data.get('mechanic_longitude'))
-    refresh_result = _refresh_on_the_way_metrics(booking, mechanic_lat, mechanic_lng)
+    refresh_result = _refresh_on_the_way_metrics(
+        booking, mechanic_lat, mechanic_lng, set_status=Booking.Status.DIAGNOSING
+    )
+    _clear_active_booking_started_for_revert(booking)
 
     notify_booking_parties(
         account.id,
         booking.request.client.account_id,
         booking.id,
         booking.status,
-        "Job was cancelled and booking moved back to on_the_way",
+        "Job was cancelled and booking moved back to diagnosing",
     )
 
     return Response(
         {
-            "message": "Job cancelled, status reverted to on_the_way.",
+            "message": "Job cancelled, status reverted to diagnosing.",
             "booking_id": booking.id,
             "status": booking.status,
             "distance_km": float(booking.distance_km) if booking.distance_km is not None else None,
@@ -600,13 +722,31 @@ def mechanic_finish_job(request, booking_id):
         )
 
     # Accept optional multipart image upload in the same request.
-    uploaded_after_photo = request.FILES.get("after_picture_service")
-    if uploaded_after_photo is not None:
-        active_booking.after_picture_service = uploaded_after_photo
-        active_booking.save(update_fields=["after_picture_service"])
+    uploaded_after_photos = list(request.FILES.getlist("after_pictures"))
+    uploaded_single_after = request.FILES.get("after_picture_service")
+    if uploaded_single_after is not None:
+        uploaded_after_photos.append(uploaded_single_after)
+    if uploaded_after_photos:
+        if not active_booking.after_picture_service:
+            active_booking.after_picture_service = uploaded_after_photos[0]
+            active_booking.save(update_fields=["after_picture_service"])
+        ActiveBookingPhoto.objects.bulk_create(
+            [
+                ActiveBookingPhoto(
+                    active_booking=active_booking,
+                    photo=photo_file,
+                    photo_type=ActiveBookingPhoto.PhotoType.AFTER,
+                )
+                for photo_file in uploaded_after_photos
+            ]
+        )
 
     # Validation gate: do not allow status transition until after-service photo exists.
-    if not active_booking.after_picture_service:
+    has_after_photos = bool(active_booking.after_picture_service) or ActiveBookingPhoto.objects.filter(
+        active_booking=active_booking,
+        photo_type=ActiveBookingPhoto.PhotoType.AFTER,
+    ).exists()
+    if not has_after_photos:
         return Response(
             {
                 "error": "after_picture_service is required before finishing the job.",
@@ -1262,7 +1402,9 @@ def mechanic_revert_stage(request, booking_id):
     Mapping:
       - pending_payment, finished -> active
       - paused -> active
-      - active -> on_the_way
+      - active -> diagnosing
+      - diagnosing -> at_location
+      - at_location -> on_the_way
       - on_the_way -> accepted
     """
     account, err = _get_mechanic_account(request)
@@ -1278,7 +1420,9 @@ def mechanic_revert_stage(request, booking_id):
         Booking.Status.PENDING_PAYMENT: Booking.Status.ACTIVE,
         Booking.Status.FINISHED: Booking.Status.ACTIVE,
         Booking.Status.PAUSED: Booking.Status.ACTIVE,
-        Booking.Status.ACTIVE: Booking.Status.ON_THE_WAY,
+        Booking.Status.ACTIVE: Booking.Status.DIAGNOSING,
+        Booking.Status.DIAGNOSING: Booking.Status.AT_LOCATION,
+        Booking.Status.AT_LOCATION: Booking.Status.ON_THE_WAY,
         Booking.Status.ON_THE_WAY: Booking.Status.ACCEPTED,
     }
 
@@ -1307,6 +1451,9 @@ def mechanic_revert_stage(request, booking_id):
     else:
         booking.status = new_status
         booking.save(update_fields=["status"])
+
+    if new_status == Booking.Status.DIAGNOSING:
+        _clear_active_booking_started_for_revert(booking)
 
     notify_booking_parties(
         account.id,
@@ -1372,7 +1519,7 @@ def mechanic_accept_backjob(request, booking_id):
         return err
 
     try:
-        booking = Booking.objects.get(id=booking_id, request__provider=account)
+        booking = Booking.objects.filter(_mechanic_booking_access_q(account)).distinct().get(id=booking_id)
     except Booking.DoesNotExist:
         return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -1382,7 +1529,13 @@ def mechanic_accept_backjob(request, booking_id):
         return Response({"error": "No backjob found for this booking"}, status=status.HTTP_404_NOT_FOUND)
 
     # If already accepted or in progress, ensure booking state is updated then return success
-    if backjob.status in [Booking.Status.ACCEPTED, Booking.Status.ON_THE_WAY, Booking.Status.ACTIVE]:
+    if backjob.status in [
+        Booking.Status.ACCEPTED,
+        Booking.Status.ON_THE_WAY,
+        Booking.Status.AT_LOCATION,
+        Booking.Status.DIAGNOSING,
+        Booking.Status.ACTIVE,
+    ]:
         try:
             booking.status = Booking.Status.ACCEPTED
             booking.amount_fee = 0
@@ -1503,7 +1656,7 @@ def mechanic_location_view(request, booking_id):
            Used by the client-side app to poll mechanic location every 5 seconds.
     POST — Upserts the MechanicLocation row for a booking.
            Used by the mechanic-side app to push GPS coordinates every 5 seconds.
-    Only works when booking status is 'on_the_way'.
+    Works while mechanic is traveling or on site before the job is active.
     """
     account_id = request.session.get("account_id")
     if not account_id:
@@ -1520,10 +1673,13 @@ def mechanic_location_view(request, booking_id):
     except Booking.DoesNotExist:
         return Response({"error": "Booking not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    # Verify access: must be the booking's provider OR the booking's client
+    # Verify access: provider (e.g. shop owner on shop jobs), client, or assigned shop mechanic.
     is_provider = booking.request.provider_id == account.id
     is_client = booking.request.client.account_id == account.id
-    if not is_provider and not is_client:
+    is_assigned_mechanic = RequestAssignment.objects.filter(
+        request=booking.request, mechanic=account
+    ).exists()
+    if not is_provider and not is_client and not is_assigned_mechanic:
         return Response({"error": "You do not have permission to access this booking"}, status=status.HTTP_403_FORBIDDEN)
 
     if request.method == "GET":
@@ -1537,12 +1693,20 @@ def mechanic_location_view(request, booking_id):
         except MechanicLocation.DoesNotExist:
             return Response({"error": "Mechanic location not available yet"}, status=status.HTTP_404_NOT_FOUND)
 
-    # POST — only the mechanic (provider) can update location
-    if not is_provider:
-        return Response({"error": "Only the assigned mechanic can update location"}, status=status.HTTP_403_FORBIDDEN)
+    # POST — solo jobs use request.provider as the mechanic; shop jobs use RequestAssignment.
+    can_push_location = is_provider or is_assigned_mechanic
+    if not can_push_location:
+        return Response({"error": "Only the traveling mechanic can update location"}, status=status.HTTP_403_FORBIDDEN)
 
-    if booking.status != Booking.Status.ON_THE_WAY:
-        return Response({"error": "Location updates are only accepted when booking is on_the_way"}, status=status.HTTP_400_BAD_REQUEST)
+    if booking.status not in (
+        Booking.Status.ON_THE_WAY,
+        Booking.Status.AT_LOCATION,
+        Booking.Status.DIAGNOSING,
+    ):
+        return Response(
+            {"error": "Location updates are only accepted while traveling or on site (before job is active)."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
     latitude = _to_float(request.data.get("latitude"))
     longitude = _to_float(request.data.get("longitude"))
@@ -1579,12 +1743,14 @@ def _count_pending_direct_requests(account):
 def _mechanic_booking_access_q(account):
     """Access rule for mechanic bookings.
 
-    - Shop mechanics: only jobs assigned in RequestAssignment.
-    - Independent mechanics: jobs where they are the provider.
+    Mechanics can access:
+    - jobs explicitly assigned to them in RequestAssignment
+    - jobs where they are the provider account
+
+    This avoids over-filtering on request.shop/provider shape (shop-owner
+    bookings may be owner-scoped even when assigned to a shop mechanic).
     """
-    if getattr(account.mechanic, "is_working_for_shop", False):
-        return Q(request__assignments__mechanic=account)
-    return Q(request__provider=account)
+    return Q(request__assignments__mechanic=account) | Q(request__provider=account)
 
 
 def _get_accessible_booking(account, booking_id):
@@ -1732,7 +1898,10 @@ def list_mechanic_bookings(request):
             # pending includes pending direct requests + bookings that have a backjob
             pending_direct_count = _count_pending_direct_requests(account)
             # Only count backjobs that are still requested (not yet accepted)
-            backjob_count = Booking.objects.filter(request__provider=account, backjob__status=Booking.Status.REWORKED).count()
+            backjob_count = Booking.objects.filter(
+                _mechanic_booking_access_q(account),
+                backjob__status=Booking.Status.REWORKED,
+            ).distinct().count()
             pending_count = pending_direct_count + backjob_count
             bookings_count = bookings_queryset.count()
             total_count = pending_count + bookings_count
@@ -1746,7 +1915,10 @@ def list_mechanic_bookings(request):
                 # Need some pending items on this page
                 direct_pending = _serialize_pending_direct_requests(account)
                 # Only include backjob bookings that are in 'reworked' state (pending mechanic acceptance)
-                backjob_qs = Booking.objects.filter(request__provider=account, backjob__status=Booking.Status.REWORKED).order_by('-booked_at')
+                backjob_qs = Booking.objects.filter(
+                    _mechanic_booking_access_q(account),
+                    backjob__status=Booking.Status.REWORKED,
+                ).distinct().order_by("-booked_at")
                 backjob_pending = _serialize_bookings(backjob_qs)
                 all_pending = direct_pending + backjob_pending
                 pending_slice = all_pending[start_index:min(end_index, pending_count)]
@@ -1762,6 +1934,8 @@ def list_mechanic_bookings(request):
             # Include tab counts so frontend doesn't need a separate request
             accepted_count = bookings_queryset.filter(status="accepted").count()
             on_the_way_count = bookings_queryset.filter(status="on_the_way").count()
+            at_location_count = bookings_queryset.filter(status="at_location").count()
+            diagnosing_count = bookings_queryset.filter(status="diagnosing").count()
             active_count = bookings_queryset.filter(status__in=["active", "paused"]).count()
             completed_count = bookings_queryset.filter(status="completed").count()
             cancelled_count = bookings_queryset.filter(status="cancelled").count()
@@ -1787,6 +1961,8 @@ def list_mechanic_bookings(request):
                         "pending": pending_count,
                         "accepted": accepted_count,
                         "on_the_way": on_the_way_count,
+                        "at_location": at_location_count,
+                        "diagnosing": diagnosing_count,
                         "active": active_count,
                         "completed": completed_count,
                         "cancelled": cancelled_count,
@@ -1802,7 +1978,10 @@ def list_mechanic_bookings(request):
             # include both direct pending requests and bookings that have backjob requests
             direct_pending = _serialize_pending_direct_requests(account)
             # Only include backjob bookings that are pending acceptance (reworked)
-            backjob_qs = Booking.objects.filter(request__provider=account, backjob__status=Booking.Status.REWORKED).order_by('-booked_at')
+            backjob_qs = Booking.objects.filter(
+                _mechanic_booking_access_q(account),
+                backjob__status=Booking.Status.REWORKED,
+            ).distinct().order_by("-booked_at")
             backjob_pending = _serialize_bookings(backjob_qs)
             all_pending = direct_pending + backjob_pending
             total_count = len(all_pending)
@@ -1825,10 +2004,10 @@ def list_mechanic_bookings(request):
                 status=status.HTTP_200_OK,
             )
 
-        # Combined on_going filter: on_the_way + active + paused
+        # Combined on_going filter: travel + on site + active + paused
         if status_filter.lower() == "on_going":
             bookings_queryset = bookings_queryset.filter(
-                status__in=["on_the_way", "active", "paused"]
+                status__in=["on_the_way", "at_location", "diagnosing", "active", "paused"]
             )
             total_count = bookings_queryset.count()
             total_pages = (total_count + page_size - 1) // page_size if page_size > 0 else 0
@@ -1855,6 +2034,8 @@ def list_mechanic_bookings(request):
         valid_statuses = [
             "accepted",
             "on_the_way",
+            "at_location",
+            "diagnosing",
             "active",
             "paused",
             "finished",
@@ -1911,6 +2092,8 @@ def list_mechanic_bookings(request):
     # No status filter: return counts + aggregate stats (lightweight for tab badges / home screen)
     accepted_count = bookings_queryset.filter(status="accepted").count()
     on_the_way_count = bookings_queryset.filter(status="on_the_way").count()
+    at_location_count = bookings_queryset.filter(status="at_location").count()
+    diagnosing_count = bookings_queryset.filter(status="diagnosing").count()
     active_count = bookings_queryset.filter(status__in=["active", "paused"]).count()
     finished_count = bookings_queryset.filter(status="finished").count()
     pending_payment_count = bookings_queryset.filter(status="pending_payment").count()
@@ -1921,7 +2104,10 @@ def list_mechanic_bookings(request):
     ).count()
     disputed_count = bookings_queryset.filter(dispute_status=Booking.DisputeState.ACTIVE).count()
     # Include backjob bookings in the pending count, but only those not yet accepted (reworked)
-    pending_count = _count_pending_direct_requests(account) + Booking.objects.filter(request__provider=account, backjob__status=Booking.Status.REWORKED).count()
+    pending_count = _count_pending_direct_requests(account) + Booking.objects.filter(
+        _mechanic_booking_access_q(account),
+        backjob__status=Booking.Status.REWORKED,
+    ).distinct().count()
 
     # Single DB aggregate — much cheaper than fetching all completed records
     total_earnings = bookings_queryset.filter(status="completed").aggregate(
@@ -1933,6 +2119,8 @@ def list_mechanic_bookings(request):
             "pending": {"count": pending_count},
             "accepted": {"count": accepted_count},
             "on_the_way": {"count": on_the_way_count},
+            "at_location": {"count": at_location_count},
+            "diagnosing": {"count": diagnosing_count},
             "active": {"count": active_count},
             "finished": {"count": finished_count},
             "pending_payment": {"count": pending_payment_count},

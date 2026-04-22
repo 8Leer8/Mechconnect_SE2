@@ -56,7 +56,13 @@ function statusVariant(status) {
   if (status === "completed") {
     return "default";
   }
-  if (status === "active" || status === "on_the_way" || status === "accepted") {
+  if (
+    status === "active" ||
+    status === "on_the_way" ||
+    status === "at_location" ||
+    status === "diagnosing" ||
+    status === "accepted"
+  ) {
     return "secondary";
   }
   if (status === "disputed" || status === "cancelled") {
@@ -73,6 +79,12 @@ function getStatusClass(status) {
   }
   if (value === "on_the_way") {
     return "border-cyan-500/40 bg-cyan-500/15 text-cyan-300";
+  }
+  if (value === "at_location") {
+    return "border-sky-500/40 bg-sky-500/15 text-sky-200";
+  }
+  if (value === "diagnosing") {
+    return "border-fuchsia-500/40 bg-fuchsia-500/15 text-fuchsia-200";
   }
   if (value === "active") {
     return "border-blue-500/40 bg-blue-500/15 text-blue-300";

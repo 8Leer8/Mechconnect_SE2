@@ -10,7 +10,6 @@ import { styles } from '@/style/mechanic/bookingsStyles';
 import WalletBadge from '@/components/wallet-badge';
 import { SkeletonBookingList } from '@/components/skeletons/SkeletonLoaders';
 import { useWebSocketContext } from '@/context/WebSocketContext';
-import { canOpenBookingChat } from '@/lib/bookingAccess';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -245,6 +244,8 @@ export default function BookingsScreen() {
       case 'accepted': return 'Booked';
       case 'active': return 'On Going';
       case 'on_the_way': return 'On the Way';
+      case 'at_location': return 'At Location';
+      case 'diagnosing': return 'Diagnosing';
       case 'paused': return 'Paused';
       case 'finished': return 'Finished';
       case 'pending_payment': return 'Pending Payment';
@@ -261,6 +262,8 @@ export default function BookingsScreen() {
       case 'accepted': return '#00B8D9';
       case 'active': return '#FF8C00';
       case 'on_the_way': return '#007AFF';
+      case 'at_location': return '#5AC8FA';
+      case 'diagnosing': return '#AF52DE';
       case 'paused': return '#8E8E93';
       case 'finished': return '#34C759';
       case 'pending_payment': return '#FFD60A';
@@ -278,6 +281,8 @@ export default function BookingsScreen() {
       case 'accepted': return 'calendar-check-o';
       case 'active': return 'play-circle';
       case 'on_the_way': return 'car';
+      case 'at_location': return 'map-marker';
+      case 'diagnosing': return 'search';
       case 'paused': return 'pause-circle';
       case 'finished': return 'check-circle';
       case 'pending_payment': return 'money';
@@ -487,6 +492,8 @@ export default function BookingsScreen() {
                     if (
                           booking.status === 'active' ||
                           booking.status === 'on_the_way' ||
+                          booking.status === 'at_location' ||
+                          booking.status === 'diagnosing' ||
                           booking.status === 'paused' ||
                           booking.status === 'completed' ||
                           booking.status === 'reworked' ||
@@ -593,7 +600,7 @@ export default function BookingsScreen() {
                         )}
                       </TouchableOpacity>
                     </View>
-                  ) : (booking.status === 'accepted' || booking.status === 'on_the_way' || booking.status === 'active' || booking.status === 'paused' || booking.status === 'completed' || booking.status === 'reworked' || booking.status === 'pending_payment') ? (
+                  ) : (booking.status === 'accepted' || booking.status === 'on_the_way' || booking.status === 'at_location' || booking.status === 'diagnosing' || booking.status === 'active' || booking.status === 'paused' || booking.status === 'completed' || booking.status === 'reworked' || booking.status === 'pending_payment') ? (
                     <View style={{ flexDirection: 'row', gap: 8 }}>
                       <TouchableOpacity
                         style={styles.detailsBtn}
@@ -602,14 +609,6 @@ export default function BookingsScreen() {
                         <ThemedText style={styles.detailsBtnText}>Details</ThemedText>
                         <FontAwesome name="chevron-right" size={11} color="#FF8C00" />
                       </TouchableOpacity>
-                      {canOpenBookingChat(booking) ? (
-                        <TouchableOpacity
-                          style={styles.chatBtn}
-                          onPress={() => router.push({ pathname: '/chat/booking_chat', params: { bookingId: String(booking.id) } })}
-                        >
-                          <ThemedText style={styles.chatBtnText}>Open Chat</ThemedText>
-                        </TouchableOpacity>
-                      ) : null}
                     </View>
                   ) : null}
                 </View>

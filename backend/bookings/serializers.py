@@ -200,7 +200,9 @@ class BookingSerializer(serializers.ModelSerializer):
 
     def get_active_details(self, obj):
         # Show active details for statuses where mechanic may need them
-        if obj.status in ['active', 'on_the_way', 'accepted', 'paused', 'finished', 'pending_payment']:
+        if obj.status in [
+            'active', 'on_the_way', 'at_location', 'diagnosing', 'accepted', 'paused', 'finished', 'pending_payment',
+        ]:
             try:
                 active = obj.activebooking
                 return ActiveBookingSerializer(active).data

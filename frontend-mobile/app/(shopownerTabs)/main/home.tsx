@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { StyleSheet, View, ScrollView, RefreshControl, Dimensions, TouchableOpacity } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { SkeletonDashboard } from '@/components/skeletons/SkeletonLoaders';
 import WalletSection from '@/components/wallet-section';
+import { useWebSocketContext } from '@/context/WebSocketContext';
+import { useFocusEffect } from '@react-navigation/native';
 
 const { width } = Dimensions.get('window');
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -33,8 +35,9 @@ export default function ShopOwnerHome() {
   const [refreshing, setRefreshing] = useState(false);
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { lastMessage } = useWebSocketContext();
 
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = useCallback(async () => {
     try {
       setError(null);
       const response = await fetch(`${API_URL}/shops/dashboard/`, {
@@ -67,11 +70,23 @@ export default function ShopOwnerHome() {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchDashboardData();
-  }, []);
+    if (!lastMessage) return;
+    const t = String(lastMessage.type || '').toLowerCase();
+    if (t === 'booking_update') {
+      fetchDashboardData();
+    }
+  }, [lastMessage, fetchDashboardData]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchDashboardData();
+      const poll = setInterval(fetchDashboardData, 30000);
+      return () => clearInterval(poll);
+    }, [fetchDashboardData])
+  );
 
   const onRefresh = () => {
     setRefreshing(true);

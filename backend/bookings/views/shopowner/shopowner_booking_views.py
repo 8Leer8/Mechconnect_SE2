@@ -496,7 +496,8 @@ def list_shopowner_bookings(request):
 
     if status_filter:
         valid = [
-            "all", "on_going", "accepted", "on_the_way", "active", "paused", "finished",
+            "all", "on_going", "accepted", "on_the_way", "at_location", "diagnosing",
+            "active", "paused", "finished",
             "pending_payment", "completed", "cancelled", "reworked", "disputed",
         ]
         sf = status_filter.lower()
@@ -508,7 +509,7 @@ def list_shopowner_bookings(request):
         if sf == "all":
             filtered = qs
         elif sf == "on_going":
-            filtered = qs.filter(status__in=["on_the_way", "active", "paused"])
+            filtered = qs.filter(status__in=["on_the_way", "at_location", "diagnosing", "active", "paused"])
         elif sf == "active":
             filtered = qs.filter(status__in=["active", "paused"])
         else:
@@ -537,6 +538,8 @@ def list_shopowner_bookings(request):
         if sf == "all":
             accepted_count = qs.filter(status="accepted").count()
             on_the_way_count = qs.filter(status="on_the_way").count()
+            at_location_count = qs.filter(status="at_location").count()
+            diagnosing_count = qs.filter(status="diagnosing").count()
             active_count = qs.filter(status__in=["active", "paused"]).count()
             completed_count = qs.filter(status="completed").count()
             cancelled_count = qs.filter(status="cancelled").count()
@@ -546,6 +549,8 @@ def list_shopowner_bookings(request):
                 "pending": 0,
                 "accepted": accepted_count,
                 "on_the_way": on_the_way_count,
+                "at_location": at_location_count,
+                "diagnosing": diagnosing_count,
                 "active": active_count,
                 "completed": completed_count,
                 "cancelled": cancelled_count,
@@ -557,8 +562,10 @@ def list_shopowner_bookings(request):
 
     # Grouped response
     groups = {}
-    for s in ["accepted", "on_the_way", "active", "paused", "finished",
-              "pending_payment", "completed", "cancelled", "reworked", "disputed"]:
+    for s in [
+        "accepted", "on_the_way", "at_location", "diagnosing", "active", "paused", "finished",
+        "pending_payment", "completed", "cancelled", "reworked", "disputed",
+    ]:
         sub = qs.filter(status=s)
         groups[s] = {"bookings": _serialize_bookings(sub), "count": sub.count()}
 
