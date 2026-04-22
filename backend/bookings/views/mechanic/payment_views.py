@@ -1490,6 +1490,31 @@ def paymongo_webhook(request):
                 logger.exception("Failed to finalize token purchase payment")
 
     if event_type == "payment_intent.succeeded":
+        pi_metadata = resource_attributes.get("metadata", {}) or {}
+        if pi_metadata.get("purpose") == "token_purchase":
+            purchase_id = pi_metadata.get("purchase_id")
+            if purchase_id:
+                try:
+                    from users.models import TokenPurchase
+                    from users.views.token_payment_views import _finalize_token_purchase
+
+                    purchase = TokenPurchase.objects.get(id=int(purchase_id))
+                    _finalize_token_purchase(purchase, resource_attributes)
+                    logger.info(
+                        "Token purchase %s finalized via payment_intent.succeeded webhook",
+                        purchase_id,
+                    )
+                except TokenPurchase.DoesNotExist:
+                    logger.warning(
+                        "Token purchase %s not found for payment_intent.succeeded",
+                        purchase_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to finalize token purchase from payment_intent.succeeded",
+                    )
+            return Response({"received": True})
+
         booking_id = _extract_booking_id_from_paymongo_event(request.data)
         installment_type = _extract_installment_type_from_paymongo_event(request.data)
         reference = resource.get("id")

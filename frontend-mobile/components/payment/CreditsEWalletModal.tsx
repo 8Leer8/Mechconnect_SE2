@@ -10,14 +10,25 @@ type CreditsEWalletModalProps = {
   visible: boolean;
   tokens: number;
   amount: number;
+  /** Optional line under the package title (defaults to neutral copy). */
+  packageSubtext?: string;
   onClose: () => void;
   onSelectMethod: (method: EWalletMethod) => Promise<void>;
 };
+
+function formatPhpLowercase(amount: number): string {
+  if (!Number.isFinite(amount)) return 'php 0';
+  const rounded = Math.round(amount * 100) / 100;
+  const isWhole = Math.abs(rounded - Math.round(rounded)) < 0.001;
+  const num = isWhole ? String(Math.round(rounded)) : rounded.toFixed(2);
+  return `php ${num}`;
+}
 
 export default function CreditsEWalletModal({
   visible,
   tokens,
   amount,
+  packageSubtext = 'Credit package for your account',
   onClose,
   onSelectMethod,
 }: CreditsEWalletModalProps) {
@@ -48,17 +59,14 @@ export default function CreditsEWalletModal({
             </View>
             <View style={styles.orderDetails}>
               <ThemedText style={styles.orderTokens}>{tokens} Credits</ThemedText>
-              <ThemedText style={styles.orderSubtext}>Token package for mechanic services</ThemedText>
+              <ThemedText style={styles.orderSubtext}>{packageSubtext}</ThemedText>
             </View>
           </View>
 
-          {/* Price Section - Prominent */}
-          <View style={styles.priceSection}>
-            <ThemedText style={styles.priceLabel}>Total Amount</ThemedText>
-            <View style={styles.priceRow}>
-              <ThemedText style={styles.currency}>PHP</ThemedText>
-              <ThemedText style={styles.priceValue}>{amount.toFixed(2)}</ThemedText>
-            </View>
+          {/* Total — single clean row */}
+          <View style={styles.totalRow}>
+            <ThemedText style={styles.totalLabel}>total amount:</ThemedText>
+            <ThemedText style={styles.totalValue}>{formatPhpLowercase(amount)}</ThemedText>
           </View>
 
           {/* Payment Methods Label */}
@@ -216,36 +224,33 @@ const styles = StyleSheet.create({
     color: '#ECEDEE',
   },
   orderSubtext: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#8E8E93',
     marginTop: 4,
+    lineHeight: 18,
   },
-  // Price Section - Prominent
-  priceSection: {
-    alignItems: 'center',
-    marginVertical: 24,
-  },
-  priceLabel: {
-    fontSize: 15,
-    color: '#8E8E93',
-    marginBottom: 12,
-    fontWeight: '500',
-  },
-  priceRow: {
+  totalRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 18,
+    marginBottom: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 4,
   },
-  currency: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#FF8C00',
-    marginRight: 6,
-    marginTop: 6,
+  totalLabel: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#9BA1A6',
+    textTransform: 'lowercase',
+    letterSpacing: 0.2,
   },
-  priceValue: {
-    fontSize: 52,
-    fontWeight: '900',
+  totalValue: {
+    fontSize: 16,
+    fontWeight: '600',
     color: '#FF8C00',
+    textTransform: 'lowercase',
+    letterSpacing: 0.3,
   },
   // Payment Section
   paymentLabel: {

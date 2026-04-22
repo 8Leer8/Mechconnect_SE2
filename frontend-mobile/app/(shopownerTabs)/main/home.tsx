@@ -120,7 +120,7 @@ export default function ShopOwnerHome() {
           <WalletSection
             creditsSource="shop-owner"
             showAddButton
-            addHref="/mechanic/wallet?shop_owner=1"
+            addHref="/shopowner/wallet"
           />
           <SkeletonDashboard />
         </ScrollView>
@@ -141,7 +141,7 @@ export default function ShopOwnerHome() {
           <WalletSection
             creditsSource="shop-owner"
             showAddButton
-            addHref="/mechanic/wallet?shop_owner=1"
+            addHref="/shopowner/wallet"
           />
           <View style={[styles.errorContainer, { marginTop: 40 }]}>
             <View style={styles.errorIconWrap}>
@@ -216,7 +216,7 @@ export default function ShopOwnerHome() {
         <WalletSection
           creditsSource="shop-owner"
           showAddButton
-          addHref="/mechanic/wallet?shop_owner=1"
+          addHref="/shopowner/wallet"
         />
 
         {/* Stats Grid - 2x2 */}

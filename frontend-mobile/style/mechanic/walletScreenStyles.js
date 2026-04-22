@@ -1,20 +1,22 @@
 import { StyleSheet, Dimensions } from 'react-native';
 
 const { width } = Dimensions.get('window');
+const GAP = 12;
+const PAGE_PAD = 16;
+const colWidth = (width - PAGE_PAD * 2 - GAP) / 2;
 
 export const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#111214' },
+  container: { flex: 1, backgroundColor: '#0B0C0E' },
 
   /* ── Header ── */
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingTop: 56,
-    paddingBottom: 16,
-    backgroundColor: '#1A1C1E',
+    paddingBottom: 14,
+    backgroundColor: '#0F1012',
     borderBottomWidth: 1,
-    borderBottomColor: '#2A2C2E',
+    borderBottomColor: '#1F2124',
   },
   backButton: {
     width: 40,
@@ -37,30 +39,41 @@ export const styles = StyleSheet.create({
   },
 
   /* ── Scroll ── */
-  scrollContent: { padding: 16, paddingTop: 20 },
+  scrollContent: { paddingHorizontal: PAGE_PAD, paddingTop: 20, paddingBottom: 32 },
 
-  /* ── Balance Card ── */
-  balanceCard: {
-    backgroundColor: '#1A1C1E',
+  /* ── Hero balance (premium card) ── */
+  heroShell: {
+    borderRadius: 20,
+    padding: 1.5,
+    marginBottom: 28,
+    backgroundColor: 'rgba(255, 140, 0, 0.22)',
+    shadowColor: '#FF8C00',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    elevation: 6,
+  },
+  heroCard: {
     borderRadius: 18,
-    padding: 28,
+    backgroundColor: '#121418',
+    paddingVertical: 26,
+    paddingHorizontal: 20,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#FF8C0025',
-    marginBottom: 24,
+    borderColor: 'rgba(255, 140, 0, 0.12)',
   },
   balanceIconCircle: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#FF8C0015',
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: 'rgba(255, 140, 0, 0.12)',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 14,
   },
-  balanceLabel: { fontSize: 13, color: '#8E8E93', marginBottom: 4 },
-  balanceValue: { fontSize: 40, fontWeight: '800', color: '#FF8C00' },
-  balanceSub: { fontSize: 13, color: '#666', marginTop: 4 },
+  balanceLabel: { fontSize: 12, color: '#6B7280', letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 6 },
+  balanceValue: { fontSize: 42, fontWeight: '800', color: '#FF8C00', letterSpacing: -0.5 },
+  balanceSub: { fontSize: 13, color: '#5C6370', marginTop: 8 },
 
   /* ── Section ── */
   section: { marginBottom: 24 },
@@ -71,44 +84,47 @@ export const styles = StyleSheet.create({
     marginBottom: 14,
   },
   sectionDot: { width: 8, height: 8, borderRadius: 4 },
-  sectionTitle: { fontSize: 17, fontWeight: '600', color: '#fff' },
+  sectionTitle: { fontSize: 17, fontWeight: '700', color: '#fff' },
+  sectionSubtitle: { fontSize: 13, color: '#6B7280', marginTop: 6, marginBottom: 14, lineHeight: 18 },
 
   /* ── Token Package Grid ── */
   packagesGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
+    gap: GAP,
   },
   packageCard: {
-    width: (width - 44) / 2,
-    backgroundColor: '#1A1C1E',
-    borderRadius: 14,
-    padding: 18,
+    width: colWidth,
+    backgroundColor: '#121418',
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#2A2C2E',
+    borderColor: '#252830',
   },
   packageIconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#FF8C0015',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 140, 0, 0.1)',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 8,
   },
-  packageAmount: { fontSize: 24, fontWeight: '800', color: '#fff' },
-  packageLabel: { fontSize: 12, color: '#8E8E93', marginTop: 2, marginBottom: 12 },
+  packageAmount: { fontSize: 20, fontWeight: '800', color: '#fff' },
+  packageMeta: { fontSize: 11, color: '#8E8E93', marginTop: 4, marginBottom: 10, textAlign: 'center' },
+  packagePrice: { fontSize: 13, fontWeight: '700', color: '#FF8C00', marginBottom: 10 },
   packageBuyBtn: {
     width: '100%',
     backgroundColor: '#FF8C00',
-    paddingVertical: 10,
-    borderRadius: 10,
+    paddingVertical: 9,
+    borderRadius: 12,
     alignItems: 'center',
-    minHeight: 36,
+    minHeight: 38,
     justifyContent: 'center',
   },
-  packageBuyText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  packageBuyText: { color: '#fff', fontWeight: '700', fontSize: 13 },
 
   /* ── Empty State ── */
   emptyCard: {
