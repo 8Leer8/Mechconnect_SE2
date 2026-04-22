@@ -263,8 +263,20 @@ export default function MechanicShopJobsScreen() {
       if (!response.ok) {
         throw new Error('Failed to accept request');
       }
-
+      const payload = await response.json().catch(() => ({} as any));
+      const acceptedBookingId = Number(
+        payload?.booking_id ?? payload?.bookingId ?? payload?.booking?.id ?? payload?.booking
+      );
       await fetchJobs();
+      if (Number.isFinite(acceptedBookingId) && acceptedBookingId > 0) {
+        router.push({
+          pathname: '/mechanic/booking/booking_details',
+          params: {
+            bookingId: String(acceptedBookingId),
+            source: 'mechanic_shop',
+          },
+        });
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to accept request');
     } finally {
