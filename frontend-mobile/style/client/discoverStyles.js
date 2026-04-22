@@ -16,12 +16,13 @@ export const styles = StyleSheet.create({
     backgroundColor: '#1A1C1E',
   },
   headerTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
+    fontSize: 16,
+    fontWeight: '600',
     color: '#fff',
   },
   headerSubtitle: {
-    fontSize: 13,
+    fontSize: 12,
+    fontWeight: '300',
     color: '#8E8E93',
     marginTop: 2,
   },
@@ -46,7 +47,8 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    paddingVertical: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
     borderRadius: 12,
     backgroundColor: '#1A1C1E',
     borderWidth: 1,
@@ -57,11 +59,101 @@ export const styles = StyleSheet.create({
     borderColor: '#FF8C00',
   },
   tabText: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: '400',
     color: '#8E8E93',
   },
   activeTabText: {
+    fontWeight: '600',
+    color: '#fff',
+  },
+  filterContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+    gap: 8,
+  },
+  filterLabel: {
+    fontSize: 12,
+    fontWeight: '400',
+    color: '#8E8E93',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  filterButton: {
+    borderRadius: 14,
+    backgroundColor: '#1A1C1E',
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+  },
+  filterButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  filterButtonText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '400',
+    color: '#fff',
+  },
+  filterModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(17, 18, 20, 0.72)',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  filterModalCard: {
+    backgroundColor: '#1A1C1E',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+    overflow: 'hidden',
+  },
+  filterModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2A2C2E',
+  },
+  filterModalTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  filterModalClose: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#202224',
+  },
+  filterModalList: {
+    paddingVertical: 8,
+  },
+  filterModalOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+  },
+  filterModalOptionActive: {
+    backgroundColor: '#FF8C0015',
+  },
+  filterModalOptionText: {
+    fontSize: 14,
+    fontWeight: '400',
+    color: '#C8CDD2',
+  },
+  filterModalOptionTextActive: {
+    fontWeight: '600',
     color: '#fff',
   },
   // List
@@ -97,16 +189,16 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
   },
   avatarText: {
-    fontSize: 18,
-    fontWeight: 'bold',
+    fontSize: 16,
+    fontWeight: '600',
     color: '#FF8C00',
   },
   cardBody: {
     flex: 1,
   },
   cardTitle: {
-    fontSize: 15,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '400',
     color: '#fff',
   },
   ratingRow: {
@@ -116,7 +208,7 @@ export const styles = StyleSheet.create({
     marginTop: 4,
   },
   ratingText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
     color: '#FFD60A',
   },
@@ -140,7 +232,8 @@ export const styles = StyleSheet.create({
     borderRadius: 5,
   },
   statusLabel: {
-    fontSize: 11,
+    fontSize: 12,
+    fontWeight: '400',
     color: '#8E8E93',
     textTransform: 'capitalize',
   },
@@ -154,7 +247,8 @@ export const styles = StyleSheet.create({
     borderTopColor: '#2A2C2E',
   },
   footerText: {
-    fontSize: 13,
+    fontSize: 14,
+    fontWeight: '400',
     color: '#8E8E93',
   },
   summaryRow: {
@@ -177,8 +271,8 @@ export const styles = StyleSheet.create({
     maxWidth: '100%',
   },
   summaryText: {
-    fontSize: 11,
-    fontWeight: '600',
+    fontSize: 12,
+    fontWeight: '400',
     color: '#C8CDD2',
   },
   summaryDot: {
@@ -208,7 +302,8 @@ export const styles = StyleSheet.create({
     gap: 8,
   },
   shopOwner: {
-    fontSize: 13,
+    fontSize: 14,
+    fontWeight: '400',
     color: '#8E8E93',
     marginTop: 2,
   },
@@ -222,12 +317,13 @@ export const styles = StyleSheet.create({
     borderRadius: 6,
   },
   verifiedText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '600',
     color: '#34C759',
   },
   descText: {
-    fontSize: 13,
+    fontSize: 14,
+    fontWeight: '400',
     color: '#aaa',
     lineHeight: 18,
     marginBottom: 4,
@@ -254,13 +350,13 @@ export const styles = StyleSheet.create({
     marginTop: 4,
   },
   categoryText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '600',
     color: '#FF8C00',
   },
   priceText: {
-    fontSize: 18,
-    fontWeight: 'bold',
+    fontSize: 16,
+    fontWeight: '600',
     color: '#34C759',
   },
   // Empty
@@ -271,7 +367,8 @@ export const styles = StyleSheet.create({
     gap: 12,
   },
   emptyText: {
-    fontSize: 15,
+    fontSize: 14,
+    fontWeight: '400',
     color: '#666',
   },
   // Error
@@ -282,6 +379,7 @@ export const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 14,
+    fontWeight: '400',
     color: '#FF3B30',
     textAlign: 'center',
   },
@@ -292,6 +390,7 @@ export const styles = StyleSheet.create({
     borderRadius: 10,
   },
   retryText: {
+    fontSize: 14,
     color: '#fff',
     fontWeight: '600',
   },
@@ -306,7 +405,7 @@ export const styles = StyleSheet.create({
     borderTopColor: '#2A2C2E',
   },
   viewDetailsText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
     color: '#FF8C00',
   },
