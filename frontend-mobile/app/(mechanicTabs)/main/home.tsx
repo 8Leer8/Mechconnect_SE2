@@ -5,6 +5,7 @@ import {
   TouchableOpacity,
   RefreshControl,
   Dimensions,
+  Image,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -15,6 +16,7 @@ import { styles } from '@/style/mechanic/homeStyles';
 import WalletSection from '@/components/wallet-section';
 import { SkeletonMechanicHome } from '@/components/skeletons/SkeletonLoaders';
 import { useWebSocketContext } from '@/context/WebSocketContext';
+import { getImageUrl } from '@/lib/imageUtils';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -65,6 +67,12 @@ interface ProfilePayload {
   full_name?: string;
   firstname?: string;
   lastname?: string;
+  current_role_profile?: {
+    mechanic?: {
+      profile_photo?: string | null;
+      profile_photo_url?: string | null;
+    };
+  };
 }
 
 interface ProfileDetailsResponse {
@@ -94,6 +102,7 @@ export default function HomeScreen() {
   const [activeDisputeBookingId, setActiveDisputeBookingId] = useState<number | null>(null);
   const [stats, setStats] = useState<GroupedBookings | null>(null);
   const [mechanicName, setMechanicName] = useState<string>('Mechanic');
+  const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -152,6 +161,8 @@ export default function HomeScreen() {
         const p: ProfilePayload = (parsedProfile as ProfileDetailsResponse).profile || (parsedProfile as ProfilePayload);
         const n = p?.full_name || `${p?.firstname || ''} ${p?.lastname || ''}`.trim();
         if (n) setMechanicName(n);
+        const mechanicProfile = p?.current_role_profile?.mechanic;
+        setProfilePhotoUrl(mechanicProfile?.profile_photo || mechanicProfile?.profile_photo_url || null);
       }
     } catch (err: any) {
       setError(err.message || 'Failed to load dashboard');
@@ -210,8 +221,17 @@ export default function HomeScreen() {
       <View style={styles.headerContainer}>
         <View style={styles.headerTop}>
           <View style={styles.headerLeft}>
-            <ThemedText style={styles.greeting}>{getGreeting()}</ThemedText>
-            <ThemedText style={styles.mechanicName}>{mechanicName}</ThemedText>
+            <View style={styles.profileCircle}>
+              {profilePhotoUrl ? (
+                <Image source={{ uri: getImageUrl(profilePhotoUrl) || '' }} style={styles.profileImage} />
+              ) : (
+                <FontAwesome name="user" size={20} color="#FF8C00" />
+              )}
+            </View>
+            <View style={{ flex: 1 }}>
+              <ThemedText style={styles.greeting}>{getGreeting()}</ThemedText>
+              <ThemedText style={styles.mechanicName}>{mechanicName}</ThemedText>
+            </View>
           </View>
           <TouchableOpacity style={styles.notificationButton}>
             <View style={styles.notifCircle}>
