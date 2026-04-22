@@ -100,6 +100,7 @@ export default function RootLayout() {
                 <Stack.Screen name="(mechanicShopTabs)" options={{ headerShown: false }} />
                 <Stack.Screen name="(shopownerTabs)" options={{ headerShown: false }} />
                 <Stack.Screen name="shopowner" options={{ headerShown: false }} />
+                <Stack.Screen name="notifications" options={{ headerShown: false }} />
                 <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
               </Stack>
               <StatusBar style="auto" />

@@ -14,6 +14,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { SkeletonMechanicShopHome } from '@/components/skeletons/SkeletonLoaders';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import { getImageUrl } from '@/lib/imageUtils';
+import NotificationBell from '@/components/notifications/NotificationBell';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -131,9 +132,9 @@ export default function MechanicShopDashboardScreen() {
 
   const fetchDashboardData = useCallback(async () => {
     try {
-      const options = {
+      const options: RequestInit = {
         method: 'GET',
-        credentials: 'include' as RequestCredentials,
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
       };
 
@@ -144,7 +145,7 @@ export default function MechanicShopDashboardScreen() {
       ]);
 
       if (profileResponse.ok) {
-        const profileData = await profileResponse.json();
+        const profileData = (await profileResponse.json()) as { profile?: ProfileData };
         const profile = profileData.profile as ProfileData;
 
         setMechanicName(profile.full_name || 'Mechanic');
@@ -244,9 +245,12 @@ export default function MechanicShopDashboardScreen() {
           <ThemedText style={styles.pageTitle}>Dashboard</ThemedText>
           <ThemedText style={styles.pageSubtitle}>Track assigned jobs and performance</ThemedText>
         </View>
-        <TouchableOpacity style={styles.headerRefreshButton} onPress={onRefresh}>
-          <FontAwesome name="refresh" size={18} color="#FF8C00" />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <NotificationBell />
+          <TouchableOpacity style={styles.headerRefreshButton} onPress={onRefresh}>
+            <FontAwesome name="refresh" size={18} color="#FF8C00" />
+          </TouchableOpacity>
+        </View>
       </View>
       <ScrollView
         style={styles.scroll}

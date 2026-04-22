@@ -8,6 +8,7 @@ import { styles } from '@/style/client/homeStyles';
 import { LineChart, BarChart } from 'react-native-chart-kit';
 import EmergencyModal from '@/components/EmergencyModal';
 import { SkeletonClientHome } from '@/components/skeletons/SkeletonLoaders';
+import NotificationBell from '@/components/notifications/NotificationBell';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import { getImageUrl } from '@/lib/imageUtils';
 import { useLocation } from '@/context/LocationContext';
@@ -354,16 +355,7 @@ export default function HomeScreen() {
               <ThemedText style={styles.clientName}>{clientName || 'Client'}</ThemedText>
             </View>
           </View>
-          <TouchableOpacity style={styles.notificationButton}>
-            <View style={styles.notifCircle}>
-              <FontAwesome name="bell-o" size={20} color="#fff" />
-            </View>
-            {pendingCount > 0 && (
-              <View style={styles.badge}>
-                <ThemedText style={styles.badgeText}>{pendingCount}</ThemedText>
-              </View>
-            )}
-          </TouchableOpacity>
+          <NotificationBell />
         </View>
         
       </View>

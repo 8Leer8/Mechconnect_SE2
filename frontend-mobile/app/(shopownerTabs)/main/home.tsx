@@ -8,6 +8,7 @@ import WalletSection from '@/components/wallet-section';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import { useFocusEffect } from '@react-navigation/native';
 import { getImageUrl } from '@/lib/imageUtils';
+import NotificationBell from '@/components/notifications/NotificationBell';
 
 const { width } = Dimensions.get('window');
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -194,17 +195,20 @@ export default function ShopOwnerHome() {
       >
         {/* Premium Header */}
         <View style={styles.header}>
-          <View style={styles.headerTop}>
+            <View style={styles.headerTop}>
             <View style={styles.headerText}>
               <ThemedText style={styles.greeting}>{getGreeting()}</ThemedText>
               <ThemedText style={styles.shopName} numberOfLines={1}>{dashboardData.shop_name}</ThemedText>
             </View>
-            <View style={[styles.statusBadge, { backgroundColor: dashboardData.shop_status === 'open' ? '#34C75920' : '#FF3B3020' }]}>
-              <View style={[styles.statusDot, { backgroundColor: dashboardData.shop_status === 'open' ? '#34C759' : '#FF3B30' }]} />
-              <ThemedText style={[styles.statusText, { color: dashboardData.shop_status === 'open' ? '#34C759' : '#FF3B30' }]}>
-                {dashboardData.shop_status === 'open' ? 'Open' : 'Closed'}
-              </ThemedText>
-            </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <NotificationBell />
+                <View style={[styles.statusBadge, { backgroundColor: dashboardData.shop_status === 'open' ? '#34C75920' : '#FF3B3020' }]}>
+                  <View style={[styles.statusDot, { backgroundColor: dashboardData.shop_status === 'open' ? '#34C759' : '#FF3B30' }]} />
+                  <ThemedText style={[styles.statusText, { color: dashboardData.shop_status === 'open' ? '#34C759' : '#FF3B30' }]}>
+                    {dashboardData.shop_status === 'open' ? 'Open' : 'Closed'}
+                  </ThemedText>
+                </View>
+              </View>
           </View>
 
           <View style={styles.bannerWrap}>

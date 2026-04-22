@@ -15,6 +15,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/mechanic/homeStyles';
 import WalletSection from '@/components/wallet-section';
 import { SkeletonMechanicHome } from '@/components/skeletons/SkeletonLoaders';
+import NotificationBell from '@/components/notifications/NotificationBell';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import { getImageUrl } from '@/lib/imageUtils';
 
@@ -233,16 +234,7 @@ export default function HomeScreen() {
               <ThemedText style={styles.mechanicName}>{mechanicName}</ThemedText>
             </View>
           </View>
-          <TouchableOpacity style={styles.notificationButton}>
-            <View style={styles.notifCircle}>
-              <FontAwesome name="bell-o" size={20} color="#fff" />
-            </View>
-            {pendingCount > 0 && (
-              <View style={styles.badge}>
-                <ThemedText style={styles.badgeText}>{pendingCount}</ThemedText>
-              </View>
-            )}
-          </TouchableOpacity>
+          <NotificationBell />
         </View>
 
         {/* Quick Stats Row inside header */}

@@ -24,6 +24,27 @@ from notification.models import Notification
 logger = logging.getLogger(__name__)
 
 
+def _notification_title_for_action(action):
+    title_map = {
+        'booking.disputed': 'Booking Disputed',
+        'booking.dispute_payment_requested': 'Payment Proof Requested',
+        'booking.dispute_resolved': 'Dispute Resolved',
+        'booking.dispute_refund_verified': 'Refund Verified',
+        'booking.dispute_resolved_voucher': 'Dispute Resolved',
+        'booking.dispute_refund_details_submitted': 'Refund Details Submitted',
+        'cancelled_no_show': 'Booking Cancelled',
+    }
+
+    if action in title_map:
+        return title_map[action]
+
+    if action.startswith('booking.'):
+        suffix = action.split('.', 1)[1].replace('_', ' ').title()
+        return f'Booking {suffix}'
+
+    return 'Notification'
+
+
 def _broadcast_booking_action(booking, action, message):
     """Broadcast booking websocket action to all involved account groups."""
     try:
@@ -60,7 +81,35 @@ def _broadcast_booking_action(booking, action, message):
             'message': message,
         }
 
+        notification_title = _notification_title_for_action(action)
+
         for account_id in participant_ids:
+            try:
+                target_role = None
+                try:
+                    participant_account = Account.objects.get(id=account_id)
+                    if hasattr(participant_account, 'client'):
+                        target_role = 'client'
+                    elif hasattr(participant_account, 'mechanic'):
+                        target_role = 'mechanic'
+                    elif hasattr(participant_account, 'shopowner'):
+                        target_role = 'shopowner'
+                except Exception:
+                    target_role = None
+
+                Notification.objects.create(
+                    receiver_id=account_id,
+                    title=notification_title,
+                    message=message,
+                    payload={
+                        'booking_id': booking.id,
+                        'action': action,
+                        'target_role': target_role,
+                    },
+                )
+            except Exception:
+                logger.exception('Failed to create notification for account %s', account_id)
+
             async_to_sync(channel_layer.group_send)(f'user_{account_id}', payload)
     except Exception:
         logger.exception('Failed to broadcast booking action %s for booking %s', action, getattr(booking, 'id', None))

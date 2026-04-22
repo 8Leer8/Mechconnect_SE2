@@ -34,6 +34,7 @@ urlpatterns = [
     path('api/services/', include('services.urls')),
     path('api/bookings/', include('bookings.urls')),
     path('api/notification/', include('notification.urls')),
+    path('api/notifications/', include('notification.urls')),
     path('api/chat/', include('chat.urls')),
     path('api/ai/', include('mechconnect_ai.urls')),  # added
     path('api/pricing/', include('pricing.urls')),
