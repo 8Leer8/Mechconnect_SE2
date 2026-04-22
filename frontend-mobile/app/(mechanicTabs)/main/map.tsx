@@ -26,6 +26,7 @@ import { styles } from '@/style/mechanic/mapStyles';
 import { getImageUrl } from '@/lib/imageUtils';
 import { useNotification } from '@/hooks/useNotification';
 import { SkeletonMapJobList } from '@/components/skeletons/SkeletonLoaders';
+import { fetchUnifiedWalletBalance } from '@/lib/walletBalance';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const ORS_KEY = process.env.EXPO_PUBLIC_ORS_API_KEY;
@@ -287,17 +288,23 @@ export default function MapScreen() {
   };
 
   const fetchTokensBalance = async () => {
-    if (isShopOwnerMap) {
-      setTokensBalance(0);
-      return;
-    }
-    try {
-      const res = await fetch(`${API_URL}/users/mechanic/wallet/`, { credentials: 'include' });
-      if (!res.ok) return;
-      const data = await res.json() as any;
-      setTokensBalance(data.tokens_balance ?? 0);
-    } catch { }
+    const source = isShopOwnerMap ? 'shop-owner' : 'mechanic';
+    const balance = await fetchUnifiedWalletBalance(source);
+    if (balance !== null) setTokensBalance(balance);
   };
+
+  // Auto-fetch broadcasts continuously while toggle is ON.
+  useEffect(() => {
+    if (!broadcastFetchEnabled) return;
+    const poll = setInterval(() => {
+      if (!broadcastFetchEnabled) return;
+      if (userLocationRef.current) {
+        fetchBroadcasts(true);
+      }
+      fetchTokensBalance();
+    }, 7000);
+    return () => clearInterval(poll);
+  }, [broadcastFetchEnabled, isShopOwnerMap]);
 
   const fetchPricingConfig = async () => {
     try {

@@ -100,6 +100,7 @@ export default function MechanicProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isFavorited, setIsFavorited] = useState(false);
   const [memberActive, setMemberActive] = useState<boolean>(member_active !== 'false');
   const [actionLoading, setActionLoading] = useState<'toggle' | 'remove' | null>(null);
 
@@ -122,10 +123,11 @@ export default function MechanicProfileScreen() {
 
       if (!response.ok) throw new Error('Failed to fetch mechanic profile');
 
-      const data = await response.json() as { mechanic: MechanicProfile; addons?: AddOn[] };
+      const data = await response.json() as { mechanic: MechanicProfile; addons?: AddOn[]; is_favorited?: boolean };
       if (isMountedRef.current) {
         setProfile(data.mechanic);
         setAddons(data.addons || data.mechanic?.addons || []);
+        setIsFavorited(Boolean(data.is_favorited));
       }
     } catch (err) {
       if (isMountedRef.current) {
@@ -265,6 +267,37 @@ export default function MechanicProfileScreen() {
         distance_km: typeof distance_km === 'string' ? distance_km : undefined,
       },
     });
+  };
+
+  const handleToggleFavorite = async () => {
+    if (!profile || actionLoading) return;
+    setActionLoading('toggle');
+    try {
+      const response = await fetch(`${API_URL}/users/favorites/toggle/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider_type: 'mechanic',
+          provider_id: profile.id,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        showNotification({ type: 'error', message: (data as { error?: string }).error || 'Failed to update favorites' });
+        return;
+      }
+      const nextValue = Boolean((data as { is_favorited?: boolean }).is_favorited);
+      setIsFavorited(nextValue);
+      showNotification({
+        type: 'success',
+        message: nextValue ? 'Mechanic added to favorites' : 'Mechanic removed from favorites',
+      });
+    } catch {
+      showNotification({ type: 'error', message: 'Failed to update favorites' });
+    } finally {
+      setActionLoading(null);
+    }
   };
 
   const handleDeactivate = async () => {
@@ -464,14 +497,31 @@ export default function MechanicProfileScreen() {
                 </TouchableOpacity>
               </View>
             ) : (
-              <TouchableOpacity
-                style={styles.directRequestBtn}
-                activeOpacity={0.7}
-                onPress={handleDirectRequest}
-              >
-                <FontAwesome name="paper-plane" size={16} color="#fff" />
-                <ThemedText style={styles.directRequestText}>Send Direct Request</ThemedText>
-              </TouchableOpacity>
+              <View style={styles.clientActionsRow}>
+                <TouchableOpacity
+                  style={[styles.directRequestBtn, styles.clientDirectRequestBtn]}
+                  activeOpacity={0.7}
+                  onPress={handleDirectRequest}
+                >
+                  <FontAwesome name="paper-plane" size={16} color="#fff" />
+                  <ThemedText style={styles.directRequestText}>Send Direct Request</ThemedText>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.favoriteBtn, isFavorited && styles.favoriteBtnActive]}
+                  activeOpacity={0.7}
+                  onPress={handleToggleFavorite}
+                  disabled={actionLoading !== null}
+                >
+                  <FontAwesome name={isFavorited ? 'heart' : 'heart-o'} size={16} color="#fff" />
+                  <ThemedText style={styles.favoriteBtnText}>
+                    {actionLoading === 'toggle'
+                      ? 'Updating...'
+                      : isFavorited
+                        ? 'Unfavorite'
+                        : 'Favorite'}
+                  </ThemedText>
+                </TouchableOpacity>
+              </View>
             )
           )}
         </View>

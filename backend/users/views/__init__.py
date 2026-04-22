@@ -41,6 +41,8 @@ __all__ = [
     # Discovery views
     'list_mechanics',
     'get_mechanic_profile',
+    'list_favorites',
+    'toggle_favorite',
     'shop_owner_wallet',
     'shop_owner_wallet_transactions',
     'shop_owner_wallet_topup',

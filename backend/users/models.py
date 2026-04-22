@@ -12,6 +12,7 @@ class Account(models.Model):
     username = models.CharField(max_length=50, unique=True)
     password = models.CharField(max_length=255)
     is_active = models.BooleanField(default=True)
+    deactivated_at = models.DateTimeField(null=True, blank=True)
     is_verified = models.BooleanField(default=False)
     last_login = models.DateTimeField(null=True, blank=True)
     last_active_role = models.CharField(
@@ -103,6 +104,26 @@ class Client(models.Model):
     contact_number = models.CharField(max_length=20, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+
+class FavoriteMechanic(models.Model):
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name="favorite_mechanics")
+    mechanic = models.ForeignKey("Mechanic", on_delete=models.CASCADE, related_name="favorited_by_clients")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [["client", "mechanic"]]
+        ordering = ["-created_at"]
+
+
+class FavoriteShop(models.Model):
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name="favorite_shops")
+    shop = models.ForeignKey("shops.Shop", on_delete=models.CASCADE, related_name="favorited_by_clients")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [["client", "shop"]]
+        ordering = ["-created_at"]
 
 class Mechanic(models.Model):
     class VerificationStatus(models.TextChoices):

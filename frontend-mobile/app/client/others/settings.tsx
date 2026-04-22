@@ -8,12 +8,14 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import { FontAwesome } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useNotification } from '@/hooks/useNotification';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { ConfirmationModal } from '@/components/ui/ConfirmationModal';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const RESEND_COOLDOWN_SECONDS = 60;
@@ -23,6 +25,7 @@ const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 type SettingsApiError = {
   error?: string;
   message?: string;
+  blockers?: Array<{ role?: string; code?: string; message?: string }>;
   current_password?: string[];
   old_password?: string[];
   new_password?: string[];
@@ -30,11 +33,14 @@ type SettingsApiError = {
   password?: string[];
   new_email?: string[];
   non_field_errors?: string[];
+  requires_reactivation_confirmation?: boolean;
+  reactivate_by?: string;
   [key: string]: any;
 };
 
 type FlowStep = 'password' | 'email' | 'otp' | 'done';
-type SettingsViewMode = 'menu' | 'change-email' | 'change-password';
+type DeactivationStep = 'password' | 'email' | 'otp';
+type SettingsViewMode = 'menu' | 'change-email' | 'change-password' | 'deactivate-account';
 
 const stepOrder: FlowStep[] = ['password', 'email', 'otp', 'done'];
 
@@ -82,6 +88,12 @@ export default function SettingsScreen() {
   const [passwordEmail, setPasswordEmail] = useState('');
   const [passwordOtpCode, setPasswordOtpCode] = useState('');
   const [passwordEmailVerified, setPasswordEmailVerified] = useState(false);
+  const [deactivationModalVisible, setDeactivationModalVisible] = useState(false);
+  const [deactivationStep, setDeactivationStep] = useState<DeactivationStep>('password');
+  const [deactivationPassword, setDeactivationPassword] = useState('');
+  const [deactivationOtpCode, setDeactivationOtpCode] = useState('');
+  const [deactivationEmail, setDeactivationEmail] = useState('');
+  const [deactivationBlockers, setDeactivationBlockers] = useState<string[]>([]);
 
   const [passwordVerified, setPasswordVerified] = useState(false);
   const [otpVerified, setOtpVerified] = useState(false);
@@ -95,6 +107,9 @@ export default function SettingsScreen() {
   const [sendingPasswordVerification, setSendingPasswordVerification] = useState(false);
   const [verifyingPasswordOtp, setVerifyingPasswordOtp] = useState(false);
   const [loadingPasswordEmail, setLoadingPasswordEmail] = useState(false);
+  const [verifyingDeactivationPassword, setVerifyingDeactivationPassword] = useState(false);
+  const [requestingDeactivationCode, setRequestingDeactivationCode] = useState(false);
+  const [confirmingDeactivation, setConfirmingDeactivation] = useState(false);
 
   const [resendCountdown, setResendCountdown] = useState(0);
   const [passwordResendCountdown, setPasswordResendCountdown] = useState(0);
@@ -123,7 +138,10 @@ export default function SettingsScreen() {
     changingPassword ||
     sendingPasswordVerification ||
     verifyingPasswordOtp ||
-    loadingPasswordEmail;
+    loadingPasswordEmail ||
+    verifyingDeactivationPassword ||
+    requestingDeactivationCode ||
+    confirmingDeactivation;
 
   const canVerifyPassword = useMemo(() => {
     return currentPassword.trim().length > 0 && !isBusy;
@@ -155,6 +173,18 @@ export default function SettingsScreen() {
     return passwordOtpCode.trim().length === 6 && !isBusy;
   }, [passwordOtpCode, isBusy]);
 
+  const canContinueDeactivation = useMemo(() => {
+    return deactivationPassword.trim().length > 0 && !isBusy;
+  }, [deactivationPassword, isBusy]);
+
+  const canRequestDeactivationCode = useMemo(() => {
+    return deactivationPassword.trim().length > 0 && !isBusy;
+  }, [deactivationPassword, isBusy]);
+
+  const canConfirmDeactivation = useMemo(() => {
+    return deactivationOtpCode.trim().length === 6 && !isBusy;
+  }, [deactivationOtpCode, isBusy]);
+
   const extractErrorMessage = (data: SettingsApiError, fallback: string) => {
     return (
       data?.current_password?.[0] ||
@@ -164,6 +194,7 @@ export default function SettingsScreen() {
       data?.password?.[0] ||
       data?.new_email?.[0] ||
       data?.non_field_errors?.[0] ||
+      data?.blockers?.[0]?.message ||
       data?.error ||
       data?.message ||
       fallback
@@ -183,6 +214,20 @@ export default function SettingsScreen() {
       message: 'API URL is not configured.',
     });
     return false;
+  };
+
+  const resetDeactivateFlow = () => {
+    setDeactivationStep('password');
+    setDeactivationPassword('');
+    setDeactivationOtpCode('');
+    setDeactivationEmail('');
+    setDeactivationBlockers([]);
+    setDeactivationModalVisible(false);
+  };
+
+  const startDeactivateFlow = () => {
+    resetDeactivateFlow();
+    setDeactivationModalVisible(true);
   };
 
   const handleVerifyPassword = async () => {
@@ -507,6 +552,141 @@ export default function SettingsScreen() {
     }
   };
 
+  const handleRequestDeactivationCode = async () => {
+    if (!ensureApiUrl()) return;
+
+    if (!deactivationPassword.trim()) {
+      showNotification({ type: 'error', message: 'Please enter your password to continue.' });
+      return;
+    }
+
+    setDeactivationBlockers([]);
+    setRequestingDeactivationCode(true);
+    try {
+      const response = await fetch(`${API_URL}/users/profile/deactivate/request/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: getHeaders(),
+        body: JSON.stringify({ current_password: deactivationPassword }),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as SettingsApiError;
+
+      if (!response.ok) {
+        const blockerMessages = Array.isArray(data.blockers)
+          ? data.blockers.map((item) => item?.message).filter(Boolean) as string[]
+          : [];
+        if (blockerMessages.length > 0) {
+          setDeactivationBlockers(blockerMessages);
+        }
+        showNotification({
+          type: 'error',
+          message: extractErrorMessage(data, 'Unable to send the deactivation verification code.'),
+        });
+        return;
+      }
+
+      setDeactivationEmail(typeof data?.email === 'string' ? data.email : '');
+      setDeactivationOtpCode('');
+      setDeactivationStep('otp');
+      setDeactivationBlockers([]);
+      showNotification({
+        type: 'success',
+        message: (data as any)?.message || 'Verification code sent to your email.',
+      });
+    } catch {
+      showNotification({ type: 'error', message: 'Connection failed. Please check your network.' });
+    } finally {
+      setRequestingDeactivationCode(false);
+    }
+  };
+
+  const handleVerifyDeactivationPassword = async () => {
+    if (!ensureApiUrl()) return;
+
+    if (!deactivationPassword.trim()) {
+      showNotification({ type: 'error', message: 'Please enter your current password.' });
+      return;
+    }
+
+    setVerifyingDeactivationPassword(true);
+    try {
+      const response = await fetch(`${API_URL}/users/profile/verify-password/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: getHeaders(),
+        body: JSON.stringify({ current_password: deactivationPassword }),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as SettingsApiError;
+
+      if (!response.ok) {
+        showNotification({
+          type: 'error',
+          message: extractErrorMessage(data, 'Incorrect password.'),
+        });
+        return;
+      }
+
+      setDeactivationStep('email');
+    } catch {
+      showNotification({ type: 'error', message: 'Connection failed. Please check your network.' });
+    } finally {
+      setVerifyingDeactivationPassword(false);
+    }
+  };
+
+  const handleConfirmAccountDeactivation = async () => {
+    if (!ensureApiUrl()) return;
+
+    const code = deactivationOtpCode.trim();
+    if (code.length !== 6) {
+      showNotification({ type: 'error', message: 'Please enter the 6-digit code sent to your email.' });
+      return;
+    }
+
+    setConfirmingDeactivation(true);
+    try {
+      const response = await fetch(`${API_URL}/users/profile/deactivate/confirm/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: getHeaders(),
+        body: JSON.stringify({
+          current_password: deactivationPassword,
+          code,
+        }),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as SettingsApiError;
+
+      if (!response.ok) {
+        showNotification({
+          type: 'error',
+          message: extractErrorMessage(data, 'Unable to deactivate your account.'),
+        });
+        return;
+      }
+
+      try {
+        await AsyncStorage.multiRemove(['auth_token', 'account_id']);
+      } catch {
+        // Ignore local storage cleanup failures and continue to login.
+      }
+
+      resetDeactivateFlow();
+      setViewMode('menu');
+      showNotification({
+        type: 'success',
+        message: (data as any)?.message || 'Account deactivated successfully.',
+      });
+      router.replace('/(auth)/login');
+    } catch {
+      showNotification({ type: 'error', message: 'Connection failed. Please check your network.' });
+    } finally {
+      setConfirmingDeactivation(false);
+    }
+  };
+
   const resetChangeEmailFlow = () => {
     setStep('password');
     setCurrentPassword('');
@@ -545,6 +725,14 @@ export default function SettingsScreen() {
   const goBackStep = () => {
     if (viewMode === 'menu') {
       router.back();
+      return;
+    }
+
+    if (viewMode === 'deactivate-account') {
+      if (!isBusy) {
+        setViewMode('menu');
+        resetDeactivateFlow();
+      }
       return;
     }
 
@@ -631,24 +819,26 @@ export default function SettingsScreen() {
                 <FontAwesome name="chevron-right" size={14} color={palette.chevron} />
               </TouchableOpacity>
 
-              <View
+              <TouchableOpacity
                 style={[
                   styles.optionCard,
-                  styles.optionCardMuted,
-                  { borderColor: palette.border, backgroundColor: palette.surfaceMuted },
+                  styles.optionCardDanger,
+                  { borderColor: '#FF3B3030', backgroundColor: palette.surfaceMuted },
                 ]}
+                onPress={startDeactivateFlow}
+                activeOpacity={0.8}
               >
-                <View style={[styles.optionIconWrap, styles.optionIconMuted, { backgroundColor: palette.optionIconMutedBg }]}> 
-                  <FontAwesome name="exclamation-triangle" size={15} color={palette.iconMuted} />
+                <View style={[styles.optionIconWrap, styles.optionIconDanger, { backgroundColor: '#FF3B3015' }]}> 
+                  <FontAwesome name="power-off" size={15} color="#FF3B30" />
                 </View>
                 <View style={styles.optionTextWrap}>
-                  <Text style={[styles.optionTitle, styles.optionTitleMuted, { color: palette.textSecondary }]}>Deactivate/Delete Account</Text>
-                  <Text style={[styles.optionDescription, { color: palette.textMuted }]}>Work in progress</Text>
+                  <Text style={[styles.optionTitle, styles.optionTitleDanger, { color: '#FF3B30' }]}>Deactivate Account</Text>
+                  <Text style={[styles.optionDescription, { color: palette.textMuted }]}>Hide your account and keep a 30-day reactivation window.</Text>
                 </View>
-                <View style={[styles.wipBadge, { backgroundColor: palette.wipBg }]}> 
-                  <Text style={[styles.wipBadgeText, { color: palette.wipText }]}>Soon</Text>
+                <View style={[styles.wipBadge, { backgroundColor: '#FF3B3015' }]}> 
+                  <Text style={[styles.wipBadgeText, { color: '#FF3B30' }]}>Danger</Text>
                 </View>
-              </View>
+              </TouchableOpacity>
             </>
           ) : viewMode === 'change-email' ? (
             <>
@@ -782,6 +972,105 @@ export default function SettingsScreen() {
                   </TouchableOpacity>
                 </View>
               )}
+            </>
+          ) : viewMode === 'deactivate-account' ? (
+            <>
+              <Text style={[styles.title, { color: palette.textPrimary }]}>Deactivate Account</Text>
+              <Text style={[styles.subtitle, { color: palette.textSecondary }]}> 
+                Your account will be hidden immediately. You can reactivate it by logging back in within 30 days, otherwise it will be deleted permanently.
+              </Text>
+
+              {deactivationBlockers.length > 0 ? (
+                <View style={[styles.deactivationWarningBox, { backgroundColor: isDark ? '#2A1515' : '#FFF2F2', borderColor: '#FF3B3030' }]}>
+                  <Text style={[styles.deactivationWarningTitle, { color: '#FF3B30' }]}>Resolve these first</Text>
+                  {deactivationBlockers.map((item) => (
+                    <View key={item} style={styles.deactivationWarningRow}>
+                      <FontAwesome name="exclamation-circle" size={13} color="#FF3B30" />
+                      <Text style={[styles.deactivationWarningText, { color: palette.textPrimary }]}>{item}</Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+
+              <View style={styles.section}>
+                {deactivationStep === 'password' ? (
+                  <>
+                    <ThemedText style={[styles.sectionTitle, { color: palette.textPrimary }]}>Step 1: Confirm Password</ThemedText>
+                    <TextInput
+                      style={[styles.input, { borderColor: palette.inputBorder, backgroundColor: palette.inputBg, color: palette.inputText }]}
+                      value={deactivationPassword}
+                      onChangeText={setDeactivationPassword}
+                      secureTextEntry
+                      autoCapitalize="none"
+                      placeholder="Enter current password"
+                      placeholderTextColor="#8E8E93"
+                      editable={!isBusy}
+                    />
+                    <TouchableOpacity
+                      style={[styles.primaryButton, !canContinueDeactivation && styles.disabledButton]}
+                      onPress={handleVerifyDeactivationPassword}
+                      disabled={!canContinueDeactivation}
+                    >
+                      {verifyingDeactivationPassword ? (
+                        <ActivityIndicator color="#111214" />
+                      ) : (
+                        <Text style={[styles.primaryButtonText, { color: palette.textPrimary }]}>Continue</Text>
+                      )}
+                    </TouchableOpacity>
+                  </>
+                ) : deactivationStep === 'email' ? (
+                  <>
+                    <ThemedText style={[styles.sectionTitle, { color: palette.textPrimary }]}>Step 2: Send Verification Code</ThemedText>
+                    <ThemedText style={[styles.metaText, { color: palette.textSecondary }]}>We’ll send a code to {deactivationEmail || 'your registered email'}.</ThemedText>
+                    <TouchableOpacity
+                      style={[styles.primaryButton, styles.dangerButton, !canRequestDeactivationCode && styles.disabledButton]}
+                      onPress={handleRequestDeactivationCode}
+                      disabled={!canRequestDeactivationCode}
+                    >
+                      {requestingDeactivationCode ? (
+                        <ActivityIndicator color="#FFFFFF" />
+                      ) : (
+                        <Text style={[styles.primaryButtonText, styles.dangerButtonText]}>Send Verification Code</Text>
+                      )}
+                    </TouchableOpacity>
+                  </>
+                ) : (
+                  <>
+                    <ThemedText style={[styles.sectionTitle, { color: palette.textPrimary }]}>Step 3: Verify Email Code</ThemedText>
+                    <ThemedText style={[styles.metaText, { color: palette.textSecondary }]}>Code sent to {deactivationEmail || 'your registered email'}</ThemedText>
+                    <TextInput
+                      style={[styles.input, { borderColor: palette.inputBorder, backgroundColor: palette.inputBg, color: palette.inputText }]}
+                      value={deactivationOtpCode}
+                      onChangeText={setDeactivationOtpCode}
+                      keyboardType="number-pad"
+                      maxLength={6}
+                      placeholder="Enter 6-digit code"
+                      placeholderTextColor="#8E8E93"
+                      editable={!isBusy}
+                    />
+                    <TouchableOpacity
+                      style={[styles.successButton, styles.dangerButton, !canConfirmDeactivation && styles.disabledButton]}
+                      onPress={handleConfirmAccountDeactivation}
+                      disabled={!canConfirmDeactivation}
+                    >
+                      {confirmingDeactivation ? <ActivityIndicator color="#FFFFFF" /> : <Text style={[styles.successButtonText, styles.dangerButtonText]}>Deactivate Account</Text>}
+                    </TouchableOpacity>
+                  </>
+                )}
+
+                <TouchableOpacity
+                  style={[styles.secondaryButton, { backgroundColor: palette.secondaryBtnBg, borderColor: palette.secondaryBtnBorder }]}
+                  onPress={() => {
+                    if (!isBusy) {
+                      setViewMode('menu');
+                      resetDeactivateFlow();
+                    }
+                  }}
+                  disabled={isBusy}
+                >
+                  <Text style={[styles.secondaryButtonText, { color: palette.secondaryBtnText }]}>Back to Settings</Text>
+                </TouchableOpacity>
+              </View>
             </>
           ) : (
             <>
@@ -935,6 +1224,25 @@ export default function SettingsScreen() {
           )}
         </View>
       </ScrollView>
+
+      <ConfirmationModal
+        visible={deactivationModalVisible}
+        type="danger"
+        title="Deactivate Account"
+        message="Are you sure you want to deactivate? Your account will be hidden but can be reactivated by logging back in. If you do not log back in within 30 days, the account will be permanently deleted."
+        confirmText="Continue"
+        cancelText="Cancel"
+        onCancel={() => {
+          if (!requestingDeactivationCode && !confirmingDeactivation) {
+            resetDeactivateFlow();
+            setViewMode('menu');
+          }
+        }}
+        onConfirm={() => {
+          setDeactivationModalVisible(false);
+          setViewMode('deactivate-account');
+        }}
+      />
     </ThemedView>
   );
 }
@@ -1029,6 +1337,10 @@ const styles = StyleSheet.create({
   optionCardMuted: {
     backgroundColor: '#F7F8FA',
   },
+  optionCardDanger: {
+    borderColor: '#FF3B3030',
+    backgroundColor: '#FFF6F6',
+  },
   optionIconWrap: {
     width: 34,
     height: 34,
@@ -1043,6 +1355,9 @@ const styles = StyleSheet.create({
   optionIconMuted: {
     backgroundColor: '#ECEEF2',
   },
+  optionIconDanger: {
+    backgroundColor: '#FF3B3015',
+  },
   optionTextWrap: {
     flex: 1,
   },
@@ -1053,6 +1368,9 @@ const styles = StyleSheet.create({
   },
   optionTitleMuted: {
     color: '#5A5E66',
+  },
+  optionTitleDanger: {
+    fontWeight: '700',
   },
   optionDescription: {
     marginTop: 2,
@@ -1069,6 +1387,28 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#6C7078',
+  },
+  deactivationWarningBox: {
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 14,
+    marginTop: 14,
+  },
+  deactivationWarningTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 10,
+  },
+  deactivationWarningRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginBottom: 8,
+  },
+  deactivationWarningText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 18,
   },
   stepRow: {
     flexDirection: 'row',
@@ -1190,6 +1530,13 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '700',
+  },
+  dangerButton: {
+    backgroundColor: '#FF3B30',
+    borderColor: '#FF3B30',
+  },
+  dangerButtonText: {
+    color: '#FFFFFF',
   },
   disabledButton: {
     opacity: 0.5,

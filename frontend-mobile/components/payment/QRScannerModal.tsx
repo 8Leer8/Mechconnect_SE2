@@ -21,7 +21,7 @@ interface QRScannerModalProps {
   onScanSuccess: (scanData: QRScanResult) => void;
 }
 
-export default function QRScannerModal({ visible, onClose, onScanSuccess }: QRScannerModalProps) {
+export default function QRScannerModal({ visible, bookingId, onClose, onScanSuccess }: QRScannerModalProps) {
   const [permission, requestPermission] = useCameraPermissions();
   const [scanning, setScanning] = useState(true);
 
@@ -63,6 +63,9 @@ export default function QRScannerModal({ visible, onClose, onScanSuccess }: QRSc
 
       if (!scanData.token || !scanData.booking_id) {
         throw new Error('Invalid QR code response');
+      }
+      if (Number(bookingId) > 0 && Number(scanData.booking_id) !== Number(bookingId)) {
+        throw new Error('This QR belongs to a different booking.');
       }
 
       onScanSuccess(scanData);
@@ -126,6 +129,9 @@ export default function QRScannerModal({ visible, onClose, onScanSuccess }: QRSc
 
         <View style={styles.bottomBar}>
           <ThemedText style={styles.hintText}>Point your camera at the mechanic QR code</ThemedText>
+          <TouchableOpacity style={styles.backButton} onPress={onClose}>
+            <ThemedText style={styles.backButtonText}>Go Back</ThemedText>
+          </TouchableOpacity>
         </View>
       </View>
     </Modal>
@@ -204,6 +210,20 @@ const styles = StyleSheet.create({
   hintText: {
     color: '#9BA1A6',
     textAlign: 'center',
+  },
+  backButton: {
+    marginTop: 12,
+    alignSelf: 'center',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#3A3D40',
+    paddingVertical: 9,
+    paddingHorizontal: 18,
+    backgroundColor: '#1A1C1E',
+  },
+  backButtonText: {
+    color: '#ECEDEE',
+    fontWeight: '700',
   },
   permissionRoot: {
     flex: 1,

@@ -15,6 +15,7 @@ import {
 import { useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import Toast from '@/components/gen/Toast';
+import { ConfirmationModal } from '@/components/ui/ConfirmationModal';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -25,6 +26,8 @@ interface LoginResponse {
   message?: string;
   active_role?: string;
   token?: string;
+  requires_reactivation_confirmation?: boolean;
+  reactivate_by?: string;
   [key: string]: any;
 }
 
@@ -52,12 +55,13 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [usernameFocused, setUsernameFocused] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
+  const [reactivationModalVisible, setReactivationModalVisible] = useState(false);
 
   const [toast, setToast] = useState({ visible: false, message: '' });
   const showToast = (message: string) => setToast({ visible: true, message });
   const hideToast = () => setToast(t => ({ ...t, visible: false }));
 
-  const handleLogin = async () => {
+  const submitLogin = async (reactivateAccount = false) => {
     if (!username && !password) {
       showToast('Please enter your username and password.');
       return;
@@ -88,14 +92,20 @@ export default function LoginScreen() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password, reactivate_account: reactivateAccount }),
         signal: controller.signal as any,
       });
 
       clearTimeout(timeout);
       const data = await response.json() as LoginResponse;
 
+      if (response.status === 409 && data.requires_reactivation_confirmation) {
+        setReactivationModalVisible(true);
+        return;
+      }
+
       if (response.ok) {
+        setReactivationModalVisible(false);
         let activeRole = data.active_role;
 
         if (!activeRole) {
@@ -163,12 +173,32 @@ export default function LoginScreen() {
     }
   };
 
+  const handleLogin = () => {
+    void submitLogin(false);
+  };
+
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={s.container}
     >
       <Toast message={toast.message} visible={toast.visible} onHide={hideToast} />
+      <ConfirmationModal
+        visible={reactivationModalVisible}
+        type="warning"
+        title="Reactivate Account"
+        message="You have recently deactivated your account. Logging in will reactivate it again. Do you want to continue?"
+        confirmText="Reactivate & Login"
+        cancelText="Cancel"
+        loading={loading}
+        onCancel={() => {
+          if (!loading) setReactivationModalVisible(false);
+        }}
+        onConfirm={() => {
+          setReactivationModalVisible(false);
+          void submitLogin(true);
+        }}
+      />
 
       <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
 

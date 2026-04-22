@@ -1,19 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { View, TouchableOpacity, StyleSheet } from 'react-native';
 import { ThemedText } from './themed-text';
 import { FontAwesome } from '@expo/vector-icons';
 import { useRouter, type Href } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { eventBus } from '@/utils/eventBus';
-
-const API_URL = process.env.EXPO_PUBLIC_API_URL;
+import { fetchUnifiedWalletBalance } from '@/lib/walletBalance';
 
 export type CreditsSource = 'mechanic' | 'shop-owner';
-
-function walletUrl(source: CreditsSource) {
-  return source === 'shop-owner'
-    ? `${API_URL}/users/shop-owner/wallet/`
-    : `${API_URL}/users/mechanic/wallet/`;
-}
 
 type WalletSectionProps = {
   /** Which backend wallet to read (default: mechanic). */
@@ -32,24 +26,32 @@ export default function WalletSection({
   const [balance, setBalance] = useState<number | null>(null);
   const router = useRouter();
   const canShowAdd = showAddButton ?? creditsSource !== 'shop-owner';
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  const loadBalance = useCallback(async () => {
+    const data = await fetchUnifiedWalletBalance(creditsSource);
+    setBalance(data ?? 0);
+  }, [creditsSource]);
 
   useEffect(() => {
     let mounted = true;
-    async function load() {
-      try {
-        const res = await fetch(walletUrl(creditsSource), { credentials: 'include' });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!mounted) return;
-        setBalance(data.tokens_balance ?? 0);
-      } catch (e) {
-        // ignore
-      }
-    }
-    load();
-    const off = eventBus.on('walletChanged', () => load());
+    loadBalance().catch(() => {});
+    const off = eventBus.on('walletChanged', () => {
+      if (!mounted) return;
+      setRefreshTick((v) => v + 1);
+    });
     return () => { mounted = false; off(); };
-  }, [creditsSource]);
+  }, [loadBalance]);
+
+  useEffect(() => {
+    loadBalance().catch(() => {});
+  }, [loadBalance, refreshTick]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadBalance().catch(() => {});
+    }, [loadBalance])
+  );
 
   return (
     <View style={styles.card}>

@@ -1,12 +1,13 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import {View, TouchableOpacity, FlatList, Image, ListRenderItem, RefreshControl, } from 'react-native';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { Modal, View, TouchableOpacity, FlatList, Image, ListRenderItem, RefreshControl } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { FontAwesome } from '@expo/vector-icons';
+import { Feather, FontAwesome } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { styles } from '@/style/client/discoverStyles';
 import { getImageUrl } from '@/lib/imageUtils';
 import { SkeletonDiscoverList } from '@/components/skeletons/SkeletonLoaders';
+import { useNotification } from '@/hooks/useNotification';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -18,6 +19,7 @@ interface Mechanic {
   average_rating: number;
   status: string;
   is_working_for_shop?: boolean;
+  is_favorited?: boolean;
 }
 
 interface Shop {
@@ -30,6 +32,8 @@ interface Shop {
   service_banner: string | null;
   is_verified: boolean;
   status: string;
+  is_favorited?: boolean;
+  average_rating?: number;
 }
 
 interface Service {
@@ -54,10 +58,14 @@ interface ServicesResponse {
 }
 
 type TabType = 'mechanics' | 'shops' | 'services';
+type ProviderFilterType = 'all' | 'favourites' | 'most_rated' | 'least_rated';
 
 export default function DiscoverScreen() {
   const router = useRouter();
+  const { showNotification } = useNotification();
   const [activeTab, setActiveTab] = useState<TabType>('mechanics');
+  const [providerFilter, setProviderFilter] = useState<ProviderFilterType>('all');
+  const [isFilterModalVisible, setIsFilterModalVisible] = useState(false);
   const [mechanics, setMechanics] = useState<Mechanic[]>([]);
   const [shops, setShops] = useState<Shop[]>([]);
   const [services, setServices] = useState<Service[]>([]);
@@ -115,10 +123,49 @@ export default function DiscoverScreen() {
     fetchData(activeTab, true);
   };
 
+  const toggleFavorite = useCallback(async (providerType: 'mechanic' | 'shop', providerId: number) => {
+    try {
+      const response = await fetch(`${API_URL}/users/favorites/toggle/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider_type: providerType,
+          provider_id: providerId,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error((data as { error?: string }).error || 'Failed to update favorites');
+      }
+
+      const isFavorited = Boolean((data as { is_favorited?: boolean }).is_favorited);
+      if (providerType === 'mechanic') {
+        setMechanics((prev) =>
+          prev.map((item) =>
+            item.id === providerId ? { ...item, is_favorited: isFavorited } : item,
+          ),
+        );
+      } else {
+        setShops((prev) =>
+          prev.map((item) =>
+            item.id === providerId ? { ...item, is_favorited: isFavorited } : item,
+          ),
+        );
+      }
+    } catch (err) {
+      showNotification({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Failed to update favorites',
+      });
+    }
+  }, [showNotification]);
+
   const tabs: { key: TabType; label: string; icon: string }[] = [
-    { key: 'mechanics', label: 'Mechanics', icon: 'wrench' },
-    { key: 'shops', label: 'Shops', icon: 'building' },
-    { key: 'services', label: 'Services', icon: 'cogs' },
+    { key: 'mechanics', label: 'Mechanics', icon: 'tool' },
+    { key: 'shops', label: 'Shops', icon: 'home' },
+    { key: 'services', label: 'Services', icon: 'grid' },
   ];
 
   const formatRating = (rating: number) => {
@@ -136,6 +183,60 @@ export default function DiscoverScreen() {
 
   const getAvailabilityLabel = (statusValue: string, type: 'mechanic' | 'shop') =>
     isAvailableStatus(statusValue, type) ? 'Available' : 'Not Available';
+
+  const providerFilters: { key: ProviderFilterType; label: string }[] = [
+    { key: 'all', label: 'All' },
+    { key: 'favourites', label: 'Favourites' },
+    { key: 'most_rated', label: 'Most Rated' },
+    { key: 'least_rated', label: 'Least Rated' },
+  ];
+
+  const selectedProviderFilterLabel = providerFilters.find(
+    (filter) => filter.key === providerFilter,
+  )?.label ?? 'All';
+
+  const currentData = useMemo(() => {
+    if (activeTab === 'services') {
+      return services;
+    }
+
+    const providerData = activeTab === 'mechanics' ? mechanics : shops;
+
+    if (providerFilter === 'favourites') {
+      return providerData.filter((item) => Boolean(item.is_favorited));
+    }
+
+    if (providerFilter === 'most_rated' || providerFilter === 'least_rated') {
+      return [...providerData].sort((left, right) => {
+        const leftRating = Number(left.average_rating || 0);
+        const rightRating = Number(right.average_rating || 0);
+
+        return providerFilter === 'most_rated'
+          ? rightRating - leftRating
+          : leftRating - rightRating;
+      });
+    }
+
+    return providerData;
+  }, [activeTab, providerFilter, mechanics, shops, services]);
+
+  const getEmptyMessage = useCallback(() => {
+    if (activeTab === 'services') {
+      return 'No services available';
+    }
+
+    const subject = activeTab === 'mechanics' ? 'mechanics' : 'shops';
+
+    if (providerFilter === 'favourites') {
+      return `No favourite ${subject} yet`;
+    }
+
+    if (providerFilter === 'most_rated' || providerFilter === 'least_rated') {
+      return `No ${subject} match this filter`;
+    }
+
+    return `No ${subject} available`;
+  }, [activeTab, providerFilter]);
 
   // Memoized render functions for FlatList
   const renderMechanicItem: ListRenderItem<Mechanic> = useCallback(({ item: mechanic }) => (
@@ -157,12 +258,12 @@ export default function DiscoverScreen() {
         <View style={styles.cardBody}>
           <ThemedText style={styles.cardTitle}>{mechanic.name}</ThemedText>
           <View style={styles.ratingRow}>
-            <FontAwesome name="star" size={12} color="#FFD60A" />
+            <Feather name="star" size={12} color="#FFD60A" />
               <ThemedText style={styles.ratingText}>{formatRating(mechanic.average_rating)}</ThemedText>
           </View>
             <View style={styles.summaryRow}>
               <View style={styles.summaryChip}>
-                <FontAwesome name="briefcase" size={11} color="#8E8E93" />
+                <Feather name="briefcase" size={11} color="#8E8E93" />
                 <ThemedText style={styles.summaryText}>
                   {mechanic.is_working_for_shop ? 'Shop Mechanic' : 'Independent'}
                 </ThemedText>
@@ -170,6 +271,20 @@ export default function DiscoverScreen() {
             </View>
         </View>
         <View style={styles.cardRight}>
+          <TouchableOpacity
+            style={styles.favoriteBtn}
+            onPress={(event) => {
+              event.stopPropagation();
+              toggleFavorite('mechanic', mechanic.id);
+            }}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <FontAwesome
+              name={mechanic.is_favorited ? 'heart' : 'heart-o'}
+              size={15}
+              color={mechanic.is_favorited ? '#FF5A5F' : '#8E8E93'}
+            />
+          </TouchableOpacity>
           <View
             style={[
               styles.statusDot,
@@ -187,7 +302,7 @@ export default function DiscoverScreen() {
         </View>
       </View>
       <View style={styles.cardFooter}>
-        <FontAwesome name="phone" size={12} color="#8E8E93" />
+        <Feather name="phone" size={12} color="#8E8E93" />
         <ThemedText style={styles.footerText}>{mechanic.contact_number || 'No contact number'}</ThemedText>
       </View>
     </TouchableOpacity>
@@ -206,13 +321,33 @@ export default function DiscoverScreen() {
         <View style={styles.shopInfo}>
           <ThemedText style={styles.cardTitle}>{shop.shop_name}</ThemedText>
           <ThemedText style={styles.shopOwner}>by {shop.owner_name}</ThemedText>
-        </View>
-        {shop.is_verified && (
-          <View style={styles.verifiedBadge}>
-            <FontAwesome name="check-circle" size={12} color="#34C759" />
-            <ThemedText style={styles.verifiedText}>Verified</ThemedText>
+          <View style={styles.ratingRow}>
+            <Feather name="star" size={12} color="#FFD60A" />
+            <ThemedText style={styles.ratingText}>{formatRating(shop.average_rating || 0)}</ThemedText>
           </View>
-        )}
+        </View>
+        <View style={styles.shopHeaderRight}>
+          <TouchableOpacity
+            style={styles.favoriteBtn}
+            onPress={(event) => {
+              event.stopPropagation();
+              toggleFavorite('shop', shop.id);
+            }}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <FontAwesome
+              name={shop.is_favorited ? 'heart' : 'heart-o'}
+              size={15}
+              color={shop.is_favorited ? '#FF5A5F' : '#8E8E93'}
+            />
+          </TouchableOpacity>
+          {shop.is_verified && (
+            <View style={styles.verifiedBadge}>
+              <Feather name="check-circle" size={12} color="#34C759" />
+              <ThemedText style={styles.verifiedText}>Verified</ThemedText>
+            </View>
+          )}
+        </View>
       </View>
       {shop.description ? (
         <ThemedText style={styles.descText} numberOfLines={2}>{shop.description}</ThemedText>
@@ -240,14 +375,14 @@ export default function DiscoverScreen() {
           </ThemedText>
         </View>
         <View style={styles.summaryChip}>
-          <FontAwesome name="envelope" size={11} color="#8E8E93" />
+          <Feather name="mail" size={11} color="#8E8E93" />
           <ThemedText style={styles.summaryText} numberOfLines={1}>
             {shop.email || 'No email'}
           </ThemedText>
         </View>
       </View>
       <View style={styles.cardFooter}>
-        <FontAwesome name="phone" size={12} color="#8E8E93" />
+        <Feather name="phone" size={12} color="#8E8E93" />
         <ThemedText style={styles.footerText}>{shop.contact_number || 'No contact number'}</ThemedText>
       </View>
     </TouchableOpacity>
@@ -278,19 +413,25 @@ export default function DiscoverScreen() {
       ) : null}
       <View style={styles.viewDetailsRow}>
         <ThemedText style={styles.viewDetailsText}>View Details</ThemedText>
-        <FontAwesome name="chevron-right" size={12} color="#FF8C00" />
+        <Feather name="chevron-right" size={12} color="#FF8C00" />
       </View>
     </TouchableOpacity>
   ), [router]);
+
+  const currentRenderer = activeTab === 'mechanics'
+    ? renderMechanicItem
+    : activeTab === 'shops'
+      ? renderShopItem
+      : renderServiceItem;
 
   const keyExtractor = useCallback((item: Mechanic | Shop | Service) => item.id.toString(), []);
 
   const renderEmptyComponent = useCallback(() => (
     <View style={styles.emptyCard}>
-      <FontAwesome name="inbox" size={36} color="#555" />
-      <ThemedText style={styles.emptyText}>No {activeTab} available</ThemedText>
+      <Feather name="inbox" size={36} color="#555" />
+      <ThemedText style={styles.emptyText}>{getEmptyMessage()}</ThemedText>
     </View>
-  ), [activeTab]);
+  ), [getEmptyMessage]);
 
   const renderListHeader = useCallback(() => {
     if (loading && !refreshing) {
@@ -301,7 +442,7 @@ export default function DiscoverScreen() {
     if (error) {
       return (
         <View style={styles.errorCard}>
-          <FontAwesome name="exclamation-circle" size={24} color="#FF3B30" />
+          <Feather name="alert-circle" size={24} color="#FF3B30" />
           <ThemedText style={styles.errorText}>{error}</ThemedText>
           <TouchableOpacity style={styles.retryBtn} onPress={() => fetchData(activeTab, true)}>
             <ThemedText style={styles.retryText}>Retry</ThemedText>
@@ -311,9 +452,6 @@ export default function DiscoverScreen() {
     }
     return null;
   }, [loading, refreshing, error, activeTab, fetchData]);
-
-  const currentData = activeTab === 'mechanics' ? mechanics : activeTab === 'shops' ? shops : services;
-  const currentRenderer = activeTab === 'mechanics' ? renderMechanicItem : activeTab === 'shops' ? renderShopItem : renderServiceItem;
 
   return (
     <ThemedView style={styles.container}>
@@ -326,7 +464,7 @@ export default function DiscoverScreen() {
           </ThemedText>
         </View>
         <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
-          <FontAwesome name="refresh" size={16} color="#FF8C00" />
+          <Feather name="refresh-cw" size={16} color="#FF8C00" />
         </TouchableOpacity>
       </View>
 
@@ -339,7 +477,7 @@ export default function DiscoverScreen() {
             onPress={() => setActiveTab(tab.key)}
             activeOpacity={0.7}
           >
-            <FontAwesome
+            <Feather
               name={tab.icon as any}
               size={14}
               color={activeTab === tab.key ? '#fff' : '#8E8E93'}
@@ -350,6 +488,76 @@ export default function DiscoverScreen() {
           </TouchableOpacity>
         ))}
       </View>
+
+      {activeTab !== 'services' ? (
+        <View style={styles.filterContainer}>
+          <ThemedText style={styles.filterLabel}>Filter</ThemedText>
+          <TouchableOpacity
+            style={styles.filterButton}
+            activeOpacity={0.75}
+            onPress={() => setIsFilterModalVisible(true)}
+          >
+            <View style={styles.filterButtonContent}>
+              <ThemedText style={styles.filterButtonText}>{selectedProviderFilterLabel}</ThemedText>
+              <Feather name="chevron-down" size={16} color="#8E8E93" />
+            </View>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      <Modal
+        transparent
+        visible={isFilterModalVisible}
+        animationType="fade"
+        onRequestClose={() => setIsFilterModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.filterModalOverlay}
+          activeOpacity={1}
+          onPress={() => setIsFilterModalVisible(false)}
+        >
+          <TouchableOpacity activeOpacity={1} style={styles.filterModalCard} onPress={() => null}>
+            <View style={styles.filterModalHeader}>
+              <ThemedText style={styles.filterModalTitle}>Select Filter</ThemedText>
+              <TouchableOpacity
+                style={styles.filterModalClose}
+                onPress={() => setIsFilterModalVisible(false)}
+                activeOpacity={0.75}
+              >
+                <Feather name="x" size={18} color="#8E8E93" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.filterModalList}>
+              {providerFilters.map((filter) => {
+                const isActive = providerFilter === filter.key;
+
+                return (
+                  <TouchableOpacity
+                    key={filter.key}
+                    style={[styles.filterModalOption, isActive && styles.filterModalOptionActive]}
+                    onPress={() => {
+                      setProviderFilter(filter.key);
+                      setIsFilterModalVisible(false);
+                    }}
+                    activeOpacity={0.75}
+                  >
+                    <ThemedText
+                      style={[
+                        styles.filterModalOptionText,
+                        isActive && styles.filterModalOptionTextActive,
+                      ]}
+                    >
+                      {filter.label}
+                    </ThemedText>
+                    {isActive ? <Feather name="check" size={16} color="#FF8C00" /> : null}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
 
       {/* Content - Using FlatList for performance */}
       <FlatList

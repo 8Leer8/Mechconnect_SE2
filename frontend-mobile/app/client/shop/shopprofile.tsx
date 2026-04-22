@@ -9,6 +9,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/client/shopProfileStyles';
 import { getImageUrl } from '@/lib/imageUtils';
 import { SkeletonDetailPage } from '@/components/skeletons/SkeletonLoaders';
+import { useNotification } from '@/hooks/useNotification';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -62,6 +63,7 @@ interface ShopProfile {
   service_banner: string | null;
   is_verified: boolean;
   status: string;
+  is_favorited?: boolean;
   created_at: string;
   years_active: number;
   address?: {
@@ -83,6 +85,7 @@ interface ShopProfile {
 
 export default function ShopProfileScreen() {
   const router = useRouter();
+  const { showNotification } = useNotification();
   const pathname = usePathname();
   const { shopId, id, distance_km } = useLocalSearchParams<{
     shopId?: string;
@@ -96,6 +99,7 @@ export default function ShopProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isFavorited, setIsFavorited] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -120,6 +124,7 @@ export default function ShopProfileScreen() {
       if (isMountedRef.current) {
         setProfile(data.shop);
         setItems(data.shop?.items || []);
+        setIsFavorited(Boolean(data.shop?.is_favorited));
       }
     } catch (err) {
       if (isMountedRef.current) {
@@ -244,6 +249,37 @@ export default function ShopProfileScreen() {
         distance_km: typeof distance_km === 'string' ? distance_km : undefined,
       },
     });
+  };
+
+  const handleToggleFavorite = async () => {
+    if (!profile) return;
+    try {
+      const response = await fetch(`${API_URL}/users/favorites/toggle/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider_type: 'shop',
+          provider_id: profile.id,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error((data as { error?: string }).error || 'Failed to update favorites');
+      }
+
+      const nextValue = Boolean((data as { is_favorited?: boolean }).is_favorited);
+      setIsFavorited(nextValue);
+      showNotification({
+        type: 'success',
+        message: nextValue ? 'Shop added to favorites' : 'Shop removed from favorites',
+      });
+    } catch (err) {
+      showNotification({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Failed to update favorites',
+      });
+    }
   };
 
   useFocusEffect(
@@ -379,6 +415,17 @@ export default function ShopProfileScreen() {
               <ThemedText style={styles.directRequestText}>Request Service from Shop</ThemedText>
             </TouchableOpacity>
           )}
+
+          <TouchableOpacity
+            style={[styles.favoriteBtn, isFavorited && styles.favoriteBtnActive]}
+            activeOpacity={0.7}
+            onPress={handleToggleFavorite}
+          >
+            <FontAwesome name={isFavorited ? 'heart' : 'heart-o'} size={16} color="#fff" />
+            <ThemedText style={styles.favoriteBtnText}>
+              {isFavorited ? 'Remove from Favorites' : 'Add to Favorites'}
+            </ThemedText>
+          </TouchableOpacity>
         </View>
 
         {/* Info Section */}

@@ -5,9 +5,10 @@ from rest_framework import status
 from django.db.models import Count, Sum, Avg, Q
 
 from ..models import Shop, ShopMechanic
-from users.models import ShopOwner, Mechanic
+from users.models import Account, FavoriteShop, ShopOwner, Mechanic
 from bookings.models import Booking, CompleteBooking
 from services.models import ShopService
+from MainBackend.storage_utils import get_media_url
 
 
 @api_view(['GET'])
@@ -18,14 +19,51 @@ def list_shops(request):
     Returns shop details including owner info and status
     """
     try:
+        current_account = None
+        user = getattr(request, "user", None)
+        if isinstance(user, Account):
+            current_account = user
+        else:
+            account_id = request.session.get("account_id")
+            if account_id:
+                current_account = Account.objects.filter(id=account_id).first()
+
+        current_client = None
+        if current_account and hasattr(current_account, "client"):
+            current_client = current_account.client
+
         shops = Shop.objects.select_related('shop_owner__account').filter(
             is_verified=True,
             shop_owner__verification_status=ShopOwner.VerificationStatus.APPROVED,
             shop_owner__account__is_active=True,
         )
+        shop_list = list(shops)
+        shop_ids = [shop.id for shop in shop_list]
+
+        favorite_shop_ids = set()
+        if current_client and shop_ids:
+            favorite_shop_ids = set(
+                FavoriteShop.objects.filter(
+                    client=current_client,
+                    shop_id__in=shop_ids,
+                ).values_list("shop_id", flat=True)
+            )
+
+        shop_rating_map = {}
+        if shop_ids:
+            rating_rows = ShopMechanic.objects.filter(
+                shop_id__in=shop_ids,
+            ).values('shop_id').annotate(
+                avg_rating=Avg('mechanic__average_rating', filter=Q(mechanic__average_rating__gt=0))
+            )
+            shop_rating_map = {
+                row['shop_id']: round(float(row['avg_rating']), 2) if row['avg_rating'] else 0
+                for row in rating_rows
+            }
+
         shops_data = []
         
-        for shop in shops:
+        for shop in shop_list:
             shop_info = {
                 'id': shop.id,
                 'shop_name': shop.shop_name,
@@ -34,9 +72,11 @@ def list_shops(request):
                 'email': shop.email,
                 'website': shop.website,
                 'description': shop.description,
-                'service_banner': shop.service_banner.url if shop.service_banner else None,
+                'service_banner': get_media_url(shop.service_banner, request) if shop.service_banner else None,
                 'is_verified': shop.is_verified,
                 'status': shop.status,
+                'is_favorited': shop.id in favorite_shop_ids,
+                'average_rating': shop_rating_map.get(shop.id, 0),
             }
             shops_data.append(shop_info)
         

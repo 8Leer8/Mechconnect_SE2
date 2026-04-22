@@ -34,6 +34,8 @@ urlpatterns = [
     path('profile/settings/', views.update_profile_settings, name='update_profile_settings'),
     path('profile/verify-password/', views.verify_profile_password, name='verify_profile_password'),
     path('profile/change-email/', views.change_profile_email, name='change_profile_email'),
+    path('profile/deactivate/request/', views.request_account_deactivation, name='request_account_deactivation'),
+    path('profile/deactivate/confirm/', views.confirm_account_deactivation, name='confirm_account_deactivation'),
     path('profile/switch-role/', views.switch_role, name='switch_role'),
     path('profile/active-role/', views.get_active_role, name='get_active_role'),
     path('profile/role-status/', views.get_role_status, name='get_role_status'),
@@ -50,6 +52,8 @@ urlpatterns = [
     path('mechanics/', views.list_mechanics, name='list_mechanics'),
     path('mechanics/nearby/', views.list_nearby_mechanics, name='list_nearby_mechanics'),
     path('mechanics/<int:mechanic_id>/profile/', views.get_mechanic_profile, name='get_mechanic_profile'),
+    path('favorites/', views.list_favorites, name='list_favorites'),
+    path('favorites/toggle/', views.toggle_favorite, name='toggle_favorite'),
     
     # Role registration
     path('register-mechanic/', views.register_mechanic, name='register_mechanic'),

@@ -3,16 +3,9 @@ import { TouchableOpacity, StyleSheet } from 'react-native';
 import { ThemedText } from './themed-text';
 import { FontAwesome } from '@expo/vector-icons';
 import { eventBus } from '@/utils/eventBus';
-
-const API_URL = process.env.EXPO_PUBLIC_API_URL;
+import { fetchUnifiedWalletBalance } from '@/lib/walletBalance';
 
 export type CreditsSource = 'mechanic' | 'shop-owner';
-
-function walletUrl(source: CreditsSource) {
-  return source === 'shop-owner'
-    ? `${API_URL}/users/shop-owner/wallet/`
-    : `${API_URL}/users/mechanic/wallet/`;
-}
 
 type WalletBadgeProps = {
   onPress?: () => void;
@@ -26,13 +19,9 @@ export default function WalletBadge({ onPress, creditsSource = 'mechanic' }: Wal
     let mounted = true;
     async function load() {
       try {
-        const res = await fetch(walletUrl(creditsSource), {
-          credentials: 'include',
-        });
-        if (!res.ok) return;
-        const data = await res.json();
+        const data = await fetchUnifiedWalletBalance(creditsSource);
         if (!mounted) return;
-        setBalance(data.tokens_balance ?? 0);
+        setBalance(data ?? 0);
       } catch (e) {
         // ignore
       }
