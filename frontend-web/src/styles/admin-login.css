@@ -103,6 +103,87 @@
   font-weight: 500;
 }
 
+/* Toast-style alerts (icon + bar), similar to Toastify */
+.auth-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 6px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  background: color-mix(in srgb, var(--paper) 88%, #1a1d20 12%);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+
+.auth-alert__icon {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+}
+
+.auth-alert__text {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--ink-900);
+}
+
+.auth-alert--error {
+  border-left-color: #ef4444;
+  background: color-mix(in srgb, #2a1518 92%, var(--paper) 8%);
+}
+
+.auth-alert--error .auth-alert__icon {
+  color: #f87171;
+}
+
+.auth-alert--error .auth-alert__text {
+  color: #fecaca;
+}
+
+.auth-alert--forbidden {
+  border-left-color: #f97316;
+  background: color-mix(in srgb, #2a1f14 90%, var(--paper) 10%);
+}
+
+.auth-alert--forbidden .auth-alert__icon {
+  color: #fb923c;
+}
+
+.auth-alert--forbidden .auth-alert__text {
+  color: #fed7aa;
+}
+
+.auth-alert--validation {
+  border-left-color: #eab308;
+  background: color-mix(in srgb, #2a2610 88%, var(--paper) 12%);
+}
+
+.auth-alert--validation .auth-alert__icon {
+  color: #facc15;
+}
+
+.auth-alert--validation .auth-alert__text {
+  color: #fef08a;
+}
+
+.auth-alert--rate-limit {
+  border-left-color: #a855f7;
+  background: color-mix(in srgb, #241a2e 92%, var(--paper) 8%);
+}
+
+.auth-alert--rate-limit .auth-alert__icon {
+  color: #c084fc;
+}
+
+.auth-alert--rate-limit .auth-alert__text {
+  color: #e9d5ff;
+}
+
 .auth-submit {
   margin-top: 12px;
   border: none;

@@ -13,6 +13,11 @@ from ..serializers import (
     RegisterSerializer, LoginSerializer, AccountSerializer
 )
 from ..deactivation_utils import get_deactivation_deadline, purge_expired_deactivated_account
+from ..login_rate_limit import (
+    assert_login_not_locked,
+    record_login_failure,
+    clear_login_attempts,
+)
 import jwt
 from utils.email import build_verification_email_html, send_html_email, send_html_email_async
 
@@ -54,9 +59,20 @@ def login(request):
     
     Returns account details and session
     """
+    allowed, client_ip, lock_seconds = assert_login_not_locked(request, scope='login')
+    if not allowed:
+        return Response(
+            {
+                'error': 'Too many failed login attempts. Please wait before trying again.',
+                'retry_after_seconds': lock_seconds,
+            },
+            status=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
     serializer = LoginSerializer(data=request.data)
     if serializer.is_valid():
         account = serializer.validated_data['account']
+        clear_login_attempts(client_ip, scope='login')
 
         deleted, deadline = purge_expired_deactivated_account(account)
         if deleted:
@@ -136,6 +152,16 @@ def login(request):
             resp.update({'token': token, 'expires_at': exp.isoformat()})
 
         return Response(resp, status=status.HTTP_200_OK)
+
+    just_locked, wait_seconds = record_login_failure(client_ip, scope='login')
+    if just_locked:
+        return Response(
+            {
+                'error': 'Too many failed login attempts. Your login is temporarily blocked.',
+                'retry_after_seconds': wait_seconds,
+            },
+            status=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -145,9 +171,20 @@ def token_login(request):
     """
     Obtain a simple JWT for API use. Returns { token, expires_at }.
     """
+    allowed, client_ip, lock_seconds = assert_login_not_locked(request, scope='login')
+    if not allowed:
+        return Response(
+            {
+                'error': 'Too many failed login attempts. Please wait before trying again.',
+                'retry_after_seconds': lock_seconds,
+            },
+            status=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
     serializer = LoginSerializer(data=request.data)
     if serializer.is_valid():
         account = serializer.validated_data['account']
+        clear_login_attempts(client_ip, scope='login')
 
         deleted, deadline = purge_expired_deactivated_account(account)
         if deleted:
@@ -196,6 +233,16 @@ def token_login(request):
         }
         token = jwt.encode(payload, settings.SECRET_KEY, algorithm='HS256')
         return Response({'token': token, 'expires_at': exp.isoformat(), 'account': AccountSerializer(account).data}, status=status.HTTP_200_OK)
+
+    just_locked, wait_seconds = record_login_failure(client_ip, scope='login')
+    if just_locked:
+        return Response(
+            {
+                'error': 'Too many failed login attempts. Your login is temporarily blocked.',
+                'retry_after_seconds': wait_seconds,
+            },
+            status=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
