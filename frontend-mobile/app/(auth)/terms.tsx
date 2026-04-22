@@ -6,59 +6,49 @@ import {
   Text,
   Image,
   StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Feather } from '@expo/vector-icons';
+import GenTopNav from '../../components/gen/GenTopNav';
 
 export const options = { headerShown: false } as const;
 
-export default function PrivacyScreen() {
+export default function TermsScreen() {
   const router = useRouter();
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
-    >
+    <View style={styles.container}>
+      <GenTopNav title="Terms of Service" />
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-        <View style={styles.headerRow}>
-          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-            <Feather name="chevron-left" size={20} color="#FF8C00" />
-          </TouchableOpacity>
-        </View>
-
         <View style={styles.logoRow}>
           <Image source={require('@/assets/images/logo_main.png')} style={styles.logo} />
-          <Text style={styles.title}>Privacy Policy</Text>
-          <Text style={styles.tagline}>Learn how we collect, use, and protect your information.</Text>
+          <Text style={styles.title}>Terms of Service</Text>
+          <Text style={styles.tagline}>Please read our terms and conditions carefully.</Text>
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>1. Information We Collect</Text>
+          <Text style={styles.sectionTitle}>1. Acceptance of Terms</Text>
           <Text style={styles.contentText}>
-            We collect information you provide directly, such as account details, and data generated from your use of the app to deliver a safe and personalized experience.
+            By accessing and using MechConnect, you accept and agree to be bound by the terms and provision of this agreement.
           </Text>
 
-          <Text style={styles.sectionTitle}>2. How We Use Your Data</Text>
+          <Text style={styles.sectionTitle}>2. Use License</Text>
           <Text style={styles.contentText}>
-            We use collected information to provide services, process transactions, communicate with you, and improve the MechConnect platform.
+            Permission is granted to temporarily download one copy of the materials (information or software) on MechConnect for personal, non-commercial transitory viewing only.
           </Text>
 
-          <Text style={styles.sectionTitle}>3. Sharing and Disclosure</Text>
+          <Text style={styles.sectionTitle}>3. Disclaimer</Text>
           <Text style={styles.contentText}>
-            We do not sell your personal information. We may share it with service providers, mechanics, and partners only as needed to fulfill service requests.
+            The materials on MechConnect are provided on an 'as is' basis. We make no warranties, expressed or implied, and hereby disclaim and negate all other warranties.
           </Text>
 
-          <Text style={styles.sectionTitle}>4. Security</Text>
+          <Text style={styles.sectionTitle}>4. Limitations</Text>
           <Text style={styles.contentText}>
-            We implement reasonable safeguards to protect your data, but no system is completely secure. Please keep your account credentials safe.
+            In no event shall MechConnect or its suppliers be liable for any damages (including, without limitation, damages for loss of data or profit) arising out of the use or inability to use the materials on MechConnect.
           </Text>
 
-          <Text style={styles.sectionTitle}>5. Changes to This Policy</Text>
+          <Text style={styles.sectionTitle}>5. Revisions</Text>
           <Text style={styles.contentText}>
-            We may update this policy periodically. Continued use of the app after changes means you accept the revised privacy policy.
+            The materials appearing on MechConnect could include technical, typographical, or photographic errors. MechConnect does not warrant that any of the materials on our website are accurate, complete or current.
           </Text>
         </View>
 
@@ -66,7 +56,7 @@ export default function PrivacyScreen() {
           <Text style={styles.buttonText}>Accept and Continue</Text>
         </TouchableOpacity>
       </ScrollView>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -78,19 +68,8 @@ const styles = StyleSheet.create({
   scroll: {
     flexGrow: 1,
     paddingHorizontal: 24,
-    paddingTop: 64,
+    paddingTop: 24,
     paddingBottom: 24,
-  },
-  headerRow: {
-    marginBottom: 18,
-  },
-  backButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: '#16171A',
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   logoRow: {
     alignItems: 'flex-start',
@@ -103,14 +82,14 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   title: {
-    fontSize: 24,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '600',
     color: '#ECEDEE',
     marginBottom: 6,
   },
   tagline: {
-    fontSize: 14,
-    fontWeight: '400',
+    fontSize: 12,
+    fontWeight: '300',
     color: '#8E8E93',
     marginBottom: 20,
   },
@@ -123,8 +102,8 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   sectionTitle: {
-    fontSize: 15,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '600',
     color: '#ECEDEE',
     marginBottom: 8,
   },
@@ -139,11 +118,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#FF8C00',
     borderRadius: 10,
     paddingVertical: 12,
+    height: 42,
+    justifyContent: 'center',
     alignItems: 'center',
   },
   buttonText: {
     color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

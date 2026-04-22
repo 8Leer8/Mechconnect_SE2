@@ -147,6 +147,8 @@ export default function RegisterScreen() {
   const showToast = (msg: string) => setToast({ visible: true, message: msg });
   const hideToast = () => setToast(t => ({ ...t, visible: false }));
 
+  const [agreedToPolicies, setAgreedToPolicies] = useState(false);
+
   const [formData, setFormData] = useState({
     firstname: '', lastname: '', middlename: '',
     email: '', username: '', password: '', confirm_password: '',
@@ -357,6 +359,7 @@ export default function RegisterScreen() {
 
   const handleRegister = async () => {
     if (!emailVerified) { showToast('Please verify your email first.'); return; }
+    if (!agreedToPolicies) { showToast('Please agree to the Terms & Conditions and Privacy Policy.'); return; }
     if (!formData.firstname || !formData.lastname || !formData.email || !formData.username || !formData.password || !formData.confirm_password) { showToast('Please fill in all required fields.'); return; }
     if (!formData.region || !formData.province || !formData.city_municipality || !formData.barangay) { showToast('Please complete your address.'); return; }
     if (formData.password !== formData.confirm_password) { showToast('Passwords do not match.'); return; }
@@ -535,6 +538,31 @@ export default function RegisterScreen() {
         <Text style={s.stageLabel}>{STAGE_LABELS[currentStage]}</Text>
         <View style={s.form}>
           {renderStage()}
+          {currentStage === totalStages && (
+            <View style={s.termsWrap}>
+              <TouchableOpacity
+                style={s.checkboxButton}
+                onPress={() => setAgreedToPolicies(prev => !prev)}
+                disabled={loading}
+              >
+                <Feather
+                  name={agreedToPolicies ? 'check-square' : 'square'}
+                  size={16}
+                  color={agreedToPolicies ? ORANGE : MUTED}
+                />
+              </TouchableOpacity>
+              <View style={s.termsTextWrap}>
+                <Text style={s.termsText}>I agree to the </Text>
+                <TouchableOpacity disabled={loading} onPress={() => router.push('./terms' as any)}>
+                  <Text style={s.termsLink}>Terms &amp; Conditions</Text>
+                </TouchableOpacity>
+                <Text style={s.termsText}> and the </Text>
+                <TouchableOpacity disabled={loading} onPress={() => router.push('./privacy' as any)}>
+                  <Text style={s.termsLink}>Privacy Policy</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
           {currentStage !== 2 && (
             <View style={s.navRow}>
               {currentStage > 1 && (
@@ -547,7 +575,7 @@ export default function RegisterScreen() {
                   {currentStage === 1 && sendingCode ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>Next</Text>}
                 </TouchableOpacity>
               ) : (
-                <TouchableOpacity style={[s.button, s.navBtn, loading && s.btnDisabled]} onPress={handleRegister} disabled={loading}>
+                <TouchableOpacity style={[s.button, s.navBtn, (loading || !agreedToPolicies) && s.btnDisabled]} onPress={handleRegister} disabled={loading || !agreedToPolicies}>
                   {loading ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>Create Account</Text>}
                 </TouchableOpacity>
               )}
@@ -666,5 +694,30 @@ const s = StyleSheet.create({
   loginRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 20 },
   loginBase:{ fontSize: 12, fontWeight: '400', color: MUTED },
   loginLink:{ fontSize: 12, fontWeight: '600', color: ORANGE },
+  termsWrap: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+    marginTop: 20,
+  },
+  checkboxButton: {
+    marginTop: 1,
+    marginRight: 8,
+  },
+  termsTextWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    flex: 1,
+  },
+  termsText: {
+    fontSize: 12,
+    fontWeight: '400',
+    color: MUTED,
+  },
+  termsLink: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: ORANGE,
+  },
   copyright:{ fontSize: 12, fontWeight: '300', color: MUTED, textAlign: 'center', marginTop: 32 },
 });
