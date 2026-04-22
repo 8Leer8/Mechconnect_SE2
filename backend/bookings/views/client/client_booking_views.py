@@ -1104,6 +1104,8 @@ def _serialize_single_booking(booking, viewer_account=None):
             'barangay': booking.request.service_location.barangay,
             'city_municipality': booking.request.service_location.city_municipality,
             'landmark': booking.request.service_location.landmark,
+            'latitude': float(booking.request.service_location.latitude) if booking.request.service_location.latitude is not None else None,
+            'longitude': float(booking.request.service_location.longitude) if booking.request.service_location.longitude is not None else None,
         } if booking.request.service_location else None,
     }
     

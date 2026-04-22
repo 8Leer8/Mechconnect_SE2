@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Modal,
@@ -16,11 +16,26 @@ import { ThemedText } from '@/components/themed-text';
 import { FontAwesome } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
+import { router } from 'expo-router';
 import { useNotification } from '@/hooks/useNotification';
 import VehicleTypeModal from '@/components/VehicleTypeModal';
+import { useLocation } from '@/context/LocationContext';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const { height } = Dimensions.get('window');
+const MAX_EMERGENCY_PHOTOS = 5;
+const EMPTY_DRAFT = {
+  description: '',
+  concernPictures: [] as string[],
+  autoLocation: null as { latitude: number; longitude: number; address?: string } | null,
+  pinnedLocation: null as { latitude: number; longitude: number; address?: string } | null,
+  locationMode: 'auto' as 'auto' | 'pinned',
+  vehicleType: '',
+  vehicleBrand: '',
+  vehicleModel: '',
+  vehicleDescription: '',
+};
+let emergencyDraftCache = { ...EMPTY_DRAFT };
 const emergencyPhrases = [
   "Engine won't start / Dead battery",
   'Flat tire / Need help installing spare',
@@ -40,19 +55,29 @@ interface EmergencyModalProps {
 
 export default function EmergencyModal({ visible, onClose, onSuccess }: EmergencyModalProps) {
   const { showNotification } = useNotification();
-  const [description, setDescription] = useState('');
-  const [concernPicture, setConcernPicture] = useState<string | null>(null);
+  const { selectedLocation, setSelectedLocation } = useLocation();
+  const [description, setDescription] = useState(emergencyDraftCache.description);
+  const [concernPictures, setConcernPictures] = useState<string[]>(emergencyDraftCache.concernPictures);
   const [loading, setLoading] = useState(false);
-  const [location, setLocation] = useState<{
+  const [autoLocation, setAutoLocation] = useState<{
     latitude: number;
     longitude: number;
     address?: string;
-  } | null>(null);
+  } | null>(emergencyDraftCache.autoLocation);
+  const [pinnedLocation, setPinnedLocation] = useState<{
+    latitude: number;
+    longitude: number;
+    address?: string;
+  } | null>(emergencyDraftCache.pinnedLocation);
+  const [locationMode, setLocationMode] = useState<'auto' | 'pinned'>(emergencyDraftCache.locationMode);
   const [fetchingLocation, setFetchingLocation] = useState(false);
   const [cooldownSeconds, setCooldownSeconds] = useState(0);
-  const [vehicleType, setVehicleType] = useState('');
-  const [vehicleBrand, setVehicleBrand] = useState('');
-  const [vehicleModel, setVehicleModel] = useState('');
+  const [vehicleType, setVehicleType] = useState(emergencyDraftCache.vehicleType);
+  const [vehicleBrand, setVehicleBrand] = useState(emergencyDraftCache.vehicleBrand);
+  const [vehicleModel, setVehicleModel] = useState(emergencyDraftCache.vehicleModel);
+  const [vehicleDescription, setVehicleDescription] = useState(emergencyDraftCache.vehicleDescription);
+  const [isPickingLocation, setIsPickingLocation] = useState(false);
+  const wasVisibleRef = useRef(false);
 
   const formatCooldown = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -82,19 +107,62 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
   };
 
   useEffect(() => {
-    if (visible) {
-      // Reset state when modal opens
-      setDescription('');
-      setConcernPicture(null);
-      setLocation(null);
-      setVehicleType('');
-      setVehicleBrand('');
-      setVehicleModel('');
-      // Automatically get location when modal opens
-      getCurrentLocation();
+    emergencyDraftCache = {
+      description,
+      concernPictures,
+      autoLocation,
+      pinnedLocation,
+      locationMode,
+      vehicleType,
+      vehicleBrand,
+      vehicleModel,
+      vehicleDescription,
+    };
+  }, [description, concernPictures, autoLocation, pinnedLocation, locationMode, vehicleType, vehicleBrand, vehicleModel, vehicleDescription]);
+
+  const clearDraft = () => {
+    emergencyDraftCache = { ...EMPTY_DRAFT };
+    setDescription('');
+    setConcernPictures([]);
+    setAutoLocation(null);
+    setPinnedLocation(null);
+    setLocationMode('auto');
+    setVehicleType('');
+    setVehicleBrand('');
+    setVehicleModel('');
+    setVehicleDescription('');
+  };
+
+  const activeLocation = locationMode === 'pinned' && pinnedLocation ? pinnedLocation : autoLocation;
+
+  useEffect(() => {
+    const isOpening = visible && !wasVisibleRef.current;
+    wasVisibleRef.current = visible;
+
+    if (isOpening) {
+      // If coming back from map picker, keep current form values.
+      if (isPickingLocation) {
+        setIsPickingLocation(false);
+        fetchEmergencyCooldown();
+        return;
+      }
+
+      // Keep draft values on open. If no saved auto location, auto-detect one.
+      if (!autoLocation) getCurrentLocation();
       fetchEmergencyCooldown();
     }
-  }, [visible]);
+  }, [visible, isPickingLocation, autoLocation]);
+
+  useEffect(() => {
+    if (!selectedLocation) return;
+    setPinnedLocation({
+      latitude: selectedLocation.latitude,
+      longitude: selectedLocation.longitude,
+      address: selectedLocation.address,
+    });
+    setLocationMode('pinned');
+    setSelectedLocation(null);
+  }, [visible, selectedLocation, setSelectedLocation]);
 
   useEffect(() => {
     if (cooldownSeconds <= 0) return;
@@ -125,7 +193,7 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
         longitude: currentLocation.coords.longitude,
       });
 
-      setLocation({
+      setAutoLocation({
         latitude: currentLocation.coords.latitude,
         longitude: currentLocation.coords.longitude,
         address: addressResult
@@ -141,6 +209,11 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
   };
 
   const takePhoto = async () => {
+    if (concernPictures.length >= MAX_EMERGENCY_PHOTOS) {
+      showNotification({ type: 'warning', message: `You can only upload up to ${MAX_EMERGENCY_PHOTOS} photos.` });
+      return;
+    }
+
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
@@ -155,11 +228,95 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
       });
 
       if (!result.canceled && result.assets[0]) {
-        setConcernPicture(result.assets[0].uri);
+        setConcernPictures((prev) => [...prev, result.assets[0].uri]);
       }
     } catch (error) {
       showNotification({ type: 'error', message: 'Failed to take photo' });
     }
+  };
+
+  const pickPhotos = async () => {
+    if (concernPictures.length >= MAX_EMERGENCY_PHOTOS) {
+      showNotification({ type: 'warning', message: `You can only upload up to ${MAX_EMERGENCY_PHOTOS} photos.` });
+      return;
+    }
+
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        showNotification({ type: 'warning', title: 'Permission Denied', message: 'Photo library permission is required.' });
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsMultipleSelection: true,
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets.length > 0) {
+        setConcernPictures((prev) => {
+          const remainingSlots = MAX_EMERGENCY_PHOTOS - prev.length;
+          const incoming = result.assets.map((a) => a.uri);
+          const toAdd = incoming.slice(0, remainingSlots);
+          if (incoming.length > remainingSlots) {
+            showNotification({
+              type: 'warning',
+              message: `Only ${MAX_EMERGENCY_PHOTOS} photos are allowed. Extra photos were skipped.`,
+            });
+          }
+          return [...prev, ...toAdd];
+        });
+      }
+    } catch (_error) {
+      showNotification({ type: 'error', message: 'Failed to select photos' });
+    }
+  };
+
+  const openLocationPicker = () => {
+    setIsPickingLocation(true);
+
+    // Close modal first so map screen is not rendered behind it.
+    onClose();
+
+    const navigate = () => {
+      // Prefer existing custom pin when available so edits start from pinned point.
+      const locationForMap = pinnedLocation || activeLocation || autoLocation;
+      if (locationForMap) {
+        router.push({
+          pathname: '/client/request/main_request_form/map',
+          params: {
+            latitude: String(locationForMap.latitude),
+            longitude: String(locationForMap.longitude),
+            radiusKm: '5',
+            return_to: 'emergency',
+          },
+        });
+        return;
+      }
+      router.push({
+        pathname: '/client/request/main_request_form/map',
+        params: { radiusKm: '5', return_to: 'emergency' },
+      });
+    };
+
+    // Give the modal close animation a moment before navigating.
+    setTimeout(navigate, 200);
+  };
+
+  const handleSelectAutoLocation = () => {
+    setLocationMode('auto');
+  };
+
+  const handleSelectCustomLocation = () => {
+    // If we already have a pinned location, just select it.
+    // Open map only when custom location is not set yet.
+    if (pinnedLocation) {
+      setLocationMode('pinned');
+      return;
+    }
+    setLocationMode('pinned');
+    openLocationPicker();
   };
 
   const handleSubmit = async () => {
@@ -172,13 +329,18 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
       return;
     }
 
-    if (!location) {
+    if (!activeLocation) {
       showNotification({ type: 'error', message: 'Location is required for emergency requests. Please enable location services.' });
       return;
     }
 
     if (!vehicleType || !vehicleBrand || !vehicleModel) {
       showNotification({ type: 'error', message: 'Please select your vehicle type, brand, and model.' });
+      return;
+    }
+
+    if (!vehicleDescription.trim()) {
+      showNotification({ type: 'error', message: 'Please add a vehicle description (color or identifiers).' });
       return;
     }
 
@@ -193,28 +355,37 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
 
       // Add location data
       const serviceLocationData = {
-        street_name: location.address || `${location.latitude}, ${location.longitude}`,
+        street_name: activeLocation.address || `${activeLocation.latitude}, ${activeLocation.longitude}`,
         barangay: 'Emergency Location',
         city_municipality: 'Emergency',
-        latitude: location.latitude,
-        longitude: location.longitude,
+        latitude: activeLocation.latitude,
+        longitude: activeLocation.longitude,
       };
       formData.append('service_location', JSON.stringify(serviceLocationData));
       formData.append('vehicle_type', vehicleType);
       formData.append('vehicle_brand', vehicleBrand);
       formData.append('vehicle_model', vehicleModel);
+      formData.append('vehicle_description', vehicleDescription.trim());
 
       // Add picture (optional)
-      if (concernPicture) {
-        const filename = concernPicture.split('/').pop() || 'emergency.jpg';
+      if (concernPictures.length > 0) {
+        const firstPicture = concernPictures[0];
+        const filename = firstPicture.split('/').pop() || 'emergency.jpg';
         const match = /\.(\w+)$/.exec(filename);
         const type = match ? `image/${match[1]}` : 'image/jpeg';
         formData.append('concern_picture', {
-          uri: concernPicture,
+          uri: firstPicture,
           name: filename,
           type: type,
         } as any);
       }
+
+      concernPictures.forEach((uri, idx) => {
+        const filename = uri.split('/').pop() || `emergency_${idx + 1}.jpg`;
+        const match = /\.(\w+)$/.exec(filename);
+        const type = match ? `image/${match[1]}` : 'image/jpeg';
+        formData.append('concern_pictures', { uri, name: filename, type } as any);
+      });
 
       const response = await fetch(`${API_URL}/bookings/requests/emergency/create/`, {
         method: 'POST',
@@ -227,6 +398,7 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
       if (response.ok) {
         setCooldownSeconds(5 * 60);
         showNotification({ type: 'success', title: 'Emergency Request Sent', message: 'Your emergency request has been sent to nearby mechanics. Help is on the way!' });
+        clearDraft();
         onClose();
         onSuccess?.();
       } else {
@@ -271,6 +443,10 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
             <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
               <View style={styles.modalContent}>
             {/* Location Status */}
+            <View style={styles.sectionHeader}>
+              <FontAwesome name="crosshairs" size={14} color="#8E8E93" />
+              <ThemedText style={styles.sectionTitle}>Choose Location Source *</ThemedText>
+            </View>
             {cooldownSeconds > 0 && (
               <View style={styles.cooldownCard}>
                 <FontAwesome name="clock-o" size={18} color="#FF3B30" />
@@ -286,17 +462,24 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
                 <ActivityIndicator size="small" color="#FF3B30" />
                 <ThemedText style={styles.statusText}>Getting your location...</ThemedText>
               </View>
-            ) : location ? (
-              <View style={styles.statusCard}>
-                <FontAwesome name="check-circle" size={24} color="#34C759" />
+            ) : autoLocation ? (
+              <TouchableOpacity
+                style={[styles.statusCard, locationMode === 'auto' && styles.statusCardSelected]}
+                onPress={handleSelectAutoLocation}
+                disabled={loading}
+                activeOpacity={0.85}
+              >
+                <View style={styles.radioBtn}>
+                  <FontAwesome name={locationMode === 'auto' ? 'dot-circle-o' : 'circle-o'} size={18} color="#34C759" />
+                </View>
                 <View style={styles.statusInfo}>
-                  <ThemedText style={styles.statusLabel}>Location Detected</ThemedText>
-                  <ThemedText style={styles.statusValue}>{location.address || 'Current Location'}</ThemedText>
+                  <ThemedText style={styles.statusLabel}>Auto Location (Your current location)</ThemedText>
+                  <ThemedText style={styles.statusValue} numberOfLines={4}>{autoLocation.address || 'Current Location'}</ThemedText>
                   <ThemedText style={styles.coordsText}>
-                    {location.latitude.toFixed(6)}, {location.longitude.toFixed(6)}
+                    {autoLocation.latitude.toFixed(6)}, {autoLocation.longitude.toFixed(6)}
                   </ThemedText>
                 </View>
-              </View>
+              </TouchableOpacity>
             ) : (
               <View style={styles.statusCard}>
                 <FontAwesome name="exclamation-circle" size={24} color="#FF3B30" />
@@ -309,7 +492,49 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
                 </TouchableOpacity>
               </View>
             )}
-
+            {pinnedLocation ? (
+              <TouchableOpacity
+                style={[styles.statusCard, locationMode === 'pinned' && styles.statusCardSelected]}
+                onPress={handleSelectCustomLocation}
+                disabled={loading}
+                activeOpacity={0.85}
+              >
+                <View style={styles.radioBtn}>
+                  <FontAwesome name={locationMode === 'pinned' ? 'dot-circle-o' : 'circle-o'} size={18} color="#FF8C00" />
+                </View>
+                <View style={styles.statusInfo}>
+                  <ThemedText style={styles.statusLabel}>Custom Location</ThemedText>
+                  <ThemedText style={styles.statusValue} numberOfLines={5}>{pinnedLocation.address || 'Pinned on map'}</ThemedText>
+                  <ThemedText style={styles.coordsText}>
+                    {pinnedLocation.latitude.toFixed(6)}, {pinnedLocation.longitude.toFixed(6)}
+                  </ThemedText>
+                </View>
+                <TouchableOpacity
+                  style={styles.editCustomBtn}
+                  onPress={openLocationPicker}
+                  disabled={loading}
+                  activeOpacity={0.8}
+                >
+                  <FontAwesome name="pencil" size={12} color="#FF8C00" />
+                </TouchableOpacity>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={[styles.statusCard, styles.statusCardPlaceholder]}
+                onPress={handleSelectCustomLocation}
+                disabled={loading}
+                activeOpacity={0.85}
+              >
+                <View style={styles.radioBtn}>
+                  <FontAwesome name={locationMode === 'pinned' ? 'dot-circle-o' : 'circle-o'} size={18} color="#8E8E93" />
+                </View>
+                <View style={styles.statusInfo}>
+                  <ThemedText style={styles.statusLabel}>Custom Location</ThemedText>
+                  <ThemedText style={styles.statusValue}>Set location from map</ThemedText>
+                  <ThemedText style={styles.coordsText}>Tap this card to pin custom location</ThemedText>
+                </View>
+              </TouchableOpacity>
+            )}
             {/* Description Input (Optional) */}
             <View style={styles.inputSection}>
               <View style={styles.sectionHeader}>
@@ -367,31 +592,61 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
               />
             </View>
 
+            <View style={styles.inputSection}>
+              <View style={styles.sectionHeader}>
+                <FontAwesome name="list-alt" size={14} color="#8E8E93" />
+                <ThemedText style={styles.sectionTitle}>Vehicle Description *</ThemedText>
+              </View>
+              <TextInput
+                style={styles.textArea}
+                placeholder="Example: Red Toyota Vios, plate ABC-1234, with roof rack."
+                placeholderTextColor="#6C6C70"
+                multiline
+                numberOfLines={3}
+                value={vehicleDescription}
+                onChangeText={setVehicleDescription}
+                editable={!loading}
+              />
+            </View>
+
             {/* Photo Section (Optional) */}
             <View style={styles.inputSection}>
               <View style={styles.sectionHeader}>
                 <FontAwesome name="camera" size={14} color="#8E8E93" />
-                <ThemedText style={styles.sectionTitle}>Photo (Optional)</ThemedText>
+                <ThemedText style={styles.sectionTitle}>Photo (Optional) {`(${concernPictures.length}/${MAX_EMERGENCY_PHOTOS})`}</ThemedText>
               </View>
-              {concernPicture ? (
-                <View style={styles.imagePreviewContainer}>
-                  <Image source={{ uri: concernPicture }} style={styles.previewImage} />
-                  <TouchableOpacity
-                    style={styles.removeImageBtn}
-                    onPress={() => setConcernPicture(null)}
-                  >
-                    <FontAwesome name="times-circle" size={28} color="#FF3B30" />
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                <TouchableOpacity 
+              <View style={styles.photoActionRow}>
+                <TouchableOpacity
                   style={styles.addPhotoBtn}
                   onPress={takePhoto}
                   disabled={loading}
                 >
-                  <FontAwesome name="camera" size={28} color="#8E8E93" />
+                  <FontAwesome name="camera" size={24} color="#8E8E93" />
                   <ThemedText style={styles.addPhotoText}>Take Photo</ThemedText>
                 </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.addPhotoBtn}
+                  onPress={pickPhotos}
+                  disabled={loading}
+                >
+                  <FontAwesome name="image" size={24} color="#8E8E93" />
+                  <ThemedText style={styles.addPhotoText}>Choose Photos</ThemedText>
+                </TouchableOpacity>
+              </View>
+              {concernPictures.length > 0 && (
+                <View style={styles.photoGrid}>
+                  {concernPictures.map((uri, index) => (
+                    <View key={`${uri}-${index}`} style={styles.thumbWrap}>
+                      <Image source={{ uri }} style={styles.previewImage} />
+                      <TouchableOpacity
+                        style={styles.removeImageBtn}
+                        onPress={() => setConcernPictures((prev) => prev.filter((_, i) => i !== index))}
+                      >
+                        <FontAwesome name="times-circle" size={20} color="#FF3B30" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
               )}
             </View>
 
@@ -415,9 +670,9 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
               <ThemedText style={styles.cancelBtnText}>Cancel</ThemedText>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.sendBtn, (!location || loading || cooldownSeconds > 0) && styles.sendBtnDisabled]}
+              style={[styles.sendBtn, (!activeLocation || loading || cooldownSeconds > 0 || !vehicleDescription.trim()) && styles.sendBtnDisabled]}
               onPress={handleSubmit}
-              disabled={!location || loading || cooldownSeconds > 0}
+              disabled={!activeLocation || loading || cooldownSeconds > 0 || !vehicleDescription.trim()}
             >
               {loading ? (
                 <ActivityIndicator size="small" color="#FFFFFF" />
@@ -478,12 +733,34 @@ const styles = StyleSheet.create({
   },
   statusCard: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
+    alignItems: 'flex-start',
+    gap: 10,
     backgroundColor: '#2C2C2E',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#3A3A3C',
+  },
+  statusCardSelected: {
+    borderColor: '#FF8C00',
+    backgroundColor: '#FF8C0015',
+  },
+  statusCardPlaceholder: {
+    opacity: 0.85,
+  },
+  editCustomBtn: {
+    marginLeft: 8,
+    marginTop: 2,
+    width: 24,
+    height: 24,
     borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FF8C001A',
+    borderWidth: 1,
+    borderColor: '#FF8C0040',
   },
   cooldownCard: {
     flexDirection: 'row',
@@ -510,9 +787,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   statusLabel: {
-    fontSize: 12,
-    color: '#8E8E93',
-    marginBottom: 4,
+    fontSize: 11,
+    color: '#B0B0B5',
+    marginBottom: 3,
   },
   statusText: {
     fontSize: 14,
@@ -520,20 +797,24 @@ const styles = StyleSheet.create({
     marginLeft: 10,
   },
   statusValue: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#ECEDEE',
-    marginBottom: 4,
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#F5F5F7',
+    marginBottom: 3,
   },
   coordsText: {
-    fontSize: 11,
-    color: '#555',
+    fontSize: 10,
+    color: '#FFB46A',
     fontFamily: 'monospace',
   },
   retryIconBtn: {
     padding: 8,
     backgroundColor: '#FF3B3020',
     borderRadius: 8,
+  },
+  radioBtn: {
+    paddingRight: 2,
+    paddingTop: 1,
   },
   inputSection: {
     marginBottom: 16,
@@ -602,23 +883,42 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: '#2C2C2E',
   },
+  photoActionRow: {
+    flexDirection: 'row',
+    marginHorizontal: -4,
+    marginBottom: 6,
+  },
+  photoGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginHorizontal: -4,
+    marginTop: 6,
+  },
+  thumbWrap: {
+    position: 'relative',
+    width: '33.33%',
+    paddingHorizontal: 4,
+    marginBottom: 8,
+  },
   previewImage: {
     width: '100%',
-    height: 180,
-    borderRadius: 12,
+    height: 92,
+    borderRadius: 10,
   },
   removeImageBtn: {
     position: 'absolute',
-    top: 10,
+    top: 6,
     right: 10,
     backgroundColor: '#1A1C1E',
     borderRadius: 20,
     padding: 2,
   },
   addPhotoBtn: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 32,
+    minHeight: 92,
+    marginHorizontal: 4,
     backgroundColor: '#2C2C2E',
     borderRadius: 12,
     borderWidth: 2,
