@@ -70,16 +70,36 @@ export default function RootLayout() {
   }, []);
 
   useEffect(() => {
-    const handleDeepLink = ({ url }: { url: string }) => {
+    const processDeepLink = (url: string | null) => {
+      if (!url) return;
       const normalizedUrl = String(url || '').toLowerCase();
+
+      // Booking payment deep links
       if (normalizedUrl.startsWith('mechconnect://payment/success')) {
         router.push('/payment/success');
       } else if (normalizedUrl.startsWith('mechconnect://payment/failed')) {
         router.push('/payment/failed');
       }
+      // Wallet/token purchase payment deep links (Mechanic)
+      else if (normalizedUrl.includes('wallet/payment/success')) {
+        router.replace('/wallet/payment/success');
+      } else if (normalizedUrl.includes('wallet/payment/failed')) {
+        router.replace('/wallet/payment/failed');
+      }
+      // Shop Owner wallet payment deep links
+      else if (normalizedUrl.includes('shop-owner/payment/success')) {
+        router.replace('/shopowner/wallet');
+      } else if (normalizedUrl.includes('shop-owner/payment/failed')) {
+        router.replace('/shopowner/wallet');
+      }
     };
 
-    const subscription = Linking.addEventListener('url', handleDeepLink);
+    // Handle deep links when app is already running
+    const subscription = Linking.addEventListener('url', ({ url }) => processDeepLink(url));
+
+    // Handle initial deep link when app opens from closed state
+    Linking.getInitialURL().then(processDeepLink);
+
     return () => subscription.remove();
   }, [router]);
 

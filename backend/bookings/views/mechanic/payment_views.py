@@ -1387,6 +1387,10 @@ def paymongo_webhook(request):
     resource = event_attributes.get("data", {}) or {}
     resource_attributes = resource.get("attributes", {}) or {}
 
+    # Check if this is a token purchase event
+    metadata = resource_attributes.get("metadata", {}) or {}
+    is_token_purchase = metadata.get("purpose") == "token_purchase"
+
     # For source-based e-wallet flow, source.chargeable must be charged by backend.
     if event_type == "source.chargeable":
         source_id = resource.get("id")
@@ -1394,18 +1398,32 @@ def paymongo_webhook(request):
         currency = resource_attributes.get("currency", "PHP")
 
         if source_id and amount:
-            try:
-                create_paymongo_payment_from_source(
-                    source_id=source_id,
-                    amount_centavos=amount,
-                    currency=currency,
-                )
-            except requests.exceptions.HTTPError:
-                logger.exception("Failed to create PayMongo payment for source %s", source_id)
-                return Response({"error": "Unable to charge source"}, status=502)
-            except Exception:
-                logger.exception("Unexpected error while charging PayMongo source %s", source_id)
-                return Response({"error": "Unable to charge source"}, status=500)
+            # Handle token purchase
+            if is_token_purchase:
+                from users.views.token_payment_views import _charge_token_purchase_source
+                try:
+                    purchase_id = metadata.get("purchase_id")
+                    if purchase_id:
+                        from users.models import TokenPurchase
+                        purchase = TokenPurchase.objects.get(id=purchase_id)
+                        _charge_token_purchase_source(source_id, purchase, resource_attributes)
+                except Exception:
+                    logger.exception("Failed to charge token purchase source %s", source_id)
+                    return Response({"error": "Unable to charge token purchase source"}, status=500)
+            else:
+                # Handle booking payment
+                try:
+                    create_paymongo_payment_from_source(
+                        source_id=source_id,
+                        amount_centavos=amount,
+                        currency=currency,
+                    )
+                except requests.exceptions.HTTPError:
+                    logger.exception("Failed to create PayMongo payment for source %s", source_id)
+                    return Response({"error": "Unable to charge source"}, status=502)
+                except Exception:
+                    logger.exception("Unexpected error while charging PayMongo source %s", source_id)
+                    return Response({"error": "Unable to charge source"}, status=500)
 
     if event_type == "payment.paid":
         booking_id = _extract_booking_id_from_paymongo_event(request.data)
@@ -1445,6 +1463,31 @@ def paymongo_webhook(request):
                     installment_type=installment_type,
                     method=method,
                 )
+
+        # Handle token purchase payment completion
+        # For payment.paid, also check source metadata since metadata may be nested
+        payment_metadata = metadata
+        if not is_token_purchase and event_type == "payment.paid":
+            source_obj = (resource_attributes.get("source", {}) or {}).get("data", {}) or {}
+            source_attributes = source_obj.get("attributes", {}) or {}
+            source_metadata = source_attributes.get("metadata", {}) or {}
+            if source_metadata.get("purpose") == "token_purchase":
+                is_token_purchase = True
+                payment_metadata = source_metadata
+
+        if is_token_purchase:
+            from users.views.token_payment_views import _finalize_token_purchase
+            try:
+                purchase_id = payment_metadata.get("purchase_id")
+                if purchase_id:
+                    from users.models import TokenPurchase
+                    purchase = TokenPurchase.objects.get(id=purchase_id)
+                    _finalize_token_purchase(purchase, resource_attributes)
+                    logger.info("Token purchase %s finalized via payment.paid webhook", purchase_id)
+            except TokenPurchase.DoesNotExist:
+                logger.warning("Token purchase %s not found for payment.paid webhook", purchase_id)
+            except Exception:
+                logger.exception("Failed to finalize token purchase payment")
 
     if event_type == "payment_intent.succeeded":
         booking_id = _extract_booking_id_from_paymongo_event(request.data)

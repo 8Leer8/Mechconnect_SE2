@@ -1,5 +1,12 @@
 from django.urls import path
 from . import views
+from .views.token_payment_views import (
+    initiate_token_purchase,
+    token_purchase_webhook,
+    token_redirect_success,
+    token_redirect_failed,
+    check_purchase_status,
+)
 from .views.admin import (
     admin_login,
     admin_logout,
@@ -66,6 +73,17 @@ urlpatterns = [
     path('mechanic/wallet/transactions/', views.mechanic_wallet_transactions, name='mechanic_wallet_transactions'),
     path('mechanic/wallet/topup/', views.mechanic_wallet_topup, name='mechanic_wallet_topup'),
     path('mechanic/wallet/token-pricing/', views.get_token_pricing_view, name='mechanic-wallet-token-pricing'),
+    # Token purchase PayMongo payment flow (Mechanic)
+    path('wallet/initiate-payment/', initiate_token_purchase, name='initiate_token_purchase'),
+    path('wallet/webhook/', token_purchase_webhook, name='token_purchase_webhook'),
+    path('wallet/redirect/success/', token_redirect_success, name='token_redirect_success'),
+    path('wallet/redirect/failed/', token_redirect_failed, name='token_redirect_failed'),
+    path('wallet/purchase/<int:purchase_id>/status/', check_purchase_status, name='check_purchase_status'),
+    # Token purchase PayMongo payment flow (Shop Owner) - uses same views
+    path('shop-owner/wallet/initiate-payment/', initiate_token_purchase, name='shop_owner_initiate_token_purchase'),
+    path('shop-owner/wallet/purchase/<int:purchase_id>/status/', check_purchase_status, name='shop_owner_check_purchase_status'),
+    path('shop-owner/redirect/success/', token_redirect_success, name='shop_owner_token_redirect_success'),
+    path('shop-owner/redirect/failed/', token_redirect_failed, name='shop_owner_token_redirect_failed'),
 ]
 
 #Admin Urls

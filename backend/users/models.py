@@ -268,6 +268,9 @@ class TokenPurchase(models.Model):
     payment_method = models.CharField(max_length=50, null=True, blank=True)
     status = models.CharField(max_length=50, default='pending')
     purchased_at = models.DateTimeField(auto_now_add=True)
+    # PayMongo tracking fields
+    ewallet_source_id = models.CharField(max_length=255, null=True, blank=True)
+    external_reference = models.CharField(max_length=255, null=True, blank=True)
 
 
 class TokenTransaction(models.Model):

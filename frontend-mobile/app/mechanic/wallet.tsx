@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { View, TouchableOpacity, ScrollView, ActivityIndicator, Alert } from 'react-native';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { View, TouchableOpacity, ScrollView, ActivityIndicator, Alert, Linking, AppState } from 'react-native';
+import { Stack, useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -14,12 +14,14 @@ const MECHANIC_WALLET = {
   balance: () => `${API_URL}/users/mechanic/wallet/`,
   transactions: () => `${API_URL}/users/mechanic/wallet/transactions/`,
   topup: () => `${API_URL}/users/mechanic/wallet/topup/`,
+  initiatePayment: () => `${API_URL}/users/wallet/initiate-payment/`,
 };
 
 const SHOP_OWNER_WALLET = {
   balance: () => `${API_URL}/users/shop-owner/wallet/`,
   transactions: () => `${API_URL}/users/shop-owner/wallet/transactions/`,
   topup: () => `${API_URL}/users/shop-owner/wallet/topup/`,
+  initiatePayment: () => `${API_URL}/users/shop-owner/wallet/initiate-payment/`,
 };
 
 type TokenPricingData = {
@@ -166,25 +168,49 @@ export default function WalletScreen() {
     } catch (e) {}
   }
 
-  async function topUp(pkg: { tokens: number; price: number }, method: 'gcash' | 'maya') {
+  async function initiateTokenPurchase(pkg: { tokens: number; price: number }, method: 'gcash' | 'maya') {
     try {
       setTopUpLoading(pkg.tokens);
-      const res = await fetch(shopOwnerCreditsView ? SHOP_OWNER_WALLET.topup() : MECHANIC_WALLET.topup(), {
+
+      // Use appropriate endpoint for mechanic or shop owner
+      const initiateUrl = shopOwnerCreditsView
+        ? SHOP_OWNER_WALLET.initiatePayment()
+        : MECHANIC_WALLET.initiatePayment();
+
+      const res = await fetch(initiateUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ tokens: pkg.tokens, price: pkg.price, payment_method: method }),
+        body: JSON.stringify({
+          tokens: pkg.tokens,
+          price: pkg.price,
+          payment_method: method,
+        }),
       });
+
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(String(err.error || 'Failed to buy credits'));
+        throw new Error(String(err.error || 'Failed to initiate payment'));
       }
+
       const data = await res.json();
-      setBalance(data.tokens_balance ?? balance);
-      await fetchTransactions();
-      eventBus.emit('walletChanged', { tokens_balance: data.tokens_balance });
+      const checkoutUrl = data.checkout_url;
+      const purchaseId = data.purchase_id;
+
+      if (!checkoutUrl) {
+        throw new Error('No checkout URL received');
+      }
+
+      // Close modal before opening browser
+      setPaymentModalVisible(false);
+
+      // Open PayMongo checkout in browser
+      await Linking.openURL(checkoutUrl);
+
+      // Store pending purchase ID for status checking
+      // (Optional: could poll for status when app comes back to foreground)
     } catch (e: any) {
-      Alert.alert('Top-up failed', String(e?.message || 'Unable to process e-cash payment'));
+      Alert.alert('Payment Error', String(e?.message || 'Unable to start e-wallet payment'));
     } finally {
       setTopUpLoading(null);
     }
@@ -196,12 +222,19 @@ export default function WalletScreen() {
     setPaymentModalVisible(true);
   }
 
-  async function confirmWalletMethod(method: 'gcash' | 'maya') {
+  async function handleSelectPaymentMethod(method: 'gcash' | 'maya') {
     if (!selectedPackage) return;
-    await topUp(selectedPackage, method);
-    setPaymentModalVisible(false);
+    await initiateTokenPurchase(selectedPackage, method);
     setSelectedPackage(null);
   }
+
+  // Refresh data when screen comes into focus (after returning from payment)
+  useFocusEffect(
+    useCallback(() => {
+      fetchBalance();
+      fetchTransactions();
+    }, [])
+  );
 
   return (
     <ThemedView style={styles.container}>
@@ -324,13 +357,14 @@ export default function WalletScreen() {
 
       <CreditsEWalletModal
         visible={paymentModalVisible}
+        tokens={selectedPackage?.tokens || 0}
         amount={selectedPackage?.price || 0}
         onClose={() => {
           if (topUpLoading !== null) return;
           setPaymentModalVisible(false);
           setSelectedPackage(null);
         }}
-        onConfirm={confirmWalletMethod}
+        onSelectMethod={handleSelectPaymentMethod}
       />
     </ThemedView>
   );
