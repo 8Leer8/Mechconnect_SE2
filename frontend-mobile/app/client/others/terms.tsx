@@ -8,7 +8,7 @@ import {
   StyleSheet,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import GenTopNav from '../../components/gen/GenTopNav';
+import GenTopNav from '../../../components/gen/GenTopNav';
 
 export const options = { headerShown: false } as const;
 
