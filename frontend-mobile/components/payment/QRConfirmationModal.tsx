@@ -87,7 +87,7 @@ export default function QRConfirmationModal({
 
           <TouchableOpacity style={styles.cancelButton} onPress={onCancel}>
             <FontAwesome name="refresh" size={14} color="#ECEDEE" />
-            <ThemedText style={styles.cancelText}>Scan Again</ThemedText>
+            <ThemedText style={styles.cancelText}>Back to Scanner</ThemedText>
           </TouchableOpacity>
         </View>
       </View>

@@ -99,6 +99,21 @@ export const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 4,
   },
+  favoriteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#2C2E30',
+    width: '100%',
+    paddingVertical: 14,
+    borderRadius: 12,
+    marginTop: 10,
+  },
+  favoriteBtnActive: {
+    backgroundColor: '#D84B52',
+  },
+  favoriteBtnText: { fontSize: 15, fontWeight: '700', color: '#fff' },
   directRequestText: { fontSize: 15, fontWeight: '700', color: '#fff' },
 
   // Sections

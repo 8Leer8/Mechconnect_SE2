@@ -50,6 +50,8 @@ urlpatterns = [
     path('mechanics/', views.list_mechanics, name='list_mechanics'),
     path('mechanics/nearby/', views.list_nearby_mechanics, name='list_nearby_mechanics'),
     path('mechanics/<int:mechanic_id>/profile/', views.get_mechanic_profile, name='get_mechanic_profile'),
+    path('favorites/', views.list_favorites, name='list_favorites'),
+    path('favorites/toggle/', views.toggle_favorite, name='toggle_favorite'),
     
     # Role registration
     path('register-mechanic/', views.register_mechanic, name='register_mechanic'),

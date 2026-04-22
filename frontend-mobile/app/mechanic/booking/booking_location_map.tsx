@@ -270,6 +270,7 @@ export default function BookingLocationMapScreen() {
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const updateIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const staleCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastRouteRefreshAtRef = useRef(0);
   const didInitialFitRef = useRef(false);
 
   const clientCoordsRef = useRef<Coordinates | null>(null);
@@ -930,6 +931,16 @@ export default function BookingLocationMapScreen() {
               setMechanicCoords(next);
               setLastMechanicUpdateAt(Date.now());
               pushLocationToBackend(next);
+
+              // Near-realtime reroute while moving (GTA-like line updates), throttled to protect APIs.
+              const to = clientCoordsRef.current;
+              const now = Date.now();
+              if (to && now - lastRouteRefreshAtRef.current >= 5000) {
+                lastRouteRefreshAtRef.current = now;
+                refreshRouteAndTraffic(next, to, status).catch(() => {
+                  // Keep existing route if a recalculation fails.
+                });
+              }
             }
           );
 
@@ -952,7 +963,7 @@ export default function BookingLocationMapScreen() {
         refreshRouteAndTraffic(from, to, status).catch(() => {
           // Realtime refresh failures are reflected by existing fallback state.
         });
-      }, 30000);
+      }, 15000);
 
       return () => {
         isMounted = false;

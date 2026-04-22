@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Modal, StyleSheet, TouchableOpacity, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 
@@ -26,12 +26,13 @@ export default function CashQRDisplayModal({
   const [remainingSeconds, setRemainingSeconds] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
+  const [awaitingSettlement, setAwaitingSettlement] = useState(false);
   const { lastMessage } = useWebSocketContext();
 
-  const loadToken = async () => {
+  const loadToken = useCallback(async (silent = false) => {
     try {
-      setLoading(true);
-      setError('');
+      if (!silent) setLoading(true);
+      if (!awaitingSettlement) setError('');
       const response = await fetch(`${API_URL}/bookings/payments/qr/${bookingId}/`, {
         method: 'GET',
         credentials: 'include',
@@ -44,22 +45,51 @@ export default function CashQRDisplayModal({
           : {};
       const errorMessage =
         typeof payload.error === 'string' ? payload.error : 'Unable to load QR token';
-      if (!response.ok) throw new Error(errorMessage);
+      if (!response.ok) {
+        const normalized = String(errorMessage || '').toLowerCase();
+        const tokenWasScannedOrConsumed =
+          normalized.includes('expired') ||
+          normalized.includes('already been used') ||
+          normalized.includes('already used');
 
+        if (tokenWasScannedOrConsumed) {
+          // Client likely scanned and token is consumed; wait for final payment completion event.
+          setAwaitingSettlement(true);
+          setToken('');
+          setError('');
+          return;
+        }
+        // Token creation is async with payment-method selection; keep retrying quietly.
+        setToken('');
+        throw new Error(errorMessage);
+      }
+
+      setAwaitingSettlement(false);
       setToken(typeof payload.token === 'string' ? payload.token : '');
       setExpiresAt(typeof payload.expires_at === 'string' ? payload.expires_at : '');
     } catch (scanError) {
       const message = scanError instanceof Error ? scanError.message : 'Unable to load QR token';
       setError(message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  };
+  }, [bookingId]);
 
   useEffect(() => {
     if (!visible) return;
-    loadToken();
-  }, [visible]);
+    setAwaitingSettlement(false);
+    loadToken(false);
+  }, [visible, loadToken]);
+
+  useEffect(() => {
+    if (!visible) return;
+    if (awaitingSettlement) return;
+    // Realtime retry while waiting for token to be generated/updated.
+    const poll = setInterval(() => {
+      loadToken(true);
+    }, 2000);
+    return () => clearInterval(poll);
+  }, [visible, loadToken, awaitingSettlement]);
 
   useEffect(() => {
     if (!expiresAt) return;
@@ -75,6 +105,13 @@ export default function CashQRDisplayModal({
     const timer = setInterval(update, 1000);
     return () => clearInterval(timer);
   }, [expiresAt]);
+
+  useEffect(() => {
+    if (!visible) return;
+    if (remainingSeconds > 0) return;
+    // If token is expired while modal is open, keep trying to refresh.
+    loadToken(true);
+  }, [remainingSeconds, visible, loadToken]);
 
   useEffect(() => {
     if (!visible || !lastMessage) return;
@@ -100,9 +137,15 @@ export default function CashQRDisplayModal({
           <ThemedText style={styles.title}>Show this QR to client</ThemedText>
 
           <View style={styles.qrContainer}>
-            {loading ? <ActivityIndicator color="#FF8C00" /> : null}
+            {loading || awaitingSettlement ? <ActivityIndicator color="#FF8C00" /> : null}
             {!loading && token ? <QRCode value={token} size={200} /> : null}
+            {!loading && awaitingSettlement ? (
+              <ThemedText style={styles.processingText}>Client scanned QR. Finalizing payment...</ThemedText>
+            ) : null}
             {!loading && error ? <ThemedText style={styles.errorText}>{error}</ThemedText> : null}
+            {!loading && !token && !error && !awaitingSettlement ? (
+              <ThemedText style={styles.errorText}>No QR token yet. Tap refresh below.</ThemedText>
+            ) : null}
           </View>
 
           <ThemedText style={styles.meta}>Booking #{bookingId}</ThemedText>
@@ -112,7 +155,13 @@ export default function CashQRDisplayModal({
             {remainingSeconds > 0 ? `Expires in: ${countdown}` : 'Expired'}
           </ThemedText>
 
-          <ThemedText style={styles.waitingText}>Waiting for client scan...</ThemedText>
+          <ThemedText style={styles.waitingText}>
+            {awaitingSettlement ? 'Payment is being processed...' : 'Waiting for client scan...'}
+          </ThemedText>
+
+          <TouchableOpacity style={styles.retryButton} onPress={() => loadToken(false)} disabled={loading || awaitingSettlement}>
+            <ThemedText style={styles.retryText}>{loading ? 'Loading...' : 'Refresh QR'}</ThemedText>
+          </TouchableOpacity>
 
           <TouchableOpacity style={styles.closeButton} onPress={onClose}>
             <ThemedText style={styles.closeText}>Close</ThemedText>
@@ -178,11 +227,24 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
   },
   closeButton: {
-    marginTop: 14,
+    marginTop: 10,
     borderRadius: 12,
     backgroundColor: '#2A2C2E',
     paddingVertical: 10,
     paddingHorizontal: 20,
+  },
+  retryButton: {
+    marginTop: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FF8C0040',
+    backgroundColor: '#FF8C0015',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+  },
+  retryText: {
+    color: '#FF8C00',
+    fontWeight: '700',
   },
   closeText: {
     color: '#ECEDEE',
@@ -192,5 +254,10 @@ const styles = StyleSheet.create({
     color: '#FF3B30',
     textAlign: 'center',
     paddingHorizontal: 12,
+  },
+  processingText: {
+    color: '#8E8E93',
+    textAlign: 'center',
+    paddingHorizontal: 16,
   },
 });

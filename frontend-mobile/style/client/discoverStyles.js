@@ -124,6 +124,16 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
   },
+  favoriteBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#202224',
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+  },
   statusDot: {
     width: 10,
     height: 10,
@@ -191,6 +201,11 @@ export const styles = StyleSheet.create({
   },
   shopInfo: {
     flex: 1,
+  },
+  shopHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   shopOwner: {
     fontSize: 13,

@@ -7,6 +7,7 @@ import { useRouter } from 'expo-router';
 import { styles } from '@/style/client/discoverStyles';
 import { getImageUrl } from '@/lib/imageUtils';
 import { SkeletonDiscoverList } from '@/components/skeletons/SkeletonLoaders';
+import { useNotification } from '@/hooks/useNotification';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -18,6 +19,7 @@ interface Mechanic {
   average_rating: number;
   status: string;
   is_working_for_shop?: boolean;
+  is_favorited?: boolean;
 }
 
 interface Shop {
@@ -30,6 +32,7 @@ interface Shop {
   service_banner: string | null;
   is_verified: boolean;
   status: string;
+  is_favorited?: boolean;
 }
 
 interface Service {
@@ -57,6 +60,7 @@ type TabType = 'mechanics' | 'shops' | 'services';
 
 export default function DiscoverScreen() {
   const router = useRouter();
+  const { showNotification } = useNotification();
   const [activeTab, setActiveTab] = useState<TabType>('mechanics');
   const [mechanics, setMechanics] = useState<Mechanic[]>([]);
   const [shops, setShops] = useState<Shop[]>([]);
@@ -115,6 +119,45 @@ export default function DiscoverScreen() {
     fetchData(activeTab, true);
   };
 
+  const toggleFavorite = useCallback(async (providerType: 'mechanic' | 'shop', providerId: number) => {
+    try {
+      const response = await fetch(`${API_URL}/users/favorites/toggle/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider_type: providerType,
+          provider_id: providerId,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error((data as { error?: string }).error || 'Failed to update favorites');
+      }
+
+      const isFavorited = Boolean((data as { is_favorited?: boolean }).is_favorited);
+      if (providerType === 'mechanic') {
+        setMechanics((prev) =>
+          prev.map((item) =>
+            item.id === providerId ? { ...item, is_favorited: isFavorited } : item,
+          ),
+        );
+      } else {
+        setShops((prev) =>
+          prev.map((item) =>
+            item.id === providerId ? { ...item, is_favorited: isFavorited } : item,
+          ),
+        );
+      }
+    } catch (err) {
+      showNotification({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Failed to update favorites',
+      });
+    }
+  }, [showNotification]);
+
   const tabs: { key: TabType; label: string; icon: string }[] = [
     { key: 'mechanics', label: 'Mechanics', icon: 'wrench' },
     { key: 'shops', label: 'Shops', icon: 'building' },
@@ -170,6 +213,20 @@ export default function DiscoverScreen() {
             </View>
         </View>
         <View style={styles.cardRight}>
+          <TouchableOpacity
+            style={styles.favoriteBtn}
+            onPress={(event) => {
+              event.stopPropagation();
+              toggleFavorite('mechanic', mechanic.id);
+            }}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <FontAwesome
+              name={mechanic.is_favorited ? 'heart' : 'heart-o'}
+              size={16}
+              color={mechanic.is_favorited ? '#FF5A5F' : '#8E8E93'}
+            />
+          </TouchableOpacity>
           <View
             style={[
               styles.statusDot,
@@ -207,12 +264,28 @@ export default function DiscoverScreen() {
           <ThemedText style={styles.cardTitle}>{shop.shop_name}</ThemedText>
           <ThemedText style={styles.shopOwner}>by {shop.owner_name}</ThemedText>
         </View>
-        {shop.is_verified && (
-          <View style={styles.verifiedBadge}>
-            <FontAwesome name="check-circle" size={12} color="#34C759" />
-            <ThemedText style={styles.verifiedText}>Verified</ThemedText>
-          </View>
-        )}
+        <View style={styles.shopHeaderRight}>
+          <TouchableOpacity
+            style={styles.favoriteBtn}
+            onPress={(event) => {
+              event.stopPropagation();
+              toggleFavorite('shop', shop.id);
+            }}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <FontAwesome
+              name={shop.is_favorited ? 'heart' : 'heart-o'}
+              size={16}
+              color={shop.is_favorited ? '#FF5A5F' : '#8E8E93'}
+            />
+          </TouchableOpacity>
+          {shop.is_verified && (
+            <View style={styles.verifiedBadge}>
+              <FontAwesome name="check-circle" size={12} color="#34C759" />
+              <ThemedText style={styles.verifiedText}>Verified</ThemedText>
+            </View>
+          )}
+        </View>
       </View>
       {shop.description ? (
         <ThemedText style={styles.descText} numberOfLines={2}>{shop.description}</ThemedText>

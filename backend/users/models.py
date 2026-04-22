@@ -104,6 +104,26 @@ class Client(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+
+class FavoriteMechanic(models.Model):
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name="favorite_mechanics")
+    mechanic = models.ForeignKey("Mechanic", on_delete=models.CASCADE, related_name="favorited_by_clients")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [["client", "mechanic"]]
+        ordering = ["-created_at"]
+
+
+class FavoriteShop(models.Model):
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name="favorite_shops")
+    shop = models.ForeignKey("shops.Shop", on_delete=models.CASCADE, related_name="favorited_by_clients")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [["client", "shop"]]
+        ordering = ["-created_at"]
+
 class Mechanic(models.Model):
     class VerificationStatus(models.TextChoices):
         PENDING = "pending", "Pending"

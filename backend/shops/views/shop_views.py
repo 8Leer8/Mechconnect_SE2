@@ -5,9 +5,10 @@ from rest_framework import status
 from django.db.models import Count, Sum, Avg, Q
 
 from ..models import Shop, ShopMechanic
-from users.models import ShopOwner, Mechanic
+from users.models import Account, FavoriteShop, ShopOwner, Mechanic
 from bookings.models import Booking, CompleteBooking
 from services.models import ShopService
+from MainBackend.storage_utils import get_media_url
 
 
 @api_view(['GET'])
@@ -18,11 +19,33 @@ def list_shops(request):
     Returns shop details including owner info and status
     """
     try:
+        current_account = None
+        user = getattr(request, "user", None)
+        if isinstance(user, Account):
+            current_account = user
+        else:
+            account_id = request.session.get("account_id")
+            if account_id:
+                current_account = Account.objects.filter(id=account_id).first()
+
+        current_client = None
+        if current_account and hasattr(current_account, "client"):
+            current_client = current_account.client
+
         shops = Shop.objects.select_related('shop_owner__account').filter(
             is_verified=True,
             shop_owner__verification_status=ShopOwner.VerificationStatus.APPROVED,
             shop_owner__account__is_active=True,
         )
+        favorite_shop_ids = set()
+        if current_client:
+            favorite_shop_ids = set(
+                FavoriteShop.objects.filter(
+                    client=current_client,
+                    shop__in=shops,
+                ).values_list("shop_id", flat=True)
+            )
+
         shops_data = []
         
         for shop in shops:
@@ -34,9 +57,10 @@ def list_shops(request):
                 'email': shop.email,
                 'website': shop.website,
                 'description': shop.description,
-                'service_banner': shop.service_banner.url if shop.service_banner else None,
+                'service_banner': get_media_url(shop.service_banner, request) if shop.service_banner else None,
                 'is_verified': shop.is_verified,
                 'status': shop.status,
+                'is_favorited': shop.id in favorite_shop_ids,
             }
             shops_data.append(shop_info)
         

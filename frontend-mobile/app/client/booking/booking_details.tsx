@@ -62,8 +62,10 @@ interface BookingDetail {
     landmark?: string | null;
   } | null;
   active_details?: {
-    before_picture: string | null;
-    after_picture: string | null;
+    before_picture?: string | null;
+    after_picture?: string | null;
+    before_pictures?: string[];
+    after_pictures?: string[];
     is_job_done: boolean;
     is_rescheduled: boolean;
     reason: string | null;
@@ -186,6 +188,7 @@ export default function ClientBookingDetailScreen() {
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string | null>(null);
   const [isPaying, setIsPaying] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showPaymentReceiptConfirm, setShowPaymentReceiptConfirm] = useState(false);
   const [showEWalletModal, setShowEWalletModal] = useState(false);
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [showQRConfirm, setShowQRConfirm] = useState(false);
@@ -212,6 +215,13 @@ export default function ClientBookingDetailScreen() {
   const [expandedQuoteItems, setExpandedQuoteItems] = useState<Record<string, boolean>>({});
   const [quotationListExpanded, setQuotationListExpanded] = useState(false);
   const [pricingConfig, setPricingConfig] = useState<PricingConfig>({});
+  const [visibleBeforePhotoCount, setVisibleBeforePhotoCount] = useState(6);
+  const [visibleAfterPhotoCount, setVisibleAfterPhotoCount] = useState(6);
+
+  useEffect(() => {
+    setVisibleBeforePhotoCount(6);
+    setVisibleAfterPhotoCount(6);
+  }, [booking?.id]);
 
   useEffect(() => {
     let isMounted = true;
@@ -662,9 +672,6 @@ export default function ClientBookingDetailScreen() {
       if (!bid || !resolvedBookingId) return;
       if (bid === Number(resolvedBookingId)) {
         const action = String(lastMessage.action || '').toLowerCase();
-        if (action === 'booking.pending_payment' && !bookingHasBackjob(booking)) {
-          setShowPaymentModal(true);
-        }
         if (action === 'payment.completed') {
           setShowSuccess(true);
         }
@@ -680,13 +687,6 @@ export default function ClientBookingDetailScreen() {
     setRefreshing(true);
     fetchBookingDetail();
   };
-
-  useEffect(() => {
-    if (booking?.status === 'pending_payment' && !bookingHasBackjob(booking)) {
-      setUseInitialPayment(false);
-      setShowPaymentModal(true);
-    }
-  }, [booking?.status, booking?.has_backjob, booking?.backjob?.status]);
 
   const getStatusLabel = (status: string) => {
     switch (status) {
@@ -1996,40 +1996,119 @@ export default function ClientBookingDetailScreen() {
           </View>
         )}
 
-        {/* After-Service Photo */}
+        {/* Before and After Service Photos */}
         {booking.active_details && (
           <View style={styles.sectionCard}>
-            <View style={styles.sectionHeader}>
-              <View style={[styles.sectionIcon, { backgroundColor: '#34C75915' }]}>
-                <FontAwesome name="camera" size={16} color="#34C759" />
-              </View>
-              <ThemedText style={styles.sectionTitle}>After-Service Photo</ThemedText>
-            </View>
+            {(() => {
+              const beforePhotos = booking.active_details?.before_pictures?.length
+                ? booking.active_details.before_pictures
+                : booking.active_details?.before_picture
+                  ? [booking.active_details.before_picture]
+                  : [];
+              const afterPhotos = booking.active_details?.after_pictures?.length
+                ? booking.active_details.after_pictures
+                : booking.active_details?.after_picture
+                  ? [booking.active_details.after_picture]
+                  : [];
 
-            {booking.active_details.after_picture ? (
-              <Image
-                source={{ uri: booking.active_details.after_picture }}
-                style={{ width: '100%', height: 220, borderRadius: 12, marginTop: 8 }}
-                contentFit="cover"
-              />
-            ) : (
-              <View
-                style={{
-                  marginTop: 8,
-                  height: 140,
-                  borderRadius: 12,
-                  borderWidth: 1,
-                  borderColor: '#2A2C2E',
-                  backgroundColor: '#111214',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 8,
-                }}
-              >
-                <FontAwesome name="image" size={26} color="#6C6C70" />
-                <ThemedText style={{ color: '#8E8E93' }}>No after-service photo uploaded yet</ThemedText>
-              </View>
-            )}
+              const renderPhotos = (photos: string[]) => (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 8, marginHorizontal: -4 }}>
+                  {photos.map((uri, idx) => (
+                    <View key={`${uri}-${idx}`} style={{ width: '50%', paddingHorizontal: 4, marginBottom: 8 }}>
+                      <Image
+                        source={{ uri }}
+                        style={{ width: '100%', height: 150, borderRadius: 12 }}
+                        contentFit="cover"
+                      />
+                    </View>
+                  ))}
+                </View>
+              );
+
+              return (
+                <>
+                  <View style={styles.sectionHeader}>
+                    <View style={[styles.sectionIcon, { backgroundColor: '#4F8CFF15' }]}>
+                      <FontAwesome name="camera" size={16} color="#4F8CFF" />
+                    </View>
+                    <ThemedText style={styles.sectionTitle}>Before-Service Photos</ThemedText>
+                  </View>
+                  {beforePhotos.length ? (
+                    <>
+                      {renderPhotos(beforePhotos.slice(0, visibleBeforePhotoCount))}
+                      {beforePhotos.length > visibleBeforePhotoCount ? (
+                        <TouchableOpacity
+                          style={[styles.navigateButton, { marginTop: 4 }]}
+                          onPress={() => setVisibleBeforePhotoCount((prev) => prev + 6)}
+                          activeOpacity={0.85}
+                        >
+                          <ThemedText style={styles.navigateButtonText}>Load More Before Photos</ThemedText>
+                        </TouchableOpacity>
+                      ) : null}
+                    </>
+                  ) : (
+                    <View
+                      style={{
+                        marginTop: 8,
+                        height: 120,
+                        borderRadius: 12,
+                        borderWidth: 1,
+                        borderColor: '#2A2C2E',
+                        backgroundColor: '#111214',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 8,
+                      }}
+                    >
+                      <FontAwesome name="image" size={24} color="#6C6C70" />
+                      <ThemedText style={{ color: '#8E8E93' }}>No before-service photos uploaded yet</ThemedText>
+                    </View>
+                  )}
+
+                  {(booking.status === 'completed' || afterPhotos.length > 0) ? (
+                    <>
+                      <View style={[styles.sectionHeader, { marginTop: 8 }]}>
+                        <View style={[styles.sectionIcon, { backgroundColor: '#34C75915' }]}>
+                          <FontAwesome name="camera" size={16} color="#34C759" />
+                        </View>
+                        <ThemedText style={styles.sectionTitle}>After-Service Photos</ThemedText>
+                      </View>
+                      {afterPhotos.length ? (
+                        <>
+                          {renderPhotos(afterPhotos.slice(0, visibleAfterPhotoCount))}
+                          {afterPhotos.length > visibleAfterPhotoCount ? (
+                            <TouchableOpacity
+                              style={[styles.navigateButton, { marginTop: 4 }]}
+                              onPress={() => setVisibleAfterPhotoCount((prev) => prev + 6)}
+                              activeOpacity={0.85}
+                            >
+                              <ThemedText style={styles.navigateButtonText}>Load More After Photos</ThemedText>
+                            </TouchableOpacity>
+                          ) : null}
+                        </>
+                      ) : (
+                        <View
+                          style={{
+                            marginTop: 8,
+                            height: 120,
+                            borderRadius: 12,
+                            borderWidth: 1,
+                            borderColor: '#2A2C2E',
+                            backgroundColor: '#111214',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 8,
+                          }}
+                        >
+                          <FontAwesome name="image" size={24} color="#6C6C70" />
+                          <ThemedText style={{ color: '#8E8E93' }}>No after-service photos uploaded yet</ThemedText>
+                        </View>
+                      )}
+                    </>
+                  ) : null}
+                </>
+              );
+            })()}
           </View>
         )}
 
@@ -2258,7 +2337,7 @@ export default function ClientBookingDetailScreen() {
 
       {showPaymentCTA && (
         <View style={styles.actionButtonsContainer}>
-          <TouchableOpacity style={styles.finishLargeButton} onPress={() => setShowPaymentModal(true)}>
+          <TouchableOpacity style={styles.finishLargeButton} onPress={() => setShowPaymentReceiptConfirm(true)}>
             <FontAwesome name="credit-card" size={16} color="#fff" style={{ marginRight: 8 }} />
             <ThemedText style={styles.actionButtonText}>
               {isBookedState ? 'Secure Booking (Optional Initial Payment)' : 'Proceed to Payment'}
@@ -2266,6 +2345,115 @@ export default function ClientBookingDetailScreen() {
           </TouchableOpacity>
         </View>
       )}
+
+      <Modal
+        visible={showPaymentReceiptConfirm && showPaymentCTA}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowPaymentReceiptConfirm(false)}
+      >
+        <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.72)' }}>
+          <View
+            style={{
+              backgroundColor: '#1A1C1E',
+              borderTopLeftRadius: 20,
+              borderTopRightRadius: 20,
+              borderWidth: 1,
+              borderColor: '#2A2C2E',
+              paddingHorizontal: 16,
+              paddingTop: 14,
+              paddingBottom: 24,
+              maxHeight: '84%',
+            }}
+          >
+            <View style={{ width: 44, height: 5, borderRadius: 3, backgroundColor: '#3A3D40', alignSelf: 'center', marginBottom: 14 }} />
+            <ThemedText style={{ color: '#ECEDEE', fontSize: 20, fontWeight: '800' }}>Confirm Payment Summary</ThemedText>
+            <ThemedText style={{ color: '#8E8E93', marginTop: 4, marginBottom: 10 }}>
+              Please review this receipt before proceeding.
+            </ThemedText>
+
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 420 }}>
+              <View style={{ backgroundColor: '#151718', borderRadius: 12, borderWidth: 1, borderColor: '#2A2C2E', padding: 12 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <ThemedText style={{ color: '#8E8E93' }}>Booking</ThemedText>
+                  <ThemedText style={{ color: '#ECEDEE', fontWeight: '700' }}>#{booking.id}</ThemedText>
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <ThemedText style={{ color: '#8E8E93' }}>Quoted Services</ThemedText>
+                  <ThemedText style={{ color: '#ECEDEE', fontWeight: '700' }}>₱{quotationEstimatedTotal.toFixed(2)}</ThemedText>
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <ThemedText style={{ color: '#8E8E93' }}>Travel Fee</ThemedText>
+                  <ThemedText style={{ color: '#ECEDEE', fontWeight: '700' }}>₱{travelFeeTotal.toFixed(2)}</ThemedText>
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <ThemedText style={{ color: '#8E8E93' }}>Traffic Fee</ThemedText>
+                  <ThemedText style={{ color: '#ECEDEE', fontWeight: '700' }}>₱{trafficFeeTotal.toFixed(2)}</ThemedText>
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <ThemedText style={{ color: '#8E8E93' }}>Convenience Fee</ThemedText>
+                  <ThemedText style={{ color: '#ECEDEE', fontWeight: '700' }}>₱{convenienceFeeTotal.toFixed(2)}</ThemedText>
+                </View>
+                <View style={{ height: 1, backgroundColor: '#2A2C2E', marginVertical: 10 }} />
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <ThemedText style={{ color: '#8E8E93', fontSize: 13 }}>Total Amount</ThemedText>
+                  <ThemedText style={{ color: '#ECEDEE', fontWeight: '700' }}>₱{totalAmount.toFixed(2)}</ThemedText>
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
+                  <ThemedText style={{ color: '#8E8E93', fontSize: 13 }}>Less Partial Paid</ThemedText>
+                  <ThemedText style={{ color: '#34C759', fontWeight: '700' }}>₱{totalPaid.toFixed(2)}</ThemedText>
+                </View>
+                <View style={{ height: 1, backgroundColor: '#2A2C2E', marginVertical: 10 }} />
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <ThemedText style={{ color: '#ECEDEE', fontSize: 16, fontWeight: '800' }}>Total Amount To Pay</ThemedText>
+                  <ThemedText style={{ color: '#FF8C00', fontSize: 16, fontWeight: '800' }}>₱{remainingBalance.toFixed(2)}</ThemedText>
+                </View>
+              </View>
+
+              {sortedQuotationItems.length > 0 ? (
+                <View style={{ marginTop: 10, backgroundColor: '#151718', borderRadius: 12, borderWidth: 1, borderColor: '#2A2C2E', padding: 12 }}>
+                  <ThemedText style={{ color: '#ECEDEE', fontWeight: '700', marginBottom: 8 }}>
+                    Included Quotation Items ({sortedQuotationItems.length})
+                  </ThemedText>
+                  {sortedQuotationItems.slice(0, 8).map((it: any, idx: number) => {
+                    const statusRaw = String(getItemStatus(it, (booking as any)?.quotation || displayQuotation) || '').toLowerCase();
+                    if (statusRaw !== 'accepted') return null;
+                    const desc = it?.description || it?.name || 'Item';
+                    const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
+                    const qty = Number(it?.quantity ?? 1) || 1;
+                    return (
+                      <View key={`receipt-item-${idx}`} style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+                        <ThemedText style={{ color: '#C9CDD2', flex: 1 }} numberOfLines={1}>{desc} x{qty}</ThemedText>
+                        <ThemedText style={{ color: '#ECEDEE' }}>₱{(price * qty).toFixed(2)}</ThemedText>
+                      </View>
+                    );
+                  })}
+                  {sortedQuotationItems.length > 8 ? (
+                    <ThemedText style={{ color: '#8E8E93', marginTop: 4 }}>...and more items in full quotation</ThemedText>
+                  ) : null}
+                </View>
+              ) : null}
+            </ScrollView>
+
+            <TouchableOpacity
+              style={[styles.finishLargeButton, { marginTop: 14 }]}
+              onPress={() => {
+                setShowPaymentReceiptConfirm(false);
+                setShowPaymentModal(true);
+              }}
+            >
+              <FontAwesome name="check" size={16} color="#fff" style={{ marginRight: 8 }} />
+              <ThemedText style={styles.actionButtonText}>Accept & Continue to Payment</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.cancelBtn, { marginTop: 10 }]}
+              onPress={() => setShowPaymentReceiptConfirm(false)}
+            >
+              <ThemedText style={styles.cancelBtnText}>Cancel</ThemedText>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       <PaymentMethodModal
         visible={showPaymentModal && showPaymentCTA}
@@ -2310,7 +2498,10 @@ export default function ClientBookingDetailScreen() {
       <QRScannerModal
         visible={showQRScanner && !hasBackjob}
         bookingId={booking.id}
-        onClose={() => setShowQRScanner(false)}
+        onClose={() => {
+          setShowQRScanner(false);
+          setShowPaymentModal(true);
+        }}
         onScanSuccess={(data) => {
           setQrScanData(data);
           setScannedToken(data.token);
@@ -2330,6 +2521,8 @@ export default function ClientBookingDetailScreen() {
         }}
         onCancel={() => {
           setShowQRConfirm(false);
+          setScannedToken('');
+          setQrScanData(null);
           setShowQRScanner(true);
         }}
       />

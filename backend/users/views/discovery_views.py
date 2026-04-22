@@ -5,7 +5,7 @@ from rest_framework import status
 from django.db.models import OuterRef, Subquery, Prefetch
 from math import radians, sin, cos, sqrt, atan2
 
-from ..models import Mechanic
+from ..models import Account, Client, FavoriteMechanic, FavoriteShop, Mechanic
 from ..serializers import MechanicSerializer, MechanicProfileSerializer
 from bookings.models import MechanicLocation, BroadcastOffer
 from services.models import MechanicService, MechanicSpecialty, ServiceAddOn
@@ -13,6 +13,25 @@ from services.serializers import ServiceAddOnPublicSerializer
 from shops.models import Shop
 from services.models import ShopService
 from MainBackend.storage_utils import get_media_url
+
+
+def _get_authenticated_account(request):
+    user = getattr(request, "user", None)
+    if user and isinstance(user, Account):
+        return user
+
+    account_id = request.session.get("account_id")
+    if not account_id:
+        return None
+
+    return Account.objects.filter(id=account_id).first()
+
+
+def _get_current_client(request):
+    account = _get_authenticated_account(request)
+    if not account or not hasattr(account, "client"):
+        return None
+    return account.client
 
 
 def _haversine_km(lat1, lon1, lat2, lon2):
@@ -32,7 +51,8 @@ def list_mechanics(request):
     Returns mechanic details including profile, ratings, and services
     """
     try:
-        account_id = request.session.get('account_id')
+        account = _get_authenticated_account(request)
+        account_id = account.id if account else None
 
         mechanics = Mechanic.objects.select_related('account').filter(
             verification_status=Mechanic.VerificationStatus.APPROVED,
@@ -40,6 +60,16 @@ def list_mechanics(request):
         )
         if account_id:
             mechanics = mechanics.exclude(account_id=account_id)
+
+        favorite_mechanic_ids = set()
+        current_client = account.client if account and hasattr(account, "client") else None
+        if current_client:
+            favorite_mechanic_ids = set(
+                FavoriteMechanic.objects.filter(
+                    client=current_client,
+                    mechanic__in=mechanics,
+                ).values_list("mechanic_id", flat=True)
+            )
 
         mechanics_data = []
         
@@ -53,6 +83,7 @@ def list_mechanics(request):
                 'average_rating': float(mechanic.average_rating),
                 'status': mechanic.status,
                 'is_working_for_shop': mechanic.is_working_for_shop,
+                'is_favorited': mechanic.id in favorite_mechanic_ids,
             }
             mechanics_data.append(mechanic_info)
         
@@ -108,10 +139,19 @@ def get_mechanic_profile(request, mechanic_id):
             many=True,
             context={'request': request},
         ).data
+
+        current_client = _get_current_client(request)
+        is_favorited = False
+        if current_client:
+            is_favorited = FavoriteMechanic.objects.filter(
+                client=current_client,
+                mechanic=mechanic,
+            ).exists()
         
         return Response({
             'mechanic': serializer.data,
             'addons': addons,
+            'is_favorited': is_favorited,
         }, status=status.HTTP_200_OK)
         
     except Mechanic.DoesNotExist:
@@ -296,5 +336,160 @@ def list_nearby_mechanics(request):
             'count': len(providers),
         },
         status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def list_favorites(request):
+    current_client = _get_current_client(request)
+    if not current_client:
+        return Response(
+            {"error": "Client authentication required"},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
+
+    favorite_mechanics = FavoriteMechanic.objects.filter(client=current_client).select_related(
+        "mechanic",
+        "mechanic__account",
+    )
+    favorite_shops = FavoriteShop.objects.filter(client=current_client).select_related(
+        "shop",
+        "shop__shop_owner__account",
+    )
+
+    mechanics_data = []
+    for favorite in favorite_mechanics:
+        mechanic = favorite.mechanic
+        mechanics_data.append(
+            {
+                "id": mechanic.id,
+                "account_id": mechanic.account.id,
+                "name": f"{mechanic.account.firstname} {mechanic.account.lastname}",
+                "profile_photo": get_media_url(mechanic.profile_photo, request) if mechanic.profile_photo else None,
+                "contact_number": mechanic.contact_number,
+                "average_rating": float(mechanic.average_rating),
+                "status": mechanic.status,
+                "is_working_for_shop": mechanic.is_working_for_shop,
+                "is_favorited": True,
+            }
+        )
+
+    shops_data = []
+    for favorite in favorite_shops:
+        shop = favorite.shop
+        owner_account = shop.shop_owner.account
+        shops_data.append(
+            {
+                "id": shop.id,
+                "shop_name": shop.shop_name,
+                "owner_name": f"{owner_account.firstname} {owner_account.lastname}",
+                "contact_number": shop.contact_number,
+                "email": shop.email,
+                "website": shop.website,
+                "description": shop.description,
+                "service_banner": get_media_url(shop.service_banner, request) if shop.service_banner else None,
+                "is_verified": shop.is_verified,
+                "status": shop.status,
+                "is_favorited": True,
+            }
+        )
+
+    return Response(
+        {
+            "mechanics": mechanics_data,
+            "shops": shops_data,
+            "count": len(mechanics_data) + len(shops_data),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def toggle_favorite(request):
+    current_client = _get_current_client(request)
+    if not current_client:
+        return Response(
+            {"error": "Client authentication required"},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
+
+    provider_type = str(request.data.get("provider_type", "")).strip().lower()
+    provider_id = request.data.get("provider_id")
+
+    try:
+        provider_id = int(provider_id)
+    except (TypeError, ValueError):
+        return Response(
+            {"error": "provider_id must be a valid integer"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if provider_type == "mechanic":
+        mechanic = Mechanic.objects.filter(id=provider_id).first()
+        if not mechanic:
+            return Response({"error": "Mechanic not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        favorite, created = FavoriteMechanic.objects.get_or_create(
+            client=current_client,
+            mechanic=mechanic,
+        )
+        if created:
+            return Response(
+                {
+                    "provider_type": provider_type,
+                    "provider_id": provider_id,
+                    "is_favorited": True,
+                    "message": "Mechanic added to favorites",
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        favorite.delete()
+        return Response(
+            {
+                "provider_type": provider_type,
+                "provider_id": provider_id,
+                "is_favorited": False,
+                "message": "Mechanic removed from favorites",
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    if provider_type == "shop":
+        shop = Shop.objects.filter(id=provider_id).first()
+        if not shop:
+            return Response({"error": "Shop not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        favorite, created = FavoriteShop.objects.get_or_create(
+            client=current_client,
+            shop=shop,
+        )
+        if created:
+            return Response(
+                {
+                    "provider_type": provider_type,
+                    "provider_id": provider_id,
+                    "is_favorited": True,
+                    "message": "Shop added to favorites",
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        favorite.delete()
+        return Response(
+            {
+                "provider_type": provider_type,
+                "provider_id": provider_id,
+                "is_favorited": False,
+                "message": "Shop removed from favorites",
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    return Response(
+        {"error": "provider_type must be either 'mechanic' or 'shop'"},
+        status=status.HTTP_400_BAD_REQUEST,
     )
 

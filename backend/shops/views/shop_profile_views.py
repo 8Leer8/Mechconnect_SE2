@@ -6,7 +6,7 @@ from django.db.models import Avg, Count, Prefetch
 from django.utils import timezone
 
 from ..models import Shop, ShopMechanic
-from users.models import ShopOwner, Mechanic
+from users.models import Account, FavoriteShop, ShopOwner, Mechanic
 from services.models import ShopService, ServiceAddOn
 from services.serializers import ServiceAddOnPublicSerializer
 from MainBackend.storage_utils import get_media_url
@@ -114,6 +114,20 @@ def get_shop_profile(request, shop_id):
             years_active = round(delta.days / 365.25, 1)
         
         # Build response data
+        user = getattr(request, "user", None)
+        current_account = user if isinstance(user, Account) else None
+        if current_account is None:
+            account_id = request.session.get("account_id")
+            if account_id:
+                current_account = Account.objects.filter(id=account_id).first()
+
+        is_favorited = False
+        if current_account and hasattr(current_account, "client"):
+            is_favorited = FavoriteShop.objects.filter(
+                client=current_account.client,
+                shop=shop,
+            ).exists()
+
         shop_profile = {
             'id': shop.id,
             'shop_name': shop.shop_name,
@@ -124,6 +138,7 @@ def get_shop_profile(request, shop_id):
             'service_banner': get_media_url(shop.service_banner, request) if shop.service_banner else None,
             'is_verified': shop.is_verified,
             'status': shop.status,
+            'is_favorited': is_favorited,
             'created_at': shop.created_at.isoformat() if shop.created_at else None,
             'years_active': years_active,
             'address': {

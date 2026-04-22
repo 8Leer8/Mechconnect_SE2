@@ -84,6 +84,34 @@ export const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 4,
   },
+  clientActionsRow: {
+    width: '100%',
+    flexDirection: 'row',
+    gap: 10,
+  },
+  clientDirectRequestBtn: {
+    flex: 1,
+    width: undefined,
+  },
+  favoriteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    backgroundColor: '#2C2E30',
+    minWidth: 128,
+  },
+  favoriteBtnActive: {
+    backgroundColor: '#D84B52',
+  },
+  favoriteBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#fff',
+  },
   directRequestText: { fontSize: 15, fontWeight: '700', color: '#fff' },
   shopOwnerActionsRow: {
     width: '100%',

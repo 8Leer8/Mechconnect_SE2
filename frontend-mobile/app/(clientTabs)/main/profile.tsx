@@ -215,7 +215,7 @@ export default function ProfileScreen() {
   const currentRoleLabel = profileData.available_roles.find(r => r.value === activeRole)?.label || activeRole;
 
   const settingsItems = [
-    { icon: 'heart', label: 'Favorites', route: null },
+    { icon: 'heart', label: 'Favorites', route: '/client/profile/favorites' },
     { icon: 'legal', label: 'My Disputes', route: '/client/profile/dispute' },
     { icon: 'cog', label: 'Settings', route: '/client/others/settings' },
     { icon: 'shield', label: 'Privacy & Security', route: '/client/others/privacy' },

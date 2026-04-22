@@ -104,8 +104,15 @@ export default function ShopOwnerBookingDetailScreen() {
   const [assigningId, setAssigningId] = useState<number | null>(null);
   const [chatPreview, setChatPreview] = useState<string | null>(null);
   const [viewerPhotoUri, setViewerPhotoUri] = useState<string | null>(null);
+  const [visibleBeforePhotoCount, setVisibleBeforePhotoCount] = useState(6);
+  const [visibleAfterPhotoCount, setVisibleAfterPhotoCount] = useState(6);
   const { showNotification } = useNotification();
   const { lastMessage } = useWebSocketContext();
+
+  useEffect(() => {
+    setVisibleBeforePhotoCount(6);
+    setVisibleAfterPhotoCount(6);
+  }, [booking?.id]);
 
   useEffect(() => {
     try {
@@ -1106,51 +1113,114 @@ export default function ShopOwnerBookingDetailScreen() {
         {/* Before-Service Photos */}
         {booking.active_details && (
           <View style={styles.sectionCard}>
-            <View style={styles.sectionHeader}>
-              <View style={[styles.sectionIcon, { backgroundColor: '#4F8CFF15' }]}>
-                <FontAwesome name="camera" size={16} color="#4F8CFF" />
-              </View>
-              <ThemedText style={styles.sectionTitle}>Before-Service Photos</ThemedText>
-            </View>
-
-            {(
-              (booking.active_details.before_pictures && booking.active_details.before_pictures.length > 0) ||
-              booking.active_details.before_picture
-            ) ? (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingVertical: 8 }}>
-                {(booking.active_details.before_pictures && booking.active_details.before_pictures.length > 0
-                  ? booking.active_details.before_pictures
-                  : booking.active_details.before_picture
+            {(() => {
+              const beforePhotos = booking.active_details?.before_pictures?.length
+                ? booking.active_details.before_pictures
+                : booking.active_details?.before_picture
                   ? [booking.active_details.before_picture]
-                  : []
-                ).map((uri, idx) => (
-                  <TouchableOpacity key={`${uri}-${idx}`} activeOpacity={0.85} onPress={() => setViewerPhotoUri(uri)}>
-                    <Image
-                      source={{ uri }}
-                      style={{ width: 220, height: 220, borderRadius: 12 }}
-                      contentFit="cover"
-                    />
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            ) : (
-              <View
-                style={{
-                  marginTop: 8,
-                  height: 140,
-                  borderRadius: 12,
-                  borderWidth: 1,
-                  borderColor: '#2A2C2E',
-                  backgroundColor: '#111214',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 8,
-                }}
-              >
-                <FontAwesome name="image" size={26} color="#6C6C70" />
-                <ThemedText style={{ color: '#8E8E93' }}>No before-service photos uploaded yet</ThemedText>
-              </View>
-            )}
+                  : [];
+              const afterPhotos = booking.active_details?.after_pictures?.length
+                ? booking.active_details.after_pictures
+                : booking.active_details?.after_picture
+                  ? [booking.active_details.after_picture]
+                  : [];
+
+              const renderPhotos = (photos: string[]) => (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 8, marginHorizontal: -4 }}>
+                  {photos.map((uri, idx) => (
+                    <View key={`${uri}-${idx}`} style={{ width: '50%', paddingHorizontal: 4, marginBottom: 8 }}>
+                      <TouchableOpacity activeOpacity={0.85} onPress={() => setViewerPhotoUri(uri)}>
+                        <Image source={{ uri }} style={{ width: '100%', height: 150, borderRadius: 12 }} contentFit="cover" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              );
+
+              return (
+                <>
+                  <View style={styles.sectionHeader}>
+                    <View style={[styles.sectionIcon, { backgroundColor: '#4F8CFF15' }]}>
+                      <FontAwesome name="camera" size={16} color="#4F8CFF" />
+                    </View>
+                    <ThemedText style={styles.sectionTitle}>Before-Service Photos</ThemedText>
+                  </View>
+                  {beforePhotos.length ? (
+                    <>
+                      {renderPhotos(beforePhotos.slice(0, visibleBeforePhotoCount))}
+                      {beforePhotos.length > visibleBeforePhotoCount ? (
+                        <TouchableOpacity
+                          style={[styles.refreshBtn, { marginTop: 4, alignSelf: 'flex-start', width: 'auto', paddingHorizontal: 12 }]}
+                          onPress={() => setVisibleBeforePhotoCount((prev) => prev + 6)}
+                          activeOpacity={0.85}
+                        >
+                          <ThemedText style={{ color: '#FF8C00', fontWeight: '700' }}>Load More Before Photos</ThemedText>
+                        </TouchableOpacity>
+                      ) : null}
+                    </>
+                  ) : (
+                    <View
+                      style={{
+                        marginTop: 8,
+                        height: 140,
+                        borderRadius: 12,
+                        borderWidth: 1,
+                        borderColor: '#2A2C2E',
+                        backgroundColor: '#111214',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 8,
+                      }}
+                    >
+                      <FontAwesome name="image" size={26} color="#6C6C70" />
+                      <ThemedText style={{ color: '#8E8E93' }}>No before-service photos uploaded yet</ThemedText>
+                    </View>
+                  )}
+
+                  {(booking.status === 'completed' || afterPhotos.length > 0) ? (
+                    <>
+                      <View style={[styles.sectionHeader, { marginTop: 8 }]}>
+                        <View style={[styles.sectionIcon, { backgroundColor: '#34C75915' }]}>
+                          <FontAwesome name="camera" size={16} color="#34C759" />
+                        </View>
+                        <ThemedText style={styles.sectionTitle}>After-Service Photos</ThemedText>
+                      </View>
+                      {afterPhotos.length ? (
+                        <>
+                          {renderPhotos(afterPhotos.slice(0, visibleAfterPhotoCount))}
+                          {afterPhotos.length > visibleAfterPhotoCount ? (
+                            <TouchableOpacity
+                              style={[styles.refreshBtn, { marginTop: 4, alignSelf: 'flex-start', width: 'auto', paddingHorizontal: 12 }]}
+                              onPress={() => setVisibleAfterPhotoCount((prev) => prev + 6)}
+                              activeOpacity={0.85}
+                            >
+                              <ThemedText style={{ color: '#FF8C00', fontWeight: '700' }}>Load More After Photos</ThemedText>
+                            </TouchableOpacity>
+                          ) : null}
+                        </>
+                      ) : (
+                        <View
+                          style={{
+                            marginTop: 8,
+                            height: 140,
+                            borderRadius: 12,
+                            borderWidth: 1,
+                            borderColor: '#2A2C2E',
+                            backgroundColor: '#111214',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 8,
+                          }}
+                        >
+                          <FontAwesome name="image" size={26} color="#6C6C70" />
+                          <ThemedText style={{ color: '#8E8E93' }}>No after-service photos uploaded yet</ThemedText>
+                        </View>
+                      )}
+                    </>
+                  ) : null}
+                </>
+              );
+            })()}
           </View>
         )}
 
