@@ -187,7 +187,7 @@ export default function DirectRequestMapScreen() {
         address: parsed.address,
         streetName: parsed.streetName,
         city: parsed.city,
-        barangay: parsed.region || parsed.barangay,
+        barangay: parsed.barangay,
       });
       handleBack();
     } catch {

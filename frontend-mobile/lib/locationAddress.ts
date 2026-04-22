@@ -100,6 +100,169 @@ function dedupeComponent(value: string, comparisons: string[]): string {
   return matches ? '' : normalized;
 }
 
+/** True if this label is a region / large admin area, not a barangay or village. */
+function looksLikePhilippineRegionLabel(value: string): boolean {
+  const v = clean(value).toLowerCase();
+  if (!v) return false;
+  if (/zamboanga\s+peninsula/i.test(v)) return true;
+  if (v.includes('administrative region')) return true;
+  if (v.includes('autonomous region')) return true;
+  if (v === 'zamboanga del sur' || v === 'zamboanga del norte' || v === 'zamboanga sibugay') return true;
+  if (/\bregion\b/.test(v)) return true;
+  if (v.includes('metro manila') || v === 'ncr') return true;
+  if (v.includes('mimaropa') || v.includes('calabarzon') || v.includes('soccsksargen')) return true;
+  if (v.includes('bangsamoro') || v.includes('barmm')) return true;
+  if (v.includes('caraga') || v.includes('cordillera')) return true;
+  if (v.includes('northern mindanao') || v.includes('davao region') || v.includes('western visayas')) return true;
+  if (v.includes('eastern visayas') || v.includes('central visayas')) return true;
+  return false;
+}
+
+/** Region-like value wrongly stored as subdivision (e.g. admin_area_level_3 = Peninsula). */
+function subdivisionIsActuallyRegion(value: string): boolean {
+  const v = clean(value).toLowerCase();
+  if (!v) return false;
+  if (looksLikePhilippineRegionLabel(value)) return true;
+  if (v.includes('peninsula')) return true;
+  return false;
+}
+
+function namesMatch(a: string, b: string): boolean {
+  return clean(a).toLowerCase() === clean(b).toLowerCase();
+}
+
+/** Remove "Zamboanga Peninsula" when it is stuck on the end of a barangay string (with or without a comma). */
+function stripTrailingZamboangaPeninsulaFromBarangay(value: string): string {
+  let s = clean(value);
+  if (!s) return '';
+  s = s.replace(/\s*,\s*zamboanga\s+peninsula\s*$/i, '').trim();
+  s = s.replace(/\s+zamboanga\s+peninsula\s*$/i, '').trim();
+  return s;
+}
+
+/**
+ * Clean a barangay string that may already be saved on the server (Expo/geocode quirks).
+ * Pass city / region / subdivision when you have them so overlaps are removed.
+ */
+export function coerceBarangayForDisplay(
+  barangay: string | null | undefined,
+  cityMunicipality?: string | null,
+  region?: string | null,
+  subdivisionVillage?: string | null
+): string {
+  return sanitizeParsedLocationAddress({
+    address: '',
+    streetName: '',
+    barangay: clean(barangay),
+    city: clean(cityMunicipality),
+    subdivision: clean(subdivisionVillage),
+    region: clean(region),
+  }).barangay;
+}
+
+/**
+ * Google sometimes puts the region in sublocality/subdivision; some screens also
+ * confused region with barangay. Clean overlaps and normalize Zamboanga labels.
+ */
+function sanitizeParsedLocationAddress(data: ParsedLocationAddress): ParsedLocationAddress {
+  let streetName = clean(data.streetName);
+  let barangay = stripTrailingZamboangaPeninsulaFromBarangay(clean(data.barangay));
+  let city = clean(data.city);
+  let subdivision = clean(data.subdivision);
+  let region = clean(data.region);
+
+  // Treat "Zamboanga City" as the same area name as "Zamboanga Peninsula" for dedupe only.
+  const zamboangaCityVsPeninsula = (a: string, b: string) => {
+    const x = clean(a).toLowerCase();
+    const y = clean(b).toLowerCase();
+    if (!x || !y) return false;
+    const city = x.includes('zamboanga city') || y.includes('zamboanga city');
+    const pen = x.includes('zamboanga peninsula') || y.includes('zamboanga peninsula');
+    return city && pen;
+  };
+
+  // Geocoder sometimes uses "Zamboanga City" where we want the standard region label.
+  if (region && /^zamboanga city$/i.test(region.trim())) {
+    region = 'Zamboanga Peninsula';
+  }
+
+  if (subdivision) {
+    if (namesMatch(subdivision, region) || subdivisionIsActuallyRegion(subdivision)) {
+      if (!region) {
+        region = firstSegment(subdivision);
+      }
+      subdivision = '';
+    }
+  }
+
+  if (barangay) {
+    const parts = barangay.includes(',')
+      ? barangay.split(',').map((p) => p.trim()).filter(Boolean)
+      : [barangay];
+    const kept: string[] = [];
+    for (const part of parts) {
+      const seg = stripTrailingZamboangaPeninsulaFromBarangay(part);
+      if (!seg) continue;
+      if (namesMatch(seg, region) || namesMatch(seg, city) || namesMatch(seg, subdivision)) {
+        continue;
+      }
+      if (looksLikePhilippineRegionLabel(seg)) {
+        if (!region) region = firstSegment(seg);
+        continue;
+      }
+      if (zamboangaCityVsPeninsula(seg, region) || zamboangaCityVsPeninsula(seg, city)) {
+        continue;
+      }
+      kept.push(seg);
+    }
+    barangay = kept.join(', ').trim();
+
+    if (barangay && looksLikePhilippineRegionLabel(barangay)) {
+      if (!region) region = firstSegment(barangay);
+      barangay = '';
+    } else if (barangay) {
+      const overlapsHigher =
+        namesMatch(barangay, region) ||
+        namesMatch(barangay, city) ||
+        namesMatch(barangay, subdivision) ||
+        zamboangaCityVsPeninsula(barangay, region) ||
+        zamboangaCityVsPeninsula(barangay, city);
+      if (overlapsHigher) {
+        barangay = '';
+      }
+    }
+  }
+
+  // "Zamboanga del Sur" in barangay is usually the province/region tier, not a barangay.
+  if (barangay && /^zamboanga del sur$/i.test(barangay.trim())) {
+    if (!region) {
+      region = 'Zamboanga del Sur';
+    }
+    barangay = '';
+  }
+
+  if (city && region && namesMatch(city, region)) {
+    city = '';
+  }
+
+  barangay = firstSegment(barangay);
+  city = firstSegment(city);
+  subdivision = firstSegment(subdivision);
+  region = firstSegment(region);
+
+  const address =
+    uniqueJoin([streetName, barangay, city, subdivision, region]) || clean(data.address);
+
+  return {
+    address,
+    streetName,
+    barangay,
+    city,
+    subdivision,
+    region,
+  };
+}
+
 function parseGoogleResult(result: GoogleGeocodeResult): ParsedLocationAddress {
   const components = result.address_components || [];
 
@@ -113,7 +276,7 @@ function parseGoogleResult(result: GoogleGeocodeResult): ParsedLocationAddress {
   const locality =
     getAddressComponent(components, 'locality') ||
     getAddressComponent(components, 'administrative_area_level_2');
-  const subdivision =
+  let subdivision =
     getAddressComponent(components, 'administrative_area_level_3') ||
     getAddressComponent(components, 'administrative_area_level_4');
   const region = getAddressComponent(components, 'administrative_area_level_1');
@@ -127,8 +290,9 @@ function parseGoogleResult(result: GoogleGeocodeResult): ParsedLocationAddress {
   let barangay = firstSegment(sublocality);
   let city = firstSegment(locality);
 
-  barangay = dedupeComponent(barangay, [streetName, city]);
-  city = dedupeComponent(city, [streetName, barangay]);
+  barangay = dedupeComponent(barangay, [streetName, city, region, subdivision]);
+  city = dedupeComponent(city, [streetName, barangay, region]);
+  subdivision = dedupeComponent(firstSegment(subdivision), [streetName, barangay, city, region]);
 
   const address = uniqueJoin([
     streetName,
@@ -138,14 +302,14 @@ function parseGoogleResult(result: GoogleGeocodeResult): ParsedLocationAddress {
     region,
   ]) || clean(result.formatted_address);
 
-  return {
+  return sanitizeParsedLocationAddress({
     address,
     streetName,
     barangay,
     city,
-    subdivision: firstSegment(subdivision),
-    region: firstSegment(region),
-  };
+    subdivision,
+    region,
+  });
 }
 
 function parseExpoResult(place: Location.LocationGeocodedAddress | null | undefined): ParsedLocationAddress {
@@ -174,14 +338,14 @@ function parseExpoResult(place: Location.LocationGeocodedAddress | null | undefi
     region,
   ]);
 
-  return {
+  return sanitizeParsedLocationAddress({
     address: address || uniqueJoin([cityMunicipality, region]) || 'Selected location',
     streetName,
     barangay,
     city: cityMunicipality,
     subdivision,
     region,
-  };
+  });
 }
 
 export async function reverseGeocodeAddress(latitude: number, longitude: number): Promise<ParsedLocationAddress> {

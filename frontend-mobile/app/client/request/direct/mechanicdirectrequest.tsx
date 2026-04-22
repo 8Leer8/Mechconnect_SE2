@@ -349,7 +349,7 @@ export default function MechanicDirectRequestScreen() {
 				if (!isMountedRef.current) return;
 				setCurrentStreetName(parsed.streetName || 'Current location');
 				setCurrentSubdivision(parsed.subdivision || '');
-				setCurrentBarangay(parsed.region || parsed.barangay || '');
+				setCurrentBarangay(parsed.barangay || '');
 				setCurrentCity(parsed.city || '');
 				setCurrentAddress(parsed.address || 'Current location');
 				setCurrentLocationError(null);

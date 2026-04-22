@@ -9,6 +9,8 @@ import { ThemedText } from '@/components/themed-text';
 interface AfterServicePhotoModalProps {
   visible: boolean;
   mode?: 'before' | 'after';
+  /** When mode is before: starting the job vs adding more during the job */
+  beforeFlow?: 'start_job' | 'append';
   loading?: boolean;
   onClose: () => void;
   onSubmit: (photoUris: string[]) => void;
@@ -17,6 +19,7 @@ interface AfterServicePhotoModalProps {
 export default function AfterServicePhotoModal({
   visible,
   mode = 'after',
+  beforeFlow = 'start_job',
   loading = false,
   onClose,
   onSubmit,
@@ -116,7 +119,11 @@ export default function AfterServicePhotoModal({
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <FontAwesome name="camera" size={18} color="#FF8C00" />
                 <ThemedText style={styles.title}>
-                  {mode === 'before' ? 'Before-Service Photos Required' : 'After-Service Photos Required'}
+                  {mode === 'before'
+                    ? beforeFlow === 'append'
+                      ? 'Add more before-service photos'
+                      : 'Before-Service Photos Required'
+                    : 'After-Service Photos Required'}
                 </ThemedText>
               </View>
               <TouchableOpacity onPress={onClose} disabled={loading}>
@@ -126,7 +133,9 @@ export default function AfterServicePhotoModal({
 
             <ThemedText style={styles.subtitle}>
               {mode === 'before'
-                ? 'Take photos first before starting the job. Added photos are locked and cannot be removed.'
+                ? beforeFlow === 'append'
+                  ? 'Use this if you need to document another issue or area while the job is in progress. Photos are saved to the booking.'
+                  : 'Take photos first before starting the job. Added photos are locked and cannot be removed.'
                 : 'Take photos before finishing the job. Added photos are locked and cannot be removed.'}
             </ThemedText>
 
@@ -166,7 +175,11 @@ export default function AfterServicePhotoModal({
                 <>
                   <FontAwesome name="check" size={14} color="#fff" />
                   <ThemedText style={styles.primaryButtonText}>
-                    {mode === 'before' ? 'Upload & Start Job' : 'Upload & Complete'}
+                    {mode === 'before'
+                      ? beforeFlow === 'append'
+                        ? 'Upload photos'
+                        : 'Upload & Start Job'
+                      : 'Upload & Complete'}
                   </ThemedText>
                 </>
               )}

@@ -21,6 +21,7 @@ import { useNotification } from '@/hooks/useNotification';
 import VehicleTypeModal from '@/components/VehicleTypeModal';
 import { useLocation } from '@/context/LocationContext';
 import { ensureForegroundLocationAccess } from '@/lib/locationPermission';
+import { reverseGeocodeAddress } from '@/lib/locationAddress';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const { height } = Dimensions.get('window');
@@ -165,28 +166,29 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
     return text;
   };
 
-  const buildLocationDataFromGeocode = (
+  const buildLocationDataFromCoords = async (
     latitude: number,
-    longitude: number,
-    result?: Location.LocationGeocodedAddress | null
-  ): EmergencyLocationData => {
-    const streetName = cleanLocationText(result?.street || result?.name || '');
-    const subdivisionVillage = cleanLocationText(result?.district || result?.subregion || '');
-    const barangay = cleanLocationText(result?.district || result?.subregion || '');
-    const cityMunicipality = cleanLocationText(result?.city || result?.subregion || result?.region || '');
-    const landmark = cleanLocationText(result?.name || '');
-    const compactAddress = [streetName, barangay || cityMunicipality].filter(Boolean).join(', ');
-
-    return {
-      latitude,
-      longitude,
-      address: compactAddress || 'Location detected',
-      street_name: streetName || undefined,
-      subdivision_village: subdivisionVillage || undefined,
-      barangay: barangay || undefined,
-      city_municipality: cityMunicipality || undefined,
-      landmark: landmark || undefined,
-    };
+    longitude: number
+  ): Promise<EmergencyLocationData> => {
+    try {
+      const parsed = await reverseGeocodeAddress(latitude, longitude);
+      return {
+        latitude,
+        longitude,
+        address: parsed.address || 'Location detected',
+        street_name: cleanLocationText(parsed.streetName),
+        subdivision_village: cleanLocationText(parsed.subdivision),
+        barangay: cleanLocationText(parsed.barangay),
+        city_municipality: cleanLocationText(parsed.city),
+        landmark: undefined,
+      };
+    } catch {
+      return {
+        latitude,
+        longitude,
+        address: 'Location detected',
+      };
+    }
   };
 
   useEffect(() => {
@@ -218,14 +220,9 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
       };
 
       try {
-        const [reverseResult] = await Location.reverseGeocodeAsync({
-          latitude: selectedLocation.latitude,
-          longitude: selectedLocation.longitude,
-        });
-        const geocoded = buildLocationDataFromGeocode(
+        const geocoded = await buildLocationDataFromCoords(
           selectedLocation.latitude,
-          selectedLocation.longitude,
-          reverseResult
+          selectedLocation.longitude
         );
         setPinnedLocation({
           ...baseLocation,
@@ -265,17 +262,10 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
         accuracy: Location.Accuracy.High,
       });
 
-      // Get address from coordinates
-      const [addressResult] = await Location.reverseGeocodeAsync({
-        latitude: currentLocation.coords.latitude,
-        longitude: currentLocation.coords.longitude,
-      });
-
       setAutoLocation(
-        buildLocationDataFromGeocode(
+        await buildLocationDataFromCoords(
           currentLocation.coords.latitude,
-          currentLocation.coords.longitude,
-          addressResult
+          currentLocation.coords.longitude
         )
       );
     } catch (error) {
@@ -437,14 +427,9 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
 
       if (!resolvedLocationData.barangay || !resolvedLocationData.city_municipality || !resolvedLocationData.street_name) {
         try {
-          const [reverseResult] = await Location.reverseGeocodeAsync({
-            latitude: activeLocation.latitude,
-            longitude: activeLocation.longitude,
-          });
-          const geocodedData = buildLocationDataFromGeocode(
+          const geocodedData = await buildLocationDataFromCoords(
             activeLocation.latitude,
-            activeLocation.longitude,
-            reverseResult
+            activeLocation.longitude
           );
           resolvedLocationData = {
             ...resolvedLocationData,

@@ -356,7 +356,7 @@ export default function ShopDirectRequestScreen() {
 			if (!isMountedRef.current || fetchSeq !== locationFetchSeqRef.current) return;
 			setCurrentStreetName(parsed.streetName || 'Current location');
 			setCurrentSubdivision(parsed.subdivision || '');
-			setCurrentBarangay(parsed.region || parsed.barangay || '');
+			setCurrentBarangay(parsed.barangay || '');
 			setCurrentCity(parsed.city || '');
 			setCurrentAddress(parsed.address || 'Current location');
 			setCurrentLocationError(null);

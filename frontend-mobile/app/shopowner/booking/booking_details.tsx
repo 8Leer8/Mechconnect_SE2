@@ -12,6 +12,7 @@ import { styles } from '@/style/mechanic/bookingDetailsStyles';
 import { canOpenBookingChat } from '@/lib/bookingAccess';
 import { fetchBookingChatPreview } from '@/lib/bookingChatPreview';
 import { useNotification } from '@/hooks/useNotification';
+import { coerceBarangayForDisplay } from '@/lib/locationAddress';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -873,7 +874,15 @@ export default function ShopOwnerBookingDetailScreen() {
                 ? `${Number((booking.service_location as any).latitude).toFixed(6)}, ${Number((booking.service_location as any).longitude).toFixed(6)}`
                 : 'Unavailable';
             const streetValue = locationText(inferred.street || booking.service_location?.street_name, fallbackStreet);
-            const barangayValue = locationText(booking.service_location?.barangay, locationText(inferred.barangay, 'Unavailable'));
+            const barangayValue = locationText(
+              coerceBarangayForDisplay(
+                booking.service_location?.barangay,
+                booking.service_location?.city_municipality,
+                (booking.service_location as { region?: string } | undefined)?.region,
+                booking.service_location?.subdivision_village
+              ),
+              locationText(inferred.barangay, 'Unavailable')
+            );
             const cityValue = locationText(booking.service_location?.city_municipality, locationText(inferred.city, 'Unavailable'));
             return (
               <>
