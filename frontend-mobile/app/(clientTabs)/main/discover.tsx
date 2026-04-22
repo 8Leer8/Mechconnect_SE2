@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Modal, View, TouchableOpacity, FlatList, Image, ListRenderItem, RefreshControl } from 'react-native';
+import * as Location from 'expo-location';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Feather, FontAwesome } from '@expo/vector-icons';
@@ -8,6 +9,14 @@ import { styles } from '@/style/client/discoverStyles';
 import { getImageUrl } from '@/lib/imageUtils';
 import { SkeletonDiscoverList } from '@/components/skeletons/SkeletonLoaders';
 import { useNotification } from '@/hooks/useNotification';
+import { useLocation } from '@/context/LocationContext';
+import { getDistanceKm } from '@/context/LocationContext';
+import { ensureForegroundLocationAccess } from '@/lib/locationPermission';
+import {
+  formatStructuredAddress,
+  geocodeAddress,
+  type StructuredAccountAddress,
+} from '@/lib/locationAddress';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -16,10 +25,13 @@ interface Mechanic {
   name: string;
   profile_photo: string | null;
   contact_number: string;
+  address?: StructuredAccountAddress | null;
+  address_label?: string | null;
   average_rating: number;
   status: string;
   is_working_for_shop?: boolean;
   is_favorited?: boolean;
+  distance_km?: number | null;
 }
 
 interface Shop {
@@ -29,11 +41,14 @@ interface Shop {
   contact_number: string;
   email: string;
   description: string;
+  address?: StructuredAccountAddress | null;
+  address_label?: string | null;
   service_banner: string | null;
   is_verified: boolean;
   status: string;
   is_favorited?: boolean;
   average_rating?: number;
+  distance_km?: number | null;
 }
 
 interface Service {
@@ -58,27 +73,133 @@ interface ServicesResponse {
 }
 
 type TabType = 'mechanics' | 'shops' | 'services';
-type ProviderFilterType = 'all' | 'favourites' | 'most_rated' | 'least_rated';
+type ProviderFilterType = 'all' | 'favorites' | 'most_rated' | 'least_rated' | 'nearest';
+
+function formatDistanceLabel(distanceKm?: number | null) {
+  if (distanceKm === null || distanceKm === undefined || Number.isNaN(Number(distanceKm))) {
+    return null;
+  }
+
+  const numericDistance = Number(distanceKm);
+  if (numericDistance < 1) {
+    return `${Math.max(0, Math.round(numericDistance * 1000))} m away`;
+  }
+
+  return `${numericDistance.toFixed(1)} km away`;
+}
+
+function formatProviderAddress(address?: StructuredAccountAddress | null, addressLabel?: string | null) {
+  return addressLabel || formatStructuredAddress(address) || null;
+}
+
+async function enrichProvidersWithDistance<T extends {
+  address?: StructuredAccountAddress | null;
+  address_label?: string | null;
+  distance_km?: number | null;
+}>(
+  items: T[],
+  clientLocation: { latitude: number; longitude: number } | null,
+) {
+  if (items.length === 0) {
+    return items;
+  }
+
+  if (!clientLocation) {
+    return items.map((item) => ({
+      ...item,
+      distance_km: null,
+    }));
+  }
+
+  return Promise.all(
+    items.map(async (item) => {
+      const addressLabel = formatProviderAddress(item.address, item.address_label);
+      if (!addressLabel) {
+        return {
+          ...item,
+          distance_km: null,
+        };
+      }
+
+      const coordinates = await geocodeAddress(addressLabel);
+      if (!coordinates) {
+        return {
+          ...item,
+          distance_km: null,
+        };
+      }
+
+      return {
+        ...item,
+        distance_km: Number(getDistanceKm(clientLocation, coordinates).toFixed(2)),
+      };
+    }),
+  );
+}
 
 export default function DiscoverScreen() {
   const router = useRouter();
   const { showNotification } = useNotification();
+  const { selectedLocation } = useLocation();
   const [activeTab, setActiveTab] = useState<TabType>('mechanics');
   const [providerFilter, setProviderFilter] = useState<ProviderFilterType>('all');
   const [isFilterModalVisible, setIsFilterModalVisible] = useState(false);
   const [mechanics, setMechanics] = useState<Mechanic[]>([]);
   const [shops, setShops] = useState<Shop[]>([]);
   const [services, setServices] = useState<Service[]>([]);
+  const [clientLocation, setClientLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (selectedLocation && selectedLocation.latitude && selectedLocation.longitude) {
+      setClientLocation({
+        latitude: selectedLocation.latitude,
+        longitude: selectedLocation.longitude,
+      });
+      return;
+    }
+
+    let cancelled = false;
+
+    const resolveCurrentLocation = async () => {
+      try {
+        const permission = await ensureForegroundLocationAccess();
+        if (!permission.granted || cancelled) {
+          return;
+        }
+
+        const current = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.High,
+        });
+
+        if (!cancelled) {
+          setClientLocation({
+            latitude: current.coords.latitude,
+            longitude: current.coords.longitude,
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setClientLocation(null);
+        }
+      }
+    };
+
+    resolveCurrentLocation();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedLocation]);
 
   const fetchData = useCallback(async (tab: TabType, force = false) => {
     try {
       setLoading(true);
       setError(null);
 
-      if (tab === 'mechanics' && (mechanics.length === 0 || force)) {
+      if (tab === 'mechanics') {
         const response = await fetch(`${API_URL}/users/mechanics/`, {
           method: 'GET',
           credentials: 'include',
@@ -86,8 +207,8 @@ export default function DiscoverScreen() {
         });
         if (!response.ok) throw new Error('Failed to fetch mechanics');
         const data = await response.json() as MechanicsResponse;
-        setMechanics(data.mechanics || []);
-      } else if (tab === 'shops' && (shops.length === 0 || force)) {
+        setMechanics(await enrichProvidersWithDistance(data.mechanics || [], clientLocation));
+      } else if (tab === 'shops') {
         const response = await fetch(`${API_URL}/shops/`, {
           method: 'GET',
           credentials: 'include',
@@ -95,8 +216,8 @@ export default function DiscoverScreen() {
         });
         if (!response.ok) throw new Error('Failed to fetch shops');
         const data = await response.json() as ShopsResponse;
-        setShops(data.shops || []);
-      } else if (tab === 'services' && (services.length === 0 || force)) {
+        setShops(await enrichProvidersWithDistance(data.shops || [], clientLocation));
+      } else if (tab === 'services') {
         const response = await fetch(`${API_URL}/services/`, {
           method: 'GET',
           credentials: 'include',
@@ -112,11 +233,11 @@ export default function DiscoverScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [mechanics.length, shops.length, services.length]);
+  }, [clientLocation, providerFilter]);
 
   useEffect(() => {
-    fetchData(activeTab);
-  }, [activeTab]);
+    fetchData(activeTab, true);
+  }, [activeTab, providerFilter, clientLocation, fetchData]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -186,9 +307,10 @@ export default function DiscoverScreen() {
 
   const providerFilters: { key: ProviderFilterType; label: string }[] = [
     { key: 'all', label: 'All' },
-    { key: 'favourites', label: 'Favourites' },
+    { key: 'favorites', label: 'Favorites' },
     { key: 'most_rated', label: 'Most Rated' },
     { key: 'least_rated', label: 'Least Rated' },
+    { key: 'nearest', label: 'Nearest' },
   ];
 
   const selectedProviderFilterLabel = providerFilters.find(
@@ -202,8 +324,17 @@ export default function DiscoverScreen() {
 
     const providerData = activeTab === 'mechanics' ? mechanics : shops;
 
-    if (providerFilter === 'favourites') {
+    if (providerFilter === 'favorites') {
       return providerData.filter((item) => Boolean(item.is_favorited));
+    }
+
+    if (providerFilter === 'nearest') {
+      return [...providerData].sort((left, right) => {
+        const leftDistance = left.distance_km ?? Number.POSITIVE_INFINITY;
+        const rightDistance = right.distance_km ?? Number.POSITIVE_INFINITY;
+
+        return leftDistance - rightDistance;
+      });
     }
 
     if (providerFilter === 'most_rated' || providerFilter === 'least_rated') {
@@ -227,8 +358,12 @@ export default function DiscoverScreen() {
 
     const subject = activeTab === 'mechanics' ? 'mechanics' : 'shops';
 
-    if (providerFilter === 'favourites') {
-      return `No favourite ${subject} yet`;
+    if (providerFilter === 'favorites') {
+      return `No favorite ${subject} yet`;
+    }
+
+    if (providerFilter === 'nearest') {
+      return `No nearby ${subject} found`;
     }
 
     if (providerFilter === 'most_rated' || providerFilter === 'least_rated') {
@@ -242,7 +377,13 @@ export default function DiscoverScreen() {
   const renderMechanicItem: ListRenderItem<Mechanic> = useCallback(({ item: mechanic }) => (
     <TouchableOpacity
       style={styles.card}
-      onPress={() => router.push(`/client/mechanic/mechanicprofile?mechanicId=${mechanic.id}`)}
+      onPress={() => {
+        const distanceParam = mechanic.distance_km !== null && mechanic.distance_km !== undefined
+          ? `&distance_km=${mechanic.distance_km}`
+          : '';
+
+        router.push(`/client/mechanic/mechanicprofile?mechanicId=${mechanic.id}${distanceParam}`);
+      }}
       activeOpacity={0.7}
     >
       <View style={styles.cardRow}>
@@ -261,6 +402,20 @@ export default function DiscoverScreen() {
             <Feather name="star" size={12} color="#FFD60A" />
               <ThemedText style={styles.ratingText}>{formatRating(mechanic.average_rating)}</ThemedText>
           </View>
+          {formatDistanceLabel(mechanic.distance_km) ? (
+            <View style={styles.distanceRow}>
+              <Feather name="map-pin" size={11} color="#8E8E93" />
+              <ThemedText style={styles.distanceText}>{formatDistanceLabel(mechanic.distance_km)}</ThemedText>
+            </View>
+          ) : null}
+          {formatProviderAddress(mechanic.address, mechanic.address_label) ? (
+            <View style={styles.addressRow}>
+              <Feather name="map-pin" size={11} color="#8E8E93" />
+              <ThemedText style={styles.addressText} numberOfLines={2}>
+                {formatProviderAddress(mechanic.address, mechanic.address_label)}
+              </ThemedText>
+            </View>
+          ) : null}
             <View style={styles.summaryRow}>
               <View style={styles.summaryChip}>
                 <Feather name="briefcase" size={11} color="#8E8E93" />
@@ -311,7 +466,13 @@ export default function DiscoverScreen() {
   const renderShopItem: ListRenderItem<Shop> = useCallback(({ item: shop }) => (
     <TouchableOpacity
       style={styles.card}
-      onPress={() => router.push(`/client/shop/shopprofile?shopId=${shop.id}`)}
+      onPress={() => {
+        const distanceParam = shop.distance_km !== null && shop.distance_km !== undefined
+          ? `&distance_km=${shop.distance_km}`
+          : '';
+
+        router.push(`/client/shop/shopprofile?shopId=${shop.id}${distanceParam}`);
+      }}
       activeOpacity={0.7}
     >
       {shop.service_banner && (
@@ -325,6 +486,20 @@ export default function DiscoverScreen() {
             <Feather name="star" size={12} color="#FFD60A" />
             <ThemedText style={styles.ratingText}>{formatRating(shop.average_rating || 0)}</ThemedText>
           </View>
+          {formatDistanceLabel(shop.distance_km) ? (
+            <View style={styles.distanceRow}>
+              <Feather name="map-pin" size={11} color="#8E8E93" />
+              <ThemedText style={styles.distanceText}>{formatDistanceLabel(shop.distance_km)}</ThemedText>
+            </View>
+          ) : null}
+          {formatProviderAddress(shop.address, shop.address_label) ? (
+            <View style={styles.addressRow}>
+              <Feather name="map-pin" size={11} color="#8E8E93" />
+              <ThemedText style={styles.addressText} numberOfLines={2}>
+                {formatProviderAddress(shop.address, shop.address_label)}
+              </ThemedText>
+            </View>
+          ) : null}
         </View>
         <View style={styles.shopHeaderRight}>
           <TouchableOpacity

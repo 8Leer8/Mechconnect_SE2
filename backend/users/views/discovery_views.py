@@ -2,8 +2,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
-from django.db.models import OuterRef, Subquery, Prefetch
-from math import radians, sin, cos, sqrt, atan2
+from django.db.models import Prefetch
 
 from ..models import Account, Client, FavoriteMechanic, FavoriteShop, Mechanic
 from ..serializers import MechanicSerializer, MechanicProfileSerializer
@@ -13,6 +12,7 @@ from services.serializers import ServiceAddOnPublicSerializer
 from shops.models import Shop
 from services.models import ShopService
 from MainBackend.storage_utils import get_media_url
+from utils.location_utils import haversine_km, mechanic_location_annotations
 
 
 def _get_authenticated_account(request):
@@ -34,13 +34,24 @@ def _get_current_client(request):
     return account.client
 
 
-def _haversine_km(lat1, lon1, lat2, lon2):
-    earth_radius_km = 6371.0
-    dlat = radians(lat2 - lat1)
-    dlon = radians(lon2 - lon1)
-    a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
-    c = 2 * atan2(sqrt(a), sqrt(1 - a))
-    return earth_radius_km * c
+def _format_address(address):
+    if not address:
+        return None
+
+    parts = [
+        address.house_building_number,
+        address.street_name,
+        address.subdivision_village,
+        address.barangay,
+        address.city_municipality,
+        address.province,
+        address.region,
+        address.postal_code,
+    ]
+    label = ', '.join(
+        str(part).strip() for part in parts if part and str(part).strip()
+    )
+    return label or None
 
 
 @api_view(['GET'])
@@ -53,6 +64,17 @@ def list_mechanics(request):
     try:
         account = _get_authenticated_account(request)
         account_id = account.id if account else None
+        lat_raw = request.GET.get('lat')
+        lng_raw = request.GET.get('lng')
+        filter_value = str(request.GET.get('filter', '')).strip().lower()
+
+        selected_lat = selected_lng = None
+        try:
+            if lat_raw is not None and lng_raw is not None:
+                selected_lat = float(lat_raw)
+                selected_lng = float(lng_raw)
+        except (TypeError, ValueError):
+            selected_lat = selected_lng = None
 
         mechanics = Mechanic.objects.select_related('account').filter(
             verification_status=Mechanic.VerificationStatus.APPROVED,
@@ -60,6 +82,8 @@ def list_mechanics(request):
         )
         if account_id:
             mechanics = mechanics.exclude(account_id=account_id)
+
+        mechanics = mechanics.annotate(**mechanic_location_annotations('account_id', 'pk'))
 
         favorite_mechanic_ids = set()
         current_client = account.client if account and hasattr(account, "client") else None
@@ -74,6 +98,24 @@ def list_mechanics(request):
         mechanics_data = []
         
         for mechanic in mechanics:
+            distance_km = None
+            if selected_lat is not None and selected_lng is not None:
+                src_lat = mechanic.live_lat if mechanic.live_lat is not None else mechanic.offer_lat
+                src_lng = mechanic.live_lng if mechanic.live_lng is not None else mechanic.offer_lng
+                if src_lat is not None and src_lng is not None:
+                    try:
+                        distance_km = round(
+                            haversine_km(
+                                selected_lat,
+                                selected_lng,
+                                float(src_lat),
+                                float(src_lng),
+                            ),
+                            2,
+                        )
+                    except (TypeError, ValueError):
+                        distance_km = None
+
             mechanic_info = {
                 'id': mechanic.id,
                 'account_id': mechanic.account.id,
@@ -84,8 +126,28 @@ def list_mechanics(request):
                 'status': mechanic.status,
                 'is_working_for_shop': mechanic.is_working_for_shop,
                 'is_favorited': mechanic.id in favorite_mechanic_ids,
+                'address': {
+                    'house_building_number': mechanic.account.accountaddress.house_building_number,
+                    'street_name': mechanic.account.accountaddress.street_name,
+                    'subdivision_village': mechanic.account.accountaddress.subdivision_village,
+                    'barangay': mechanic.account.accountaddress.barangay,
+                    'city_municipality': mechanic.account.accountaddress.city_municipality,
+                    'province': mechanic.account.accountaddress.province,
+                    'region': mechanic.account.accountaddress.region,
+                    'postal_code': mechanic.account.accountaddress.postal_code,
+                } if hasattr(mechanic.account, 'accountaddress') else None,
+                'address_label': _format_address(getattr(mechanic.account, 'accountaddress', None)),
+                'distance_km': distance_km,
             }
             mechanics_data.append(mechanic_info)
+
+        if filter_value == 'nearest' and any(item['distance_km'] is not None for item in mechanics_data):
+            mechanics_data.sort(
+                key=lambda item: (
+                    item['distance_km'] is None,
+                    item['distance_km'] if item['distance_km'] is not None else 0,
+                )
+            )
         
         return Response({
             'mechanics': mechanics_data,
@@ -202,25 +264,6 @@ def list_nearby_mechanics(request):
     else:
         base_radius_km = min(radius_km, default_max_radius_km)
 
-    live_lat_sq = MechanicLocation.objects.filter(
-        booking__request__provider=OuterRef('account')
-    ).order_by('-updated_at').values('latitude')[:1]
-    live_lng_sq = MechanicLocation.objects.filter(
-        booking__request__provider=OuterRef('account')
-    ).order_by('-updated_at').values('longitude')[:1]
-    offer_lat_sq = BroadcastOffer.objects.filter(
-        mechanic=OuterRef('pk'),
-        status=BroadcastOffer.Status.ACCEPTED,
-        mechanic_latitude__isnull=False,
-        mechanic_longitude__isnull=False,
-    ).order_by('-responded_at', '-id').values('mechanic_latitude')[:1]
-    offer_lng_sq = BroadcastOffer.objects.filter(
-        mechanic=OuterRef('pk'),
-        status=BroadcastOffer.Status.ACCEPTED,
-        mechanic_latitude__isnull=False,
-        mechanic_longitude__isnull=False,
-    ).order_by('-responded_at', '-id').values('mechanic_longitude')[:1]
-
     mechanics = Mechanic.objects.select_related('account').filter(
         verification_status=Mechanic.VerificationStatus.APPROVED,
         status=Mechanic.WorkStatus.AVAILABLE,
@@ -229,12 +272,7 @@ def list_nearby_mechanics(request):
         'shop',
         'shop__shop_owner',
         'shop__shop_owner__account',
-    ).annotate(
-        live_lat=Subquery(live_lat_sq),
-        live_lng=Subquery(live_lng_sq),
-        offer_lat=Subquery(offer_lat_sq),
-        offer_lng=Subquery(offer_lng_sq),
-    )
+    ).annotate(**mechanic_location_annotations('account_id', 'pk'))
 
     mechanic_ids = [m.id for m in mechanics]
     specialty_map = {mid: [] for mid in mechanic_ids}
@@ -265,7 +303,7 @@ def list_nearby_mechanics(request):
         except (TypeError, ValueError):
             continue
 
-        distance_km = _haversine_km(selected_lat, selected_lng, mech_lat, mech_lng)
+        distance_km = haversine_km(selected_lat, selected_lng, mech_lat, mech_lng)
         specialties = specialty_map.get(mechanic.id) or service_map.get(mechanic.id) or []
         specialization = ', '.join(specialties[:2]) if specialties else None
         rating_value = float(mechanic.average_rating) if mechanic.average_rating is not None else 0.0

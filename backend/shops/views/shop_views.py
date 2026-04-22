@@ -7,8 +7,30 @@ from django.db.models import Count, Sum, Avg, Q
 from ..models import Shop, ShopMechanic
 from users.models import Account, FavoriteShop, ShopOwner, Mechanic
 from bookings.models import Booking, CompleteBooking
+from bookings.models import MechanicLocation, BroadcastOffer
 from services.models import ShopService
 from MainBackend.storage_utils import get_media_url
+from utils.location_utils import haversine_km, mechanic_location_annotations
+
+
+def _format_address(address):
+    if not address:
+        return None
+
+    parts = [
+        address.house_building_number,
+        address.street_name,
+        address.subdivision_village,
+        address.barangay,
+        address.city_municipality,
+        address.province,
+        address.region,
+        address.postal_code,
+    ]
+    label = ', '.join(
+        str(part).strip() for part in parts if part and str(part).strip()
+    )
+    return label or None
 
 
 @api_view(['GET'])
@@ -21,6 +43,18 @@ def list_shops(request):
     try:
         current_account = None
         user = getattr(request, "user", None)
+        lat_raw = request.GET.get('lat')
+        lng_raw = request.GET.get('lng')
+        filter_value = str(request.GET.get('filter', '')).strip().lower()
+
+        selected_lat = selected_lng = None
+        try:
+            if lat_raw is not None and lng_raw is not None:
+                selected_lat = float(lat_raw)
+                selected_lng = float(lng_raw)
+        except (TypeError, ValueError):
+            selected_lat = selected_lng = None
+
         if isinstance(user, Account):
             current_account = user
         else:
@@ -61,6 +95,37 @@ def list_shops(request):
                 for row in rating_rows
             }
 
+        shop_distance_map = {}
+        if selected_lat is not None and selected_lng is not None and shop_ids:
+            shop_mechanics = ShopMechanic.objects.filter(
+                shop_id__in=shop_ids,
+                is_active=True,
+            ).select_related(
+                'shop',
+                'mechanic',
+                'mechanic__account',
+            ).annotate(**mechanic_location_annotations('mechanic__account_id', 'mechanic_id'))
+
+            for shop_mechanic in shop_mechanics:
+                src_lat = shop_mechanic.live_lat if shop_mechanic.live_lat is not None else shop_mechanic.offer_lat
+                src_lng = shop_mechanic.live_lng if shop_mechanic.live_lng is not None else shop_mechanic.offer_lng
+                if src_lat is None or src_lng is None:
+                    continue
+
+                try:
+                    distance_km = haversine_km(
+                        selected_lat,
+                        selected_lng,
+                        float(src_lat),
+                        float(src_lng),
+                    )
+                except (TypeError, ValueError):
+                    continue
+
+                current_distance = shop_distance_map.get(shop_mechanic.shop_id)
+                if current_distance is None or distance_km < current_distance:
+                    shop_distance_map[shop_mechanic.shop_id] = distance_km
+
         shops_data = []
         
         for shop in shop_list:
@@ -76,9 +141,29 @@ def list_shops(request):
                 'is_verified': shop.is_verified,
                 'status': shop.status,
                 'is_favorited': shop.id in favorite_shop_ids,
+                'address': {
+                    'house_building_number': shop.shop_owner.account.accountaddress.house_building_number,
+                    'street_name': shop.shop_owner.account.accountaddress.street_name,
+                    'subdivision_village': shop.shop_owner.account.accountaddress.subdivision_village,
+                    'barangay': shop.shop_owner.account.accountaddress.barangay,
+                    'city_municipality': shop.shop_owner.account.accountaddress.city_municipality,
+                    'province': shop.shop_owner.account.accountaddress.province,
+                    'region': shop.shop_owner.account.accountaddress.region,
+                    'postal_code': shop.shop_owner.account.accountaddress.postal_code,
+                } if hasattr(shop.shop_owner.account, 'accountaddress') else None,
+                'address_label': _format_address(getattr(shop.shop_owner.account, 'accountaddress', None)),
                 'average_rating': shop_rating_map.get(shop.id, 0),
+                'distance_km': round(float(shop_distance_map[shop.id]), 2) if shop.id in shop_distance_map else None,
             }
             shops_data.append(shop_info)
+
+        if filter_value == 'nearest' and any(item['distance_km'] is not None for item in shops_data):
+            shops_data.sort(
+                key=lambda item: (
+                    item['distance_km'] is None,
+                    item['distance_km'] if item['distance_km'] is not None else 0,
+                )
+            )
         
         return Response({
             'shops': shops_data,

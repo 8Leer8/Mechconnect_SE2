@@ -25,6 +25,24 @@ export interface ParsedLocationAddress {
   region: string;
 }
 
+export interface StructuredAccountAddress {
+  house_building_number?: string | null;
+  street_name?: string | null;
+  subdivision_village?: string | null;
+  barangay?: string | null;
+  city_municipality?: string | null;
+  province?: string | null;
+  region?: string | null;
+  postal_code?: string | null;
+}
+
+export interface Coordinates {
+  latitude: number;
+  longitude: number;
+}
+
+const geocodeCache = new Map<string, Coordinates | null>();
+
 function clean(value?: string | null): string {
   return (value || '').trim();
 }
@@ -55,6 +73,23 @@ function uniqueJoin(parts: string[]): string {
   });
 
   return ordered.join(', ');
+}
+
+export function formatStructuredAddress(address?: StructuredAccountAddress | null): string {
+  if (!address) {
+    return '';
+  }
+
+  return uniqueJoin([
+    address.house_building_number || '',
+    address.street_name || '',
+    address.subdivision_village || '',
+    address.barangay || '',
+    address.city_municipality || '',
+    address.province || '',
+    address.region || '',
+    address.postal_code || '',
+  ]);
 }
 
 function dedupeComponent(value: string, comparisons: string[]): string {
@@ -182,4 +217,77 @@ export async function reverseGeocodeAddress(latitude: number, longitude: number)
       region: '',
     };
   }
+}
+
+async function geocodeWithExpo(address: string): Promise<Coordinates | null> {
+  try {
+    const geocodeFn = (Location as typeof Location & {
+      geocodeAsync?: (address: string) => Promise<Array<{ latitude: number; longitude: number }>>;
+    }).geocodeAsync;
+
+    if (!geocodeFn) {
+      return null;
+    }
+
+    const results = await geocodeFn(address);
+    const firstResult = results?.[0];
+    if (
+      firstResult &&
+      typeof firstResult.latitude === 'number' &&
+      typeof firstResult.longitude === 'number'
+    ) {
+      return {
+        latitude: firstResult.latitude,
+        longitude: firstResult.longitude,
+      };
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+export async function geocodeAddress(address: string): Promise<Coordinates | null> {
+  const normalizedAddress = clean(address);
+  if (!normalizedAddress) {
+    return null;
+  }
+
+  const cacheKey = normalizedAddress.toLowerCase();
+  if (geocodeCache.has(cacheKey)) {
+    return geocodeCache.get(cacheKey) || null;
+  }
+
+  const apiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+
+  if (apiKey) {
+    try {
+      const url =
+        `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(normalizedAddress)}` +
+        `&key=${apiKey}&language=en`;
+      const response = await fetch(url);
+      if (response.ok) {
+        const payload = (await response.json()) as GoogleGeocodeResponse;
+        if (payload.status === 'OK' && payload.results && payload.results.length > 0) {
+          const firstResult = payload.results[0];
+          const location = firstResult?.geometry?.location;
+          if (location && typeof location.lat === 'number' && typeof location.lng === 'number') {
+            const coordinates = {
+              latitude: location.lat,
+              longitude: location.lng,
+            };
+            geocodeCache.set(cacheKey, coordinates);
+            return coordinates;
+          }
+        }
+      }
+    } catch {
+      // Fall back to Expo geocoding.
+    }
+  }
+
+  const expoCoordinates = await geocodeWithExpo(normalizedAddress);
+  geocodeCache.set(cacheKey, expoCoordinates);
+  return expoCoordinates;
 }

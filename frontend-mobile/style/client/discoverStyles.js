@@ -212,6 +212,30 @@ export const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#FFD60A',
   },
+  distanceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 4,
+  },
+  distanceText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#8E8E93',
+  },
+  addressRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 4,
+    marginTop: 4,
+  },
+  addressText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '400',
+    color: '#A7ADB5',
+    lineHeight: 16,
+  },
   cardRight: {
     alignItems: 'center',
     gap: 4,

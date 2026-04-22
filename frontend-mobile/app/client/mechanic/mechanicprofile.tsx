@@ -8,6 +8,7 @@ import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/client/mechanicProfileStyles';
 import { getImageUrl } from '@/lib/imageUtils';
+import { formatStructuredAddress } from '@/lib/locationAddress';
 import { SkeletonDetailPage } from '@/components/skeletons/SkeletonLoaders';
 import { useNotification } from '@/hooks/useNotification';
 
@@ -48,12 +49,14 @@ interface AddOn {
 }
 
 interface Address {
+  house_building_number?: string | null;
   street_name?: string | null;
   subdivision_village?: string | null;
   barangay?: string | null;
   city_municipality?: string | null;
   province?: string | null;
   region?: string | null;
+  postal_code?: string | null;
 }
 
 interface MechanicProfile {
@@ -80,6 +83,23 @@ interface MechanicProfile {
   contact_number: string | null;
   status: string;
   address?: Address | null;
+}
+
+function formatDistanceLabel(distanceKm?: string | null) {
+  if (!distanceKm) {
+    return null;
+  }
+
+  const numericDistance = Number(distanceKm);
+  if (Number.isNaN(numericDistance)) {
+    return null;
+  }
+
+  if (numericDistance < 1) {
+    return `${Math.max(0, Math.round(numericDistance * 1000))} m away`;
+  }
+
+  return `${numericDistance.toFixed(1)} km away`;
 }
 
 export default function MechanicProfileScreen() {
@@ -538,6 +558,22 @@ export default function MechanicProfileScreen() {
                 Joined {new Date(profile.account_created).toLocaleDateString('en-US', { year: 'numeric', month: 'long' })}
               </ThemedText>
             </View>
+            {formatStructuredAddress(profile.address) ? (
+              <View style={styles.infoRow}>
+                <View style={styles.infoIconCircle}>
+                  <FontAwesome name="map-marker" size={14} color="#FF8C00" />
+                </View>
+                <ThemedText style={styles.infoText}>{formatStructuredAddress(profile.address)}</ThemedText>
+              </View>
+            ) : null}
+            {formatDistanceLabel(distance_km) ? (
+              <View style={styles.infoRow}>
+                <View style={styles.infoIconCircle}>
+                  <FontAwesome name="road" size={14} color="#FF8C00" />
+                </View>
+                <ThemedText style={styles.infoText}>{formatDistanceLabel(distance_km)}</ThemedText>
+              </View>
+            ) : null}
             {profile.contact_number && (
               <View style={styles.infoRow}>
                 <View style={styles.infoIconCircle}>
