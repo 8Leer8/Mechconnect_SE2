@@ -1,4 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+
+function useNavSections(user) {
+  return useMemo(() => getNavSections(user), [user]);
+}
 import {
   AlertTriangle,
   Bell,
@@ -34,7 +38,8 @@ import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetClose, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
-const navSections = [
+// All navigation items
+const allNavSections = [
   {
     label: "Overview",
     items: [
@@ -50,18 +55,34 @@ const navSections = [
     items: [
       { label: "Verification Queue", to: "/admin/verification", icon: ShieldCheck },
       { label: "Requests & Bookings", to: "/admin/bookings", icon: CalendarCheck },
-      { label: "Service & Specialty Catalog", to: "/admin/services", icon: Briefcase },
+      { label: "Service & Specialty Catalog", to: "/admin/services", icon: Briefcase, headAdmin: true},
     ],
   },
   {
     label: "Trust & Finance",
     items: [
-      { label: "Trust and Safety", to: "/admin/trust", icon: AlertTriangle },
+      { label: "Trust and Safety", to: "/admin/trust", icon: AlertTriangle, headAdminOnly: true },
       { label: "Dispute Center", to: "/admin/disputes", icon: Scale },
-      { label: "Wallet & Token Ledger", to: "/admin/wallet", icon: Wallet },
+      { label: "Wallet & Token Ledger", to: "/admin/wallet", icon: Wallet, headAdminOnly: true },
     ],
   },
 ];
+
+// Filter nav sections based on is_superadmin flag
+function getNavSections(user) {
+  // is_superadmin is now at root level from AccountSerializer
+  const isSuperAdmin = user?.is_superadmin ?? false;
+
+  return allNavSections
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => {
+        // Superadmin sees everything, regular admin sees non-headAdminOnly items
+        return isSuperAdmin || !item.headAdminOnly;
+      }),
+    }))
+    .filter((section) => section.items.length > 0);
+}
 
 const titleByPath = {
   "/admin/dashboard": "Overview Dashboard",
@@ -114,7 +135,9 @@ function getInitials(user) {
   return "AD";
 }
 
-function SidebarLinks({ onNavigate }) {
+function SidebarLinks({ onNavigate, user }) {
+  const navSections = useMemo(() => getNavSections(user), [user]);
+
   return (
     <>
       {navSections.map((section) => (
@@ -156,6 +179,7 @@ export function AdminLayout({ children, title }) {
   const displayName = useMemo(() => getDisplayName(user), [user]);
   const initials = useMemo(() => getInitials(user), [user]);
   const pageTitle = title || titleByPath[location.pathname] || "Admin";
+  const navSections = useNavSections(user);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -184,7 +208,7 @@ export function AdminLayout({ children, title }) {
         </div>
 
         <ScrollArea className="flex-1">
-          <SidebarLinks />
+          <SidebarLinks user={user} />
         </ScrollArea>
 
         <div className="mt-auto">
@@ -222,34 +246,34 @@ export function AdminLayout({ children, title }) {
                 <ScrollArea className="h-[calc(100dvh-69px)]">
                   <div className="pb-6 pt-2">
                     {navSections.map((section) => (
-                    <section key={section.label}>
-                      <p className="px-5 pb-2 pt-5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                        {section.label}
-                      </p>
-                      <nav className="space-y-1 px-2">
-                        {section.items.map((item) => {
-                          const Icon = item.icon;
-                          return (
-                            <SheetClose key={item.to} asChild>
-                              <NavLink
-                                to={item.to}
-                                className={({ isActive }) =>
-                                  cn(
-                                    "mx-1.5 flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
-                                    isActive && "bg-primary text-primary-foreground hover:bg-primary/90",
-                                  )
-                                }
-                                onClick={() => setMobileOpen(false)}
-                              >
-                                <Icon className="size-4" />
-                                <span>{item.label}</span>
-                              </NavLink>
-                            </SheetClose>
-                          );
-                        })}
-                      </nav>
-                    </section>
-                  ))}
+                      <section key={section.label}>
+                        <p className="px-5 pb-2 pt-5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                          {section.label}
+                        </p>
+                        <nav className="space-y-1 px-2">
+                          {section.items.map((item) => {
+                            const Icon = item.icon;
+                            return (
+                              <SheetClose key={item.to} asChild>
+                                <NavLink
+                                  to={item.to}
+                                  className={({ isActive }) =>
+                                    cn(
+                                      "mx-1.5 flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+                                      isActive && "bg-primary text-primary-foreground hover:bg-primary/90",
+                                    )
+                                  }
+                                  onClick={() => setMobileOpen(false)}
+                                >
+                                  <Icon className="size-4" />
+                                  <span>{item.label}</span>
+                                </NavLink>
+                              </SheetClose>
+                            );
+                          })}
+                        </nav>
+                      </section>
+                    ))}
                   </div>
                 </ScrollArea>
               </SheetContent>

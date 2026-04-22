@@ -38,6 +38,11 @@ const STATUS_FILTERS = [
   { key: "disputed", label: "Disputed" },
 ];
 
+const SORT_OPTIONS = [
+  { key: "newest", label: "Newest to Oldest" },
+  { key: "oldest", label: "Oldest to Newest" },
+];
+
 const BOOKING_TABLE_GRID_CLASS =
   "grid items-center gap-4 [grid-template-columns:minmax(120px,1fr)_minmax(130px,1fr)_minmax(190px,1.2fr)_minmax(120px,0.9fr)_minmax(120px,0.8fr)_minmax(150px,1fr)]";
 
@@ -130,6 +135,7 @@ export function RequestsBookingsPage() {
   const [loadError, setLoadError] = useState("");
   const [activeRequestType, setActiveRequestType] = useState(REQUEST_TYPE_TABS[0].key);
   const [activeStatusFilter, setActiveStatusFilter] = useState("all");
+  const [sortOrder, setSortOrder] = useState("newest");
   const [selectedBooking, setSelectedBooking] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -184,16 +190,25 @@ export function RequestsBookingsPage() {
   }, [bookings]);
 
   const filteredBookings = useMemo(() => {
-    return bookings.filter((booking) => {
+    let result = bookings.filter((booking) => {
       const matchesType = booking.request_type === activeRequestType;
       const matchesStatus = activeStatusFilter === "all" || booking.status === activeStatusFilter;
       return matchesType && matchesStatus;
     });
-  }, [bookings, activeRequestType, activeStatusFilter]);
+
+    // Sort by booked_at timestamp
+    result = result.sort((a, b) => {
+      const dateA = new Date(a.booked_at || 0);
+      const dateB = new Date(b.booked_at || 0);
+      return sortOrder === "newest" ? dateB - dateA : dateA - dateB;
+    });
+
+    return result;
+  }, [bookings, activeRequestType, activeStatusFilter, sortOrder]);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [activeRequestType, activeStatusFilter]);
+  }, [activeRequestType, activeStatusFilter, sortOrder]);
 
   const totalPages = useMemo(
     () => Math.max(Math.ceil(filteredBookings.length / ITEMS_PER_PAGE), 1),
@@ -263,22 +278,42 @@ export function RequestsBookingsPage() {
                 ))}
               </div>
 
-              <div className="w-full space-y-1.5 md:ml-auto md:w-64">
-                <label htmlFor="booking-status-filter" className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Status Filter
-                </label>
-                <select
-                  id="booking-status-filter"
-                  value={activeStatusFilter}
-                  onChange={(event) => setActiveStatusFilter(event.target.value)}
-                  className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm text-foreground outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/20"
-                >
-                  {STATUS_FILTERS.map((statusOption) => (
-                    <option key={statusOption.key} value={statusOption.key}>
-                      {statusOption.label}
-                    </option>
-                  ))}
-                </select>
+              <div className="flex flex-col gap-3 md:flex-row md:items-end">
+                <div className="w-full space-y-1.5 md:w-48">
+                  <label htmlFor="booking-sort" className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Sort By
+                  </label>
+                  <select
+                    id="booking-sort"
+                    value={sortOrder}
+                    onChange={(event) => setSortOrder(event.target.value)}
+                    className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm text-foreground outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/20"
+                  >
+                    {SORT_OPTIONS.map((sortOption) => (
+                      <option key={sortOption.key} value={sortOption.key}>
+                        {sortOption.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="w-full space-y-1.5 md:w-64">
+                  <label htmlFor="booking-status-filter" className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Status Filter
+                  </label>
+                  <select
+                    id="booking-status-filter"
+                    value={activeStatusFilter}
+                    onChange={(event) => setActiveStatusFilter(event.target.value)}
+                    className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm text-foreground outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/20"
+                  >
+                    {STATUS_FILTERS.map((statusOption) => (
+                      <option key={statusOption.key} value={statusOption.key}>
+                        {statusOption.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </div>
 

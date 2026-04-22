@@ -2,7 +2,7 @@ from rest_framework import serializers
 from .models import (
     Booking, Request, CustomRequest, DirectRequest, EmergencyRequest,
     ActiveBooking, ServiceLocation, DirectRequestAddOn, BroadcastRequest, BroadcastOffer,
-    RequestAssignment, Receipt
+    RequestAssignment, Receipt, Quotation, QuotationItem
 )
 from services.models import Service, ServiceAddOn
 from users.models import Account, Client
@@ -99,10 +99,14 @@ class EmergencyRequestSerializer(serializers.ModelSerializer):
 class BroadcastRequestDetailSerializer(serializers.ModelSerializer):
     services = ServiceBasicSerializer(many=True, read_only=True)
     add_ons = serializers.SerializerMethodField()
+    vehicle_type = serializers.CharField(source='request.vehicle_type', read_only=True, allow_null=True)
+    vehicle_brand = serializers.CharField(source='request.vehicle_brand', read_only=True, allow_null=True)
+    vehicle_model = serializers.CharField(source='request.vehicle_model', read_only=True, allow_null=True)
     
     class Meta:
         model = BroadcastRequest
-        fields = ['id', 'description', 'concern_picture', 'status', 'services', 'add_ons', 'expires_at']
+        fields = ['id', 'description', 'concern_picture', 'status', 'services', 'add_ons', 'expires_at',
+                  'vehicle_type', 'vehicle_brand', 'vehicle_model']
     
     def get_add_ons(self, obj):
         from .models import BroadcastRequestAddOn
@@ -127,10 +131,15 @@ class RequestSerializer(serializers.ModelSerializer):
     service_location = ServiceLocationSerializer(read_only=True)
     request_details = serializers.SerializerMethodField()
     assigned_mechanics = RequestAssignmentSerializer(source='assignments', many=True, read_only=True)
+    vehicle_type = serializers.CharField(read_only=True, allow_null=True)
+    vehicle_brand = serializers.CharField(read_only=True, allow_null=True)
+    vehicle_model = serializers.CharField(read_only=True, allow_null=True)
     
     class Meta:
         model = Request
-        fields = ['id', 'type', 'request_type', 'broadcast_request', 'client', 'provider', 'shop', 'service_location', 'created_at', 'request_details', 'assigned_mechanics']
+        fields = ['id', 'type', 'request_type', 'broadcast_request', 'client', 'provider', 'shop', 
+                  'service_location', 'created_at', 'request_details', 'assigned_mechanics',
+                  'vehicle_type', 'vehicle_brand', 'vehicle_model']
 
     def get_broadcast_request(self, obj):
         if not hasattr(obj, 'broadcast_request') or obj.broadcast_request is None:
@@ -184,17 +193,64 @@ class ActiveBookingSerializer(serializers.ModelSerializer):
         ]
 
 
+class QuotationItemSerializer(serializers.ModelSerializer):
+    id = serializers.IntegerField(required=False)
+    line_total = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()
+    service_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = QuotationItem
+        fields = [
+            'id',
+            'description',
+            'quantity',
+            'unit_price',
+            'line_total',
+            'status',
+            'service_name',
+        ]
+
+    def get_line_total(self, obj):
+        return obj.line_total
+
+    def get_status(self, obj):
+        return obj.status
+
+    def get_service_name(self, obj):
+        if obj.service:
+            return obj.service.name
+        if obj.service_add_on:
+            return obj.service_add_on.name
+        return None
+
+
+class QuotationDetailSerializer(serializers.ModelSerializer):
+    items = QuotationItemSerializer(many=True, read_only=True)
+    mechanic = AccountBasicSerializer(read_only=True)
+
+    class Meta:
+        model = Quotation
+        fields = ['id', 'status', 'notes', 'total_amount', 'is_final', 'items', 'mechanic', 'created_at', 'updated_at']
+
+
 class BookingSerializer(serializers.ModelSerializer):
     request = RequestSerializer(read_only=True)
     active_details = serializers.SerializerMethodField()
     estimated_eta_minutes = serializers.IntegerField(source='eta_minutes', read_only=True)
     traffic_level = serializers.SerializerMethodField()
+    quotation = serializers.SerializerMethodField()
+    vehicle_type = serializers.SerializerMethodField()
+    base_fee = serializers.SerializerMethodField()
+    services_list = serializers.SerializerMethodField()
 
     class Meta:
         model = Booking
         fields = [
-            'id', 'request', 'status', 'dispute_status', 'amount_fee', 'convenience_fee', 'distance_km', 'estimated_eta_minutes', 'traffic_level', 'booked_at',
-            'updated_at', 'completed_at', 'active_details'
+            'id', 'request', 'status', 'dispute_status', 'amount_fee', 'convenience_fee',
+            'distance_km', 'estimated_eta_minutes', 'traffic_level', 'traffic_surcharge',
+            'booked_at', 'updated_at', 'completed_at', 'active_details', 'quotation',
+            'vehicle_type', 'base_fee', 'services_list'
         ]
         read_only_fields = ['id', 'request', 'amount_fee', 'booked_at', 'updated_at', 'completed_at', 'active_details']
 
@@ -218,6 +274,46 @@ class BookingSerializer(serializers.ModelSerializer):
             status=BroadcastOffer.Status.ACCEPTED,
         ).order_by('-responded_at', '-id').first()
         return offer.traffic_level if offer and offer.traffic_level else None
+
+    def get_quotation(self, obj):
+        try:
+            quotation = obj.quotation
+            return QuotationDetailSerializer(quotation).data
+        except Quotation.DoesNotExist:
+            return None
+
+    def get_vehicle_type(self, obj):
+        if hasattr(obj, 'request') and obj.request:
+            return obj.request.vehicle_type
+        return None
+
+    def get_base_fee(self, obj):
+        """Calculate base fee by subtracting distance and traffic surcharges from convenience fee"""
+        if obj.convenience_fee is None:
+            return None
+        distance_fee = (obj.distance_km or 0) * 10  # Assuming 10 per km rate
+        traffic_fee = obj.traffic_surcharge or 0
+        return obj.convenience_fee - distance_fee - traffic_fee
+
+    def get_services_list(self, obj):
+        """Return list of service names for both Broadcast and Direct requests"""
+        if not hasattr(obj, 'request') or not obj.request:
+            return []
+
+        request = obj.request
+
+        # Handle BroadcastRequest - multiple services
+        if hasattr(request, 'broadcast_request') and request.broadcast_request:
+            services = request.broadcast_request.services.all()
+            return [service.name for service in services]
+
+        # Handle DirectRequest - single service
+        if hasattr(request, 'directrequest') and request.directrequest:
+            service = request.directrequest.service
+            if service:
+                return [service.name]
+
+        return []
 
     def update(self, instance, validated_data):
         # Allow status update via PATCH

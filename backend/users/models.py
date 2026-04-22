@@ -220,6 +220,7 @@ class Admin(models.Model):
     account = models.OneToOneField(Account, on_delete=models.CASCADE)
     profile_photo = models.ImageField(upload_to='admins/profiles/', null=True, blank=True)
     contact_number = models.CharField(max_length=20, null=True, blank=True)
+    is_superadmin = models.BooleanField(default=False, help_text="If true, admin has access to Trust and Safety and Wallet & Token Ledger")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

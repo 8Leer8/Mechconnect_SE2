@@ -78,22 +78,30 @@ class ShopOwnerSerializer(serializers.ModelSerializer):
 class AdminSerializer(serializers.ModelSerializer):
     class Meta:
         model = Admin
-        fields = ['profile_photo', 'contact_number']
+        fields = ['profile_photo', 'contact_number', 'is_superadmin']
 
 
 class AccountSerializer(serializers.ModelSerializer):
     address = AccountAddressSerializer(source='accountaddress', read_only=True)
     roles = AccountRoleSerializer(source='accountrole_set', many=True, read_only=True)
     profile = serializers.SerializerMethodField()
-    
+    is_superadmin = serializers.SerializerMethodField()
+
     class Meta:
         model = Account
         fields = [
             'id', 'lastname', 'firstname', 'middlename', 'email',
             'date_of_birth', 'gender', 'username', 'is_active',
-            'is_verified', 'last_login', 'address', 'roles', 'profile'
+            'is_verified', 'last_login', 'address', 'roles', 'profile',
+            'is_superadmin'
         ]
         read_only_fields = ['id', 'is_active', 'is_verified', 'last_login']
+
+    def get_is_superadmin(self, obj):
+        """Return is_superadmin flag if user is an admin, otherwise False"""
+        if hasattr(obj, 'admin') and obj.admin:
+            return obj.admin.is_superadmin
+        return False
 
     def get_profile(self, obj):
         """Get the profile data based on the user's role"""

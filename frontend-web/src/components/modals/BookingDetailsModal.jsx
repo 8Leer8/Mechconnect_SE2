@@ -180,6 +180,170 @@ function LocationDetails({ location }) {
   );
 }
 
+function ServicesSection({ servicesList }) {
+  // Use the services_list from API (array of service names)
+  const servicesArray = Array.isArray(servicesList) ? servicesList : [];
+
+  if (servicesArray.length === 0) {
+    return (
+      <div className="rounded-md border border-border/70 bg-card/60 px-3 py-2.5">
+        <p className="text-xs font-semibold uppercase tracking-wide text-orange-300/80">Service</p>
+        <p className="mt-1 text-sm font-medium text-muted-foreground">—</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-md border border-border/70 bg-card/60 px-3 py-2.5">
+      <p className="text-xs font-semibold uppercase tracking-wide text-orange-300/80">
+        Service{servicesArray.length > 1 ? 's' : ''}
+      </p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {servicesArray.map((service, index) => (
+          <Badge
+            key={index}
+            variant="outline"
+            className="border-primary/40 bg-primary/10 text-primary"
+          >
+            {service}
+          </Badge>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function VehicleSection({ vehicleType, vehicleBrand, vehicleModel }) {
+  if (!vehicleType && !vehicleBrand && !vehicleModel) {
+    return (
+      <div className="rounded-md border border-border/70 bg-card/60 px-3 py-2.5">
+        <p className="text-xs font-semibold uppercase tracking-wide text-orange-300/80">Vehicle Information</p>
+        <p className="mt-1 text-sm font-medium text-muted-foreground">—</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-md border border-border/70 bg-card/60 px-3 py-2.5">
+      <p className="text-xs font-semibold uppercase tracking-wide text-orange-300/80">Vehicle Information</p>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {vehicleType && (
+          <Badge variant="outline" className="border-cyan-500/40 bg-cyan-500/10 text-cyan-300">
+            {vehicleType}
+          </Badge>
+        )}
+        {vehicleBrand && (
+          <span className="text-sm text-muted-foreground">{vehicleBrand}</span>
+        )}
+        {vehicleModel && (
+          <span className="text-sm text-foreground">{vehicleModel}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PaymentBreakdown({ booking }) {
+  const convenienceFee = booking.convenience_fee || 0;
+  const distanceKm = booking.distance_km || 0;
+  const distanceFee = distanceKm * 10; // 10 per km
+  const trafficFee = booking.traffic_surcharge || 0;
+  const baseFee = booking.base_fee || (convenienceFee - distanceFee - trafficFee);
+  const trafficLevel = booking.traffic_level;
+  const etaMinutes = booking.estimated_eta_minutes;
+  
+  const quotation = booking.quotation;
+  const quotationItems = quotation?.items || [];
+  const quotationTotal = quotation?.total_amount || 0;
+  
+  const totalFee = convenienceFee + quotationTotal;
+
+  // Hide section if no payment data available
+  if (!convenienceFee && !quotationTotal) {
+    return null;
+  }
+
+  return (
+    <section className="space-y-4 rounded-lg border border-border/70 bg-card/40 p-4">
+      <h4 className="text-sm font-semibold text-orange-400">Payment Breakdown</h4>
+      
+      {/* Convenience Fee Section */}
+      {convenienceFee > 0 && (
+        <div className="space-y-3 rounded-md border border-border/50 bg-card/30 p-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-orange-300/60">Convenience Fee</p>
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+            <div className="flex justify-between items-center rounded bg-card/60 px-2 py-1.5">
+              <span className="text-xs text-muted-foreground">Base Fee</span>
+              <span className="text-sm font-medium text-foreground">{formatCurrency(baseFee)}</span>
+            </div>
+            <div className="flex justify-between items-center rounded bg-card/60 px-2 py-1.5">
+              <span className="text-xs text-muted-foreground">Distance Fee ({distanceKm.toFixed(1)} km)</span>
+              <span className="text-sm font-medium text-foreground">{formatCurrency(distanceFee)}</span>
+            </div>
+            <div className="flex justify-between items-center rounded bg-card/60 px-2 py-1.5">
+              <span className="text-xs text-muted-foreground">
+                Traffic Fee{trafficLevel ? ` (${trafficLevel})` : ''}
+              </span>
+              <span className="text-sm font-medium text-foreground">{formatCurrency(trafficFee)}</span>
+            </div>
+            <div className="flex justify-between items-center rounded bg-card/60 px-2 py-1.5">
+              <span className="text-xs text-muted-foreground">
+                ETA{etaMinutes ? ` (${etaMinutes} min)` : ''}
+              </span>
+              <span className="text-sm font-medium text-foreground">
+                {etaMinutes ? `${etaMinutes} minutes` : "—"}
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center justify-between rounded-md border border-orange-500/30 bg-orange-500/10 px-3 py-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-orange-300/80">Convenience Fee Total</span>
+            <span className="text-sm font-bold text-foreground">{formatCurrency(convenienceFee)}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Quotation Section */}
+      {quotation && quotationItems.length > 0 && (
+        <div className="space-y-3 rounded-md border border-border/50 bg-card/30 p-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-orange-300/60">
+            Quotation {quotation.is_final && "(Final)"}
+          </p>
+          <div className="space-y-2">
+            {quotationItems.map((item, index) => (
+              <div 
+                key={item.id || index} 
+                className="flex items-center justify-between rounded-md border border-border/50 bg-card/60 px-3 py-2"
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-foreground truncate">
+                    {item.service_name || item.description || `Item ${index + 1}`}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {item.quantity || 1} × {formatCurrency(item.unit_price)}
+                  </p>
+                </div>
+                <span className="text-sm font-semibold text-foreground ml-3">
+                  {formatCurrency(item.line_total)}
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center justify-between rounded-md border border-indigo-500/30 bg-indigo-500/10 px-3 py-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-indigo-300/80">Quotation Total</span>
+            <span className="text-sm font-bold text-foreground">{formatCurrency(quotationTotal)}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Grand Total */}
+      <div className="flex items-center justify-between rounded-md border border-primary/30 bg-primary/10 px-4 py-3">
+        <span className="text-sm font-bold uppercase tracking-wide text-primary">Total Fee</span>
+        <span className="text-base font-bold text-primary">{formatCurrency(totalFee)}</span>
+      </div>
+    </section>
+  );
+}
+
 function RequestPhoto({ photoUrl, requestType }) {
   const source = toMediaUrl(photoUrl);
 
@@ -289,14 +453,6 @@ export function BookingDetailsModal({ booking, onClose }) {
                   <DetailItem label="Completed At" value={formatDateTime(booking.completed_at)} />
                   <DetailItem label="Amount" value={formatCurrency(booking.amount_fee)} />
                   <DetailItem label="Request Type" value={formatLabel(booking.request_type)} />
-                  <DetailItem
-                    label="Service"
-                    value={
-                      booking.request_details?.service_name
-                      || booking.request_details?.service_names?.join(", ")
-                      || "—"
-                    }
-                  />
                 </div>
 
                 <div className="space-y-2">
@@ -305,6 +461,16 @@ export function BookingDetailsModal({ booking, onClose }) {
                     {formatLabel(booking.status)}
                   </Badge>
                 </div>
+
+                {/* Vehicle Information Section */}
+                <VehicleSection
+                  vehicleType={booking.vehicle_type}
+                  vehicleBrand={booking.request?.vehicle_brand}
+                  vehicleModel={booking.request?.vehicle_model}
+                />
+
+                {/* Services Section with Badges */}
+                <ServicesSection servicesList={booking.services_list} />
 
                 <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2">
                   <DetailItem label="Broadcast Status" value={formatLabel(booking.request_details?.status)} />
@@ -376,6 +542,9 @@ export function BookingDetailsModal({ booking, onClose }) {
                   <h4 className="text-sm font-semibold text-orange-400">Service Location</h4>
                   <LocationDetails location={booking.service_location} />
                 </section>
+
+                {/* Payment Breakdown */}
+                <PaymentBreakdown booking={booking} />
               </section>
             </div>
           ) : (
@@ -404,9 +573,19 @@ export function BookingDetailsModal({ booking, onClose }) {
 
               <section className="space-y-2">
                 <h4 className="text-sm font-semibold text-orange-400">Request Details</h4>
+
+                {/* Vehicle Information Section */}
+                <VehicleSection
+                  vehicleType={booking.vehicle_type}
+                  vehicleBrand={booking.request?.vehicle_brand}
+                  vehicleModel={booking.request?.vehicle_model}
+                />
+
+                {/* Services Section with Badges */}
+                <ServicesSection servicesList={booking.services_list} />
+
                 <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2">
                   <DetailItem label="Request Status" value={formatLabel(booking.request_details?.request_status)} />
-                  <DetailItem label="Service" value={booking.request_details?.service_name || "—"} />
                   <DetailItem label="Quoted Price" value={formatCurrency(booking.request_details?.quoted_price)} />
                 </div>
 
@@ -434,6 +613,9 @@ export function BookingDetailsModal({ booking, onClose }) {
                 <h4 className="text-sm font-semibold text-orange-400">Service Location</h4>
                 <LocationDetails location={booking.service_location} />
               </section>
+
+              {/* Payment Breakdown */}
+              <PaymentBreakdown booking={booking} />
             </div>
           )}
         </div>

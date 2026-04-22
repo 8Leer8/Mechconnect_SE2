@@ -266,17 +266,13 @@ export function VerificationQueuePage() {
                 setActiveFilter(filter.key);
                 setCurrentPage(1);
               }}
+              className={`rounded-lg border px-3 py-1.5 text-sm transition ${
+                activeFilter === filter.key
+                  ? "border-primary/40 bg-primary/10 text-primary"
+                  : "border-border bg-card text-muted-foreground hover:bg-muted"
+              }`}
             >
-              <Badge
-                className={cn(
-                  "cursor-pointer px-3 py-1.5",
-                  activeFilter === filter.key
-                    ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                    : "bg-card text-muted-foreground hover:bg-muted",
-                )}
-              >
-                {filter.label} ({isLoading ? "..." : tabCounts[filter.key] || 0})
-              </Badge>
+              {filter.label} ({isLoading ? "..." : tabCounts[filter.key] || 0})
             </button>
           ))}
         </div>
