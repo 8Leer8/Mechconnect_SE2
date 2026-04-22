@@ -567,6 +567,49 @@ export default function ShopOwnerProfileScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Privacy, Terms, About */}
+        <View style={clientProfileStyles.settingsCard}>
+          <TouchableOpacity
+            style={clientProfileStyles.settingRow}
+            activeOpacity={0.7}
+            onPress={() => router.push('/shopowner/others/privacy')}
+          >
+            <View style={[clientProfileStyles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
+              <FontAwesome name="shield" size={16} color="#FF8C00" />
+            </View>
+            <ThemedText style={clientProfileStyles.settingText}>Privacy & Security</ThemedText>
+            <FontAwesome name="chevron-right" size={14} color="#8E8E93" />
+          </TouchableOpacity>
+
+          <View style={clientProfileStyles.settingRowBorder} />
+
+          <TouchableOpacity
+            style={clientProfileStyles.settingRow}
+            activeOpacity={0.7}
+            onPress={() => router.push('/shopowner/others/terms')}
+          >
+            <View style={[clientProfileStyles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
+              <FontAwesome name="file-text" size={16} color="#FF8C00" />
+            </View>
+            <ThemedText style={clientProfileStyles.settingText}>Terms & Regulation</ThemedText>
+            <FontAwesome name="chevron-right" size={14} color="#8E8E93" />
+          </TouchableOpacity>
+
+          <View style={clientProfileStyles.settingRowBorder} />
+
+          <TouchableOpacity
+            style={clientProfileStyles.settingRow}
+            activeOpacity={0.7}
+            onPress={() => router.push('/shopowner/others/about')}
+          >
+            <View style={[clientProfileStyles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
+              <FontAwesome name="info-circle" size={16} color="#FF8C00" />
+            </View>
+            <ThemedText style={clientProfileStyles.settingText}>About</ThemedText>
+            <FontAwesome name="chevron-right" size={14} color="#8E8E93" />
+          </TouchableOpacity>
+        </View>
+
         {/* Logout button, separated */}
         <TouchableOpacity
           style={[clientProfileStyles.logoutBtn, { marginTop: 16 }]}
