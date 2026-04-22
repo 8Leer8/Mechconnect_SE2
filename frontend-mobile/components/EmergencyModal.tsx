@@ -24,11 +24,21 @@ import { useLocation } from '@/context/LocationContext';
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const { height } = Dimensions.get('window');
 const MAX_EMERGENCY_PHOTOS = 5;
+type EmergencyLocationData = {
+  latitude: number;
+  longitude: number;
+  address?: string;
+  street_name?: string;
+  subdivision_village?: string;
+  barangay?: string;
+  city_municipality?: string;
+  landmark?: string;
+};
 const EMPTY_DRAFT = {
   description: '',
   concernPictures: [] as string[],
-  autoLocation: null as { latitude: number; longitude: number; address?: string } | null,
-  pinnedLocation: null as { latitude: number; longitude: number; address?: string } | null,
+  autoLocation: null as EmergencyLocationData | null,
+  pinnedLocation: null as EmergencyLocationData | null,
   locationMode: 'auto' as 'auto' | 'pinned',
   vehicleType: '',
   vehicleBrand: '',
@@ -63,11 +73,21 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
     latitude: number;
     longitude: number;
     address?: string;
+    street_name?: string;
+    subdivision_village?: string;
+    barangay?: string;
+    city_municipality?: string;
+    landmark?: string;
   } | null>(emergencyDraftCache.autoLocation);
   const [pinnedLocation, setPinnedLocation] = useState<{
     latitude: number;
     longitude: number;
     address?: string;
+    street_name?: string;
+    subdivision_village?: string;
+    barangay?: string;
+    city_municipality?: string;
+    landmark?: string;
   } | null>(emergencyDraftCache.pinnedLocation);
   const [locationMode, setLocationMode] = useState<'auto' | 'pinned'>(emergencyDraftCache.locationMode);
   const [fetchingLocation, setFetchingLocation] = useState(false);
@@ -135,6 +155,30 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
 
   const activeLocation = locationMode === 'pinned' && pinnedLocation ? pinnedLocation : autoLocation;
 
+  const buildLocationDataFromGeocode = (
+    latitude: number,
+    longitude: number,
+    result?: Location.LocationGeocodedAddress | null
+  ): EmergencyLocationData => {
+    const streetName = result?.street || result?.name || '';
+    const subdivisionVillage = result?.district || result?.subregion || '';
+    const barangay = result?.district || result?.subregion || '';
+    const cityMunicipality = result?.city || result?.subregion || result?.region || '';
+    const landmark = result?.name || '';
+    const compactAddress = [streetName, barangay || cityMunicipality].filter(Boolean).join(', ');
+
+    return {
+      latitude,
+      longitude,
+      address: compactAddress || 'Location detected',
+      street_name: streetName || undefined,
+      subdivision_village: subdivisionVillage || undefined,
+      barangay: barangay || undefined,
+      city_municipality: cityMunicipality || undefined,
+      landmark: landmark || undefined,
+    };
+  };
+
   useEffect(() => {
     const isOpening = visible && !wasVisibleRef.current;
     wasVisibleRef.current = visible;
@@ -193,13 +237,13 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
         longitude: currentLocation.coords.longitude,
       });
 
-      setAutoLocation({
-        latitude: currentLocation.coords.latitude,
-        longitude: currentLocation.coords.longitude,
-        address: addressResult
-          ? `${addressResult.street || ''}, ${addressResult.district || addressResult.city || ''}`
-          : 'Location detected',
-      });
+      setAutoLocation(
+        buildLocationDataFromGeocode(
+          currentLocation.coords.latitude,
+          currentLocation.coords.longitude,
+          addressResult
+        )
+      );
     } catch (error) {
       console.error('Error getting location:', error);
       showNotification({ type: 'error', message: 'Failed to get your current location. Please try again.' });
@@ -353,11 +397,38 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
         formData.append('description', description.trim());
       }
 
+      let resolvedLocationData: EmergencyLocationData = {
+        ...activeLocation,
+      };
+
+      if (!resolvedLocationData.barangay || !resolvedLocationData.city_municipality || !resolvedLocationData.street_name) {
+        try {
+          const [reverseResult] = await Location.reverseGeocodeAsync({
+            latitude: activeLocation.latitude,
+            longitude: activeLocation.longitude,
+          });
+          const geocodedData = buildLocationDataFromGeocode(
+            activeLocation.latitude,
+            activeLocation.longitude,
+            reverseResult
+          );
+          resolvedLocationData = {
+            ...resolvedLocationData,
+            ...geocodedData,
+            address: resolvedLocationData.address || geocodedData.address,
+          };
+        } catch {
+          // Keep available location text even if reverse geocoding fails.
+        }
+      }
+
       // Add location data
       const serviceLocationData = {
-        street_name: activeLocation.address || `${activeLocation.latitude}, ${activeLocation.longitude}`,
-        barangay: 'Emergency Location',
-        city_municipality: 'Emergency',
+        street_name: resolvedLocationData.street_name || resolvedLocationData.address || `${activeLocation.latitude}, ${activeLocation.longitude}`,
+        subdivision_village: resolvedLocationData.subdivision_village || undefined,
+        barangay: resolvedLocationData.barangay || 'Unknown Barangay',
+        city_municipality: resolvedLocationData.city_municipality || 'Unknown City',
+        landmark: resolvedLocationData.landmark || undefined,
         latitude: activeLocation.latitude,
         longitude: activeLocation.longitude,
       };

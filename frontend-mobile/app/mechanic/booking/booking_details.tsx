@@ -62,6 +62,8 @@ interface BookingDetail {
     barangay: string;
     city_municipality: string;
     landmark?: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
   } | null;
   active_details?: {
     before_picture?: string | null;
@@ -223,6 +225,11 @@ export default function BookingDetailScreen() {
   const [chatPreview, setChatPreview] = useState<string | null>(null);
   const [visibleBeforePhotoCount, setVisibleBeforePhotoCount] = useState(6);
   const [visibleAfterPhotoCount, setVisibleAfterPhotoCount] = useState(6);
+  const [resolvedEmergencyLocation, setResolvedEmergencyLocation] = useState<{
+    street_name?: string;
+    barangay?: string;
+    city_municipality?: string;
+  } | null>(null);
   const routerHook = useRouter();
   const isMechanicShopSource = source === 'mechanic_shop';
   const [quotation, setQuotation] = useState<any | null>(null);
@@ -233,6 +240,70 @@ export default function BookingDetailScreen() {
     setVisibleBeforePhotoCount(6);
     setVisibleAfterPhotoCount(6);
   }, [booking?.id]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const isEmergencyPlaceholder = (value: string | null | undefined) => {
+      const text = String(value || '').trim().toLowerCase();
+      return text === 'emergency' || text === 'emergency location';
+    };
+
+    const resolveEmergencyLocationText = async () => {
+      const isEmergency = String(booking?.request?.type || '').toLowerCase() === 'emergency';
+      if (!isEmergency || !booking?.service_location) {
+        setResolvedEmergencyLocation(null);
+        return;
+      }
+
+      const street = booking.service_location.street_name;
+      const barangay = booking.service_location.barangay;
+      const city = booking.service_location.city_municipality;
+      const needsOverride =
+        isEmergencyPlaceholder(street) ||
+        isEmergencyPlaceholder(barangay) ||
+        isEmergencyPlaceholder(city);
+
+      if (!needsOverride) {
+        setResolvedEmergencyLocation(null);
+        return;
+      }
+
+      const lat =
+        (booking.service_location as any)?.latitude ??
+        (booking.location as any)?.lat;
+      const lng =
+        (booking.service_location as any)?.longitude ??
+        (booking.location as any)?.lng;
+
+      if (lat == null || lng == null) {
+        setResolvedEmergencyLocation(null);
+        return;
+      }
+
+      try {
+        const [addressResult] = await Location.reverseGeocodeAsync({
+          latitude: Number(lat),
+          longitude: Number(lng),
+        });
+
+        if (!isMounted) return;
+
+        setResolvedEmergencyLocation({
+          street_name: addressResult?.street || addressResult?.name || street || undefined,
+          barangay: addressResult?.district || addressResult?.subregion || barangay || undefined,
+          city_municipality: addressResult?.city || addressResult?.subregion || addressResult?.region || city || undefined,
+        });
+      } catch {
+        if (isMounted) setResolvedEmergencyLocation(null);
+      }
+    };
+
+    resolveEmergencyLocationText();
+    return () => {
+      isMounted = false;
+    };
+  }, [booking]);
 
   useEffect(() => {
     let mounted = true;
@@ -1393,6 +1464,12 @@ export default function BookingDetailScreen() {
     (booking.request as any)?.request_details?.vehicle_model ||
     (booking.request as any)?.request_details?.vehicle?.model ||
     null;
+  const displayServiceLocation = booking.service_location
+    ? {
+        ...booking.service_location,
+        ...resolvedEmergencyLocation,
+      }
+    : null;
 
   const convenienceFeeTotal = convenienceBreakdown ? convenienceBreakdown.totalConvenienceFee : 0;
   const totalFee = convenienceFeeTotal + quotationEstimatedTotal;
@@ -2161,40 +2238,40 @@ export default function BookingDetailScreen() {
             <ThemedText style={styles.sectionTitle}>Service Location</ThemedText>
           </View>
 
-          {booking.service_location ? (
+          {displayServiceLocation ? (
             <>
               <View style={styles.locationDetails}>
                 <View style={styles.locationRow}>
                   <ThemedText style={styles.locationLabel}>Street</ThemedText>
                   <ThemedText style={styles.locationValue}>
-                    {booking.service_location.street_name}
+                    {displayServiceLocation.street_name}
                   </ThemedText>
                 </View>
-                {booking.service_location.subdivision_village && (
+                {displayServiceLocation.subdivision_village && (
                   <View style={styles.locationRow}>
                     <ThemedText style={styles.locationLabel}>Subdivision</ThemedText>
                     <ThemedText style={styles.locationValue}>
-                      {booking.service_location.subdivision_village}
+                      {displayServiceLocation.subdivision_village}
                     </ThemedText>
                   </View>
                 )}
                 <View style={styles.locationRow}>
                   <ThemedText style={styles.locationLabel}>Barangay</ThemedText>
                   <ThemedText style={styles.locationValue}>
-                    {booking.service_location.barangay}
+                    {displayServiceLocation.barangay}
                   </ThemedText>
                 </View>
                 <View style={styles.locationRow}>
                   <ThemedText style={styles.locationLabel}>City</ThemedText>
                   <ThemedText style={styles.locationValue}>
-                    {booking.service_location.city_municipality}
+                    {displayServiceLocation.city_municipality}
                   </ThemedText>
                 </View>
-                {booking.service_location.landmark && (
+                {displayServiceLocation.landmark && (
                   <View style={styles.locationRow}>
                     <ThemedText style={styles.locationLabel}>Landmark</ThemedText>
                     <ThemedText style={styles.locationValue}>
-                      {booking.service_location.landmark}
+                      {displayServiceLocation.landmark}
                     </ThemedText>
                   </View>
                 )}
@@ -2228,7 +2305,7 @@ export default function BookingDetailScreen() {
                   <View style={styles.navigateTextContainer}>
                     <ThemedText style={styles.navigateTitle}>Navigation unavailable after job completion</ThemedText>
                     <ThemedText style={styles.navigateSubtitle}>
-                      📍 Barangay {booking.location?.barangay || booking.service_location?.barangay || 'hidden'}
+                      📍 Barangay {booking.location?.barangay || displayServiceLocation?.barangay || 'hidden'}
                     </ThemedText>
                   </View>
                   <FontAwesome name="ban" size={14} color="#8E8E93" />

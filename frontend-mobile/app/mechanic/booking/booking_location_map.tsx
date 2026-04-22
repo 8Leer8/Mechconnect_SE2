@@ -129,6 +129,11 @@ function toValidCoordinate(lat: unknown, lng: unknown): Coordinates | null {
   return { latitude, longitude };
 }
 
+function isEmergencyPlaceholderText(value: unknown): boolean {
+  const text = String(value || '').trim().toLowerCase();
+  return text === 'emergency' || text === 'emergency location';
+}
+
 function hasValidCoord(lat: unknown, lng: unknown): lat is number {
   return toValidCoordinate(lat, lng) !== null;
 }
@@ -450,6 +455,18 @@ export default function BookingLocationMapScreen() {
       return null;
     }
 
+    const serviceLat = bookingData?.service_location?.latitude;
+    const serviceLng = bookingData?.service_location?.longitude;
+    if (hasValidCoord(serviceLat, serviceLng)) {
+      return toValidCoordinate(serviceLat, serviceLng);
+    }
+
+    const bookingLocLat = bookingData?.location?.lat;
+    const bookingLocLng = bookingData?.location?.lng;
+    if (hasValidCoord(bookingLocLat, bookingLocLng)) {
+      return toValidCoordinate(bookingLocLat, bookingLocLng);
+    }
+
     const broadcastLat =
       bookingData?.request?.broadcast_request?.latitude ??
       bookingData?.broadcast_latitude ??
@@ -466,18 +483,25 @@ export default function BookingLocationMapScreen() {
     const loc = bookingData.service_location;
     if (!loc) return null;
 
-    if (hasValidCoord(loc.latitude, loc.longitude)) {
-      return toValidCoordinate(loc.latitude, loc.longitude);
+    const street = String(loc.street_name || '').trim();
+    const barangay = String(loc.barangay || '').trim();
+    const city = String(loc.city_municipality || '').trim();
+    const looksLikeEmergencyPlaceholder =
+      isEmergencyPlaceholderText(street) ||
+      isEmergencyPlaceholderText(barangay) ||
+      isEmergencyPlaceholderText(city);
+
+    if (looksLikeEmergencyPlaceholder) {
+      return null;
     }
 
-    const street = String(loc.street_name || '').trim();
     const isPlusCode = street.includes('+') || /^[A-Z0-9]{4,8}\+[A-Z0-9]{2,3}$/i.test(street);
 
     if (!isPlusCode) {
       const strictAddress = [
         street,
-        loc.barangay,
-        loc.city_municipality,
+        barangay,
+        city,
         'Philippines',
       ]
         .filter(Boolean)
@@ -501,7 +525,6 @@ export default function BookingLocationMapScreen() {
       }
     }
 
-    const city = String(loc.city_municipality || '').trim();
     if (city) {
       const cityQuery = encodeURIComponent(`${city}, Philippines`);
       const cityUrl = `https://nominatim.openstreetmap.org/search?q=${cityQuery}&format=json&limit=1&countrycodes=ph`;

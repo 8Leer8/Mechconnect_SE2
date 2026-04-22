@@ -33,7 +33,11 @@ interface Booking {
     id: number;
     type: string;
     created_at: string;
-    assigned_mechanics?: { id: number; role: string; mechanic?: { id: number } }[];
+    assigned_mechanics?: {
+      id: number;
+      role: string;
+      mechanic?: { id: number; firstname?: string; lastname?: string; username?: string };
+    }[];
   };
   provider?: { id: number; name: string; email: string } | null;
   service_location?: {
@@ -74,7 +78,16 @@ type HomeResponse = {
   pending_requests: PendingRequest[];
 };
 
-type TabType = 'all' | 'pending' | 'booked' | 'on_going' | 'completed' | 'cancelled' | 'reworked' | 'disputed';
+type TabType =
+  | 'all'
+  | 'pending'
+  | 'booked'
+  | 'assigned'
+  | 'on_going'
+  | 'completed'
+  | 'cancelled'
+  | 'reworked'
+  | 'disputed';
 type RequestTabType = 'custom' | 'direct' | 'broadcast';
 
 type GroupedResponse = {
@@ -157,6 +170,8 @@ export default function ShopOwnerJobsScreen() {
           ? 'all'
           : activeTab === 'booked'
           ? 'accepted'
+          : activeTab === 'assigned'
+          ? 'accepted'
           : activeTab === 'on_going'
           ? 'on_going'
           : activeTab;
@@ -170,9 +185,20 @@ export default function ShopOwnerJobsScreen() {
       );
       if (!res.ok) throw new Error(`Failed to fetch ${activeTab} bookings`);
       const data = (await res.json()) as any;
-      setBookings(data.bookings || []);
-      setTotalCount(data.total_count || 0);
-      setTotalPages(data.total_pages || 1);
+      const fetchedBookings = data.bookings || [];
+      const filteredBookings =
+        activeTab === 'booked'
+          ? fetchedBookings.filter((booking: Booking) => !hasRequestAssignments(booking))
+          : activeTab === 'assigned'
+          ? fetchedBookings.filter((booking: Booking) => hasRequestAssignments(booking))
+          : fetchedBookings;
+      setBookings(filteredBookings);
+      setTotalCount(
+        activeTab === 'booked' || activeTab === 'assigned'
+          ? filteredBookings.length
+          : data.total_count || 0
+      );
+      setTotalPages(activeTab === 'booked' || activeTab === 'assigned' ? 1 : data.total_pages || 1);
 
       if (statusQuery === 'cancelled') {
         try {
@@ -194,18 +220,23 @@ export default function ShopOwnerJobsScreen() {
       }
 
       if (data.tab_counts) {
-        setCounts({
-          all: data.total_count || 0,
-          booked: data.tab_counts.accepted || 0,
-          on_going:
-            (data.tab_counts.on_the_way || 0) +
-            (data.tab_counts.at_location || 0) +
-            (data.tab_counts.diagnosing || 0) +
-            (data.tab_counts.active || 0),
-          completed: data.tab_counts.completed || 0,
-          cancelled: data.tab_counts.cancelled || 0,
-          reworked: data.tab_counts.reworked || 0,
-          disputed: data.tab_counts.disputed || 0,
+        const acceptedCount = data.tab_counts.accepted || 0;
+        setCounts((prev) => {
+          const assignedCount = activeTab === 'assigned' ? filteredBookings.length : prev.assigned || 0;
+          return {
+            all: data.total_count || 0,
+            booked: Math.max(0, acceptedCount - assignedCount),
+            assigned: assignedCount,
+            on_going:
+              (data.tab_counts.on_the_way || 0) +
+              (data.tab_counts.at_location || 0) +
+              (data.tab_counts.diagnosing || 0) +
+              (data.tab_counts.active || 0),
+            completed: data.tab_counts.completed || 0,
+            cancelled: data.tab_counts.cancelled || 0,
+            reworked: data.tab_counts.reworked || 0,
+            disputed: data.tab_counts.disputed || 0,
+          };
         });
       }
     } catch (e: any) {
@@ -334,26 +365,40 @@ export default function ShopOwnerJobsScreen() {
     return Array.isArray(am) && am.length > 0;
   };
 
-  /** Booked tab: still `accepted` in API, but show "Assigned" once mechanics are linked. */
+  /** Shop owner jobs view: show "Assigned" once mechanics are linked. */
   const getCardStatusLabel = (b: Booking) => {
-    if (activeTab === 'booked' && b.status === 'accepted' && hasRequestAssignments(b)) {
+    if (b.status === 'accepted' && hasRequestAssignments(b)) {
       return 'Assigned';
     }
     return getStatusLabel(b.status);
   };
 
   const getCardStatusColor = (b: Booking) => {
-    if (activeTab === 'booked' && b.status === 'accepted' && hasRequestAssignments(b)) {
+    if (b.status === 'accepted' && hasRequestAssignments(b)) {
       return '#34C759';
     }
     return getStatusColor(b.status);
   };
 
   const getCardStatusIcon = (b: Booking) => {
-    if (activeTab === 'booked' && b.status === 'accepted' && hasRequestAssignments(b)) {
+    if (b.status === 'accepted' && hasRequestAssignments(b)) {
       return 'users';
     }
     return getStatusIcon(b.status);
+  };
+
+  const getAssignedMechanicPreview = (b: Booking) => {
+    const assigned = b.request?.assigned_mechanics || [];
+    if (assigned.length === 0) return null;
+
+    const firstMechanic = assigned[0]?.mechanic;
+    const firstName = firstMechanic?.firstname || '';
+    const lastName = firstMechanic?.lastname || '';
+    const fullName = `${firstName} ${lastName}`.trim();
+    const displayName = fullName || firstMechanic?.username || 'Assigned mechanic';
+
+    if (assigned.length === 1) return displayName;
+    return `${displayName} +${assigned.length - 1} more`;
   };
 
   const formatDate = (d: string) =>
@@ -451,6 +496,7 @@ export default function ShopOwnerJobsScreen() {
           };
         })
       );
+      await fetchBookings({ silent: true });
     } catch {
       showNotification({ type: 'error', message: 'Network error' });
     } finally {
@@ -493,6 +539,7 @@ export default function ShopOwnerJobsScreen() {
           };
         })
       );
+      await fetchBookings({ silent: true });
     } catch {
       showNotification({ type: 'error', message: 'Network error' });
     }
@@ -602,6 +649,7 @@ export default function ShopOwnerJobsScreen() {
     { key: 'all', label: 'All', icon: 'th-list' },
     { key: 'pending', label: 'Pending', icon: 'envelope' },
     { key: 'booked', label: 'Booked', icon: 'calendar-check-o' },
+    { key: 'assigned', label: 'Assigned', icon: 'users' },
     { key: 'on_going', label: 'On Going', icon: 'play-circle' },
     { key: 'completed', label: 'Completed', icon: 'check-circle' },
     { key: 'cancelled', label: 'Cancelled', icon: 'times-circle' },
@@ -933,6 +981,14 @@ export default function ShopOwnerJobsScreen() {
                     <FontAwesome name="calendar-o" size={13} color="#888" />
                     <ThemedText style={styles.infoText}>{formatDate(b.booked_at)}</ThemedText>
                   </View>
+                  {hasRequestAssignments(b) ? (
+                    <View style={styles.infoRow}>
+                      <FontAwesome name="users" size={13} color="#888" />
+                      <ThemedText style={styles.infoText} numberOfLines={1}>
+                        {getAssignedMechanicPreview(b)}
+                      </ThemedText>
+                    </View>
+                  ) : null}
                 </View>
                 <View style={styles.cardFooter}>
                   <ThemedText style={styles.amount}>
@@ -1024,6 +1080,14 @@ export default function ShopOwnerJobsScreen() {
                     <FontAwesome name="calendar-o" size={13} color="#888" />
                     <ThemedText style={styles.infoText}>{formatDate(b.booked_at)}</ThemedText>
                   </View>
+                  {hasRequestAssignments(b) ? (
+                    <View style={styles.infoRow}>
+                      <FontAwesome name="users" size={13} color="#888" />
+                      <ThemedText style={styles.infoText} numberOfLines={1}>
+                        {getAssignedMechanicPreview(b)}
+                      </ThemedText>
+                    </View>
+                  ) : null}
                 </View>
 
                 {/* Footer */}

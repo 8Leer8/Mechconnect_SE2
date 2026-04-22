@@ -160,7 +160,7 @@ export default function MapScreen() {
   const lastBroadcastFetchLocationRef = useRef<{ latitude: number; longitude: number } | null>(null);
   const { showNotification } = useNotification();
   const pathname = usePathname();
-  const isShopOwnerMap = pathname.includes('(shopownerTabs)');
+  const isShopOwnerMap = pathname.includes('(shopownerTabs)') || pathname.includes('/main/shop');
 
   const [broadcasts, setBroadcasts] = useState<BroadcastRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -666,7 +666,32 @@ export default function MapScreen() {
   return (
     <ThemedView style={styles.container}>
       <View style={styles.header}>
-        <ThemedText style={styles.headerTitle}>Nearby Jobs</ThemedText>
+        <View>
+          <ThemedText style={styles.headerTitle}>Nearby Jobs</ThemedText>
+          {isShopOwnerMap && (
+            <TouchableOpacity
+              onPress={() => router.push('/(shopownerTabs)/main/emergency')}
+              style={{
+                marginTop: 8,
+                alignSelf: 'flex-start',
+                paddingHorizontal: 10,
+                paddingVertical: 5,
+                borderRadius: 12,
+                backgroundColor: '#FF3B301F',
+                borderWidth: 1,
+                borderColor: '#FF3B3044',
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              <FontAwesome name="exclamation-triangle" size={12} color="#FF3B30" />
+              <ThemedText style={{ color: '#FFD2CC', fontSize: 12, fontWeight: '600' }}>
+                Emergency Bookings
+              </ThemedText>
+            </TouchableOpacity>
+          )}
+        </View>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <TouchableOpacity style={styles.locationButton}>
             <FontAwesome name="crosshairs" size={20} color="#fff" />
