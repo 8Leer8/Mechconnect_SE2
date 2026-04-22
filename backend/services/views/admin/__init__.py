@@ -4,6 +4,14 @@ from .service_admin_views import (
     admin_list_specialties,
     admin_update_service,
     admin_update_specialty,
+    admin_create_service,
+    admin_create_specialty,
+    admin_delete_service,
+    admin_delete_specialty,
+    admin_create_category,
+    admin_list_categories,
+    admin_update_category,
+    admin_delete_category,
 )
 
 __all__ = [
@@ -12,4 +20,12 @@ __all__ = [
     'admin_list_specialties',
     'admin_update_service',
     'admin_update_specialty',
+    'admin_create_service',
+    'admin_create_specialty',
+    'admin_delete_service',
+    'admin_delete_specialty',
+    'admin_create_category',
+    'admin_list_categories',
+    'admin_update_category',
+    'admin_delete_category',
 ]

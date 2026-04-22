@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Pencil, Plus, X } from "lucide-react";
+import { Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { AdminLayout } from "../AdminLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,19 @@ import {
   fetchAdminSpecialties,
   updateAdminService,
   updateAdminSpecialty,
+  createAdminService,
+  createAdminSpecialty,
+  deleteAdminService,
+  deleteAdminSpecialty,
+  createAdminCategory,
+  updateAdminCategory,
+  deleteAdminCategory,
+  fetchAdminCategories,
 } from "@/services/adminDataService";
+import { AddServiceModal } from "@/components/modals/AddServiceModal";
+import { AddSpecialtyModal } from "@/components/modals/AddSpecialtyModal";
+import { DeleteConfirmationModal } from "@/components/modals/DeleteConfirmationModal";
+import { ManageCategoriesModal } from "@/components/modals/ManageCategoriesModal";
 
 const ITEMS_PER_PAGE = 10;
 const TAB_ITEMS = [
@@ -159,14 +171,36 @@ export function ServiceCatalogPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
 
+  // Search and filter states
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("");
+
+  // Categories state - fetched from API
+  const [categories, setCategories] = useState([]);
+
+  // Add modal states
+  const [isAddServiceModalOpen, setIsAddServiceModalOpen] = useState(false);
+  const [isAddSpecialtyModalOpen, setIsAddSpecialtyModalOpen] = useState(false);
+  const [addSaveError, setAddSaveError] = useState("");
+
+  // Delete confirmation states
+  const [deleteModalState, setDeleteModalState] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Manage categories modal state
+  const [isManageCategoriesModalOpen, setIsManageCategoriesModalOpen] = useState(false);
+  const [categoryProcessError, setCategoryProcessError] = useState("");
+  const [isProcessingCategory, setIsProcessingCategory] = useState(false);
+
   useEffect(() => {
     async function loadCatalog() {
       setIsLoading(true);
       setLoadError("");
 
-      const [servicesResult, specialtiesResult] = await Promise.allSettled([
+      const [servicesResult, specialtiesResult, categoriesResult] = await Promise.allSettled([
         fetchAdminServices({ limit: 200 }),
         fetchAdminSpecialties({ limit: 200 }),
+        fetchAdminCategories(),
       ]);
 
       if (servicesResult.status === "fulfilled") {
@@ -181,7 +215,13 @@ export function ServiceCatalogPage() {
         setSpecialties([]);
       }
 
-      if (servicesResult.status === "rejected" || specialtiesResult.status === "rejected") {
+      if (categoriesResult.status === "fulfilled") {
+        setCategories(categoriesResult.value?.results?.map((c) => c.name) || []);
+      } else {
+        setCategories([]);
+      }
+
+      if (servicesResult.status === "rejected" || specialtiesResult.status === "rejected" || categoriesResult.status === "rejected") {
         setLoadError("Some catalog data could not be loaded.");
       }
 
@@ -191,20 +231,52 @@ export function ServiceCatalogPage() {
     loadCatalog();
   }, []);
 
+  // Filter services based on search and category
+  const filteredServices = useMemo(() => {
+    return services.filter((service) => {
+      const matchesSearch =
+        searchQuery === "" ||
+        service.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        service.description?.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesCategory =
+        selectedCategory === "" || service.category === selectedCategory;
+      return matchesSearch && matchesCategory;
+    });
+  }, [services, searchQuery, selectedCategory]);
+
+  // Filter specialties based on search
+  const filteredSpecialties = useMemo(() => {
+    return specialties.filter(
+      (specialty) =>
+        searchQuery === "" ||
+        specialty.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        specialty.description?.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+  }, [specialties, searchQuery]);
+
   const paginatedServices = useMemo(() => {
     const start = (servicesPage - 1) * ITEMS_PER_PAGE;
-    return services.slice(start, start + ITEMS_PER_PAGE);
-  }, [services, servicesPage]);
+    return filteredServices.slice(start, start + ITEMS_PER_PAGE);
+  }, [filteredServices, servicesPage]);
 
   const paginatedSpecialties = useMemo(() => {
     const start = (specialtiesPage - 1) * ITEMS_PER_PAGE;
-    return specialties.slice(start, start + ITEMS_PER_PAGE);
-  }, [specialties, specialtiesPage]);
+    return filteredSpecialties.slice(start, start + ITEMS_PER_PAGE);
+  }, [filteredSpecialties, specialtiesPage]);
 
   const tabCounts = useMemo(
-    () => ({ services: services.length, specialties: specialties.length }),
-    [services.length, specialties.length],
+    () => ({
+      services: filteredServices.length,
+      specialties: filteredSpecialties.length,
+    }),
+    [filteredServices.length, filteredSpecialties.length]
   );
+
+  // Reset pagination when search/filter changes
+  useEffect(() => {
+    setServicesPage(1);
+    setSpecialtiesPage(1);
+  }, [searchQuery, selectedCategory]);
 
   function handleOpenEditService(service) {
     setModalState({ type: "service", id: service.id });
@@ -292,6 +364,188 @@ export function ServiceCatalogPage() {
     }
   }
 
+  // Add handlers
+  async function handleAddService(data) {
+    setIsSaving(true);
+    setAddSaveError("");
+
+    try {
+      const newService = await createAdminService(data);
+      setServices((prev) => [newService, ...prev]);
+      setIsAddServiceModalOpen(false);
+    } catch (error) {
+      setAddSaveError(error.message || "Failed to create service.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleAddSpecialty(data) {
+    setIsSaving(true);
+    setAddSaveError("");
+
+    try {
+      const newSpecialty = await createAdminSpecialty(data);
+      setSpecialties((prev) => [newSpecialty, ...prev]);
+      setIsAddSpecialtyModalOpen(false);
+    } catch (error) {
+      setAddSaveError(error.message || "Failed to create specialty.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleAddCategory(newCategory) {
+    try {
+      await createAdminCategory({ name: newCategory });
+      // Refresh categories list to include the new category
+      setCategories((prev) => [...prev, newCategory]);
+    } catch (error) {
+      console.error("Failed to create category:", error);
+      throw error;
+    }
+  }
+
+  // Category management handlers
+  async function handleUpdateCategory(oldCategoryName, newCategoryName) {
+    if (oldCategoryName === newCategoryName) return;
+
+    setIsProcessingCategory(true);
+    setCategoryProcessError("");
+
+    try {
+      // Find the category ID from the full categories list
+      const categoriesResponse = await fetchAdminCategories();
+      const categoryList = categoriesResponse?.results || [];
+      const category = categoryList.find((c) => c.name === oldCategoryName);
+
+      if (!category) {
+        setCategoryProcessError("Category not found.");
+        return;
+      }
+
+      await updateAdminCategory(category.id, { name: newCategoryName });
+
+      // Update categories list
+      setCategories((prev) =>
+        prev.map((cat) => (cat === oldCategoryName ? newCategoryName : cat))
+      );
+
+      // Update services that use this category
+      setServices((prev) =>
+        prev.map((service) =>
+          service.category === oldCategoryName
+            ? { ...service, category: newCategoryName }
+            : service
+        )
+      );
+    } catch (error) {
+      const message = error.message || "Failed to update category.";
+      setCategoryProcessError(message);
+    } finally {
+      setIsProcessingCategory(false);
+    }
+  }
+
+  async function handleDeleteCategory(categoryName) {
+    setIsProcessingCategory(true);
+    setCategoryProcessError("");
+
+    try {
+      // Find the category ID from the full categories list
+      const categoriesResponse = await fetchAdminCategories();
+      const categoryList = categoriesResponse?.results || [];
+      const category = categoryList.find((c) => c.name === categoryName);
+
+      if (!category) {
+        setCategoryProcessError("Category not found.");
+        return;
+      }
+
+      await deleteAdminCategory(category.id);
+
+      // Remove from categories list
+      setCategories((prev) => prev.filter((cat) => cat !== categoryName));
+
+      // Update services that use this category (set to null/uncategorized)
+      setServices((prev) =>
+        prev.map((service) =>
+          service.category === categoryName
+            ? { ...service, category: null, category_id: null }
+            : service
+        )
+      );
+    } catch (error) {
+      const message = error.message || "Failed to delete category.";
+      setCategoryProcessError(message);
+    } finally {
+      setIsProcessingCategory(false);
+    }
+  }
+
+  function handleOpenManageCategories() {
+    setCategoryProcessError("");
+    setIsManageCategoriesModalOpen(true);
+  }
+
+  function handleCloseManageCategories() {
+    if (isProcessingCategory) return;
+    setIsManageCategoriesModalOpen(false);
+    setCategoryProcessError("");
+  }
+
+  // Delete handlers
+  function handleOpenDeleteService(service) {
+    setDeleteModalState({
+      type: "service",
+      id: service.id,
+      name: service.name,
+    });
+  }
+
+  function handleOpenDeleteSpecialty(specialty) {
+    setDeleteModalState({
+      type: "specialty",
+      id: specialty.id,
+      name: specialty.name,
+    });
+  }
+
+  function handleCloseDeleteModal() {
+    if (isDeleting) {
+      return;
+    }
+    setDeleteModalState(null);
+  }
+
+  async function handleConfirmDelete() {
+    if (!deleteModalState) {
+      return;
+    }
+
+    setIsDeleting(true);
+
+    try {
+      if (deleteModalState.type === "service") {
+        await deleteAdminService(deleteModalState.id);
+        setServices((prev) =>
+          prev.filter((item) => item.id !== deleteModalState.id)
+        );
+      } else {
+        await deleteAdminSpecialty(deleteModalState.id);
+        setSpecialties((prev) =>
+          prev.filter((item) => item.id !== deleteModalState.id)
+        );
+      }
+      setDeleteModalState(null);
+    } catch (error) {
+      // Error will be shown via the modal or can be handled here
+      console.error("Delete failed:", error);
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
   return (
     <AdminLayout title="Service & Specialty Catalog">
       <div className="space-y-4">
@@ -303,9 +557,15 @@ export function ServiceCatalogPage() {
                 Maintain service offerings and specialty definitions with smooth in-page editing.
               </CardDescription>
             </div>
-            <Button disabled>
+            <Button
+              onClick={() =>
+                activeTab === "services"
+                  ? setIsAddServiceModalOpen(true)
+                  : setIsAddSpecialtyModalOpen(true)
+              }
+            >
               <Plus className="size-4" />
-              Add Item (Soon)
+              {activeTab === "services" ? "Add Service" : "Add Specialty"}
             </Button>
           </CardHeader>
           {loadError && <CardContent><p className="text-sm text-red-600">{loadError}</p></CardContent>}
@@ -316,7 +576,10 @@ export function ServiceCatalogPage() {
             <button
               key={tab.key}
               type="button"
-              onClick={() => setActiveTab(tab.key)}
+              onClick={() => {
+                setActiveTab(tab.key);
+                setSelectedCategory("");
+              }}
               className={`rounded-lg border px-3 py-1.5 text-sm transition ${
                 activeTab === tab.key
                   ? "border-primary/40 bg-primary/10 text-primary"
@@ -326,6 +589,34 @@ export function ServiceCatalogPage() {
               {tab.label} ({isLoading ? "..." : tabCounts[tab.key]})
             </button>
           ))}
+        </div>
+
+        {/* Search and Filter Controls */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder={`Search ${activeTab}...`}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full rounded-lg border border-border bg-background py-2 pl-10 pr-4 text-sm text-foreground outline-none transition focus:border-primary/70 focus:ring-2 focus:ring-primary/20"
+            />
+          </div>
+          {activeTab === "services" && (
+            <select
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition focus:border-primary/70 focus:ring-2 focus:ring-primary/20 sm:w-48"
+            >
+              <option value="">All Categories</option>
+              {categories.map((cat) => (
+                <option key={cat} value={cat}>
+                  {cat}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
 
         <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -343,18 +634,22 @@ export function ServiceCatalogPage() {
               </Card>
             ))}
 
-          {!isLoading && activeTab === "services" && services.length === 0 && (
+          {!isLoading && activeTab === "services" && filteredServices.length === 0 && (
             <Card className="md:col-span-2 xl:col-span-3">
               <CardContent className="p-4 text-sm text-muted-foreground">
-                No services found.
+                {searchQuery || selectedCategory
+                  ? "No services match your search criteria."
+                  : "No services found."}
               </CardContent>
             </Card>
           )}
 
-          {!isLoading && activeTab === "specialties" && specialties.length === 0 && (
+          {!isLoading && activeTab === "specialties" && filteredSpecialties.length === 0 && (
             <Card className="md:col-span-2 xl:col-span-3">
               <CardContent className="p-4 text-sm text-muted-foreground">
-                No specialties found.
+                {searchQuery
+                  ? "No specialties match your search criteria."
+                  : "No specialties found."}
               </CardContent>
             </Card>
           )}
@@ -375,15 +670,25 @@ export function ServiceCatalogPage() {
                   </div>
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
                     <span>Updated: {formatDateTime(service.updated_at || service.created_at)}</span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="rounded-lg border-primary/35 bg-primary/10 text-primary hover:bg-primary/20"
-                      onClick={() => handleOpenEditService(service)}
-                    >
-                      <Pencil className="size-4" />
-                      Edit
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-lg border-primary/35 bg-primary/10 text-primary hover:bg-primary/20"
+                        onClick={() => handleOpenEditService(service)}
+                      >
+                        <Pencil className="size-4" />
+                        Edit
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="rounded-lg text-red-400 hover:bg-red-500/10 hover:text-red-500"
+                        onClick={() => handleOpenDeleteService(service)}
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -404,7 +709,7 @@ export function ServiceCatalogPage() {
                     </span>
                   </div>
 
-                  <div className="flex items-center justify-end">
+                  <div className="flex items-center justify-end gap-2">
                     <Button
                       variant="outline"
                       size="sm"
@@ -414,25 +719,33 @@ export function ServiceCatalogPage() {
                       <Pencil className="size-4" />
                       Edit
                     </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="rounded-lg text-red-400 hover:bg-red-500/10 hover:text-red-500"
+                      onClick={() => handleOpenDeleteSpecialty(specialty)}
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
                   </div>
                 </CardContent>
               </Card>
             ))}
         </section>
 
-        {!isLoading && activeTab === "services" && services.length > 0 && (
+        {!isLoading && activeTab === "services" && filteredServices.length > 0 && (
           <PaginationControls
             currentPage={servicesPage}
-            totalItems={services.length}
+            totalItems={filteredServices.length}
             pageSize={ITEMS_PER_PAGE}
             onPageChange={setServicesPage}
           />
         )}
 
-        {!isLoading && activeTab === "specialties" && specialties.length > 0 && (
+        {!isLoading && activeTab === "specialties" && filteredSpecialties.length > 0 && (
           <PaginationControls
             currentPage={specialtiesPage}
-            totalItems={specialties.length}
+            totalItems={filteredSpecialties.length}
             pageSize={ITEMS_PER_PAGE}
             onPageChange={setSpecialtiesPage}
           />
@@ -447,6 +760,51 @@ export function ServiceCatalogPage() {
         onSubmit={handleSubmitEdit}
         isSaving={isSaving}
         saveError={saveError}
+      />
+
+      <AddServiceModal
+        isOpen={isAddServiceModalOpen}
+        onClose={() => {
+          setIsAddServiceModalOpen(false);
+          setAddSaveError("");
+        }}
+        onSubmit={handleAddService}
+        isSaving={isSaving}
+        saveError={addSaveError}
+        categories={categories}
+        onAddCategory={handleAddCategory}
+        onManageCategories={handleOpenManageCategories}
+      />
+
+      <ManageCategoriesModal
+        isOpen={isManageCategoriesModalOpen}
+        onClose={handleCloseManageCategories}
+        categories={categories}
+        onUpdateCategory={handleUpdateCategory}
+        onDeleteCategory={handleDeleteCategory}
+        isProcessing={isProcessingCategory}
+        processError={categoryProcessError}
+        onClearError={() => setCategoryProcessError("")}
+      />
+
+      <AddSpecialtyModal
+        isOpen={isAddSpecialtyModalOpen}
+        onClose={() => {
+          setIsAddSpecialtyModalOpen(false);
+          setAddSaveError("");
+        }}
+        onSubmit={handleAddSpecialty}
+        isSaving={isSaving}
+        saveError={addSaveError}
+      />
+
+      <DeleteConfirmationModal
+        isOpen={deleteModalState !== null}
+        onClose={handleCloseDeleteModal}
+        onConfirm={handleConfirmDelete}
+        isDeleting={isDeleting}
+        itemName={deleteModalState?.name || ""}
+        itemType={deleteModalState?.type === "service" ? "Service" : "Specialty"}
       />
     </AdminLayout>
   );

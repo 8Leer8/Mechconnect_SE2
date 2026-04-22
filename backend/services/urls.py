@@ -6,6 +6,14 @@ from .views.admin import (
     admin_list_specialties,
     admin_update_service,
     admin_update_specialty,
+    admin_create_service,
+    admin_create_specialty,
+    admin_delete_service,
+    admin_delete_specialty,
+    admin_create_category,
+    admin_list_categories,
+    admin_update_category,
+    admin_delete_category,
 )
 
 urlpatterns = [
@@ -42,6 +50,14 @@ admin_urlpatterns = [
     path('overview/', admin_service_overview, name='admin-service-overview'),
     path('list/', admin_list_services, name='admin-list-services'),
     path('list/<int:service_id>/update/', admin_update_service, name='admin-update-service'),
+    path('create/', admin_create_service, name='admin-create-service'),
+    path('<int:service_id>/delete/', admin_delete_service, name='admin-delete-service'),
     path('specialties/list/', admin_list_specialties, name='admin-list-specialties'),
     path('specialties/<int:specialty_id>/update/', admin_update_specialty, name='admin-update-specialty'),
+    path('specialties/create/', admin_create_specialty, name='admin-create-specialty'),
+    path('specialties/<int:specialty_id>/delete/', admin_delete_specialty, name='admin-delete-specialty'),
+    path('categories/', admin_list_categories, name='admin-list-categories'),
+    path('categories/create/', admin_create_category, name='admin-create-category'),
+    path('categories/<int:category_id>/update/', admin_update_category, name='admin-update-category'),
+    path('categories/<int:category_id>/delete/', admin_delete_category, name='admin-delete-category'),
 ]

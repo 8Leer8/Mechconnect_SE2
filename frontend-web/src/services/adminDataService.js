@@ -78,6 +78,56 @@ export function updateAdminSpecialty(specialtyId, payload) {
   });
 }
 
+export function createAdminService(payload) {
+  return request("/admin/services/create/", {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function createAdminSpecialty(payload) {
+  return request("/admin/services/specialties/create/", {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function deleteAdminService(serviceId) {
+  return request(`/admin/services/${serviceId}/delete/`, {
+    method: "DELETE",
+  });
+}
+
+export function deleteAdminSpecialty(specialtyId) {
+  return request(`/admin/services/specialties/${specialtyId}/delete/`, {
+    method: "DELETE",
+  });
+}
+
+export function createAdminCategory(payload) {
+  return request("/admin/services/categories/create/", {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function fetchAdminCategories() {
+  return request("/admin/services/categories/");
+}
+
+export function updateAdminCategory(categoryId, payload) {
+  return request(`/admin/services/categories/${categoryId}/update/`, {
+    method: "PATCH",
+    body: payload,
+  });
+}
+
+export function deleteAdminCategory(categoryId) {
+  return request(`/admin/services/categories/${categoryId}/delete/`, {
+    method: "DELETE",
+  });
+}
+
 export function fetchAdminNotifications(params = {}) {
   return request(withQuery("/admin/notification/list/", params));
 }

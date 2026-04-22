@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ExternalLink, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -199,7 +200,7 @@ export function BookingDetailsModal({ booking, onClose }) {
   const { latitude, longitude } = getBroadcastCoordinates(booking);
   const hasCoordinates = latitude !== null && longitude !== null;
   const { embedUrl, openUrl } = buildMapUrls(latitude, longitude);
-  const [selectedPayment, setSelectedPayment] = React.useState(null);
+  const [selectedPayment, setSelectedPayment] = useState(null);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4" onClick={onClose}>
