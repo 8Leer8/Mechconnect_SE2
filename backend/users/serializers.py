@@ -7,6 +7,8 @@ from django.contrib.auth.hashers import make_password, check_password
 from django.utils import timezone
 from django.db.models import Avg
 from MainBackend.storage_utils import get_media_url
+from services.models import ServiceAddOn
+from services.serializers import ServiceAddOnPublicSerializer
 import re
 import logging
 
@@ -596,6 +598,9 @@ class MechanicProfileSerializer(serializers.ModelSerializer):
     
     # Services offered
     services = serializers.SerializerMethodField()
+
+    # Mechanic add-ons
+    addons = serializers.SerializerMethodField()
     
     # Additional info
     contact_number = serializers.CharField(read_only=True)
@@ -611,7 +616,7 @@ class MechanicProfileSerializer(serializers.ModelSerializer):
             'years_active', 'account_created',
             'is_part_of_shop', 'shop_name', 'shop_id',
             'address',
-            'specialties', 'services',
+            'specialties', 'services', 'addons',
             'contact_number', 'status'
         ]
     
@@ -692,4 +697,26 @@ class MechanicProfileSerializer(serializers.ModelSerializer):
             return result
         except Exception as e:
             return []
+
+    def get_addons(self, obj):
+        """Get active mechanic add-ons for public profile consumption"""
+        addon_qs = getattr(obj, 'public_addons', None)
+        if addon_qs is None:
+            filters = {
+                'mechanic': obj,
+                'mechanic__isnull': False,
+            }
+            addon_field_names = {field.name for field in ServiceAddOn._meta.fields}
+            if 'is_active' in addon_field_names:
+                filters['is_active'] = True
+
+            addon_qs = ServiceAddOn.objects.select_related(
+                'mechanic', 'shop', 'service'
+            ).filter(**filters)
+
+        return ServiceAddOnPublicSerializer(
+            addon_qs,
+            many=True,
+            context=self.context,
+        ).data
 

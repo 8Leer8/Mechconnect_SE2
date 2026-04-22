@@ -2,13 +2,14 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
-from django.db.models import OuterRef, Subquery
+from django.db.models import OuterRef, Subquery, Prefetch
 from math import radians, sin, cos, sqrt, atan2
 
 from ..models import Mechanic
 from ..serializers import MechanicSerializer, MechanicProfileSerializer
 from bookings.models import MechanicLocation, BroadcastOffer
-from services.models import MechanicService, MechanicSpecialty
+from services.models import MechanicService, MechanicSpecialty, ServiceAddOn
+from services.serializers import ServiceAddOnPublicSerializer
 from shops.models import Shop
 from services.models import ShopService
 from MainBackend.storage_utils import get_media_url
@@ -81,16 +82,36 @@ def get_mechanic_profile(request, mechanic_id):
     - Shop affiliation
     """
     try:
+        addon_filters = {
+            'mechanic_id': mechanic_id,
+            'mechanic__isnull': False,
+        }
+        addon_field_names = {field.name for field in ServiceAddOn._meta.fields}
+        if 'is_active' in addon_field_names:
+            addon_filters['is_active'] = True
+
+        addon_queryset = ServiceAddOn.objects.select_related(
+            'mechanic', 'shop', 'service'
+        ).filter(**addon_filters)
+
         mechanic = Mechanic.objects.select_related(
             'account', 'shop'
         ).prefetch_related(
-            'reviews', 'reviews__reviewer'
+            'reviews',
+            'reviews__reviewer',
+            Prefetch('service_add_ons', queryset=addon_queryset, to_attr='public_addons')
         ).get(id=mechanic_id)
         
         serializer = MechanicProfileSerializer(mechanic, context={'request': request})
+        addons = ServiceAddOnPublicSerializer(
+            getattr(mechanic, 'public_addons', []),
+            many=True,
+            context={'request': request},
+        ).data
         
         return Response({
-            'mechanic': serializer.data
+            'mechanic': serializer.data,
+            'addons': addons,
         }, status=status.HTTP_200_OK)
         
     except Mechanic.DoesNotExist:

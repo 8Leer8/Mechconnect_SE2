@@ -36,6 +36,15 @@ interface Service {
   price: string;
 }
 
+interface Item {
+  id: number;
+  name: string;
+  description: string;
+  price: string;
+  image: string | null;
+  service_name: string | null;
+}
+
 interface Owner {
   id: number;
   account_id: number;
@@ -69,6 +78,7 @@ interface ShopProfile {
   total_services: number;
   mechanics: Mechanic[];
   services: Service[];
+  items?: Item[];
 }
 
 export default function ShopProfileScreen() {
@@ -82,6 +92,7 @@ export default function ShopProfileScreen() {
   const resolvedShopId = shopId || id;
   const isMountedRef = useRef(true);
   const [profile, setProfile] = useState<ShopProfile | null>(null);
+  const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -108,6 +119,7 @@ export default function ShopProfileScreen() {
       const data = await response.json() as { shop: ShopProfile };
       if (isMountedRef.current) {
         setProfile(data.shop);
+        setItems(data.shop?.items || []);
       }
     } catch (err) {
       if (isMountedRef.current) {
@@ -500,6 +512,48 @@ export default function ShopProfileScreen() {
             <View style={styles.emptyCard}>
               <FontAwesome name="wrench" size={28} color="#555" />
               <ThemedText style={styles.emptyText}>No services listed</ThemedText>
+            </View>
+          )}
+        </View>
+
+        {/* Products / Items */}
+        <View style={styles.section}>
+          <ThemedText style={styles.sectionTitle}>
+            Products / Items {items.length > 0 && `(${items.length})`}
+          </ThemedText>
+          {items.length > 0 ? (
+            items.map((item) => (
+              <View key={item.id} style={styles.serviceCard}>
+                <View style={styles.itemRow}>
+                  {item.image ? (
+                    <Image
+                      source={{ uri: getImageUrl(item.image) || '' }}
+                      style={styles.itemImage}
+                      contentFit="cover"
+                      cachePolicy="memory-disk"
+                    />
+                  ) : (
+                    <View style={[styles.itemImage, styles.itemImagePlaceholder]}>
+                      <FontAwesome name="cube" size={16} color="#FF8C00" />
+                    </View>
+                  )}
+                  <View style={styles.serviceInfo}>
+                    <ThemedText style={styles.serviceName}>{item.name}</ThemedText>
+                    {item.service_name && (
+                      <ThemedText style={styles.serviceCategory}>Under: {item.service_name}</ThemedText>
+                    )}
+                  </View>
+                  <ThemedText style={styles.servicePrice}>P{parseFloat(item.price).toFixed(2)}</ThemedText>
+                </View>
+                {item.description && (
+                  <ThemedText style={styles.serviceDesc}>{item.description}</ThemedText>
+                )}
+              </View>
+            ))
+          ) : (
+            <View style={styles.emptyCard}>
+              <FontAwesome name="cube" size={28} color="#555" />
+              <ThemedText style={styles.emptyText}>No products or items listed</ThemedText>
             </View>
           )}
         </View>
