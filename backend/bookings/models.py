@@ -155,8 +155,6 @@ class ActiveBooking(models.Model):
     # Legacy/staging fields present in DB; keep in model so ORM supplies values
     stage = models.CharField(max_length=50, default="")
     stage_updated_at = models.DateTimeField(default=timezone.now)
-    paused_at = models.DateTimeField(null=True, blank=True)
-    total_pause_duration = models.DurationField(default=timezone.timedelta(0))
 
 class ActiveBookingPhoto(models.Model):
     class PhotoType(models.TextChoices):
