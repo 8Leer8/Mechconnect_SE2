@@ -18,6 +18,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { fetchProfileDetailsCached } from '@/lib/profileCache';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -30,16 +31,6 @@ interface MechanicRegisterResponse {
 interface ContactSourceOption {
   label: string;
   value: string;
-}
-
-interface ProfileDetailsResponse {
-  profile?: {
-    current_role_profile?: {
-      client?: { contact_number?: string | null };
-      shop_owner?: { contact_number?: string | null };
-      mechanic?: { contact_number?: string | null };
-    };
-  };
 }
 
 interface Document {
@@ -200,16 +191,9 @@ export default function MechanicRegister() {
   useEffect(() => {
     const fetchContactSources = async () => {
       try {
-        const response = await fetch(`${API_URL}/users/profile/details/`, {
-          method: 'GET',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        });
-
-        if (!response.ok) return;
-
-        const data = await response.json() as ProfileDetailsResponse;
-        const profiles = data.profile?.current_role_profile;
+        const profile = await fetchProfileDetailsCached(false);
+        if (!profile) return;
+        const profiles = profile?.current_role_profile;
         const options: ContactSourceOption[] = [];
 
         if (profiles?.client?.contact_number?.trim()) {

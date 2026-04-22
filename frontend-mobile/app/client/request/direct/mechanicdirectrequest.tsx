@@ -20,6 +20,7 @@ import VehicleTypeModal from '@/components/VehicleTypeModal';
 import PriceSummarySheet from '@/components/PriceSummarySheet';
 import { useNotification } from '@/hooks/useNotification';
 import { usePricing } from '@/hooks/usePricing';
+import { ensureForegroundLocationAccess } from '@/lib/locationPermission';
 import { reverseGeocodeAddress } from '@/lib/locationAddress';
 import { useLocation } from '@/context/LocationContext';
 import { styles } from '@/style/client/mechanicDirectRequestStyles';
@@ -307,10 +308,10 @@ export default function MechanicDirectRequestScreen() {
 		}
 
 		try {
-			const permission = await Location.requestForegroundPermissionsAsync();
+			const permission = await ensureForegroundLocationAccess();
 			if (!isMountedRef.current) return;
 
-			if (permission.status !== 'granted') {
+			if (!permission.granted) {
 				setCurrentLocationError('Location permission denied');
 				Alert.alert(
 					'Permission Denied',

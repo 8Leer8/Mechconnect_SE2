@@ -21,6 +21,7 @@ import { ConfirmationModal } from '@/components/ui/ConfirmationModal';
 import { styles as clientProfileStyles } from '@/style/client/profileStyles';
 import { ShopProductsPanel } from '@/components/shopowner/ShopProductsPanel';
 import { getImageUrl } from '@/lib/imageUtils';
+import { fetchProfileDetailsCached } from '@/lib/profileCache';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -58,10 +59,6 @@ interface ProfileData {
     shop_owner?: RoleProfile;
   };
   address?: Address;
-}
-
-interface ProfileResponse {
-  profile: ProfileData;
 }
 
 interface ActiveRoleResponse {
@@ -114,22 +111,9 @@ export default function ShopOwnerProfileScreen() {
     try {
       setError(null);
 
-      const response = await fetch(`${API_URL}/users/profile/details/`, {
-        method: 'GET',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
-
-      if (response.status === 403 || response.status === 401) {
-        setError('Please login to view your profile');
-        setLoading(false);
-        return;
-      }
-
-      if (!response.ok) throw new Error('Failed to fetch profile data');
-
-      const data = (await response.json()) as ProfileResponse;
-      setProfileData(data.profile);
+      const profile = await fetchProfileDetailsCached(false);
+      if (!profile) throw new Error('Failed to fetch profile data');
+      setProfileData(profile as ProfileData);
 
       // Fetch active role so we know which role profile to emphasize
       const roleResponse = await fetch(`${API_URL}/users/profile/active-role/`, {

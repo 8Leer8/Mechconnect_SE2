@@ -88,7 +88,7 @@ export default function MechanicShopScheduleScreen() {
 
       while (hasMore && page <= 5) {
         const response = await fetch(
-          `${API_URL}/bookings/mechanic/bookings/?status=all&page=${page}&page_size=50`,
+          `${API_URL}/bookings/mechanic/bookings/?status=all&page=${page}&page_size=50&compact=1`,
           {
             method: 'GET',
             credentials: 'include',

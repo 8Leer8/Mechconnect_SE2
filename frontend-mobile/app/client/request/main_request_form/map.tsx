@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { useNotification } from '@/hooks/useNotification';
 import { reverseGeocodeAddress } from '@/lib/locationAddress';
+import { ensureForegroundLocationAccess } from '@/lib/locationPermission';
 import { styles } from '@/style/client/broadcastLocationPickerStyles';
 import { useLocation } from '@/context/LocationContext';
 
@@ -197,8 +198,8 @@ export default function MapScreen() {
     locationRequestInFlight.current = true;
 
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
+      const permission = await ensureForegroundLocationAccess();
+      if (!permission.granted) {
         if (!silentFailure) {
           showNotification({
             type: 'warning',

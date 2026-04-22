@@ -8,6 +8,7 @@ import WalletSection from '@/components/wallet-section';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import { useFocusEffect } from '@react-navigation/native';
 import { getImageUrl } from '@/lib/imageUtils';
+import { fetchProfileDetailsCached } from '@/lib/profileCache';
 import NotificationBell from '@/components/notifications/NotificationBell';
 
 const { width } = Dimensions.get('window');
@@ -23,18 +24,6 @@ interface DashboardData {
   average_rating: number;
   shop_status: string;
   is_verified: boolean;
-}
-
-interface ShopOwnerProfileResponse {
-  profile?: {
-    current_role_profile?: {
-      shop_owner?: {
-        shop?: {
-          service_banner?: string | null;
-        };
-      };
-    };
-  };
 }
 
 const getGreeting = () => {
@@ -55,17 +44,13 @@ export default function ShopOwnerHome() {
   const fetchDashboardData = useCallback(async () => {
     try {
       setError(null);
-      const [response, profileResponse] = await Promise.all([
+      const [response, profile] = await Promise.all([
         fetch(`${API_URL}/shops/dashboard/`, {
           method: 'GET',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
         }),
-        fetch(`${API_URL}/users/profile/details/`, {
-          method: 'GET',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        }),
+        fetchProfileDetailsCached(false),
       ]);
 
       const payload = (await response.json().catch(() => ({}))) as DashboardData & { error?: string };
@@ -80,10 +65,7 @@ export default function ShopOwnerHome() {
 
       setDashboardData(payload as DashboardData);
 
-      if (profileResponse.ok) {
-        const profileData = (await profileResponse.json().catch(() => ({}))) as ShopOwnerProfileResponse;
-        setShopBannerUrl(profileData.profile?.current_role_profile?.shop_owner?.shop?.service_banner || null);
-      }
+      setShopBannerUrl(profile?.current_role_profile?.shop_owner?.shop?.service_banner || null);
     } catch (err) {
       const message =
         err instanceof Error

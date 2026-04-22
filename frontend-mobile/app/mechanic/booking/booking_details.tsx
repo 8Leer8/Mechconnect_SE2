@@ -18,6 +18,8 @@ import { Image } from 'expo-image';
 import { CashQRDisplayModal, PendingPaymentModal } from '@/components/payment';
 import { bookingHasBackjob, canOpenBookingChat } from '@/lib/bookingAccess';
 import { fetchBookingChatPreview } from '@/lib/bookingChatPreview';
+import { ensureForegroundLocationAccess } from '@/lib/locationPermission';
+import { fetchProfileDetailsCached } from '@/lib/profileCache';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -309,14 +311,9 @@ export default function BookingDetailScreen() {
     let mounted = true;
     const fetchCurrentAccount = async () => {
       try {
-        const r = await fetch(`${API_URL}/users/profile/details/`, {
-          method: 'GET',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        });
-        if (!r.ok || !mounted) return;
-        const d = await r.json();
-        const aid = d?.profile?.id || d?.id || d?.profile?.account_id || null;
+        const profile = await fetchProfileDetailsCached(false);
+        if (!profile || !mounted) return;
+        const aid = profile?.id || profile?.account_id || null;
         if (aid) setCurrentAccountId(Number(aid));
       } catch (e) {
         // ignore
@@ -1088,8 +1085,8 @@ export default function BookingDetailScreen() {
 
   const buildMechanicLocationPayload = async (): Promise<Record<string, any>> => {
     try {
-      const permission = await Location.requestForegroundPermissionsAsync();
-      if (permission.status !== 'granted') return {};
+      const permission = await ensureForegroundLocationAccess();
+      if (!permission.granted) return {};
 
       const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       return {

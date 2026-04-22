@@ -60,6 +60,16 @@ interface Booking {
 
 // Tabs: All, Pending, Booked, On Going, Completed, Cancelled, Reworked, Disputed
 type TabType = 'all' | 'pending' | 'booked' | 'on_going' | 'completed' | 'cancelled' | 'reworked' | 'disputed';
+const TAB_LABELS: Record<TabType, string> = {
+  all: 'All',
+  pending: 'Pending',
+  booked: 'Booked',
+  on_going: 'On Going',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+  reworked: 'Reworked',
+  disputed: 'Disputed',
+};
 
 type MechanicPaginatedResponse = {
   status: string;
@@ -407,15 +417,8 @@ export default function BookingsScreen() {
               <ThemedText
                 style={[styles.tabText, isActive && styles.activeTabText]}
               >
-                {tab === 'all' ? 'All' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+                {`${TAB_LABELS[tab]} ${count}`}
               </ThemedText>
-              {count > 0 && activeTab === 'all' && (
-                <View style={[styles.tabCount, isActive && styles.activeTabCount]}>
-                  <ThemedText style={[styles.tabCountText, isActive && styles.activeTabCountText]}>
-                    {count}
-                  </ThemedText>
-                </View>
-              )}
             </TouchableOpacity>
           );
         },

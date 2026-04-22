@@ -14,6 +14,7 @@ import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { useNotification } from '@/hooks/useNotification';
 import { useFocusEffect } from '@react-navigation/native';
+import { fetchProfileDetailsCached } from '@/lib/profileCache';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -68,6 +69,7 @@ const ROLE_VISUALS: Record<RoleValue, RoleVisual> = {
   mechanic: { label: 'Mechanic', icon: 'wrench', accent: '#FF8C00' },
   shop_owner: { label: 'Shop Owner', icon: 'building', accent: '#3ECF8E' },
 };
+const ROLE_STATUS_POLL_MS = 15000;
 
 export default function SwitchRolePage() {
   const { showNotification } = useNotification();
@@ -79,6 +81,10 @@ export default function SwitchRolePage() {
   const [reasonRole, setReasonRole] = useState<'mechanic' | 'shop_owner' | null>(null);
   const [roleData, setRoleData] = useState<UserRoleData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const hasPendingApprovals =
+    Boolean(roleData?.pendingApprovals?.length) ||
+    roleData?.mechanicVerificationStatus === 'pending' ||
+    roleData?.shopOwnerVerificationStatus === 'pending';
 
   const fetchRoleStatus = useCallback(async (silent = false) => {
     try {
@@ -134,14 +140,18 @@ export default function SwitchRolePage() {
     useCallback(() => {
       fetchRoleStatus();
 
+      if (!hasPendingApprovals) {
+        return;
+      }
+
       const intervalId = setInterval(() => {
         fetchRoleStatus(true);
-      }, 5000);
+      }, ROLE_STATUS_POLL_MS);
 
       return () => {
         clearInterval(intervalId);
       };
-    }, [fetchRoleStatus])
+    }, [fetchRoleStatus, hasPendingApprovals])
   );
 
   const handleMechanicAction = async () => {
@@ -283,22 +293,10 @@ export default function SwitchRolePage() {
       let mechanicRoute = '/(mechanicTabs)/main/home';
       if (newRole === 'mechanic') {
         try {
-          const profileResponse = await fetch(`${API_URL}/users/profile/details/`, {
-            method: 'GET',
-            credentials: 'include',
-            headers: {
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-            },
-          });
-
-          if (profileResponse.ok) {
-            const profileData = await profileResponse.json();
-            const mechanicProfile = profileData.profile?.current_role_profile?.mechanic;
-            
-            if (mechanicProfile?.is_working_for_shop) {
-              mechanicRoute = '/(mechanicShopTabs)/main/home';
-            }
+          const profile = await fetchProfileDetailsCached(false);
+          const mechanicProfile = profile?.current_role_profile?.mechanic;
+          if (mechanicProfile?.is_working_for_shop) {
+            mechanicRoute = '/(mechanicShopTabs)/main/home';
           }
         } catch (profileError) {
           console.error('Error fetching profile for shop check:', profileError);
@@ -366,18 +364,10 @@ export default function SwitchRolePage() {
     if (activeRole === 'mechanic') {
       let profileRoute: string = '/(mechanicTabs)/main/profile';
       try {
-        const response = await fetch(`${API_URL}/users/profile/details/`, {
-          method: 'GET',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          const isWorkingForShop = Boolean(data?.profile?.current_role_profile?.mechanic?.is_working_for_shop);
-          if (isWorkingForShop) {
-            profileRoute = '/(mechanicShopTabs)/main/profile';
-          }
+        const profile = await fetchProfileDetailsCached(false);
+        const isWorkingForShop = Boolean(profile?.current_role_profile?.mechanic?.is_working_for_shop);
+        if (isWorkingForShop) {
+          profileRoute = '/(mechanicShopTabs)/main/profile';
         }
       } catch (err) {
         console.error('Failed to resolve mechanic profile route:', err);

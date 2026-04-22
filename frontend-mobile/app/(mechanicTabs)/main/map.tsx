@@ -27,6 +27,7 @@ import { getImageUrl } from '@/lib/imageUtils';
 import { useNotification } from '@/hooks/useNotification';
 import { SkeletonMapJobList } from '@/components/skeletons/SkeletonLoaders';
 import { fetchUnifiedWalletBalance } from '@/lib/walletBalance';
+import { ensureForegroundLocationAccess } from '@/lib/locationPermission';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const ORS_KEY = process.env.EXPO_PUBLIC_ORS_API_KEY;
@@ -411,8 +412,8 @@ export default function MapScreen() {
       setMapInitMessage('Failed to load map location.');
       const servicesEnabled = await Location.hasServicesEnabledAsync();
       if (!servicesEnabled) { setMapInitFailed(true); setMapInitMessage('Map failed: location services are off. Please enable GPS and refresh.'); return; }
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') { setMapInitFailed(true); setMapInitMessage('Map failed: location permission denied. Tap refresh to try again.'); return; }
+      const permission = await ensureForegroundLocationAccess();
+      if (!permission.granted) { setMapInitFailed(true); setMapInitMessage('Map failed: location permission denied. Tap refresh to try again.'); return; }
       const lastKnown = await Location.getLastKnownPositionAsync({ requiredAccuracy: 150, maxAge: 3 * 60 * 1000 });
       if (lastKnown?.coords) setRegionFromCoords(lastKnown.coords.latitude, lastKnown.coords.longitude);
       let freshLocation: Location.LocationObject | null = null;

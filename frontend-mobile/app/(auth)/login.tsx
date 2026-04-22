@@ -16,6 +16,7 @@ import { useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import Toast from '@/components/gen/Toast';
 import { ConfirmationModal } from '@/components/ui/ConfirmationModal';
+import { fetchProfileDetailsCached } from '@/lib/profileCache';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -34,16 +35,6 @@ interface LoginResponse {
 interface ActiveRoleResponse {
   active_role: string;
   roles?: string[];
-}
-
-interface ProfileDetailsResponse {
-  profile?: {
-    current_role_profile?: {
-      mechanic?: {
-        is_working_for_shop?: boolean;
-      };
-    };
-  };
 }
 
 export default function LoginScreen() {
@@ -126,20 +117,11 @@ export default function LoginScreen() {
 
         if (activeRole === 'mechanic') {
           try {
-            const profileResponse = await fetch(`${API_URL}/users/profile/details/`, {
-              method: 'GET',
-              credentials: 'include',
-              headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-            });
-            if (profileResponse.ok) {
-              const profileData = await profileResponse.json() as ProfileDetailsResponse;
-              const mechanicProfile = profileData.profile?.current_role_profile?.mechanic;
-              router.replace(mechanicProfile?.is_working_for_shop
-                ? '/(mechanicShopTabs)/main/home'
-                : '/(mechanicTabs)/main/home');
-            } else {
-              router.replace('/(mechanicTabs)/main/home');
-            }
+            const profile = await fetchProfileDetailsCached(false);
+            const mechanicProfile = profile?.current_role_profile?.mechanic;
+            router.replace(mechanicProfile?.is_working_for_shop
+              ? '/(mechanicShopTabs)/main/home'
+              : '/(mechanicTabs)/main/home');
           } catch {
             router.replace('/(mechanicTabs)/main/home');
           }
