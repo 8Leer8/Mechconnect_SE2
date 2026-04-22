@@ -9,6 +9,7 @@ import { ThemedView } from '@/components/themed-view';
 import { styles } from '@/style/mechanic/bookingsStyles';
 import { SkeletonBookingList } from '@/components/skeletons/SkeletonLoaders';
 import { useWebSocketContext } from '@/context/WebSocketContext';
+import { fetchProfileDetailsCached } from '@/lib/profileCache';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -77,17 +78,6 @@ type MechanicCountsResponse = {
   reworked?: { count: number };
   disputed?: { count: number };
   total_count: number;
-};
-
-type ProfileDetailsResponse = {
-  profile?: {
-    current_role_profile?: {
-      mechanic?: {
-        is_locked?: boolean;
-        is_working_for_shop?: boolean;
-      };
-    };
-  };
 };
 
 export default function MechanicShopJobsScreen() {
@@ -205,14 +195,9 @@ export default function MechanicShopJobsScreen() {
 
   const fetchMechanicLockState = useCallback(async () => {
     try {
-      const response = await fetch(`${API_URL}/users/profile/details/`, {
-        method: 'GET',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      if (!response.ok) return;
-      const data = (await response.json()) as ProfileDetailsResponse;
-      const m = data?.profile?.current_role_profile?.mechanic;
+      const profile = await fetchProfileDetailsCached(false);
+      if (!profile) return;
+      const m = profile?.current_role_profile?.mechanic;
       setMechanicLocked(Boolean(m?.is_locked));
       setIsShopMechanic(Boolean(m?.is_working_for_shop));
     } catch {

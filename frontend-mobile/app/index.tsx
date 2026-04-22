@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { View, Text, StyleSheet, Image, Animated, Easing } from 'react-native';
 import { useRouter } from 'expo-router';
 import { FontAwesome } from '@expo/vector-icons';
+import { fetchProfileDetailsCached } from '@/lib/profileCache';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -193,20 +194,9 @@ export default function Index() {
 
             if (finalRole === 'mechanic') {
               try {
-                const profileResponse = await fetch(`${API_URL}/users/profile/details/`, {
-                  method: 'GET',
-                  credentials: 'include',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    Accept: 'application/json',
-                  },
-                });
-
-                if (profileResponse.ok) {
-                  const profileData = await profileResponse.json() as any;
-                  const mechanicProfile = profileData?.profile?.current_role_profile?.mechanic;
-                  isWorkingForShopMechanic = !!mechanicProfile?.is_working_for_shop;
-                }
+                const profile = await fetchProfileDetailsCached(false);
+                const mechanicProfile = profile?.current_role_profile?.mechanic;
+                isWorkingForShopMechanic = !!mechanicProfile?.is_working_for_shop;
               } catch {
                 isWorkingForShopMechanic = false;
               }

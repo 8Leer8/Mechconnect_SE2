@@ -16,6 +16,7 @@ import { ThemedView } from '@/components/themed-view';
 import { useNotification } from '@/hooks/useNotification';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { ConfirmationModal } from '@/components/ui/ConfirmationModal';
+import { fetchProfileDetailsCached } from '@/lib/profileCache';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const RESEND_COOLDOWN_SECONDS = 60;
@@ -447,22 +448,12 @@ export default function SettingsScreen() {
 
     setLoadingPasswordEmail(true);
     try {
-      const response = await fetch(`${API_URL}/users/profile/details/`, {
-        method: 'GET',
-        credentials: 'include',
-        headers: getHeaders(),
-      });
-
-      const data = (await response.json().catch(() => ({}))) as any;
-      if (!response.ok) {
-        showNotification({
-          type: 'error',
-          message: extractErrorMessage(data, 'Failed to load account email.'),
-        });
+      const profile = await fetchProfileDetailsCached(false);
+      if (!profile) {
+        showNotification({ type: 'error', message: 'Failed to load account email.' });
         return;
       }
-
-      const email = typeof data?.profile?.email === 'string' ? data.profile.email.trim().toLowerCase() : '';
+      const email = typeof profile?.email === 'string' ? profile.email.trim().toLowerCase() : '';
       if (!email) {
         showNotification({ type: 'error', message: 'No account email found for verification.' });
         return;

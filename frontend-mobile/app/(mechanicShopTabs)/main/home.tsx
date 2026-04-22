@@ -14,6 +14,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { SkeletonMechanicShopHome } from '@/components/skeletons/SkeletonLoaders';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import { getImageUrl } from '@/lib/imageUtils';
+import { fetchProfileDetailsCached } from '@/lib/profileCache';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -138,14 +139,13 @@ export default function MechanicShopDashboardScreen() {
       };
 
       const [profileResponse, statsResponse, allBookingsResponse] = await Promise.all([
-        fetch(`${API_URL}/users/profile/details/`, options),
+        fetchProfileDetailsCached(false),
         fetch(`${API_URL}/bookings/mechanic/bookings/`, options),
         fetch(`${API_URL}/bookings/mechanic/bookings/?status=all&page=1&page_size=25`, options),
       ]);
 
-      if (profileResponse.ok) {
-        const profileData = await profileResponse.json();
-        const profile = profileData.profile as ProfileData;
+      if (profileResponse) {
+        const profile = profileResponse as ProfileData;
 
         setMechanicName(profile.full_name || 'Mechanic');
         setRating(Number(profile.current_role_profile?.mechanic?.average_rating) || 0);

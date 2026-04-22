@@ -22,6 +22,7 @@ import { ThemedText } from '@/components/themed-text';
 import { useNotification } from '@/hooks/useNotification';
 import { getImageUrl } from '@/lib/imageUtils';
 import { reverseGeocodeAddress, type ParsedLocationAddress } from '@/lib/locationAddress';
+import { fetchProfileDetailsCached } from '@/lib/profileCache';
 import { geocodeAddressFields } from '@/utils/geocodeAddress';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -115,10 +116,6 @@ interface ProfileData {
     admin?: RoleProfile;
   };
   address?: Address;
-}
-
-interface ProfileResponse {
-  profile: ProfileData;
 }
 
 interface ActiveRoleResponse {
@@ -287,12 +284,8 @@ export default function EditProfileScreen() {
   const loadProfile = useCallback(async () => {
     setLoading(true);
     try {
-      const [profileRes, roleRes] = await Promise.all([
-        fetch(`${API_URL}/users/profile/details/`, {
-          method: 'GET',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        }),
+      const [profile, roleRes] = await Promise.all([
+        fetchProfileDetailsCached(false),
         fetch(`${API_URL}/users/profile/active-role/`, {
           method: 'GET',
           credentials: 'include',
@@ -300,19 +293,18 @@ export default function EditProfileScreen() {
         }),
       ]);
 
-      if (!profileRes.ok) {
+      if (!profile) {
         throw new Error('Failed to load profile details');
       }
 
-      const profileJson = (await profileRes.json()) as ProfileResponse;
       const roleJson = roleRes.ok ? ((await roleRes.json()) as ActiveRoleResponse) : { active_role: 'client' as ActiveRole };
       const role = roleJson.active_role || 'client';
 
       setActiveRole(role);
 
-      const profile = profileJson.profile || {};
-      const address = profile.address || {};
-      const roleProfiles = profile.current_role_profile || {};
+      const profileData = profile as ProfileData;
+      const address = profileData.address || {};
+      const roleProfiles = profileData.current_role_profile || {};
       const currentRoleProfile =
         role === 'mechanic'
           ? roleProfiles.mechanic
@@ -328,11 +320,11 @@ export default function EditProfileScreen() {
       setServiceBannerUri(shop?.service_banner || null);
 
       setForm({
-        firstname: profile.firstname || '',
-        lastname: profile.lastname || '',
-        middlename: profile.middlename || '',
-        date_of_birth: profile.date_of_birth || '',
-        gender: profile.gender || '',
+        firstname: profileData.firstname || '',
+        lastname: profileData.lastname || '',
+        middlename: profileData.middlename || '',
+        date_of_birth: profileData.date_of_birth || '',
+        gender: profileData.gender || '',
         contact_number: currentRoleProfile?.contact_number || '',
         house_building_number: address.house_building_number || '',
         street_name: address.street_name || '',
@@ -350,7 +342,7 @@ export default function EditProfileScreen() {
         description: shop?.description || '',
       });
 
-      const dob = (profile.date_of_birth || '').split('-');
+      const dob = (profileData.date_of_birth || '').split('-');
       if (dob.length === 3) {
         setDobYear(dob[0]);
         setDobMonth(dob[1]);
