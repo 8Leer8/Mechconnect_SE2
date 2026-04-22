@@ -2,8 +2,10 @@ import React, { useEffect } from 'react';
 import { Modal, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { FontAwesome } from '@expo/vector-icons';
 
+import { API_URL } from '@/config';
 import { ThemedText } from '@/components/themed-text';
 import { useWebSocketContext } from '@/context/WebSocketContext';
+import { buildAuthHeaders } from '@/lib/authHeaders';
 
 interface PendingPaymentModalProps {
   visible: boolean;
@@ -23,6 +25,39 @@ export default function PendingPaymentModal({
   onCashSelected,
 }: PendingPaymentModalProps) {
   const { lastMessage } = useWebSocketContext();
+
+  useEffect(() => {
+    if (!visible || !onCashSelected) return;
+
+    let mounted = true;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const checkCashQrReady = async () => {
+      try {
+        const headers = await buildAuthHeaders({ 'Content-Type': 'application/json' });
+        const response = await fetch(`${API_URL}/bookings/payments/qr/${bookingId}/`, {
+          method: 'GET',
+          credentials: 'include',
+          headers,
+        });
+
+        if (!mounted) return;
+        if (response.ok) {
+          onCashSelected();
+        }
+      } catch {
+        // Keep waiting modal active when network check fails.
+      }
+    };
+
+    checkCashQrReady();
+    timer = setInterval(checkCashQrReady, 2500);
+
+    return () => {
+      mounted = false;
+      if (timer) clearInterval(timer);
+    };
+  }, [visible, bookingId, onCashSelected]);
 
   useEffect(() => {
     if (!visible || !lastMessage) return;
@@ -48,7 +83,7 @@ export default function PendingPaymentModal({
           <ThemedText style={styles.title}>Waiting for Payment</ThemedText>
           <ThemedText style={styles.amount}>PHP {Number(amount || 0).toFixed(2)}</ThemedText>
           <ThemedText style={styles.meta}>Booking #{bookingId}</ThemedText>
-          <ThemedText style={styles.message}>Client is processing payment...</ThemedText>
+          <ThemedText style={styles.message}>Waiting for client payment method...</ThemedText>
 
           <TouchableOpacity style={styles.closeButton} onPress={onClose}>
             <ThemedText style={styles.closeText}>Close</ThemedText>

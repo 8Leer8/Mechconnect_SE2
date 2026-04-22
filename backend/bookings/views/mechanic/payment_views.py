@@ -20,7 +20,7 @@ from rest_framework.response import Response
 from pricing.models import PricingConfiguration
 from users.models import Account
 
-from ...models import Booking, PaymentInstallment, PaymentQRToken, PaymentTransaction, Quotation, Receipt
+from ...models import Booking, PaymentInstallment, PaymentQRToken, PaymentTransaction, Quotation, Receipt, RequestAssignment
 from ...backjob_utils import booking_has_backjob
 
 
@@ -74,6 +74,32 @@ def _send_ws_event(account_ids, payload):
             f"user_{account_id}",
             {"type": "booking_update", **payload},
         )
+
+
+def _get_mechanic_recipient_ids(booking):
+    recipient_ids = set()
+    provider_id = getattr(booking.request, "provider_id", None)
+    if provider_id:
+        recipient_ids.add(provider_id)
+
+    try:
+        assigned_ids = booking.request.assignments.values_list("mechanic_id", flat=True)
+        for mechanic_id in assigned_ids:
+            if mechanic_id:
+                recipient_ids.add(mechanic_id)
+    except Exception:
+        pass
+
+    return recipient_ids
+
+
+def _can_access_mechanic_payment_qr(booking, account):
+    if getattr(booking.request, "provider_id", None) == account.id:
+        return True
+    return RequestAssignment.objects.filter(
+        request=booking.request,
+        mechanic_id=account.id,
+    ).exists()
 
 
 def _get_platform_fee(pricing):
@@ -925,9 +951,8 @@ def trigger_disbursement(booking):
 
 
 def notify_mechanic_cash_selected(booking):
-    provider_id = getattr(booking.request.provider, "id", None)
     _send_ws_event(
-        [provider_id],
+        _get_mechanic_recipient_ids(booking),
         {
             "action": "payment.cash_selected",
             "booking_id": booking.id,
@@ -938,9 +963,8 @@ def notify_mechanic_cash_selected(booking):
 
 
 def notify_mechanic_waiting_payment(booking):
-    provider_id = getattr(booking.request.provider, "id", None)
     _send_ws_event(
-        [provider_id],
+        _get_mechanic_recipient_ids(booking),
         {
             "action": "payment.waiting_ewallet",
             "booking_id": booking.id,
@@ -951,10 +975,13 @@ def notify_mechanic_waiting_payment(booking):
 
 
 def notify_payment_completed(booking):
-    provider_id = getattr(booking.request.provider, "id", None)
     client_id = getattr(booking.request.client.account, "id", None)
+    mechanic_ids = _get_mechanic_recipient_ids(booking)
+    recipients = set(mechanic_ids)
+    if client_id:
+        recipients.add(client_id)
     _send_ws_event(
-        [provider_id, client_id],
+        recipients,
         {
             "action": "payment.completed",
             "booking_id": booking.id,
@@ -1120,7 +1147,7 @@ def get_qr_token(request, booking_id):
 
     booking = get_object_or_404(Booking, id=booking_id)
 
-    if booking.request.provider_id != account.id:
+    if not _can_access_mechanic_payment_qr(booking, account):
         return Response({"error": "Unauthorized"}, status=403)
 
     if not _is_payment_open(booking):

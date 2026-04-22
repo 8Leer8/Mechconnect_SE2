@@ -4,6 +4,7 @@ import { FontAwesome } from '@expo/vector-icons';
 
 import { API_URL } from '@/config';
 import { ThemedText } from '@/components/themed-text';
+import { buildAuthHeaders } from '@/lib/authHeaders';
 
 const ORANGE = '#FF8C00';
 
@@ -19,6 +20,7 @@ interface QRConfirmationModalProps {
   scanData: QRConfirmationData | null;
   token: string;
   onConfirm: () => void;
+  onClose: () => void;
   onCancel: () => void;
 }
 
@@ -27,6 +29,7 @@ export default function QRConfirmationModal({
   scanData,
   token,
   onConfirm,
+  onClose,
   onCancel,
 }: QRConfirmationModalProps) {
   const [loading, setLoading] = useState(false);
@@ -35,10 +38,11 @@ export default function QRConfirmationModal({
     if (!token) return;
     try {
       setLoading(true);
+      const headers = await buildAuthHeaders({ 'Content-Type': 'application/json' });
       const response = await fetch(`${API_URL}/bookings/payments/qr/confirm/`, {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ token }),
       });
 
@@ -88,6 +92,10 @@ export default function QRConfirmationModal({
           <TouchableOpacity style={styles.cancelButton} onPress={onCancel}>
             <FontAwesome name="refresh" size={14} color="#ECEDEE" />
             <ThemedText style={styles.cancelText}>Scan Again</ThemedText>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.closeButton} onPress={onClose}>
+            <ThemedText style={styles.closeText}>Close</ThemedText>
           </TouchableOpacity>
         </View>
       </View>
@@ -163,6 +171,20 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   cancelText: {
+    color: '#ECEDEE',
+    fontWeight: '700',
+  },
+  closeButton: {
+    marginTop: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#3A3D40',
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+  },
+  closeText: {
     color: '#ECEDEE',
     fontWeight: '700',
   },

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 // Ensure the router header is hidden for this route so only the in-page header shows
 export const screenOptions = { headerShown: false } as const;
-import { View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl } from 'react-native';
+import { View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Modal } from 'react-native';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import { router, useLocalSearchParams, useFocusEffect, useNavigation, useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
@@ -17,6 +17,7 @@ import * as Location from 'expo-location';
 import { Image } from 'expo-image';
 import { CashQRDisplayModal, PendingPaymentModal } from '@/components/payment';
 import { bookingHasBackjob, canOpenBookingChat } from '@/lib/bookingAccess';
+import { fetchBookingChatPreview } from '@/lib/bookingChatPreview';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -65,6 +66,8 @@ interface BookingDetail {
   active_details?: {
     before_picture: string | null;
     after_picture: string | null;
+    before_pictures?: string[];
+    after_pictures?: string[];
     is_job_done: boolean;
     is_rescheduled: boolean;
     reason: string | null;
@@ -142,7 +145,9 @@ const DEFAULT_PRICING_CONFIG: PricingConfig = {
   convenience_fee_fixed: 0,
 };
 
-const LIVE_PRICING_STATUSES = new Set(['accepted', 'on_the_way', 'active', 'paused', 'finished']);
+const LIVE_PRICING_STATUSES = new Set([
+  'accepted', 'on_the_way', 'at_location', 'diagnosing', 'active', 'paused', 'finished',
+]);
 
 const shouldUseLiveAdditivePricing = (statusValue?: string | null): boolean => {
   const normalized = String(statusValue || '').toLowerCase();
@@ -186,6 +191,7 @@ export default function BookingDetailScreen() {
   const [pauseJobLoading, setPauseJobLoading] = useState(false);
   const [resumeJobLoading, setResumeJobLoading] = useState(false);
   const [finishJobLoading, setFinishJobLoading] = useState(false);
+  const [showBeforeServicePhotoModal, setShowBeforeServicePhotoModal] = useState(false);
   const [showAfterServicePhotoModal, setShowAfterServicePhotoModal] = useState(false);
   const [paymentReceivedLoading, setPaymentReceivedLoading] = useState(false);
   const [cancelBookingLoading, setCancelBookingLoading] = useState(false);
@@ -202,6 +208,11 @@ export default function BookingDetailScreen() {
   const isMechanicShopSource = source === 'mechanic_shop';
   const [quotation, setQuotation] = useState<any | null>(null);
   const [currentAccountId, setCurrentAccountId] = useState<number | null>(null);
+  const [arrivedLoading, setArrivedLoading] = useState(false);
+  const [startDiagnosingLoading, setStartDiagnosingLoading] = useState(false);
+  const [revertStageLoading, setRevertStageLoading] = useState(false);
+  const [chatPreview, setChatPreview] = useState<string | null>(null);
+  const [viewerPhotoUri, setViewerPhotoUri] = useState<string | null>(null);
   const { lastMessage } = useWebSocketContext();
 
   useEffect(() => {
@@ -401,11 +412,12 @@ export default function BookingDetailScreen() {
 
     const estimatedConvenienceFee = (serviceSubtotal * conveniencePct) + convenienceFixed;
     const totalConvenienceFee = hasPersistedConvenience ? persistedConvenienceFee : estimatedConvenienceFee;
-    const isOnTheWay = booking.status === 'on_the_way';
+    const st = String(booking.status || '').toLowerCase();
+    const useLockedTravelEta = st === 'on_the_way' || st === 'at_location' || st === 'diagnosing';
 
     const persistedEta = Number((booking as any).estimated_eta_minutes || 0);
     const derivedEta = Math.max(1, Math.ceil((safeDistanceKm / Math.max(1, trafficMeta.speedKmh)) * 60));
-    const etaMinutes = isOnTheWay && Number.isFinite(persistedEta) && persistedEta > 0
+    const etaMinutes = useLockedTravelEta && Number.isFinite(persistedEta) && persistedEta > 0
       ? Math.round(persistedEta)
       : derivedEta;
 
@@ -419,7 +431,7 @@ export default function BookingDetailScreen() {
       totalConvenienceFee,
       trafficLabel: trafficMeta.label,
       etaMinutes,
-      estimated: !isOnTheWay,
+      estimated: !useLockedTravelEta,
     };
   }, [booking, pricingConfig]);
 
@@ -753,13 +765,32 @@ export default function BookingDetailScreen() {
     }
   }, [bookingId]);
 
+  const refreshChatPreview = useCallback(async () => {
+    if (!bookingId) return;
+    const res = await fetchBookingChatPreview(Number(bookingId));
+    if (!res) return;
+    setChatPreview(res.lastPreview);
+  }, [bookingId]);
+
+  useEffect(() => {
+    if (!booking || !canOpenBookingChat(booking)) {
+      setChatPreview(null);
+      return;
+    }
+    refreshChatPreview();
+  }, [booking, refreshChatPreview]);
+
   useEffect(() => {
     fetchBookingDetail();
 
-    // Poll every 15 seconds so status updates appear without manual refresh
-    const interval = setInterval(fetchBookingDetail, 15000);
+    const fastPaymentRefresh =
+      booking?.status === 'pending_payment' &&
+      !bookingHasBackjob(booking) &&
+      (showPendingPayment || showCashQR);
+    const intervalMs = fastPaymentRefresh ? 2000 : 15000;
+    const interval = setInterval(fetchBookingDetail, intervalMs);
     return () => clearInterval(interval);
-  }, [fetchBookingDetail]);
+  }, [fetchBookingDetail, booking, showPendingPayment, showCashQR]);
 
   const fetchQuotation = async () => {
     if (!bookingId) return;
@@ -858,6 +889,8 @@ export default function BookingDetailScreen() {
       case 'accepted': return 'Booked';
       case 'active': return 'On Going';
       case 'on_the_way': return 'On the Way';
+      case 'at_location': return 'At Location';
+      case 'diagnosing': return 'Diagnosing';
       case 'paused': return 'Paused';
       case 'finished': return 'Finished';
       case 'pending_payment': return 'Pending Payment';
@@ -874,6 +907,8 @@ export default function BookingDetailScreen() {
       case 'accepted': return '#00B8D9';
       case 'active': return '#FF8C00';
       case 'on_the_way': return '#007AFF';
+      case 'at_location': return '#5AC8FA';
+      case 'diagnosing': return '#AF52DE';
       case 'paused': return '#8E8E93';
       case 'finished': return '#34C759';
       case 'pending_payment': return '#FFD60A';
@@ -890,6 +925,8 @@ export default function BookingDetailScreen() {
       case 'accepted': return 'calendar-check-o';
       case 'active': return 'play-circle';
       case 'on_the_way': return 'car';
+      case 'at_location': return 'map-marker';
+      case 'diagnosing': return 'search';
       case 'paused': return 'pause-circle';
       case 'finished': return 'check-circle';
       case 'pending_payment': return 'money';
@@ -939,8 +976,8 @@ export default function BookingDetailScreen() {
     successMessage: string,
     errorMessage: string,
     payload?: Record<string, any>
-  ) => {
-    if (!booking) return;
+  ): Promise<boolean> => {
+    if (!booking) return false;
     setTransitioning(true);
     try {
       const response = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/${endpoint}/`, {
@@ -967,12 +1004,19 @@ export default function BookingDetailScreen() {
             traffic_level: (result as any).traffic_level ?? prev.traffic_level,
           };
         });
+      } else if (endpoint === 'arrived' || endpoint === 'start-diagnosing') {
+        setBooking((prev) => {
+          if (!prev) return prev;
+          return { ...prev, status: (result as any).status || prev.status };
+        });
       }
 
       showNotification({ type: 'success', message: successMessage });
       await fetchBookingDetail();
+      return true;
     } catch (err: any) {
       showNotification({ type: 'error', message: err.message || errorMessage });
+      return false;
     } finally {
       setTransitioning(false);
     }
@@ -1004,7 +1048,13 @@ export default function BookingDetailScreen() {
         return;
       }
 
-      await handleStatusUpdate('start-travel', 'Status updated to On The Way!', 'Failed to start travel', payload);
+      const ok = await handleStatusUpdate('start-travel', 'Status updated to On The Way!', 'Failed to start travel', payload);
+      if (ok && bookingId) {
+        router.push({
+          pathname: '/mechanic/booking/booking_location_map',
+          params: { bookingId: String(bookingId), role: 'mechanic' },
+        });
+      }
     } finally {
       setStartTravelSubmitting(false);
     }
@@ -1028,8 +1078,55 @@ export default function BookingDetailScreen() {
       setCancelTravelLoading(false);
     }
   };
+
+  const handleArrived = async () => {
+    if (arrivedLoading || transitioning) return;
+    setArrivedLoading(true);
+    try {
+      const ok = await handleStatusUpdate('arrived', 'Marked as at location.', 'Failed to mark arrived');
+      if (ok && bookingId) {
+        router.push({
+          pathname: '/chat/booking_chat',
+          params: { bookingId: String(bookingId) },
+        });
+      }
+    } finally {
+      setArrivedLoading(false);
+    }
+  };
+
+  const handleStartDiagnosing = async () => {
+    if (startDiagnosingLoading || transitioning) return;
+    setStartDiagnosingLoading(true);
+    try {
+      await handleStatusUpdate('start-diagnosing', 'Diagnosing with the client.', 'Failed to start diagnosing');
+    } finally {
+      setStartDiagnosingLoading(false);
+    }
+  };
+
+  const handleRevertStage = async (successMessage: string) => {
+    if (!booking || revertStageLoading || transitioning) return;
+    setRevertStageLoading(true);
+    try {
+      const payload = await buildMechanicLocationPayload();
+      await handleStatusUpdate('revert-stage', successMessage, 'Failed to go back', payload);
+    } finally {
+      setRevertStageLoading(false);
+    }
+  };
+
   const handleStartJob = async () => {
     if (startJobLoading || transitioning) return;
+    const hasBeforePhoto =
+      Boolean(booking?.active_details?.before_picture) ||
+      Boolean(booking?.active_details?.before_pictures?.length);
+
+    if (!hasBeforePhoto) {
+      setShowBeforeServicePhotoModal(true);
+      return;
+    }
+
     setStartJobLoading(true);
     try {
       await handleStatusUpdate('start-job', 'Status updated to Active!', 'Failed to start job');
@@ -1043,7 +1140,7 @@ export default function BookingDetailScreen() {
     const ok = await confirm({
       type: 'warning',
       title: 'Go Back',
-      message: 'Are you sure you want to go back? This will revert the job to On the Way.',
+      message: 'Are you sure you want to go back? This will move the booking back to diagnosing (before work started).',
       confirmText: 'Go Back',
       cancelText: 'Stay',
     });
@@ -1080,22 +1177,64 @@ export default function BookingDetailScreen() {
     setShowAfterServicePhotoModal(true);
   };
 
-  const handleSubmitAfterServicePhoto = async (photoUri: string) => {
-    if (!booking || !photoUri) return;
+  const handleSubmitBeforeServicePhoto = async (photoUris: string[]) => {
+    if (!booking || !photoUris?.length || startJobLoading || transitioning) return;
+
+    setStartJobLoading(true);
+    setTransitioning(true);
+    try {
+      const formData = new FormData();
+      photoUris.forEach((uri, index) => {
+        const fileName = uri.split('/').pop() || `before-service-${booking.id}-${index + 1}.jpg`;
+        const ext = fileName.split('.').pop()?.toLowerCase();
+        const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+
+        formData.append('before_pictures', {
+          uri,
+          name: fileName,
+          type: mime,
+        } as any);
+      });
+
+      const response = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/start-job/`, {
+        method: 'POST',
+        credentials: 'include',
+        body: formData as any,
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(parseApiErrorMessage(payload, 'Failed to start job'));
+      }
+
+      setShowBeforeServicePhotoModal(false);
+      showNotification({ type: 'success', message: 'Status updated to Active!' });
+      await fetchBookingDetail();
+    } catch (err: any) {
+      showNotification({ type: 'error', message: err.message || 'Failed to start job' });
+    } finally {
+      setStartJobLoading(false);
+      setTransitioning(false);
+    }
+  };
+
+  const handleSubmitAfterServicePhoto = async (photoUris: string[]) => {
+    if (!booking || !photoUris?.length) return;
 
     setFinishJobLoading(true);
     setTransitioning(true);
     try {
       const formData = new FormData();
-      const fileName = photoUri.split('/').pop() || `after-service-${booking.id}.jpg`;
-      const ext = fileName.split('.').pop()?.toLowerCase();
-      const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
-
-      formData.append('after_picture_service', {
-        uri: photoUri,
-        name: fileName,
-        type: mime,
-      } as any);
+      photoUris.forEach((uri, index) => {
+        const fileName = uri.split('/').pop() || `after-service-${booking.id}-${index + 1}.jpg`;
+        const ext = fileName.split('.').pop()?.toLowerCase();
+        const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+        formData.append('after_pictures', {
+          uri,
+          name: fileName,
+          type: mime,
+        } as any);
+      });
 
       const response = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/finish-job/`, {
         method: 'POST',
@@ -1358,6 +1497,8 @@ export default function BookingDetailScreen() {
   const showPricingQuotationCard = (
     booking.status === 'accepted' ||
     booking.status === 'on_the_way' ||
+    booking.status === 'at_location' ||
+    booking.status === 'diagnosing' ||
     booking.status === 'active' ||
     booking.status === 'pending_payment' ||
     booking.status === 'completed'
@@ -1365,6 +1506,8 @@ export default function BookingDetailScreen() {
   const canEditQuotation = (
     booking.status === 'accepted' ||
     booking.status === 'on_the_way' ||
+    booking.status === 'at_location' ||
+    booking.status === 'diagnosing' ||
     booking.status === 'active'
   );
   const myAssignmentRole = (() => {
@@ -1373,6 +1516,13 @@ export default function BookingDetailScreen() {
     const hit = assigned.find((a) => Number(a?.mechanic?.id) === Number(currentAccountId));
     return (hit?.role || null) as string | null;
   })();
+  const myAssignmentRoleLabel =
+    myAssignmentRole === 'lead'
+      ? 'Lead Mechanic'
+      : myAssignmentRole === 'assistant'
+        ? 'Assisting Mechanic'
+        : null;
+  const showJobRoleBadge = isMechanicShopSource && !!myAssignmentRoleLabel;
   const canOpenQuotationEditor = myAssignmentRole !== 'assistant';
 
   const paymentSummary = booking.payment_summary || {};
@@ -1507,8 +1657,97 @@ export default function BookingDetailScreen() {
           </>
         )}
 
-        {/* On the way: Start Job (primary) then Cancel Travel (secondary) — full width stacked */}
+        {/* On the way: Arrived (at location) then Cancel Travel */}
         {booking.status === 'on_the_way' && (
+          <>
+            <View style={{ width: '100%' }}>
+              <TouchableOpacity
+                style={[
+                  styles.arrivedLargeButton,
+                  (transitioning || arrivedLoading) && styles.actionButtonDisabled,
+                ]}
+                onPress={handleArrived}
+                disabled={transitioning || arrivedLoading}
+                activeOpacity={0.85}
+              >
+                {arrivedLoading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <FontAwesome name="map-marker" size={18} color="#fff" />
+                )}
+                <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Arrived</ThemedText>
+              </TouchableOpacity>
+            </View>
+            <View style={{ width: '100%', marginTop: 10 }}>
+              <TouchableOpacity
+                style={[styles.largeSecondaryButton, cancelTravelLoading && styles.actionButtonDisabled]}
+                onPress={handleCancelTravel}
+                disabled={transitioning || cancelTravelLoading}
+              >
+                {cancelTravelLoading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <FontAwesome name="times" size={18} color="#fff" />
+                    <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Cancel Travel</ThemedText>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
+
+        {/* At location: start diagnosing + go back to traveling */}
+        {booking.status === 'at_location' && (
+          <>
+            <View style={{ width: '100%' }}>
+              <TouchableOpacity
+                style={[
+                  styles.largePrimaryButton,
+                  (transitioning || startDiagnosingLoading) && styles.actionButtonDisabled,
+                ]}
+                onPress={handleStartDiagnosing}
+                disabled={transitioning || startDiagnosingLoading}
+              >
+                {startDiagnosingLoading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <FontAwesome name="users" size={18} color="#fff" />
+                )}
+                <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Start Diagnosing</ThemedText>
+              </TouchableOpacity>
+            </View>
+            <View style={{ width: '100%', marginTop: 10 }}>
+              <TouchableOpacity
+                style={[styles.largeSecondaryButton, revertStageLoading && styles.actionButtonDisabled]}
+                onPress={async () => {
+                  const ok = await confirm({
+                    type: 'warning',
+                    title: 'Go Back',
+                    message: 'Go back to traveling? Your status will return to On the Way.',
+                    confirmText: 'Go Back',
+                    cancelText: 'Stay',
+                  });
+                  if (!ok) return;
+                  await handleRevertStage('Back to on the way.');
+                }}
+                disabled={transitioning || revertStageLoading}
+              >
+                {revertStageLoading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <FontAwesome name="arrow-left" size={18} color="#fff" />
+                    <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Back to Traveling</ThemedText>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
+
+        {/* Diagnosing: start job + go back to at location */}
+        {booking.status === 'diagnosing' && (
           <>
             <View style={{ width: '100%' }}>
               <TouchableOpacity
@@ -1528,16 +1767,26 @@ export default function BookingDetailScreen() {
             </View>
             <View style={{ width: '100%', marginTop: 10 }}>
               <TouchableOpacity
-                style={[styles.largeSecondaryButton, cancelTravelLoading && styles.actionButtonDisabled]}
-                onPress={handleCancelTravel}
-                disabled={transitioning || cancelTravelLoading}
+                style={[styles.largeSecondaryButton, revertStageLoading && styles.actionButtonDisabled]}
+                onPress={async () => {
+                  const ok = await confirm({
+                    type: 'warning',
+                    title: 'Go Back',
+                    message: 'Go back to At Location? You have not started the job yet.',
+                    confirmText: 'Go Back',
+                    cancelText: 'Stay',
+                  });
+                  if (!ok) return;
+                  await handleRevertStage('Back to at location.');
+                }}
+                disabled={transitioning || revertStageLoading}
               >
-                {cancelTravelLoading ? (
+                {revertStageLoading ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
                   <>
-                    <FontAwesome name="times" size={18} color="#fff" />
-                    <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Cancel Travel</ThemedText>
+                    <FontAwesome name="arrow-left" size={18} color="#fff" />
+                    <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Back to At Location</ThemedText>
                   </>
                 )}
               </TouchableOpacity>
@@ -1628,7 +1877,7 @@ export default function BookingDetailScreen() {
                   const ok = await confirm({
                     type: 'warning',
                     title: 'Go Back',
-                    message: 'Are you sure you want to go back? This will revert the job to On the Way.',
+                    message: 'This will step the booking back through paused → active → … until it reaches On the Way.',
                     confirmText: 'Go Back',
                     cancelText: 'Stay',
                   });
@@ -1637,29 +1886,21 @@ export default function BookingDetailScreen() {
                   setTransitioning(true);
                   try {
                     const payload = await buildMechanicLocationPayload();
-                    // For paused bookings, revert twice to move back to ON_THE_WAY:
-                    // PAUSED -> ACTIVE, then ACTIVE -> ON_THE_WAY
-                    const first = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/revert-stage/`, {
-                      method: 'POST',
-                      credentials: 'include',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify(payload),
-                    });
-                    if (!first.ok) {
-                      const err = await first.json().catch(() => null);
-                      throw new Error(parseApiErrorMessage(err, 'Failed to revert stage'));
-                    }
-
-                    // second revert
-                    const second = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/revert-stage/`, {
-                      method: 'POST',
-                      credentials: 'include',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify(payload),
-                    });
-                    if (!second.ok) {
-                      const err = await second.json().catch(() => null);
-                      throw new Error(parseApiErrorMessage(err, 'Failed to revert to on_the_way'));
+                    let lastStatus = '';
+                    for (let step = 0; step < 8; step++) {
+                      const res = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/revert-stage/`, {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                      });
+                      if (!res.ok) {
+                        const err = await res.json().catch(() => null);
+                        throw new Error(parseApiErrorMessage(err, 'Failed to revert stage'));
+                      }
+                      const data = await res.json().catch(() => ({}));
+                      lastStatus = String((data as any).status || '').toLowerCase();
+                      if (lastStatus === 'on_the_way' || lastStatus === 'accepted') break;
                     }
 
                     showNotification({ type: 'success', message: 'Reverted to On the Way' });
@@ -1841,6 +2082,26 @@ export default function BookingDetailScreen() {
                 ? booking.request.type.charAt(0).toUpperCase() + booking.request.type.slice(1) + ' Service'
                 : 'Service Request'}
             </ThemedText>
+            {showJobRoleBadge && myAssignmentRoleLabel ? (
+              <View
+                style={[
+                  styles.jobRoleBadge,
+                  {
+                    backgroundColor:
+                      myAssignmentRole === 'lead' ? '#FF950028' : '#34C75928',
+                  },
+                ]}
+              >
+                <ThemedText
+                  style={[
+                    styles.jobRoleBadgeText,
+                    { color: myAssignmentRole === 'lead' ? '#FF9500' : '#34C759' },
+                  ]}
+                >
+                  Your role: {myAssignmentRoleLabel}
+                </ThemedText>
+              </View>
+            ) : null}
           </View>
           <ThemedText style={styles.amountLarge}>₱{totalAmount.toFixed(2)}</ThemedText>
         </View>
@@ -1913,9 +2174,39 @@ export default function BookingDetailScreen() {
               <FontAwesome name="chevron-right" size={16} color="#8E8E93" style={{ marginLeft: 'auto' }} />
             </View>
             <View style={{ paddingVertical: 8 }}>
-              <ThemedText style={{ color: '#666' }}>Open the booking chat to message the client.</ThemedText>
+              {chatPreview ? (
+                <ThemedText style={{ color: '#aaa' }} numberOfLines={3}>
+                  {chatPreview}
+                </ThemedText>
+              ) : (
+                <ThemedText style={{ color: '#666' }}>No messages yet. Tap to chat with the client.</ThemedText>
+              )}
             </View>
           </TouchableOpacity>
+        ) : null}
+
+        {booking.status === 'on_the_way' && booking.service_location ? (
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#007AFF15' }]}>
+                <FontAwesome name="map" size={16} color="#007AFF" />
+              </View>
+              <ThemedText style={styles.sectionTitle}>Live route map</ThemedText>
+            </View>
+            <ThemedText style={{ color: '#888', marginBottom: 12 }}>
+              While you are on the way, use the map to see your route to the client. Back returns here.
+            </ThemedText>
+            <TouchableOpacity style={styles.navigateButton} onPress={handleNavigateToClient} activeOpacity={0.7}>
+              <View style={styles.navigateIconCircle}>
+                <FontAwesome name="location-arrow" size={18} color="#fff" />
+              </View>
+              <View style={styles.navigateTextContainer}>
+                <ThemedText style={styles.navigateTitle}>Open live route map</ThemedText>
+                <ThemedText style={styles.navigateSubtitle}>GPS and route to the client</ThemedText>
+              </View>
+              <FontAwesome name="external-link" size={14} color="#FF8C00" />
+            </TouchableOpacity>
+          </View>
         ) : null}
 
         {/* Payment method is shown below the Receipt card (moved there) */}
@@ -1968,21 +2259,22 @@ export default function BookingDetailScreen() {
                 )}
               </View>
 
-              {/* Navigate Button */}
-              <TouchableOpacity
-                style={styles.navigateButton}
-                onPress={handleNavigateToClient}
-                activeOpacity={0.7}
-              >
-                <View style={styles.navigateIconCircle}>
-                  <FontAwesome name="location-arrow" size={18} color="#fff" />
-                </View>
-                <View style={styles.navigateTextContainer}>
-                  <ThemedText style={styles.navigateTitle}>Navigate to Client</ThemedText>
-                  <ThemedText style={styles.navigateSubtitle}>View on map</ThemedText>
-                </View>
-                <FontAwesome name="external-link" size={14} color="#FF8C00" />
-              </TouchableOpacity>
+              {booking.status !== 'on_the_way' ? (
+                <TouchableOpacity
+                  style={styles.navigateButton}
+                  onPress={handleNavigateToClient}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.navigateIconCircle}>
+                    <FontAwesome name="location-arrow" size={18} color="#fff" />
+                  </View>
+                  <View style={styles.navigateTextContainer}>
+                    <ThemedText style={styles.navigateTitle}>Navigate to Client</ThemedText>
+                    <ThemedText style={styles.navigateSubtitle}>View on map</ThemedText>
+                  </View>
+                  <FontAwesome name="external-link" size={14} color="#FF8C00" />
+                </TouchableOpacity>
+              ) : null}
             </>
           ) : (
             <View style={styles.noLocationCard}>
@@ -2240,8 +2532,65 @@ export default function BookingDetailScreen() {
           </View>
         )}
 
-        {/* After-Service Photo */}
+        {/* Before-Service Photos */}
         {booking.active_details && (
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#4F8CFF15' }]}>
+                <FontAwesome name="camera" size={16} color="#4F8CFF" />
+              </View>
+              <ThemedText style={styles.sectionTitle}>Before-Service Photos</ThemedText>
+            </View>
+
+            {(
+              (booking.active_details.before_pictures && booking.active_details.before_pictures.length > 0) ||
+              booking.active_details.before_picture
+            ) ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingVertical: 8 }}>
+                {(booking.active_details.before_pictures && booking.active_details.before_pictures.length > 0
+                  ? booking.active_details.before_pictures
+                  : booking.active_details.before_picture
+                  ? [booking.active_details.before_picture]
+                  : []
+                ).map((uri, idx) => (
+                  <TouchableOpacity key={`${uri}-${idx}`} activeOpacity={0.85} onPress={() => setViewerPhotoUri(uri)}>
+                    <Image
+                      source={{ uri }}
+                      style={{ width: 220, height: 220, borderRadius: 12 }}
+                      contentFit="cover"
+                    />
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            ) : (
+              <View
+                style={{
+                  marginTop: 8,
+                  height: 140,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: '#2A2C2E',
+                  backgroundColor: '#111214',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                }}
+              >
+                <FontAwesome name="image" size={26} color="#6C6C70" />
+                <ThemedText style={{ color: '#8E8E93' }}>No before-service photos uploaded yet</ThemedText>
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* After-Service Photo (only after job is done/completed) */}
+        {booking.active_details &&
+          (booking.active_details.is_job_done ||
+            booking.status === 'finished' ||
+            booking.status === 'pending_payment' ||
+            booking.status === 'completed' ||
+            Boolean(booking.active_details.after_picture) ||
+            Boolean(booking.active_details.after_pictures?.length)) && (
           <View style={styles.sectionCard}>
             <View style={styles.sectionHeader}>
               <View style={[styles.sectionIcon, { backgroundColor: '#34C75915' }]}>
@@ -2250,12 +2599,15 @@ export default function BookingDetailScreen() {
               <ThemedText style={styles.sectionTitle}>After-Service Photo</ThemedText>
             </View>
 
-            {booking.active_details.after_picture ? (
-              <Image
-                source={{ uri: booking.active_details.after_picture }}
-                style={{ width: '100%', height: 220, borderRadius: 12, marginTop: 8 }}
-                contentFit="cover"
-              />
+            {(booking.active_details.after_pictures && booking.active_details.after_pictures.length > 0) ||
+            booking.active_details.after_picture ? (
+              <TouchableOpacity activeOpacity={0.85} onPress={() => setViewerPhotoUri(booking.active_details?.after_pictures?.[0] || booking.active_details?.after_picture || null)}>
+                <Image
+                  source={{ uri: booking.active_details.after_pictures?.[0] || booking.active_details.after_picture || '' }}
+                  style={{ width: '100%', height: 220, borderRadius: 12, marginTop: 8 }}
+                  contentFit="cover"
+                />
+              </TouchableOpacity>
             ) : (
               <View
                 style={{
@@ -2409,6 +2761,17 @@ export default function BookingDetailScreen() {
       />
 
       <AfterServicePhotoModal
+        mode="before"
+        visible={showBeforeServicePhotoModal}
+        loading={startJobLoading}
+        onClose={() => {
+          if (!startJobLoading) setShowBeforeServicePhotoModal(false);
+        }}
+        onSubmit={handleSubmitBeforeServicePhoto}
+      />
+
+      <AfterServicePhotoModal
+        mode="after"
         visible={showAfterServicePhotoModal}
         loading={finishJobLoading}
         onClose={() => {
@@ -2416,6 +2779,19 @@ export default function BookingDetailScreen() {
         }}
         onSubmit={handleSubmitAfterServicePhoto}
       />
+
+      <Modal visible={Boolean(viewerPhotoUri)} transparent animationType="fade" onRequestClose={() => setViewerPhotoUri(null)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' }}>
+          <TouchableOpacity style={{ position: 'absolute', top: 56, right: 20, zIndex: 2 }} onPress={() => setViewerPhotoUri(null)}>
+            <FontAwesome name="times-circle" size={30} color="#fff" />
+          </TouchableOpacity>
+          <TouchableOpacity style={{ width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center' }} activeOpacity={1} onPress={() => setViewerPhotoUri(null)}>
+            {viewerPhotoUri ? (
+              <Image source={{ uri: viewerPhotoUri }} style={{ width: '94%', height: '80%', borderRadius: 12 }} contentFit="contain" />
+            ) : null}
+          </TouchableOpacity>
+        </View>
+      </Modal>
     </ThemedView>
   );
 }
