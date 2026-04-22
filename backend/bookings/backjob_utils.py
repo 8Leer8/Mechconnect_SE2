@@ -7,6 +7,8 @@ LIVE_BACKJOB_STATUSES = {
     Booking.Status.REWORKED,
     Booking.Status.ACCEPTED,
     Booking.Status.ON_THE_WAY,
+    Booking.Status.AT_LOCATION,
+    Booking.Status.DIAGNOSING,
     Booking.Status.ACTIVE,
     Booking.Status.PAUSED,
     Booking.Status.FINISHED,

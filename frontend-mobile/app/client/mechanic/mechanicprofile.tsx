@@ -38,6 +38,15 @@ interface Specialty {
   description: string;
 }
 
+interface AddOn {
+  id: number;
+  name: string;
+  description: string;
+  price: string;
+  image: string | null;
+  service_name: string | null;
+}
+
 interface Address {
   street_name?: string | null;
   subdivision_village?: string | null;
@@ -87,6 +96,7 @@ export default function MechanicProfileScreen() {
   const resolvedMechanicId = mechanicId || id;
   const isMountedRef = useRef(true);
   const [profile, setProfile] = useState<MechanicProfile | null>(null);
+  const [addons, setAddons] = useState<AddOn[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -112,9 +122,10 @@ export default function MechanicProfileScreen() {
 
       if (!response.ok) throw new Error('Failed to fetch mechanic profile');
 
-      const data = await response.json() as { mechanic: MechanicProfile };
+      const data = await response.json() as { mechanic: MechanicProfile; addons?: AddOn[] };
       if (isMountedRef.current) {
         setProfile(data.mechanic);
+        setAddons(data.addons || data.mechanic?.addons || []);
       }
     } catch (err) {
       if (isMountedRef.current) {
@@ -520,6 +531,39 @@ export default function MechanicProfileScreen() {
             </View>
           </View>
         )}
+
+        {/* Add-ons */}
+        <View style={styles.section}>
+          <ThemedText style={styles.sectionTitle}>
+            Add-ons {addons.length > 0 && `(${addons.length})`}
+          </ThemedText>
+          {addons.length > 0 ? (
+            addons.map((addon) => (
+              <View key={addon.id} style={styles.serviceCard}>
+                <View style={styles.serviceTop}>
+                  <View style={styles.serviceIconCircle}>
+                    <FontAwesome name="plus-circle" size={16} color="#FF8C00" />
+                  </View>
+                  <View style={styles.serviceInfo}>
+                    <ThemedText style={styles.serviceName}>{addon.name}</ThemedText>
+                    {addon.service_name && (
+                      <ThemedText style={styles.serviceCategory}>Under: {addon.service_name}</ThemedText>
+                    )}
+                  </View>
+                  <ThemedText style={styles.servicePrice}>P{parseFloat(addon.price).toFixed(2)}</ThemedText>
+                </View>
+                {addon.description && (
+                  <ThemedText style={styles.serviceDesc}>{addon.description}</ThemedText>
+                )}
+              </View>
+            ))
+          ) : (
+            <View style={styles.emptyCard}>
+              <FontAwesome name="plus-square-o" size={28} color="#555" />
+              <ThemedText style={styles.emptyText}>No add-ons listed</ThemedText>
+            </View>
+          )}
+        </View>
 
         {/* Reviews */}
         <View style={styles.section}>

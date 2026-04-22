@@ -26,6 +26,8 @@ const STATUS_FILTERS = [
   { key: "all", label: "All Status" },
   { key: "accepted", label: "Accepted" },
   { key: "on_the_way", label: "On The Way" },
+  { key: "at_location", label: "At Location" },
+  { key: "diagnosing", label: "Diagnosing" },
   { key: "active", label: "Active" },
   { key: "paused", label: "Paused" },
   { key: "finished", label: "Finished" },
@@ -79,6 +81,12 @@ function getTableStatusClass(status) {
   }
   if (value === "on_the_way") {
     return "border-cyan-500/40 bg-cyan-500/15 text-cyan-300";
+  }
+  if (value === "at_location") {
+    return "border-sky-500/40 bg-sky-500/15 text-sky-200";
+  }
+  if (value === "diagnosing") {
+    return "border-fuchsia-500/40 bg-fuchsia-500/15 text-fuchsia-200";
   }
   if (value === "active") {
     return "border-blue-500/40 bg-blue-500/15 text-blue-300";

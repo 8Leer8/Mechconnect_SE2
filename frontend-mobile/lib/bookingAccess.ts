@@ -10,6 +10,8 @@ const LIVE_BACKJOB_STATUSES = new Set([
   'reworked',
   'accepted',
   'on_the_way',
+  'at_location',
+  'diagnosing',
   'active',
   'paused',
   'finished',

@@ -35,6 +35,30 @@ class ParticipantSerializer(serializers.Serializer):
         return get_media_url(image_field, request)
 
     def get_chat_role(self, obj):
+        def infer_role_from_account(account_obj):
+            try:
+                if hasattr(account_obj, 'shopowner'):
+                    return 'shop_owner'
+            except Exception:
+                pass
+            try:
+                if hasattr(account_obj, 'client'):
+                    return 'client'
+            except Exception:
+                pass
+            try:
+                if hasattr(account_obj, 'mechanic'):
+                    # Booking context is required to distinguish lead vs assisting.
+                    return 'provider_mechanic'
+            except Exception:
+                pass
+            try:
+                if hasattr(account_obj, 'admin'):
+                    return 'admin'
+            except Exception:
+                pass
+            return 'participant'
+
         booking = self.context.get('booking') if hasattr(self, 'context') else None
         booking_id = self.context.get('booking_id') if hasattr(self, 'context') else None
 
@@ -50,10 +74,13 @@ class ParticipantSerializer(serializers.Serializer):
             ).filter(id=booking_id).first()
 
         if not booking:
-            return 'participant'
+            return infer_role_from_account(obj)
 
         access = evaluate_booking_chat_access(booking, obj)
-        return access.get('role', 'participant')
+        resolved_role = access.get('role', 'participant')
+        if resolved_role in ('none', 'participant'):
+            return infer_role_from_account(obj)
+        return resolved_role
 
 
 class MessageSerializer(serializers.ModelSerializer):
@@ -90,7 +117,7 @@ class MessageSerializer(serializers.ModelSerializer):
 
 
 class ConversationSerializer(serializers.ModelSerializer):
-    participants = ParticipantSerializer(many=True, read_only=True)
+    participants = serializers.SerializerMethodField()
     last_message = serializers.SerializerMethodField()
     booking_id = serializers.IntegerField(read_only=True)
     my_chat_role = serializers.SerializerMethodField()
@@ -109,6 +136,13 @@ class ConversationSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         ]
+
+    def get_participants(self, obj):
+        participants_qs = obj.participants.all()
+        participant_context = dict(self.context) if hasattr(self, 'context') else {}
+        participant_context['booking_id'] = getattr(obj, 'booking_id', None)
+        participant_context['booking'] = getattr(obj, '_booking_obj', None)
+        return ParticipantSerializer(participants_qs, many=True, context=participant_context).data
 
     def get_last_message(self, obj):
         last = obj.messages.order_by('-created_at').first()

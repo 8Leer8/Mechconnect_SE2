@@ -235,7 +235,11 @@ export default function HomeScreen() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'active': case 'on_the_way': return '#FF8C00';
+      case 'active':
+      case 'on_the_way':
+      case 'at_location':
+      case 'diagnosing':
+        return '#FF8C00';
       case 'completed': return '#34C759';
       case 'cancelled': return '#FF3B30';
       case 'accepted': return '#00B8D9';
@@ -247,6 +251,8 @@ export default function HomeScreen() {
     switch (status) {
       case 'accepted': return 'Booked';
       case 'on_the_way': return 'On the Way';
+      case 'at_location': return 'At Location';
+      case 'diagnosing': return 'Diagnosing';
       case 'active': return 'In Progress';
       case 'completed': return 'Completed';
       case 'cancelled': return 'Cancelled';

@@ -173,6 +173,20 @@ export const styles = StyleSheet.create({
   serviceCategory: { fontSize: 12, color: '#8E8E93', marginTop: 2 },
   servicePrice: { fontSize: 16, fontWeight: 'bold', color: '#34C759' },
   serviceDesc: { fontSize: 13, color: '#8E8E93', lineHeight: 20, marginTop: 10, paddingLeft: 52 },
+  itemRow: { flexDirection: 'row', alignItems: 'center' },
+  itemImage: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    marginRight: 12,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+  },
+  itemImagePlaceholder: {
+    backgroundColor: '#FF8C0015',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
 
   // Empty
   emptyCard: {

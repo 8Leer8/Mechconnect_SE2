@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {View, ScrollView, TouchableOpacity, Image, RefreshControl, } from 'react-native';
 import { router } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -111,6 +112,12 @@ export default function ProfileScreen() {
     fetchProfileData();
   }, [fetchProfileData]);
 
+  useFocusEffect(
+    useCallback(() => {
+      fetchProfileData();
+    }, [fetchProfileData]),
+  );
+
   const onRefresh = () => {
     setRefreshing(true);
     fetchProfileData();
@@ -211,9 +218,9 @@ export default function ProfileScreen() {
     { icon: 'heart', label: 'Favorites', route: null },
     { icon: 'legal', label: 'My Disputes', route: '/client/profile/dispute' },
     { icon: 'cog', label: 'Settings', route: '/client/others/settings' },
-    { icon: 'shield', label: 'Privacy & Security', route: '/client/others/privacysecurity' },
-    { icon: 'file-text', label: 'Terms & Regulation', route: null },
-    { icon: 'info-circle', label: 'About', route: null },
+    { icon: 'shield', label: 'Privacy & Security', route: '/client/others/privacy' },
+    { icon: 'file-text', label: 'Terms & Regulation', route: '/client/others/terms' },
+    { icon: 'info-circle', label: 'About', route: '/client/others/about' },
   ];
 
   return (

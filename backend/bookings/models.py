@@ -67,6 +67,8 @@ class Booking(models.Model):
     class Status(models.TextChoices):
         ACCEPTED = "accepted"         # Mechanic accepted, waiting to start
         ON_THE_WAY = "on_the_way"    # Mechanic traveling to client
+        AT_LOCATION = "at_location"  # Mechanic arrived at service location
+        DIAGNOSING = "diagnosing"    # Mechanic met client; inspection / diagnosis
         ACTIVE = "active"            # Job started
         PAUSED = "paused"            # Job paused
         FINISHED = "finished"        # Job finished, pending payment
@@ -144,6 +146,20 @@ class ActiveBooking(models.Model):
     stage_updated_at = models.DateTimeField(default=timezone.now)
     paused_at = models.DateTimeField(null=True, blank=True)
     total_pause_duration = models.DurationField(default=timezone.timedelta(0))
+
+class ActiveBookingPhoto(models.Model):
+    class PhotoType(models.TextChoices):
+        BEFORE = "before", "Before"
+        AFTER = "after", "After"
+
+    active_booking = models.ForeignKey(
+        ActiveBooking,
+        on_delete=models.CASCADE,
+        related_name="photos",
+    )
+    photo = models.ImageField(upload_to="bookings/progress/")
+    photo_type = models.CharField(max_length=20, choices=PhotoType.choices)
+    created_at = models.DateTimeField(auto_now_add=True)
 
 class CancelBooking(models.Model):
     booking = models.OneToOneField(Booking, on_delete=models.CASCADE)

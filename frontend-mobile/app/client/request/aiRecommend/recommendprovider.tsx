@@ -6,6 +6,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useNotification } from '@/hooks/useNotification';
 import { StyleSheet } from 'react-native';
+import { getImageUrl } from '@/lib/imageUtils';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -162,7 +163,7 @@ export default function RecommendProviderScreen() {
               return (
                 <View key={shop.id} style={[styles.card, isSent && styles.cardSent]}>
                   {shop.service_banner ? (
-                    <Image source={{ uri: shop.service_banner }} style={styles.banner} resizeMode="cover" />
+                    <Image source={{ uri: getImageUrl(shop.service_banner) || '' }} style={styles.banner} resizeMode="cover" />
                   ) : (
                     <View style={styles.bannerPlaceholder}>
                       <FontAwesome name="building" size={28} color="#555" />
@@ -237,7 +238,7 @@ export default function RecommendProviderScreen() {
                   <View style={styles.cardBody}>
                     <View style={styles.mechanicRow}>
                       {mechanic.profile_photo ? (
-                        <Image source={{ uri: mechanic.profile_photo }} style={styles.profilePhoto} />
+                        <Image source={{ uri: getImageUrl(mechanic.profile_photo) || '' }} style={styles.profilePhoto} />
                       ) : (
                         <View style={styles.profilePhotoPlaceholder}>
                           <FontAwesome name="user" size={22} color="#555" />

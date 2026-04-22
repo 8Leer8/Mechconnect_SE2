@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Linking, Modal, StyleSheet, TouchableOpacity, View } from 'react-native';
-import MapView, { Marker, Polyline, UrlTile } from 'react-native-maps';
+import { ActivityIndicator, Alert, Linking, Modal, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
+import MapView, { Callout, Marker, Polyline, UrlTile } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { router, useLocalSearchParams } from 'expo-router';
 import { FontAwesome } from '@expo/vector-icons';
@@ -12,6 +12,11 @@ export const screenOptions = { headerShown: false } as const;
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const ORS_KEY = process.env.EXPO_PUBLIC_ORS_API_KEY || process.env.EXPO_PUBLIC_ORS_KEY;
 const TOMTOM_KEY = process.env.EXPO_PUBLIC_TOMTOM_API_KEY;
+
+const LIVE_MAP_STATUSES = new Set(['on_the_way', 'at_location', 'diagnosing']);
+function bookingStatusIsLiveTracking(s: string | undefined | null): boolean {
+  return LIVE_MAP_STATUSES.has(String(s || '').toLowerCase());
+}
 
 type Role = 'mechanic' | 'client';
 type TrafficLevel = 'light' | 'moderate' | 'heavy' | 'severe';
@@ -291,12 +296,14 @@ export default function BookingLocationMapScreen() {
   const [trafficMultipliers, setTrafficMultipliers] = useState<TrafficMultiplierConfig>(DEFAULT_TRAFFIC_MULTIPLIERS);
 
   const [lastMechanicUpdateAt, setLastMechanicUpdateAt] = useState<number | null>(null);
+  const lastMechanicUpdateAtRef = useRef<number | null>(null);
   const [showSignalLost, setShowSignalLost] = useState(false);
   const [permissionModalVisible, setPermissionModalVisible] = useState(false);
   const [permissionModalMessage, setPermissionModalMessage] = useState('Please enable location access to continue live tracking.');
+  const [travelActionLoading, setTravelActionLoading] = useState<'arrived' | 'cancel' | null>(null);
 
-  const headerTitle = status === 'on_the_way' ? 'Live Tracking' : 'Route to Client';
-  const isOnTheWay = status === 'on_the_way';
+  const headerTitle = bookingStatusIsLiveTracking(status) ? 'Live Tracking' : 'Route to Client';
+  const isOnTheWay = bookingStatusIsLiveTracking(status);
 
   useEffect(() => {
     clientCoordsRef.current = clientCoords;
@@ -305,6 +312,10 @@ export default function BookingLocationMapScreen() {
   useEffect(() => {
     mechanicCoordsRef.current = mechanicCoords;
   }, [mechanicCoords]);
+
+  useEffect(() => {
+    lastMechanicUpdateAtRef.current = lastMechanicUpdateAt;
+  }, [lastMechanicUpdateAt]);
 
   useEffect(() => {
     let isMounted = true;
@@ -520,7 +531,7 @@ export default function BookingLocationMapScreen() {
       try {
         const servicesEnabled = await Location.hasServicesEnabledAsync();
         if (!servicesEnabled) {
-          if (currentStatus === 'on_the_way') {
+          if (bookingStatusIsLiveTracking(currentStatus)) {
             openTrackingPermissionModal('Location services are turned off. Please enable GPS for live tracking.');
           }
           return MANILA_FALLBACK;
@@ -528,7 +539,7 @@ export default function BookingLocationMapScreen() {
 
         const permission = await Location.requestForegroundPermissionsAsync();
         if (permission.status !== 'granted') {
-          if (currentStatus === 'on_the_way') {
+          if (bookingStatusIsLiveTracking(currentStatus)) {
             openTrackingPermissionModal('Location permission is required for live tracking. Please allow location access.');
           }
           return MANILA_FALLBACK;
@@ -544,7 +555,7 @@ export default function BookingLocationMapScreen() {
       }
     }
 
-    if (currentStatus === 'on_the_way') {
+    if (bookingStatusIsLiveTracking(currentStatus)) {
       try {
         return await fetchMechanicCoordinatesForClient();
       } catch {
@@ -653,7 +664,7 @@ export default function BookingLocationMapScreen() {
       nextEta = fallbackEta;
     }
 
-    if (currentStatus === 'on_the_way') {
+    if (bookingStatusIsLiveTracking(currentStatus)) {
       try {
         const trafficData = await calculateTraffic(from, to);
         setTraffic(trafficData);
@@ -710,7 +721,7 @@ export default function BookingLocationMapScreen() {
         await refreshRouteAndTraffic(resolvedMechanicCoords, resolvedClientCoords, bookingStatus);
         setLastMechanicUpdateAt(Date.now());
       } else {
-        if (role === 'client' && bookingStatus === 'on_the_way') {
+        if (role === 'client' && bookingStatusIsLiveTracking(bookingStatus)) {
           setWaitingForMechanic(true);
         }
 
@@ -723,7 +734,7 @@ export default function BookingLocationMapScreen() {
         setEtaMinutes(bookingEta ? Math.round(bookingEta) : null);
         setRouteEstimated(false);
 
-        if (bookingStatus === 'on_the_way') {
+        if (bookingStatusIsLiveTracking(bookingStatus)) {
           const baselineTraffic = String(bookingData.traffic_level || '').toLowerCase();
           if (baselineTraffic === 'light' || baselineTraffic === 'low' || baselineTraffic === 'moderate' || baselineTraffic === 'medium' || baselineTraffic === 'heavy' || baselineTraffic === 'high' || baselineTraffic === 'severe') {
             const preset = classifyTraffic(
@@ -758,6 +769,86 @@ export default function BookingLocationMapScreen() {
       setScreenLoading(false);
     }
   }, [cleanupLiveResources, fetchBooking, refreshRouteAndTraffic, resolveClientCoordinates, resolveMechanicCoordinates, trafficMultipliers]);
+
+  const postMechanicBookingAction = useCallback(
+    async (endpoint: string, body: Record<string, unknown> = {}) => {
+      if (!API_URL || !bookingId) throw new Error('Missing configuration');
+      const res = await fetch(`${API_URL}/bookings/mechanic/bookings/${bookingId}/${endpoint}/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string; status?: string };
+      if (!res.ok) {
+        const msg = typeof data.error === 'string' && data.error.trim() ? data.error : `Update failed (${res.status})`;
+        throw new Error(msg);
+      }
+      return data;
+    },
+    [bookingId]
+  );
+
+  const openNavToClient = useCallback(() => {
+    const c = clientCoordsRef.current;
+    if (!c || !isValidCoordinate(c.latitude, c.longitude)) {
+      Alert.alert('Location', 'Client location is not ready yet.');
+      return;
+    }
+    const lat = c.latitude;
+    const lng = c.longitude;
+    const web = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`;
+    const primary =
+      Platform.OS === 'ios'
+        ? `maps:/?daddr=${lat},${lng}&dirflg=d`
+        : `google.navigation:q=${lat},${lng}`;
+    Linking.canOpenURL(primary)
+      .then((ok) => (ok ? Linking.openURL(primary) : Linking.openURL(web)))
+      .catch(() => {
+        Linking.openURL(web).catch(() => {});
+      });
+  }, []);
+
+  const goMechanicBookingDetails = useCallback(() => {
+    router.push({
+      pathname: '/mechanic/booking/booking_details',
+      params: { bookingId: String(bookingId) },
+    });
+  }, [bookingId]);
+
+  const handleMechanicArrivedFromMap = useCallback(async () => {
+    if (travelActionLoading) return;
+    setTravelActionLoading('arrived');
+    try {
+      await postMechanicBookingAction('arrived');
+      Alert.alert('Updated', 'Marked at client location.');
+      await initializeScreen();
+    } catch (e) {
+      Alert.alert('Error', e instanceof Error ? e.message : 'Could not update status');
+    } finally {
+      setTravelActionLoading(null);
+    }
+  }, [travelActionLoading, postMechanicBookingAction, initializeScreen]);
+
+  const handleMechanicCancelTravelFromMap = useCallback(() => {
+    Alert.alert('Cancel travel?', 'Your booking will go back to booked.', [
+      { text: 'Keep going', style: 'cancel' },
+      {
+        text: 'Cancel travel',
+        style: 'destructive',
+        onPress: () => {
+          setTravelActionLoading('cancel');
+          postMechanicBookingAction('cancel-travel')
+            .then(() => {
+              Alert.alert('Travel cancelled');
+              router.back();
+            })
+            .catch((e) => Alert.alert('Error', e instanceof Error ? e.message : 'Could not cancel'))
+            .finally(() => setTravelActionLoading(null));
+        },
+      },
+    ]);
+  }, [postMechanicBookingAction]);
 
   const retryLocationResolution = useCallback(async () => {
     if (!booking) return;
@@ -858,7 +949,7 @@ export default function BookingLocationMapScreen() {
         const from = mechanicCoordsRef.current;
         const to = clientCoordsRef.current;
         if (!from || !to) return;
-        refreshRouteAndTraffic(from, to, 'on_the_way').catch(() => {
+        refreshRouteAndTraffic(from, to, status).catch(() => {
           // Realtime refresh failures are reflected by existing fallback state.
         });
       }, 30000);
@@ -881,7 +972,7 @@ export default function BookingLocationMapScreen() {
         setShowSignalLost(false);
 
         if (clientCoordsRef.current) {
-          await refreshRouteAndTraffic(latest, clientCoordsRef.current, 'on_the_way');
+          await refreshRouteAndTraffic(latest, clientCoordsRef.current, status);
         }
       } catch {
         // Polling can temporarily fail in low-signal conditions.
@@ -892,21 +983,22 @@ export default function BookingLocationMapScreen() {
       const from = mechanicCoordsRef.current;
       const to = clientCoordsRef.current;
       if (!from || !to) return;
-      refreshRouteAndTraffic(from, to, 'on_the_way').catch(() => {
+      refreshRouteAndTraffic(from, to, status).catch(() => {
         // Realtime refresh failures are reflected by existing fallback state.
       });
     }, 30000);
 
     staleCheckIntervalRef.current = setInterval(() => {
-      if (!lastMechanicUpdateAt) {
-        setShowSignalLost(true);
+      const last = lastMechanicUpdateAtRef.current;
+      if (last === null) {
+        setShowSignalLost(false);
         return;
       }
-      setShowSignalLost(Date.now() - lastMechanicUpdateAt > 30000);
+      setShowSignalLost(Date.now() - last > 30000);
     }, 5000);
 
     return () => cleanupLiveResources();
-  }, [cleanupLiveResources, clientCoords, fetchMechanicCoordinatesForClient, isOnTheWay, lastMechanicUpdateAt, openTrackingPermissionModal, refreshRouteAndTraffic, role]);
+  }, [cleanupLiveResources, clientCoords, fetchMechanicCoordinatesForClient, isOnTheWay, openTrackingPermissionModal, refreshRouteAndTraffic, role, status]);
 
   useEffect(() => {
     if (!mapRef.current) return;
@@ -1019,7 +1111,7 @@ export default function BookingLocationMapScreen() {
     );
   }
 
-  if (screenLoading || waitingForMechanic) {
+  if (screenLoading) {
     return (
       <ThemedView style={styles.container}>
         <View style={styles.header}>
@@ -1032,9 +1124,7 @@ export default function BookingLocationMapScreen() {
 
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#FF8C00" />
-          <ThemedText style={styles.loadingText}>
-            {waitingForMechanic ? 'Waiting for mechanic location...' : 'Loading route details...'}
-          </ThemedText>
+          <ThemedText style={styles.loadingText}>Loading route details...</ThemedText>
         </View>
       </ThemedView>
     );
@@ -1060,6 +1150,14 @@ export default function BookingLocationMapScreen() {
         <View style={{ width: 40 }} />
       </View>
 
+      {waitingForMechanic && role === 'client' ? (
+        <View style={styles.waitingBanner}>
+          <ThemedText style={styles.waitingBannerText}>
+            Waiting for mechanic GPS. Your map is ready — it will jump to their location when they share it.
+          </ThemedText>
+        </View>
+      ) : null}
+
       <View style={styles.mapWrap}>
         <MapView ref={mapRef} style={styles.map} initialRegion={initialRegion}>
           {!!TOMTOM_KEY && (
@@ -1083,21 +1181,52 @@ export default function BookingLocationMapScreen() {
             />
           )}
 
-          {safeMechanicCoords && (
+          {/* Client service location — always a clear pin (custom view works better than pinColor on iOS). */}
+          {safeClientCoords ? (
             <Marker
-              coordinate={safeMechanicCoords}
-              pinColor="#FF8C00"
-              title="Mechanic"
-            />
-          )}
-
-          {safeClientCoords && (
-            <Marker
+              identifier="client-service-location"
               coordinate={safeClientCoords}
-              pinColor="#FF3B30"
-              title="Client Location"
-            />
-          )}
+              anchor={{ x: 0.5, y: 1 }}
+              zIndex={2}
+              tracksViewChanges={false}
+            >
+              <View style={styles.markerColumn} pointerEvents="box-none">
+                <View style={styles.clientPinBadge}>
+                  <ThemedText style={styles.clientPinBadgeText}>CLIENT</ThemedText>
+                </View>
+                <FontAwesome name="map-marker" size={40} color="#FF3B30" style={styles.markerIconShadow} />
+              </View>
+              <Callout tooltip>
+                <View style={styles.calloutBox}>
+                  <ThemedText style={styles.calloutTitle}>Client location</ThemedText>
+                  <ThemedText style={styles.calloutSub}>Service / drop-off pin</ThemedText>
+                </View>
+              </Callout>
+            </Marker>
+          ) : null}
+
+          {safeMechanicCoords ? (
+            <Marker
+              identifier="mechanic-position"
+              coordinate={safeMechanicCoords}
+              anchor={{ x: 0.5, y: 1 }}
+              zIndex={3}
+              tracksViewChanges={false}
+            >
+              <View style={styles.markerColumn} pointerEvents="box-none">
+                <View style={styles.mechanicPinBadge}>
+                  <ThemedText style={styles.mechanicPinBadgeText}>YOU</ThemedText>
+                </View>
+                <FontAwesome name="map-marker" size={40} color="#FF8C00" style={styles.markerIconShadow} />
+              </View>
+              <Callout tooltip>
+                <View style={styles.calloutBox}>
+                  <ThemedText style={styles.calloutTitle}>Your position</ThemedText>
+                  <ThemedText style={styles.calloutSub}>Updates while you are traveling</ThemedText>
+                </View>
+              </Callout>
+            </Marker>
+          ) : null}
         </MapView>
       </View>
 
@@ -1134,6 +1263,44 @@ export default function BookingLocationMapScreen() {
         {routeEstimated && (
           <ThemedText style={styles.warnText}>⚠️ Showing estimated route.</ThemedText>
         )}
+
+        {role === 'mechanic' && String(status).toLowerCase() === 'on_the_way' ? (
+          <View style={styles.mechanicTravelBar}>
+            <ThemedText style={styles.mechanicTravelHint}>Road route follows the orange line. Use Maps for voice turn-by-turn.</ThemedText>
+            <View style={styles.mechanicTravelRow}>
+              <TouchableOpacity style={styles.mtBtnSecondary} onPress={goMechanicBookingDetails} activeOpacity={0.85}>
+                <FontAwesome name="file-text-o" size={14} color="#E4E4E7" />
+                <ThemedText style={styles.mtBtnSecondaryText}>Details</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.mtBtnSecondary} onPress={openNavToClient} activeOpacity={0.85}>
+                <FontAwesome name="external-link" size={14} color="#E4E4E7" />
+                <ThemedText style={styles.mtBtnSecondaryText}>Maps app</ThemedText>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.mechanicTravelRow}>
+              <TouchableOpacity
+                style={[styles.mtBtnDanger, travelActionLoading && styles.mtBtnDisabled]}
+                onPress={handleMechanicCancelTravelFromMap}
+                disabled={!!travelActionLoading}
+                activeOpacity={0.85}
+              >
+                <ThemedText style={styles.mtBtnDangerText}>Cancel travel</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.mtBtnPrimary, travelActionLoading && styles.mtBtnDisabled]}
+                onPress={handleMechanicArrivedFromMap}
+                disabled={!!travelActionLoading}
+                activeOpacity={0.85}
+              >
+                {travelActionLoading === 'arrived' ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <ThemedText style={styles.mtBtnPrimaryText}>Arrived</ThemedText>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : null}
       </View>
 
       <Modal
@@ -1191,6 +1358,19 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FFFFFF',
   },
+  waitingBanner: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: '#2A2418',
+    borderBottomWidth: 1,
+    borderBottomColor: '#3D3318',
+  },
+  waitingBannerText: {
+    color: '#FDE68A',
+    fontSize: 13,
+    lineHeight: 18,
+    textAlign: 'center',
+  },
   mapWrap: {
     flex: 1,
   },
@@ -1235,6 +1415,7 @@ const styles = StyleSheet.create({
     left: 16,
     right: 16,
     bottom: 16,
+    maxHeight: '46%',
     backgroundColor: '#1A1C1E',
     borderRadius: 16,
     padding: 16,
@@ -1245,6 +1426,122 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
     elevation: 3,
+  },
+  mechanicTravelBar: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#2A2C2E',
+    gap: 10,
+  },
+  mechanicTravelHint: {
+    fontSize: 12,
+    color: '#A1A1AA',
+    lineHeight: 16,
+  },
+  mechanicTravelRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  mtBtnSecondary: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#2A2C2E',
+    borderWidth: 1,
+    borderColor: '#3F4144',
+  },
+  mtBtnSecondaryText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#E4E4E7',
+  },
+  mtBtnPrimary: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#007AFF',
+  },
+  mtBtnPrimaryText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  mtBtnDanger: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#3A2A2A',
+    borderWidth: 1,
+    borderColor: '#7F1D1D',
+  },
+  mtBtnDangerText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FCA5A5',
+  },
+  mtBtnDisabled: {
+    opacity: 0.55,
+  },
+  markerColumn: {
+    alignItems: 'center',
+  },
+  clientPinBadge: {
+    marginBottom: -8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: '#FF3B30',
+  },
+  clientPinBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#fff',
+    letterSpacing: 0.5,
+  },
+  mechanicPinBadge: {
+    marginBottom: -8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: '#FF8C00',
+  },
+  mechanicPinBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#111',
+    letterSpacing: 0.5,
+  },
+  markerIconShadow: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.35,
+    shadowRadius: 2,
+    elevation: 4,
+  },
+  calloutBox: {
+    padding: 10,
+    minWidth: 160,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+  },
+  calloutTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111',
+  },
+  calloutSub: {
+    marginTop: 4,
+    fontSize: 12,
+    color: '#555',
   },
   infoTitle: {
     fontSize: 16,

@@ -2,12 +2,13 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
-from django.db.models import Avg, Count
+from django.db.models import Avg, Count, Prefetch
 from django.utils import timezone
 
 from ..models import Shop, ShopMechanic
 from users.models import ShopOwner, Mechanic
-from services.models import ShopService
+from services.models import ShopService, ServiceAddOn
+from services.serializers import ServiceAddOnPublicSerializer
 from MainBackend.storage_utils import get_media_url
 
 
@@ -26,7 +27,21 @@ def get_shop_profile(request, shop_id):
     - Verification status
     """
     try:
-        shop = Shop.objects.select_related('shop_owner__account').get(id=shop_id)
+        item_filters = {
+            'shop_id': shop_id,
+            'shop__isnull': False,
+        }
+        item_field_names = {field.name for field in ServiceAddOn._meta.fields}
+        if 'is_active' in item_field_names:
+            item_filters['is_active'] = True
+
+        item_queryset = ServiceAddOn.objects.select_related(
+            'mechanic', 'shop', 'service'
+        ).filter(**item_filters)
+
+        shop = Shop.objects.select_related('shop_owner__account').prefetch_related(
+            Prefetch('service_add_ons', queryset=item_queryset, to_attr='public_items')
+        ).get(id=shop_id)
         
         # Get shop owner info
         owner = shop.shop_owner
@@ -85,6 +100,12 @@ def get_shop_profile(request, shop_id):
                 'price': str(service.minimum_price),  # Use the service's minimum price
             }
             services_data.append(service_info)
+
+        items_data = ServiceAddOnPublicSerializer(
+            getattr(shop, 'public_items', []),
+            many=True,
+            context={'request': request},
+        ).data
         
         # Calculate years active
         years_active = 0
@@ -132,6 +153,9 @@ def get_shop_profile(request, shop_id):
             
             # Services
             'services': services_data,
+
+            # Products / items from ServiceAddOn
+            'items': items_data,
         }
         
         return Response({

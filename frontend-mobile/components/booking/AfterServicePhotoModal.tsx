@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Image } from 'expo-image';
 import { FontAwesome } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -8,27 +8,75 @@ import { ThemedText } from '@/components/themed-text';
 
 interface AfterServicePhotoModalProps {
   visible: boolean;
+  mode?: 'before' | 'after';
   loading?: boolean;
   onClose: () => void;
-  onSubmit: (photoUri: string) => void;
+  onSubmit: (photoUris: string[]) => void;
 }
 
 export default function AfterServicePhotoModal({
   visible,
+  mode = 'after',
   loading = false,
   onClose,
   onSubmit,
 }: AfterServicePhotoModalProps) {
-  const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [photoUris, setPhotoUris] = useState<string[]>([]);
 
   useEffect(() => {
     if (!visible) return;
-    setPhotoUri(null);
+    setPhotoUris([]);
   }, [visible]);
 
+  const ensureCameraPermission = async (): Promise<boolean> => {
+    let permission = await ImagePicker.getCameraPermissionsAsync();
+
+    if (permission.status !== 'granted') {
+      permission = await ImagePicker.requestCameraPermissionsAsync();
+    }
+
+    if (permission.status === 'granted') {
+      return true;
+    }
+
+    if (permission.canAskAgain) {
+      return new Promise((resolve) => {
+        Alert.alert(
+          'Camera Permission Needed',
+          'Camera access is required to take before/after service photos.',
+          [
+            { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+            {
+              text: 'Ask Again',
+              onPress: async () => {
+                const retryPermission = await ImagePicker.requestCameraPermissionsAsync();
+                resolve(retryPermission.status === 'granted');
+              },
+            },
+          ]
+        );
+      });
+    }
+
+    Alert.alert(
+      'Camera Access Blocked',
+      'Camera permission is blocked for this app. Please enable it in settings, then try again.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Open Settings',
+          onPress: () => {
+            Linking.openSettings().catch(() => undefined);
+          },
+        },
+      ]
+    );
+    return false;
+  };
+
   const pickFromCamera = async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') return;
+    const hasPermission = await ensureCameraPermission();
+    if (!hasPermission) return;
 
     const result = await ImagePicker.launchCameraAsync({
       allowsEditing: true,
@@ -37,13 +85,26 @@ export default function AfterServicePhotoModal({
     });
 
     if (!result.canceled && result.assets[0]?.uri) {
-      setPhotoUri(result.assets[0].uri);
+      const capturedUri = result.assets[0].uri;
+      Alert.alert(
+        'Use this photo?',
+        'Confirm this capture before adding it to the job record.',
+        [
+          { text: 'Retake', style: 'cancel' },
+          {
+            text: 'Use Photo',
+            onPress: () => {
+              setPhotoUris((prev) => [...prev, capturedUri]);
+            },
+          },
+        ]
+      );
     }
   };
 
   const handleSubmit = () => {
-    if (!photoUri || loading) return;
-    onSubmit(photoUri);
+    if (!photoUris.length || loading) return;
+    onSubmit(photoUris);
   };
 
   return (
@@ -54,7 +115,9 @@ export default function AfterServicePhotoModal({
             <View style={styles.headerRow}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <FontAwesome name="camera" size={18} color="#FF8C00" />
-                <ThemedText style={styles.title}>After-Service Photo Required</ThemedText>
+                <ThemedText style={styles.title}>
+                  {mode === 'before' ? 'Before-Service Photos Required' : 'After-Service Photos Required'}
+                </ThemedText>
               </View>
               <TouchableOpacity onPress={onClose} disabled={loading}>
                 <FontAwesome name="times" size={20} color="#8E8E93" />
@@ -62,20 +125,26 @@ export default function AfterServicePhotoModal({
             </View>
 
             <ThemedText style={styles.subtitle}>
-              Take and upload an after-service photo before finishing the job.
+              {mode === 'before'
+                ? 'Take photos first before starting the job. Added photos are locked and cannot be removed.'
+                : 'Take photos before finishing the job. Added photos are locked and cannot be removed.'}
             </ThemedText>
 
-            {photoUri ? (
-              <View style={styles.previewWrap}>
-                <Image source={{ uri: photoUri }} style={styles.previewImage} contentFit="cover" />
-                <TouchableOpacity style={styles.removeButton} onPress={() => setPhotoUri(null)} disabled={loading}>
-                  <FontAwesome name="times-circle" size={24} color="#FF3B30" />
-                </TouchableOpacity>
-              </View>
+            {photoUris.length > 0 ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.previewList}>
+                {photoUris.map((uri, idx) => (
+                  <View key={`${uri}-${idx}`} style={styles.previewWrap}>
+                    <Image source={{ uri }} style={styles.previewImage} contentFit="cover" />
+                    <View style={styles.photoNumberBadge}>
+                      <ThemedText style={styles.photoNumberText}>{idx + 1}</ThemedText>
+                    </View>
+                  </View>
+                ))}
+              </ScrollView>
             ) : (
               <View style={styles.placeholderWrap}>
                 <FontAwesome name="image" size={30} color="#6C6C70" />
-                <ThemedText style={styles.placeholderText}>No photo selected yet</ThemedText>
+                <ThemedText style={styles.placeholderText}>No photos captured yet</ThemedText>
               </View>
             )}
 
@@ -87,16 +156,18 @@ export default function AfterServicePhotoModal({
             </View>
 
             <TouchableOpacity
-              style={[styles.primaryButton, (!photoUri || loading) && styles.primaryButtonDisabled]}
+              style={[styles.primaryButton, (!photoUris.length || loading) && styles.primaryButtonDisabled]}
               onPress={handleSubmit}
-              disabled={!photoUri || loading}
+              disabled={!photoUris.length || loading}
             >
               {loading ? (
                 <ActivityIndicator size="small" color="#fff" />
               ) : (
                 <>
                   <FontAwesome name="check" size={14} color="#fff" />
-                  <ThemedText style={styles.primaryButtonText}>Upload & Complete</ThemedText>
+                  <ThemedText style={styles.primaryButtonText}>
+                    {mode === 'before' ? 'Upload & Start Job' : 'Upload & Complete'}
+                  </ThemedText>
                 </>
               )}
             </TouchableOpacity>
@@ -137,24 +208,40 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
     marginBottom: 12,
   },
+  previewList: {
+    gap: 10,
+    paddingBottom: 6,
+    marginBottom: 10,
+  },
   previewWrap: {
     borderRadius: 12,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#2A2C2E',
     backgroundColor: '#111214',
-    marginBottom: 10,
+    width: 170,
+    height: 150,
   },
   previewImage: {
-    width: '100%',
-    height: 200,
+    width: 170,
+    height: 150,
   },
-  removeButton: {
+  photoNumberBadge: {
     position: 'absolute',
-    right: 8,
-    top: 8,
-    backgroundColor: '#111214CC',
-    borderRadius: 20,
+    top: 6,
+    right: 6,
+    backgroundColor: '#111214D9',
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  photoNumberText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
   },
   placeholderWrap: {
     height: 140,

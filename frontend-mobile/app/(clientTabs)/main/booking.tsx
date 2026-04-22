@@ -121,7 +121,7 @@ export default function BookingScreen() {
   useEffect(() => {
     if (
       lastMessage?.type === 'booking_update' &&
-      ['accepted', 'on_the_way', 'active', 'pending_payment', 'completed', 'cancelled', 'reworked', 'disputed'].includes(String(lastMessage?.status || ''))
+      ['accepted', 'on_the_way', 'at_location', 'diagnosing', 'active', 'pending_payment', 'completed', 'cancelled', 'reworked', 'disputed'].includes(String(lastMessage?.status || ''))
     ) {
       fetchData();
     }
@@ -180,6 +180,8 @@ export default function BookingScreen() {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'on_the_way': return '#007AFF';
+      case 'at_location': return '#5AC8FA';
+      case 'diagnosing': return '#AF52DE';
       case 'active': return '#FF8C00';
       case 'accepted': return '#00B8D9';
       case 'completed': return '#34C759';
@@ -193,6 +195,8 @@ export default function BookingScreen() {
     switch (status) {
       case 'accepted': return 'Booked';
       case 'on_the_way': return 'On the Way';
+      case 'at_location': return 'At Location';
+      case 'diagnosing': return 'Diagnosing';
       case 'active': return 'In Progress';
       case 'completed': return 'Completed';
       case 'cancelled': return 'Cancelled';
@@ -206,6 +210,8 @@ export default function BookingScreen() {
       case 'accepted': return 'calendar-check-o';
       case 'active': return 'play-circle';
       case 'on_the_way': return 'car';
+      case 'at_location': return 'map-marker';
+      case 'diagnosing': return 'search';
       case 'completed': return 'check-circle';
       case 'cancelled': return 'times-circle';
       case 'reworked': return 'refresh';
@@ -352,7 +358,24 @@ export default function BookingScreen() {
                 </View>
 
                 {/* Status-specific Banners */}
-                {(booking.status === 'active' || booking.status === 'on_the_way') && booking.active_details && (
+                {(booking.status === 'on_the_way' ||
+                  booking.status === 'at_location' ||
+                  booking.status === 'diagnosing') && (
+                  <View style={styles.detailBanner}>
+                    <View style={styles.bannerRow}>
+                      <FontAwesome name="info-circle" size={14} color="#FF8C00" />
+                      <ThemedText style={[styles.bannerText, { color: '#FF8C00' }]}>
+                        {booking.status === 'on_the_way'
+                          ? 'Mechanic is on the way'
+                          : booking.status === 'at_location'
+                            ? 'Mechanic arrived at your location'
+                            : 'Mechanic is diagnosing with you'}
+                      </ThemedText>
+                    </View>
+                  </View>
+                )}
+
+                {booking.status === 'active' && booking.active_details && (
                   <View style={styles.detailBanner}>
                     {booking.active_details.is_job_done ? (
                       <View style={styles.bannerRow}>
@@ -362,9 +385,7 @@ export default function BookingScreen() {
                     ) : (
                       <View style={styles.bannerRow}>
                         <FontAwesome name="info-circle" size={14} color="#FF8C00" />
-                        <ThemedText style={[styles.bannerText, { color: '#FF8C00' }]}>
-                          {booking.status === 'on_the_way' ? 'Mechanic is on the way' : 'Job in progress'}
-                        </ThemedText>
+                        <ThemedText style={[styles.bannerText, { color: '#FF8C00' }]}>Job in progress</ThemedText>
                       </View>
                     )}
                   </View>

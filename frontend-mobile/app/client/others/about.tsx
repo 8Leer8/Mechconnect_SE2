@@ -2,53 +2,44 @@ import React from 'react';
 import {
   View,
   ScrollView,
-  TouchableOpacity,
   Text,
   Image,
   StyleSheet,
 } from 'react-native';
-import { useRouter } from 'expo-router';
-import GenTopNav from '../../components/gen/GenTopNav';
+import GenTopNav from '../../../components/gen/GenTopNav';
 
 export const options = { headerShown: false } as const;
 
-export default function TermsScreen() {
-  const router = useRouter();
-
+export default function AboutScreen() {
   return (
     <View style={styles.container}>
-      <GenTopNav title="Terms of Service" />
+      <GenTopNav title="About MechConnect" />
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         <View style={styles.logoRow}>
           <Image source={require('@/assets/images/logo_main.png')} style={styles.logo} />
-          <Text style={styles.title}>Terms of Service</Text>
-          <Text style={styles.tagline}>Please read our terms and conditions carefully.</Text>
+          <Text style={styles.title}>About MechConnect</Text>
+          <Text style={styles.tagline}>Learn more about our platform and mission.</Text>
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>1. Acceptance of Terms</Text>
+          <Text style={styles.sectionTitle}>Our Mission</Text>
           <Text style={styles.contentText}>
-            By accessing and using MechConnect, you accept and agree to be bound by the terms and provision of this agreement.
+            MechConnect is dedicated to bridging the gap between vehicle owners and qualified mechanics, providing a seamless and transparent platform for automotive services.
           </Text>
 
-          <Text style={styles.sectionTitle}>2. Use License</Text>
+          <Text style={styles.sectionTitle}>What We Do</Text>
           <Text style={styles.contentText}>
-            Permission is granted to temporarily download one copy of the materials (information or software) on MechConnect for personal, non-commercial transitory viewing only.
+            We connect clients with trusted mechanics and shops, enabling quick service requests, real-time tracking, and quality assurance. Our platform makes finding reliable automotive services easy and convenient.
           </Text>
 
-          <Text style={styles.sectionTitle}>3. Disclaimer</Text>
+          <Text style={styles.sectionTitle}>Our Commitment</Text>
           <Text style={styles.contentText}>
-            The materials on MechConnect are provided on an 'as is' basis. We make no warranties, expressed or implied, and hereby disclaim and negate all other warranties.
+            We are committed to maintaining high standards of service quality, ensuring user safety, and providing exceptional customer support. Your satisfaction is our priority.
           </Text>
 
-          <Text style={styles.sectionTitle}>4. Limitations</Text>
+          <Text style={styles.sectionTitle}>Version</Text>
           <Text style={styles.contentText}>
-            In no event shall MechConnect or its suppliers be liable for any damages (including, without limitation, damages for loss of data or profit) arising out of the use or inability to use the materials on MechConnect.
-          </Text>
-
-          <Text style={styles.sectionTitle}>5. Revisions</Text>
-          <Text style={styles.contentText}>
-            The materials appearing on MechConnect could include technical, typographical, or photographic errors. MechConnect does not warrant that any of the materials on our website are accurate, complete or current.
+            MechConnect v1.0
           </Text>
         </View>
       </ScrollView>

@@ -9,7 +9,7 @@ export default function ShopOwnerLayout() {
       }}
     >
       <Stack.Screen name="others" options={{ headerShown: false }} />
-      <Stack.Screen name="booking" options={{ headerShown: false }} />
+      <Stack.Screen name="booking/booking_details" options={{ headerShown: false }} />
       <Stack.Screen name="request_details" options={{ headerShown: false }} />
     </Stack>
   );
