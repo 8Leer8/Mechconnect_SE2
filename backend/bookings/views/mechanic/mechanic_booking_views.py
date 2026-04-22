@@ -528,6 +528,77 @@ def mechanic_start_job(request, booking_id):
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
+def mechanic_append_before_photos(request, booking_id):
+    """
+    Append extra before-service photos while the job is active or paused
+    (e.g. documenting an additional issue mid-job). Does not change booking status.
+    """
+    account, err = _get_mechanic_account(request)
+    if err:
+        return err
+
+    try:
+        booking = _get_accessible_booking(account, booking_id)
+    except Booking.DoesNotExist:
+        return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
+
+    if booking.status not in (Booking.Status.ACTIVE, Booking.Status.PAUSED):
+        return Response(
+            {"error": "You can add more before photos only while the job is active or paused."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    uploaded_before_photos = list(request.FILES.getlist("before_pictures"))
+    uploaded_single_before = request.FILES.get("before_picture_service")
+    if uploaded_single_before is not None:
+        uploaded_before_photos.append(uploaded_single_before)
+
+    if not uploaded_before_photos:
+        return Response(
+            {"error": "No photos uploaded.", "code": "no_photos"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        with transaction.atomic():
+            active_booking = ActiveBooking.objects.select_for_update().get(booking=booking)
+            if not active_booking.before_picture_service:
+                active_booking.before_picture_service = uploaded_before_photos[0]
+                active_booking.save(update_fields=["before_picture_service"])
+            ActiveBookingPhoto.objects.bulk_create(
+                [
+                    ActiveBookingPhoto(
+                        active_booking=active_booking,
+                        photo=photo_file,
+                        photo_type=ActiveBookingPhoto.PhotoType.BEFORE,
+                    )
+                    for photo_file in uploaded_before_photos
+                ]
+            )
+    except ActiveBooking.DoesNotExist:
+        return Response({"error": "Job has not started yet."}, status=status.HTTP_400_BAD_REQUEST)
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.error("append before photos booking %s: %s", booking_id, traceback.format_exc())
+        return Response({"error": "Failed to save photos", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    notify_booking_parties(
+        account.id,
+        booking.request.client.account_id,
+        booking.id,
+        booking.status,
+        "Mechanic added before-service photos",
+    )
+
+    return Response(
+        {"message": "Before photos added.", "booking_id": booking.id, "status": booking.status},
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
 def mechanic_cancel_job(request, booking_id):
     """
     Mechanic cancels the job and reverts status to diagnosing (still on site with client).

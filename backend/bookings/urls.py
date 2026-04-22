@@ -71,6 +71,7 @@ urlpatterns = [
     path('mechanic/bookings/<int:booking_id>/arrived/', views.mechanic_arrived, name='mechanic-arrived'),
     path('mechanic/bookings/<int:booking_id>/start-diagnosing/', views.mechanic_start_diagnosing, name='mechanic-start-diagnosing'),
     path('mechanic/bookings/<int:booking_id>/start-job/', views.mechanic_start_job, name='mechanic-start-job'),
+    path('mechanic/bookings/<int:booking_id>/append-before-photos/', views.mechanic_append_before_photos, name='mechanic-append-before-photos'),
     path('mechanic/bookings/<int:booking_id>/cancel-job/', views.mechanic_cancel_job, name='mechanic-cancel-job'),
     path('mechanic/bookings/<int:booking_id>/pause-job/', views.mechanic_pause_job, name='mechanic-pause-job'),
     path('mechanic/bookings/<int:booking_id>/resume-job/', views.mechanic_resume_job, name='mechanic-resume-job'),

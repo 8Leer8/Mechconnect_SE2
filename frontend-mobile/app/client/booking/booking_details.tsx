@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 // Ensure the router header is hidden for this route so only the in-page header shows
 export const screenOptions = { headerShown: false } as const;
-import {View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Linking, Platform, Modal, TextInput, KeyboardAvoidingView, Alert } from 'react-native';
+import {View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Linking, Platform, Modal, TextInput, KeyboardAvoidingView, Alert, useWindowDimensions } from 'react-native';
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -23,6 +23,7 @@ import {
 import ReportNoShowModal from '@/components/booking/ReportNoShowModal';
 import MechanicRatingModal from '@/components/booking/MechanicRatingModal';
 import { bookingHasBackjob, canOpenBookingChat } from '@/lib/bookingAccess';
+import { coerceBarangayForDisplay } from '@/lib/locationAddress';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -151,6 +152,17 @@ const shouldUseLiveAdditivePricing = (statusValue?: string | null): boolean => {
   return LIVE_PRICING_STATUSES.has(normalized);
 };
 
+const PHOTO_GRID_BREAKPOINT = 440;
+
+function mergeGalleryWithLegacy(gallery: string[] | undefined, legacy: string | null | undefined) {
+  const norm = (u: string) => String(u || '').replace(/\s+/g, '').trim();
+  const list = (gallery || []).map(norm).filter(Boolean);
+  const leg = norm(String(legacy || ''));
+  if (!leg) return list;
+  if (list.some((u) => u === leg)) return list;
+  return [leg, ...list];
+}
+
 const toPrice = (value: unknown) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
@@ -175,6 +187,8 @@ const solveServiceSubtotalFromAmount = (
 export default function ClientBookingDetailScreen() {
   const { bookingId, id } = useLocalSearchParams<{ bookingId?: string; id?: string }>();
   const resolvedBookingId = bookingId || id;
+  const { width: windowWidth } = useWindowDimensions();
+  const photoGridCols = windowWidth >= PHOTO_GRID_BREAKPOINT ? 3 : 2;
   const navigation = useNavigation();
   const [booking, setBooking] = useState<BookingDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -217,11 +231,31 @@ export default function ClientBookingDetailScreen() {
   const [pricingConfig, setPricingConfig] = useState<PricingConfig>({});
   const [visibleBeforePhotoCount, setVisibleBeforePhotoCount] = useState(6);
   const [visibleAfterPhotoCount, setVisibleAfterPhotoCount] = useState(6);
+  const [beforePhotosExpanded, setBeforePhotosExpanded] = useState(false);
+  const [afterPhotosExpanded, setAfterPhotosExpanded] = useState(false);
+  const [photoLoadingMap, setPhotoLoadingMap] = useState<Record<string, boolean>>({});
+  const [photoErrorMap, setPhotoErrorMap] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     setVisibleBeforePhotoCount(6);
     setVisibleAfterPhotoCount(6);
+    setBeforePhotosExpanded(false);
+    setAfterPhotosExpanded(false);
+    setPhotoLoadingMap({});
+    setPhotoErrorMap({});
   }, [booking?.id]);
+
+  const toggleBeforePhotosAccordion = useCallback(() => {
+    setBeforePhotosExpanded((prev) => !prev);
+    setPhotoLoadingMap({});
+    setPhotoErrorMap({});
+  }, []);
+
+  const toggleAfterPhotosAccordion = useCallback(() => {
+    setAfterPhotosExpanded((prev) => !prev);
+    setPhotoLoadingMap({});
+    setPhotoErrorMap({});
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -1650,7 +1684,15 @@ export default function ClientBookingDetailScreen() {
                 ? `${Number((booking.service_location as any).latitude).toFixed(6)}, ${Number((booking.service_location as any).longitude).toFixed(6)}`
                 : 'Unavailable';
             const streetValue = locationText(inferred.street || booking.service_location?.street_name, fallbackStreet);
-            const barangayValue = locationText(booking.service_location?.barangay, locationText(inferred.barangay, 'Unavailable'));
+            const barangayValue = locationText(
+              coerceBarangayForDisplay(
+                booking.service_location?.barangay,
+                booking.service_location?.city_municipality,
+                (booking.service_location as { region?: string } | undefined)?.region,
+                booking.service_location?.subdivision_village
+              ),
+              locationText(inferred.barangay, 'Unavailable')
+            );
             const cityValue = locationText(booking.service_location?.city_municipality, locationText(inferred.city, 'Unavailable'));
             return (
               <>
@@ -2057,40 +2099,99 @@ export default function ClientBookingDetailScreen() {
         {booking.active_details && (
           <View style={styles.sectionCard}>
             {(() => {
-              const beforePhotos = booking.active_details?.before_pictures?.length
-                ? booking.active_details.before_pictures
-                : booking.active_details?.before_picture
-                  ? [booking.active_details.before_picture]
-                  : [];
-              const afterPhotos = booking.active_details?.after_pictures?.length
-                ? booking.active_details.after_pictures
-                : booking.active_details?.after_picture
-                  ? [booking.active_details.after_picture]
-                  : [];
+              const beforePhotos = mergeGalleryWithLegacy(
+                booking.active_details?.before_pictures,
+                booking.active_details?.before_picture ?? null
+              );
+              const afterPhotos = mergeGalleryWithLegacy(
+                booking.active_details?.after_pictures,
+                booking.active_details?.after_picture ?? null
+              );
 
               const renderPhotos = (photos: string[]) => (
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 8, marginHorizontal: -4 }}>
-                  {photos.map((uri, idx) => (
-                    <View key={`${uri}-${idx}`} style={{ width: '50%', paddingHorizontal: 4, marginBottom: 8 }}>
-                      <Image
-                        source={{ uri }}
-                        style={{ width: '100%', height: 150, borderRadius: 12 }}
-                        contentFit="cover"
-                      />
-                    </View>
-                  ))}
+                <View style={styles.photoGrid}>
+                  {photos.map((uri, idx) => {
+                    const isFullWidth =
+                      photos.length === 1 ||
+                      (photos.length % photoGridCols !== 0 && idx === photos.length - 1);
+                    const tileStyle = photoGridCols === 3 ? styles.photoTileThird : styles.photoTile;
+                    const safeUri = String(uri || '').replace(/\s+/g, '').trim();
+                    const photoKey = `${safeUri}-${idx}`;
+                    const isLoading = !!photoLoadingMap[photoKey];
+                    const hasError = !!photoErrorMap[photoKey];
+
+                    return (
+                      <View
+                        key={photoKey}
+                        style={[
+                          tileStyle,
+                          isFullWidth && styles.photoTileWide,
+                        ]}
+                      >
+                        {safeUri ? (
+                          <View style={styles.photoImageWrap}>
+                            <Image
+                              source={{ uri: safeUri }}
+                              style={styles.photoImage}
+                              contentFit="cover"
+                              transition={180}
+                              onLoadStart={() => {
+                                setPhotoLoadingMap((prev) => ({ ...prev, [photoKey]: true }));
+                                setPhotoErrorMap((prev) => ({ ...prev, [photoKey]: false }));
+                              }}
+                              onLoad={() => {
+                                setPhotoLoadingMap((prev) => ({ ...prev, [photoKey]: false }));
+                              }}
+                              onError={() => {
+                                setPhotoLoadingMap((prev) => ({ ...prev, [photoKey]: false }));
+                                setPhotoErrorMap((prev) => ({ ...prev, [photoKey]: true }));
+                              }}
+                            />
+                            {isLoading && (
+                              <View style={styles.photoLoadingOverlay}>
+                                <ActivityIndicator size="small" color="#FFFFFF" />
+                              </View>
+                            )}
+                            {hasError && (
+                              <View style={styles.photoLoadingOverlay}>
+                                <FontAwesome name="image" size={18} color="#8E8E93" />
+                                <ThemedText style={styles.photoFailedText}>Failed to load</ThemedText>
+                              </View>
+                            )}
+                          </View>
+                        ) : (
+                          <View style={styles.photoFallbackTile}>
+                            <FontAwesome name="image" size={18} color="#8E8E93" />
+                            <ThemedText style={styles.photoFailedText}>No image</ThemedText>
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })}
                 </View>
               );
 
               return (
                 <>
-                  <View style={styles.sectionHeader}>
+                  <TouchableOpacity
+                    style={styles.photoAccordionHeader}
+                    onPress={toggleBeforePhotosAccordion}
+                    activeOpacity={0.85}
+                  >
                     <View style={[styles.sectionIcon, { backgroundColor: '#4F8CFF15' }]}>
                       <FontAwesome name="camera" size={16} color="#4F8CFF" />
                     </View>
-                    <ThemedText style={styles.sectionTitle}>Before-Service Photos</ThemedText>
-                  </View>
-                  {beforePhotos.length ? (
+                    <ThemedText style={styles.photoAccordionTitle}>Before-Service Photos</ThemedText>
+                    <View style={styles.photoAccordionChevronWrap}>
+                      <FontAwesome
+                        name={beforePhotosExpanded ? 'angle-up' : 'angle-down'}
+                        size={18}
+                        color="#AEAEB2"
+                      />
+                    </View>
+                  </TouchableOpacity>
+                  {beforePhotosExpanded && (
+                    beforePhotos.length ? (
                     <>
                       {renderPhotos(beforePhotos.slice(0, visibleBeforePhotoCount))}
                       {beforePhotos.length > visibleBeforePhotoCount ? (
@@ -2104,33 +2205,34 @@ export default function ClientBookingDetailScreen() {
                       ) : null}
                     </>
                   ) : (
-                    <View
-                      style={{
-                        marginTop: 8,
-                        height: 120,
-                        borderRadius: 12,
-                        borderWidth: 1,
-                        borderColor: '#2A2C2E',
-                        backgroundColor: '#111214',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 8,
-                      }}
-                    >
+                    <View style={styles.photoEmptyState}>
                       <FontAwesome name="image" size={24} color="#6C6C70" />
-                      <ThemedText style={{ color: '#8E8E93' }}>No before-service photos uploaded yet</ThemedText>
+                      <ThemedText style={styles.photoEmptyText}>No before-service photos uploaded yet</ThemedText>
                     </View>
+                    )
                   )}
 
                   {(booking.status === 'completed' || afterPhotos.length > 0) ? (
                     <>
-                      <View style={[styles.sectionHeader, { marginTop: 8 }]}>
+                      <TouchableOpacity
+                        style={[styles.photoAccordionHeader, { marginTop: 8 }]}
+                        onPress={toggleAfterPhotosAccordion}
+                        activeOpacity={0.85}
+                      >
                         <View style={[styles.sectionIcon, { backgroundColor: '#34C75915' }]}>
                           <FontAwesome name="camera" size={16} color="#34C759" />
                         </View>
-                        <ThemedText style={styles.sectionTitle}>After-Service Photos</ThemedText>
-                      </View>
-                      {afterPhotos.length ? (
+                        <ThemedText style={styles.photoAccordionTitle}>After-Service Photos</ThemedText>
+                        <View style={styles.photoAccordionChevronWrap}>
+                          <FontAwesome
+                            name={afterPhotosExpanded ? 'angle-up' : 'angle-down'}
+                            size={18}
+                            color="#AEAEB2"
+                          />
+                        </View>
+                      </TouchableOpacity>
+                      {afterPhotosExpanded && (
+                        afterPhotos.length ? (
                         <>
                           {renderPhotos(afterPhotos.slice(0, visibleAfterPhotoCount))}
                           {afterPhotos.length > visibleAfterPhotoCount ? (
@@ -2144,22 +2246,11 @@ export default function ClientBookingDetailScreen() {
                           ) : null}
                         </>
                       ) : (
-                        <View
-                          style={{
-                            marginTop: 8,
-                            height: 120,
-                            borderRadius: 12,
-                            borderWidth: 1,
-                            borderColor: '#2A2C2E',
-                            backgroundColor: '#111214',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: 8,
-                          }}
-                        >
+                        <View style={styles.photoEmptyState}>
                           <FontAwesome name="image" size={24} color="#6C6C70" />
-                          <ThemedText style={{ color: '#8E8E93' }}>No after-service photos uploaded yet</ThemedText>
+                          <ThemedText style={styles.photoEmptyText}>No after-service photos uploaded yet</ThemedText>
                         </View>
+                        )
                       )}
                     </>
                   ) : null}

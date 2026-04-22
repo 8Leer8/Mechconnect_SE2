@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 // Ensure the router header is hidden for this route so only the in-page header shows
 export const screenOptions = { headerShown: false } as const;
-import { View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Modal } from 'react-native';
+import { View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Modal, useWindowDimensions } from 'react-native';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import { router, useLocalSearchParams, useFocusEffect, useNavigation, useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
@@ -20,6 +20,7 @@ import { bookingHasBackjob, canOpenBookingChat } from '@/lib/bookingAccess';
 import { fetchBookingChatPreview } from '@/lib/bookingChatPreview';
 import { ensureForegroundLocationAccess } from '@/lib/locationPermission';
 import { fetchProfileDetailsCached } from '@/lib/profileCache';
+import { reverseGeocodeAddress, coerceBarangayForDisplay } from '@/lib/locationAddress';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -28,6 +29,17 @@ const parseApiErrorMessage = (payload: unknown, fallback: string) => {
   const value = (payload as Record<string, unknown>).error;
   return typeof value === 'string' && value.trim() ? value : fallback;
 };
+
+const PHOTO_GRID_BREAKPOINT = 440;
+
+function mergeGalleryWithLegacy(gallery: string[] | undefined, legacy: string | null | undefined) {
+  const norm = (u: string) => String(u || '').replace(/\s+/g, '').trim();
+  const list = (gallery || []).map(norm).filter(Boolean);
+  const leg = norm(String(legacy || ''));
+  if (!leg) return list;
+  if (list.some((u) => u === leg)) return list;
+  return [leg, ...list];
+}
 
 interface BookingDetail {
   id: number;
@@ -191,6 +203,8 @@ export default function BookingDetailScreen() {
   const navigation = useNavigation();
   const { showNotification } = useNotification();
   const { confirm } = useConfirmation();
+  const { width: windowWidth } = useWindowDimensions();
+  const photoGridCols = windowWidth >= PHOTO_GRID_BREAKPOINT ? 3 : 2;
   const [booking, setBooking] = useState<BookingDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -211,6 +225,8 @@ export default function BookingDetailScreen() {
   const [resumeJobLoading, setResumeJobLoading] = useState(false);
   const [finishJobLoading, setFinishJobLoading] = useState(false);
   const [showBeforeServicePhotoModal, setShowBeforeServicePhotoModal] = useState(false);
+  const [showAppendBeforePhotosModal, setShowAppendBeforePhotosModal] = useState(false);
+  const [appendBeforePhotosLoading, setAppendBeforePhotosLoading] = useState(false);
   const [showAfterServicePhotoModal, setShowAfterServicePhotoModal] = useState(false);
   const [paymentReceivedLoading, setPaymentReceivedLoading] = useState(false);
   const [cancelBookingLoading, setCancelBookingLoading] = useState(false);
@@ -227,6 +243,10 @@ export default function BookingDetailScreen() {
   const [chatPreview, setChatPreview] = useState<string | null>(null);
   const [visibleBeforePhotoCount, setVisibleBeforePhotoCount] = useState(6);
   const [visibleAfterPhotoCount, setVisibleAfterPhotoCount] = useState(6);
+  const [beforePhotosExpanded, setBeforePhotosExpanded] = useState(false);
+  const [afterPhotosExpanded, setAfterPhotosExpanded] = useState(false);
+  const [photoLoadingMap, setPhotoLoadingMap] = useState<Record<string, boolean>>({});
+  const [photoErrorMap, setPhotoErrorMap] = useState<Record<string, boolean>>({});
   const [resolvedEmergencyLocation, setResolvedEmergencyLocation] = useState<{
     street_name?: string;
     barangay?: string;
@@ -241,7 +261,23 @@ export default function BookingDetailScreen() {
   useEffect(() => {
     setVisibleBeforePhotoCount(6);
     setVisibleAfterPhotoCount(6);
+    setBeforePhotosExpanded(false);
+    setAfterPhotosExpanded(false);
+    setPhotoLoadingMap({});
+    setPhotoErrorMap({});
   }, [booking?.id]);
+
+  const toggleBeforePhotosAccordion = useCallback(() => {
+    setBeforePhotosExpanded((prev) => !prev);
+    setPhotoLoadingMap({});
+    setPhotoErrorMap({});
+  }, []);
+
+  const toggleAfterPhotosAccordion = useCallback(() => {
+    setAfterPhotosExpanded((prev) => !prev);
+    setPhotoLoadingMap({});
+    setPhotoErrorMap({});
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -284,17 +320,14 @@ export default function BookingDetailScreen() {
       }
 
       try {
-        const [addressResult] = await Location.reverseGeocodeAsync({
-          latitude: Number(lat),
-          longitude: Number(lng),
-        });
+        const parsed = await reverseGeocodeAddress(Number(lat), Number(lng));
 
         if (!isMounted) return;
 
         setResolvedEmergencyLocation({
-          street_name: addressResult?.street || addressResult?.name || street || undefined,
-          barangay: addressResult?.district || addressResult?.subregion || barangay || undefined,
-          city_municipality: addressResult?.city || addressResult?.subregion || addressResult?.region || city || undefined,
+          street_name: parsed.streetName || street || undefined,
+          barangay: parsed.barangay || barangay || undefined,
+          city_municipality: parsed.city || city || undefined,
         });
       } catch {
         if (isMounted) setResolvedEmergencyLocation(null);
@@ -1178,11 +1211,10 @@ export default function BookingDetailScreen() {
     if (startJobLoading || transitioning) return;
     if (!booking) return;
 
-    const existingBeforePhotos = booking.active_details?.before_pictures?.length
-      ? booking.active_details.before_pictures
-      : booking.active_details?.before_picture
-        ? [booking.active_details.before_picture]
-        : [];
+    const existingBeforePhotos = mergeGalleryWithLegacy(
+      booking.active_details?.before_pictures,
+      booking.active_details?.before_picture ?? null
+    );
 
     // First start-job requires before-service photos; if already uploaded before, allow direct restart.
     if (!existingBeforePhotos.length) {
@@ -1278,6 +1310,46 @@ export default function BookingDetailScreen() {
       showNotification({ type: 'error', message: err.message || 'Failed to start job' });
     } finally {
       setStartJobLoading(false);
+      setTransitioning(false);
+    }
+  };
+
+  const handleSubmitAppendBeforePhotos = async (photoUris: string[]) => {
+    if (!booking || !photoUris?.length) return;
+
+    setAppendBeforePhotosLoading(true);
+    setTransitioning(true);
+    try {
+      const formData = new FormData();
+      photoUris.forEach((photoUri, index) => {
+        const fileName = photoUri.split('/').pop() || `before-extra-${booking.id}-${index + 1}.jpg`;
+        const ext = fileName.split('.').pop()?.toLowerCase();
+        const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+        formData.append('before_pictures', {
+          uri: photoUri,
+          name: fileName,
+          type: mime,
+        } as any);
+      });
+
+      const response = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/append-before-photos/`, {
+        method: 'POST',
+        credentials: 'include',
+        body: formData as any,
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(parseApiErrorMessage(payload, 'Failed to upload photos'));
+      }
+
+      setShowAppendBeforePhotosModal(false);
+      showNotification({ type: 'success', message: 'Before photos added.' });
+      await fetchBookingDetail();
+    } catch (err: any) {
+      showNotification({ type: 'error', message: err.message || 'Failed to upload photos' });
+    } finally {
+      setAppendBeforePhotosLoading(false);
       setTransitioning(false);
     }
   };
@@ -2313,7 +2385,15 @@ export default function BookingDetailScreen() {
                 <View style={styles.locationRow}>
                   <ThemedText style={styles.locationLabel}>Barangay</ThemedText>
                   <ThemedText style={styles.locationValue}>
-                    {locationText(displayServiceLocation.barangay, locationText(inferredStreetParts.barangay, 'Unavailable'))}
+                    {locationText(
+                      coerceBarangayForDisplay(
+                        displayServiceLocation.barangay,
+                        displayServiceLocation.city_municipality,
+                        (displayServiceLocation as { region?: string }).region,
+                        displayServiceLocation.subdivision_village
+                      ),
+                      locationText(inferredStreetParts.barangay, 'Unavailable')
+                    )}
                   </ThemedText>
                 </View>
                 <View style={styles.locationRow}>
@@ -2642,109 +2722,169 @@ export default function BookingDetailScreen() {
         {booking.active_details && (
           <View style={styles.sectionCard}>
             {(() => {
-              const beforePhotos = booking.active_details?.before_pictures?.length
-                ? booking.active_details.before_pictures
-                : booking.active_details?.before_picture
-                  ? [booking.active_details.before_picture]
-                  : [];
-              const afterPhotos = booking.active_details?.after_pictures?.length
-                ? booking.active_details.after_pictures
-                : booking.active_details?.after_picture
-                  ? [booking.active_details.after_picture]
-                  : [];
+              const beforePhotos = mergeGalleryWithLegacy(
+                booking.active_details?.before_pictures,
+                booking.active_details?.before_picture ?? null
+              );
+              const afterPhotos = mergeGalleryWithLegacy(
+                booking.active_details?.after_pictures,
+                booking.active_details?.after_picture ?? null
+              );
 
               const renderPhotos = (photos: string[]) => (
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 8, marginHorizontal: -4 }}>
-                  {photos.map((uri, idx) => (
-                    <View key={`${uri}-${idx}`} style={{ width: '50%', paddingHorizontal: 4, marginBottom: 8 }}>
-                      <Image
-                        source={{ uri }}
-                        style={{ width: '100%', height: 150, borderRadius: 12 }}
-                        contentFit="cover"
-                      />
-                    </View>
-                  ))}
+                <View style={styles.photoGrid}>
+                  {photos.map((uri, idx) => {
+                    const isFullWidth =
+                      photos.length === 1 ||
+                      (photos.length % photoGridCols !== 0 && idx === photos.length - 1);
+                    const tileStyle = photoGridCols === 3 ? styles.photoTileThird : styles.photoTile;
+                    const safeUri = String(uri || '').replace(/\s+/g, '').trim();
+                    const photoKey = `${safeUri}-${idx}`;
+                    const isLoading = !!photoLoadingMap[photoKey];
+                    const hasError = !!photoErrorMap[photoKey];
+
+                    return (
+                      <View
+                        key={photoKey}
+                        style={[
+                          tileStyle,
+                          isFullWidth && styles.photoTileWide,
+                        ]}
+                      >
+                        {safeUri ? (
+                          <View style={styles.photoImageWrap}>
+                            <Image
+                              source={{ uri: safeUri }}
+                              style={styles.photoImage}
+                              contentFit="cover"
+                              transition={180}
+                              onLoadStart={() => {
+                                setPhotoLoadingMap((prev) => ({ ...prev, [photoKey]: true }));
+                                setPhotoErrorMap((prev) => ({ ...prev, [photoKey]: false }));
+                              }}
+                              onLoad={() => {
+                                setPhotoLoadingMap((prev) => ({ ...prev, [photoKey]: false }));
+                              }}
+                              onError={() => {
+                                setPhotoLoadingMap((prev) => ({ ...prev, [photoKey]: false }));
+                                setPhotoErrorMap((prev) => ({ ...prev, [photoKey]: true }));
+                              }}
+                            />
+                            {isLoading && (
+                              <View style={styles.photoLoadingOverlay}>
+                                <ActivityIndicator size="small" color="#FFFFFF" />
+                              </View>
+                            )}
+                            {hasError && (
+                              <View style={styles.photoLoadingOverlay}>
+                                <FontAwesome name="image" size={18} color="#8E8E93" />
+                                <ThemedText style={styles.photoFailedText}>Failed to load</ThemedText>
+                              </View>
+                            )}
+                          </View>
+                        ) : (
+                          <View style={styles.photoFallbackTile}>
+                            <FontAwesome name="image" size={18} color="#8E8E93" />
+                            <ThemedText style={styles.photoFailedText}>No image</ThemedText>
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })}
                 </View>
               );
 
               return (
                 <>
-                  <View style={styles.sectionHeader}>
+                  <TouchableOpacity
+                    style={styles.photoAccordionHeader}
+                    onPress={toggleBeforePhotosAccordion}
+                    activeOpacity={0.85}
+                  >
                     <View style={[styles.sectionIcon, { backgroundColor: '#4F8CFF15' }]}>
                       <FontAwesome name="camera" size={16} color="#4F8CFF" />
                     </View>
-                    <ThemedText style={styles.sectionTitle}>Before-Service Photos</ThemedText>
-                  </View>
-                  {beforePhotos.length ? (
-                    <>
-                      {renderPhotos(beforePhotos.slice(0, visibleBeforePhotoCount))}
-                      {beforePhotos.length > visibleBeforePhotoCount ? (
-                        <TouchableOpacity
-                          style={[styles.navigateButton, { marginTop: 4 }]}
-                          onPress={() => setVisibleBeforePhotoCount((prev) => prev + 6)}
-                          activeOpacity={0.85}
-                        >
-                          <ThemedText style={styles.navigateButtonText}>Load More Before Photos</ThemedText>
-                        </TouchableOpacity>
-                      ) : null}
-                    </>
-                  ) : (
-                    <View
-                      style={{
-                        marginTop: 8,
-                        height: 120,
-                        borderRadius: 12,
-                        borderWidth: 1,
-                        borderColor: '#2A2C2E',
-                        backgroundColor: '#111214',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 8,
-                      }}
-                    >
-                      <FontAwesome name="image" size={24} color="#6C6C70" />
-                      <ThemedText style={{ color: '#8E8E93' }}>No before-service photos uploaded yet</ThemedText>
+                    <ThemedText style={styles.photoAccordionTitle}>Before-Service Photos</ThemedText>
+                    <View style={styles.photoAccordionChevronWrap}>
+                      <FontAwesome
+                        name={beforePhotosExpanded ? 'angle-up' : 'angle-down'}
+                        size={18}
+                        color="#AEAEB2"
+                      />
                     </View>
+                  </TouchableOpacity>
+                  {(booking.status === 'active' || booking.status === 'paused') && (
+                    <TouchableOpacity
+                      style={styles.addMoreBeforePhotosRow}
+                      onPress={() => setShowAppendBeforePhotosModal(true)}
+                      disabled={transitioning || appendBeforePhotosLoading}
+                      activeOpacity={0.85}
+                    >
+                      <FontAwesome name="plus-circle" size={16} color="#FF8C00" />
+                      <ThemedText style={styles.addMoreBeforePhotosText}>Add more before photos</ThemedText>
+                    </TouchableOpacity>
+                  )}
+                  {beforePhotosExpanded && (
+                    beforePhotos.length ? (
+                      <>
+                        {renderPhotos(beforePhotos.slice(0, visibleBeforePhotoCount))}
+                        {beforePhotos.length > visibleBeforePhotoCount ? (
+                          <TouchableOpacity
+                            style={[styles.navigateButton, { marginTop: 4 }]}
+                            onPress={() => setVisibleBeforePhotoCount((prev) => prev + 6)}
+                            activeOpacity={0.85}
+                          >
+                            <ThemedText style={styles.navigateButtonText}>Load More Before Photos</ThemedText>
+                          </TouchableOpacity>
+                        ) : null}
+                      </>
+                    ) : (
+                      <View style={styles.photoEmptyState}>
+                        <FontAwesome name="image" size={24} color="#6C6C70" />
+                        <ThemedText style={styles.photoEmptyText}>No before-service photos uploaded yet</ThemedText>
+                      </View>
+                    )
                   )}
 
                   {(booking.status === 'completed' || afterPhotos.length > 0) ? (
                     <>
-                      <View style={[styles.sectionHeader, { marginTop: 8 }]}>
+                      <TouchableOpacity
+                        style={[styles.photoAccordionHeader, { marginTop: 8 }]}
+                        onPress={toggleAfterPhotosAccordion}
+                        activeOpacity={0.85}
+                      >
                         <View style={[styles.sectionIcon, { backgroundColor: '#34C75915' }]}>
                           <FontAwesome name="camera" size={16} color="#34C759" />
                         </View>
-                        <ThemedText style={styles.sectionTitle}>After-Service Photos</ThemedText>
-                      </View>
-                      {afterPhotos.length ? (
-                        <>
-                          {renderPhotos(afterPhotos.slice(0, visibleAfterPhotoCount))}
-                          {afterPhotos.length > visibleAfterPhotoCount ? (
-                            <TouchableOpacity
-                              style={[styles.navigateButton, { marginTop: 4 }]}
-                              onPress={() => setVisibleAfterPhotoCount((prev) => prev + 6)}
-                              activeOpacity={0.85}
-                            >
-                              <ThemedText style={styles.navigateButtonText}>Load More After Photos</ThemedText>
-                            </TouchableOpacity>
-                          ) : null}
-                        </>
-                      ) : (
-                        <View
-                          style={{
-                            marginTop: 8,
-                            height: 120,
-                            borderRadius: 12,
-                            borderWidth: 1,
-                            borderColor: '#2A2C2E',
-                            backgroundColor: '#111214',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: 8,
-                          }}
-                        >
-                          <FontAwesome name="image" size={24} color="#6C6C70" />
-                          <ThemedText style={{ color: '#8E8E93' }}>No after-service photos uploaded yet</ThemedText>
+                        <ThemedText style={styles.photoAccordionTitle}>After-Service Photos</ThemedText>
+                        <View style={styles.photoAccordionChevronWrap}>
+                          <FontAwesome
+                            name={afterPhotosExpanded ? 'angle-up' : 'angle-down'}
+                            size={18}
+                            color="#AEAEB2"
+                          />
                         </View>
+                      </TouchableOpacity>
+                      {afterPhotosExpanded && (
+                        afterPhotos.length ? (
+                          <>
+                            {renderPhotos(afterPhotos.slice(0, visibleAfterPhotoCount))}
+                            {afterPhotos.length > visibleAfterPhotoCount ? (
+                              <TouchableOpacity
+                                style={[styles.navigateButton, { marginTop: 4 }]}
+                                onPress={() => setVisibleAfterPhotoCount((prev) => prev + 6)}
+                                activeOpacity={0.85}
+                              >
+                                <ThemedText style={styles.navigateButtonText}>Load More After Photos</ThemedText>
+                              </TouchableOpacity>
+                            ) : null}
+                          </>
+                        ) : (
+                          <View style={styles.photoEmptyState}>
+                            <FontAwesome name="image" size={24} color="#6C6C70" />
+                            <ThemedText style={styles.photoEmptyText}>No after-service photos uploaded yet</ThemedText>
+                          </View>
+                        )
                       )}
                     </>
                   ) : null}
@@ -2948,11 +3088,23 @@ export default function BookingDetailScreen() {
       <AfterServicePhotoModal
         visible={showBeforeServicePhotoModal}
         mode="before"
+        beforeFlow="start_job"
         loading={startJobLoading}
         onClose={() => {
           if (!startJobLoading) setShowBeforeServicePhotoModal(false);
         }}
         onSubmit={handleSubmitBeforeServicePhoto}
+      />
+
+      <AfterServicePhotoModal
+        visible={showAppendBeforePhotosModal}
+        mode="before"
+        beforeFlow="append"
+        loading={appendBeforePhotosLoading}
+        onClose={() => {
+          if (!appendBeforePhotosLoading) setShowAppendBeforePhotosModal(false);
+        }}
+        onSubmit={handleSubmitAppendBeforePhotos}
       />
 
       <AfterServicePhotoModal
