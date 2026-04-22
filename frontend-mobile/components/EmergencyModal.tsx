@@ -20,6 +20,7 @@ import { router } from 'expo-router';
 import { useNotification } from '@/hooks/useNotification';
 import VehicleTypeModal from '@/components/VehicleTypeModal';
 import { useLocation } from '@/context/LocationContext';
+import { ensureForegroundLocationAccess } from '@/lib/locationPermission';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const { height } = Dimensions.get('window');
@@ -253,9 +254,8 @@ export default function EmergencyModal({ visible, onClose, onSuccess }: Emergenc
   const getCurrentLocation = async () => {
     try {
       setFetchingLocation(true);
-      const { status } = await Location.requestForegroundPermissionsAsync();
-
-      if (status !== 'granted') {
+      const permission = await ensureForegroundLocationAccess();
+      if (!permission.granted) {
         showNotification({ type: 'warning', title: 'Location Permission Required', message: 'Emergency requests require your location to help mechanics find you quickly.' });
         setFetchingLocation(false);
         return;

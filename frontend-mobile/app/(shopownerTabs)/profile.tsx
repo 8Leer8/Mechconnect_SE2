@@ -21,6 +21,7 @@ import { ConfirmationModal } from '@/components/ui/ConfirmationModal';
 import { styles as clientProfileStyles } from '@/style/client/profileStyles';
 import { ShopProductsPanel } from '@/components/shopowner/ShopProductsPanel';
 import { getImageUrl } from '@/lib/imageUtils';
+import { fetchProfileDetailsCached } from '@/lib/profileCache';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -58,10 +59,6 @@ interface ProfileData {
     shop_owner?: RoleProfile;
   };
   address?: Address;
-}
-
-interface ProfileResponse {
-  profile: ProfileData;
 }
 
 interface ActiveRoleResponse {
@@ -114,22 +111,9 @@ export default function ShopOwnerProfileScreen() {
     try {
       setError(null);
 
-      const response = await fetch(`${API_URL}/users/profile/details/`, {
-        method: 'GET',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
-
-      if (response.status === 403 || response.status === 401) {
-        setError('Please login to view your profile');
-        setLoading(false);
-        return;
-      }
-
-      if (!response.ok) throw new Error('Failed to fetch profile data');
-
-      const data = (await response.json()) as ProfileResponse;
-      setProfileData(data.profile);
+      const profile = await fetchProfileDetailsCached(false);
+      if (!profile) throw new Error('Failed to fetch profile data');
+      setProfileData(profile as ProfileData);
 
       // Fetch active role so we know which role profile to emphasize
       const roleResponse = await fetch(`${API_URL}/users/profile/active-role/`, {
@@ -563,6 +547,49 @@ export default function ShopOwnerProfileScreen() {
               <FontAwesome name="exchange" size={16} color="#FF8C00" />
             </View>
             <ThemedText style={clientProfileStyles.settingText}>Switch Role</ThemedText>
+            <FontAwesome name="chevron-right" size={14} color="#8E8E93" />
+          </TouchableOpacity>
+        </View>
+
+        {/* Privacy, Terms, About */}
+        <View style={clientProfileStyles.settingsCard}>
+          <TouchableOpacity
+            style={clientProfileStyles.settingRow}
+            activeOpacity={0.7}
+            onPress={() => router.push('/shopowner/others/privacy')}
+          >
+            <View style={[clientProfileStyles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
+              <FontAwesome name="shield" size={16} color="#FF8C00" />
+            </View>
+            <ThemedText style={clientProfileStyles.settingText}>Privacy & Security</ThemedText>
+            <FontAwesome name="chevron-right" size={14} color="#8E8E93" />
+          </TouchableOpacity>
+
+          <View style={clientProfileStyles.settingRowBorder} />
+
+          <TouchableOpacity
+            style={clientProfileStyles.settingRow}
+            activeOpacity={0.7}
+            onPress={() => router.push('/shopowner/others/terms')}
+          >
+            <View style={[clientProfileStyles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
+              <FontAwesome name="file-text" size={16} color="#FF8C00" />
+            </View>
+            <ThemedText style={clientProfileStyles.settingText}>Terms & Regulation</ThemedText>
+            <FontAwesome name="chevron-right" size={14} color="#8E8E93" />
+          </TouchableOpacity>
+
+          <View style={clientProfileStyles.settingRowBorder} />
+
+          <TouchableOpacity
+            style={clientProfileStyles.settingRow}
+            activeOpacity={0.7}
+            onPress={() => router.push('/shopowner/others/about')}
+          >
+            <View style={[clientProfileStyles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
+              <FontAwesome name="info-circle" size={16} color="#FF8C00" />
+            </View>
+            <ThemedText style={clientProfileStyles.settingText}>About</ThemedText>
             <FontAwesome name="chevron-right" size={14} color="#8E8E93" />
           </TouchableOpacity>
         </View>

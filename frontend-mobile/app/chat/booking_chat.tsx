@@ -5,6 +5,7 @@ import { useLocalSearchParams, router, useNavigation } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { FontAwesome } from '@expo/vector-icons';
 import { getImageUrl } from '@/lib/imageUtils';
+import { fetchProfileDetailsCached, getCachedAccountId } from '@/lib/profileCache';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -40,38 +41,40 @@ export default function BookingChatScreen() {
   const isNearBottomRef = useRef(true);
   const forceFollowNextUpdateRef = useRef(false);
   const lastMessageSignatureRef = useRef('');
+  const [visibleMessageKeys, setVisibleMessageKeys] = useState<Record<string, true>>({});
 
   const getQuotationMessageKey = (m: any) => `${m?.id || 'noid'}_${m?.created_at || 'notime'}`;
+  const getMessageKey = (m: any, fallbackIndex?: number) => {
+    if (m && (m.id || m.created_at)) {
+      const idPart = m.id ? String(m.id) : 'noid';
+      const timePart = m.created_at ? String(new Date(m.created_at).getTime()) : 'notime';
+      return `${idPart}_${timePart}`;
+    }
+    return `idx_${String(fallbackIndex ?? 0)}`;
+  };
+  const viewabilityConfigRef = useRef({ itemVisiblePercentThreshold: 25 });
+  const onViewableItemsChangedRef = useRef(({ viewableItems }: { viewableItems: any[] }) => {
+    const nextVisible: Record<string, true> = {};
+    viewableItems.forEach((entry: any) => {
+      const key = entry?.item ? getMessageKey(entry.item, entry.index) : null;
+      if (key) nextVisible[key] = true;
+    });
+    setVisibleMessageKeys(nextVisible);
+  });
 
   // Fetch profile or stored account id
   const fetchProfile = async (): Promise<number | null> => {
-    try {
-      const r = await fetch(`${API_URL}/users/profile/details/`, {
-        method: 'GET',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      if (r.ok) {
-        const d = await r.json();
-        const aid = d?.profile?.id || d?.id || d?.profile?.account_id || null;
-        if (aid) {
-          setAccountId(Number(aid));
-          await AsyncStorage.setItem('account_id', String(aid));
-          return Number(aid);
-        }
-      }
-    } catch (e) {
-      // ignore
+    const cachedId = await getCachedAccountId();
+    if (cachedId) {
+      setAccountId(cachedId);
+      return cachedId;
     }
 
-    try {
-      const stored = await AsyncStorage.getItem('account_id');
-      if (stored) {
-        setAccountId(Number(stored));
-        return Number(stored);
-      }
-    } catch (e) {
-      // ignore
+    const profile = await fetchProfileDetailsCached(false);
+    const aid = Number(profile?.id || profile?.account_id || 0) || null;
+    if (aid) {
+      setAccountId(aid);
+      return aid;
     }
     return null;
   };
@@ -378,8 +381,9 @@ export default function BookingChatScreen() {
 
     refreshConversationAccess();
     fetchMessages();
-    pollRef.current = setInterval(fetchMessages, 3000);
-    accessPoll = setInterval(refreshConversationAccess, 15000);
+    // Lower polling rate to reduce backend pressure and repeated media serialization.
+    pollRef.current = setInterval(fetchMessages, 8000);
+    accessPoll = setInterval(refreshConversationAccess, 30000);
     return () => {
       mounted = false;
       if (pollRef.current) clearInterval(pollRef.current);
@@ -661,6 +665,9 @@ export default function BookingChatScreen() {
   };
 
   const renderItem = ({ item }: { item: any }) => {
+    const messageKey = getMessageKey(item);
+    const shouldLoadImages = Boolean(visibleMessageKeys[messageKey]);
+
     // try parse structured content (system messages like backjob_request)
     let parsed: any = null;
     try { parsed = JSON.parse(item.content); } catch (e) { parsed = null; }
@@ -673,7 +680,7 @@ export default function BookingChatScreen() {
               <ThemedText style={styles.systemTitle}>Backjob Request</ThemedText>
               <ThemedText style={styles.systemText}>{parsed.requested_by_name || 'Client'} asked for a backjob</ThemedText>
               {parsed.reason ? <ThemedText style={styles.systemText}>{parsed.reason}</ThemedText> : null}
-              {Array.isArray(parsed.images) && parsed.images.length > 0 && (
+              {shouldLoadImages && Array.isArray(parsed.images) && parsed.images.length > 0 && (
                 <View style={{ marginTop: 8 }}>
                   {parsed.images.map((img: string, idx: number) => (
                     <Image key={idx} source={{ uri: img }} style={styles.systemImage} />
@@ -971,11 +978,13 @@ export default function BookingChatScreen() {
     const senderName = [item?.sender?.firstname, item?.sender?.lastname].filter(Boolean).join(' ').trim() || item?.sender?.username || 'User';
     const senderInitial = (senderName || 'U').charAt(0).toUpperCase();
     const senderPhoto = getImageUrl(item?.sender?.profile_photo) || null;
-    const senderRole = String(item?.sender?.chat_role || 'participant');
+    const senderRole = String(
+      (isMe ? (myChatRole || item?.sender?.chat_role) : item?.sender?.chat_role) || 'participant'
+    );
     const senderRoleLabelMap: Record<string, string> = {
       lead_mechanic: 'Lead Mechanic',
       assistant_mechanic: 'Assisting Mechanic',
-      shop_owner: 'Shopowner',
+      shop_owner: 'Shop Owner',
       client: 'Client',
       provider_mechanic: 'Lead Mechanic',
       participant: 'Participant',
@@ -987,7 +996,7 @@ export default function BookingChatScreen() {
       <View style={[styles.messageRow, isMe ? { alignItems: 'flex-end' } : { alignItems: 'flex-start' }]}> 
         <View style={[styles.senderRow, isMe ? styles.senderRowMine : styles.senderRowOther]}>
           {!isMe ? (
-            senderPhoto ? (
+            (shouldLoadImages && senderPhoto) ? (
               <Image source={{ uri: senderPhoto }} style={styles.messageAvatar} />
             ) : (
               <View style={styles.messageAvatarFallback}>
@@ -1011,7 +1020,7 @@ export default function BookingChatScreen() {
           </View>
 
           {isMe ? (
-            senderPhoto ? (
+            (shouldLoadImages && senderPhoto) ? (
               <Image source={{ uri: senderPhoto }} style={styles.messageAvatar} />
             ) : (
               <View style={styles.messageAvatarFallback}>
@@ -1107,20 +1116,21 @@ export default function BookingChatScreen() {
           <FlatList
             ref={listRef}
             data={messages}
+            initialNumToRender={12}
+            maxToRenderPerBatch={8}
+            windowSize={7}
+            removeClippedSubviews
             // Use a combined key of id + created_at to avoid duplicates; fallback to index
             keyExtractor={(it, index) => {
-              if (it && (it.id || it.created_at)) {
-                const idPart = it.id ? String(it.id) : 'noid';
-                const timePart = it.created_at ? String(new Date(it.created_at).getTime()) : 'notime';
-                return `${idPart}_${timePart}`;
-              }
-              return String(index);
+              return getMessageKey(it, index);
             }}
             renderItem={renderItem}
             contentContainerStyle={{ padding: 16, paddingBottom: 56 }}
             onContentSizeChange={handleContentSizeChange}
             onScroll={handleListScroll}
             scrollEventThrottle={16}
+            onViewableItemsChanged={onViewableItemsChangedRef.current}
+            viewabilityConfig={viewabilityConfigRef.current}
           />
 
           <Modal visible={showAcceptModal} animationType="slide" transparent>

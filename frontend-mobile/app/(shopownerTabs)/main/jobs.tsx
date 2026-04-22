@@ -686,7 +686,7 @@ export default function ShopOwnerJobsScreen() {
         >
           {tabConfig.map((t) => {
             const active = activeTab === t.key;
-            const c = counts[t.key] || 0;
+            const c = t.key === 'pending' ? pendingRequests.length : (counts[t.key] || 0);
             return (
               <TouchableOpacity
                 key={t.key}
@@ -700,13 +700,8 @@ export default function ShopOwnerJobsScreen() {
                   style={{ marginRight: 5 }}
                 />
                 <ThemedText style={[styles.tabText, active && styles.tabTextActive]}>
-                  {t.label}
+                  {`${t.label} ${c}`}
                 </ThemedText>
-                {c > 0 && activeTab === 'all' && (
-                  <View style={[styles.tabBadge, active && styles.tabBadgeActive]}>
-                    <ThemedText style={styles.tabBadgeText}>{c}</ThemedText>
-                  </View>
-                )}
               </TouchableOpacity>
             );
           })}
@@ -738,8 +733,15 @@ export default function ShopOwnerJobsScreen() {
               <View style={styles.requestTabsRow}>
                 {(['custom', 'direct', 'broadcast'] as RequestTabType[]).map((tab) => {
                   const active = requestTab === tab;
-                  const label =
+                  const labelBase =
                     tab === 'custom' ? 'Custom' : tab === 'direct' ? 'Direct' : 'Broadcast';
+                  const tabCount =
+                    tab === 'custom'
+                      ? customRequests.length
+                      : tab === 'direct'
+                      ? directRequests.length
+                      : broadcastRequests.length;
+                  const label = `${labelBase} ${tabCount}`;
                   return (
                     <TouchableOpacity
                       key={tab}

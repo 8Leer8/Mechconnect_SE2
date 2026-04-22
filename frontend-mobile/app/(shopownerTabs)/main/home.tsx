@@ -8,6 +8,8 @@ import WalletSection from '@/components/wallet-section';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import { useFocusEffect } from '@react-navigation/native';
 import { getImageUrl } from '@/lib/imageUtils';
+import { fetchProfileDetailsCached } from '@/lib/profileCache';
+import NotificationBell from '@/components/notifications/NotificationBell';
 
 const { width } = Dimensions.get('window');
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -22,18 +24,6 @@ interface DashboardData {
   average_rating: number;
   shop_status: string;
   is_verified: boolean;
-}
-
-interface ShopOwnerProfileResponse {
-  profile?: {
-    current_role_profile?: {
-      shop_owner?: {
-        shop?: {
-          service_banner?: string | null;
-        };
-      };
-    };
-  };
 }
 
 const getGreeting = () => {
@@ -54,17 +44,13 @@ export default function ShopOwnerHome() {
   const fetchDashboardData = useCallback(async () => {
     try {
       setError(null);
-      const [response, profileResponse] = await Promise.all([
+      const [response, profile] = await Promise.all([
         fetch(`${API_URL}/shops/dashboard/`, {
           method: 'GET',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
         }),
-        fetch(`${API_URL}/users/profile/details/`, {
-          method: 'GET',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        }),
+        fetchProfileDetailsCached(false),
       ]);
 
       const payload = (await response.json().catch(() => ({}))) as DashboardData & { error?: string };
@@ -79,10 +65,7 @@ export default function ShopOwnerHome() {
 
       setDashboardData(payload as DashboardData);
 
-      if (profileResponse.ok) {
-        const profileData = (await profileResponse.json().catch(() => ({}))) as ShopOwnerProfileResponse;
-        setShopBannerUrl(profileData.profile?.current_role_profile?.shop_owner?.shop?.service_banner || null);
-      }
+      setShopBannerUrl(profile?.current_role_profile?.shop_owner?.shop?.service_banner || null);
     } catch (err) {
       const message =
         err instanceof Error
@@ -194,17 +177,20 @@ export default function ShopOwnerHome() {
       >
         {/* Premium Header */}
         <View style={styles.header}>
-          <View style={styles.headerTop}>
+            <View style={styles.headerTop}>
             <View style={styles.headerText}>
               <ThemedText style={styles.greeting}>{getGreeting()}</ThemedText>
               <ThemedText style={styles.shopName} numberOfLines={1}>{dashboardData.shop_name}</ThemedText>
             </View>
-            <View style={[styles.statusBadge, { backgroundColor: dashboardData.shop_status === 'open' ? '#34C75920' : '#FF3B3020' }]}>
-              <View style={[styles.statusDot, { backgroundColor: dashboardData.shop_status === 'open' ? '#34C759' : '#FF3B30' }]} />
-              <ThemedText style={[styles.statusText, { color: dashboardData.shop_status === 'open' ? '#34C759' : '#FF3B30' }]}>
-                {dashboardData.shop_status === 'open' ? 'Open' : 'Closed'}
-              </ThemedText>
-            </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <NotificationBell />
+                <View style={[styles.statusBadge, { backgroundColor: dashboardData.shop_status === 'open' ? '#34C75920' : '#FF3B3020' }]}>
+                  <View style={[styles.statusDot, { backgroundColor: dashboardData.shop_status === 'open' ? '#34C759' : '#FF3B30' }]} />
+                  <ThemedText style={[styles.statusText, { color: dashboardData.shop_status === 'open' ? '#34C759' : '#FF3B30' }]}>
+                    {dashboardData.shop_status === 'open' ? 'Open' : 'Closed'}
+                  </ThemedText>
+                </View>
+              </View>
           </View>
 
           <View style={styles.bannerWrap}>

@@ -12,6 +12,7 @@ from users.permissions import IsAdmin
 def admin_notification_overview(request):
     data = {
         'notifications_total': Notification.objects.count(),
+        'unread_notifications_total': Notification.objects.filter(is_read=False).count(),
     }
     return Response(data, status=status.HTTP_200_OK)
 
@@ -40,6 +41,8 @@ def admin_list_notifications(request):
                 'receiver_username': notification.receiver.username,
                 'title': notification.title,
                 'message': notification.message,
+                'is_read': notification.is_read,
+                'payload': notification.payload,
                 'created_at': notification.created_at,
             }
         )

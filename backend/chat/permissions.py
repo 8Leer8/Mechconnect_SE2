@@ -22,13 +22,6 @@ def evaluate_booking_chat_access(booking, account) -> Dict[str, Any]:
             "role": "none",
         }
 
-    if not booking_allows_chat(booking):
-        return {
-            "is_participant": False,
-            "can_send": False,
-            "role": "none",
-        }
-
     # Client can always chat in their booking conversation.
     try:
         client_account = booking.request.client.account
@@ -52,6 +45,14 @@ def evaluate_booking_chat_access(booking, account) -> Dict[str, Any]:
             }
     except Exception:
         pass
+
+    # Non-owner/non-client participants are gated when booking chat is closed.
+    if not booking_allows_chat(booking):
+        return {
+            "is_participant": False,
+            "can_send": False,
+            "role": "none",
+        }
 
     has_assignments = RequestAssignment.objects.filter(request=booking.request).exists()
 

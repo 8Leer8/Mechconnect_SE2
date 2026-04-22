@@ -22,6 +22,7 @@ import { useConfirmation } from '@/hooks/useConfirmation';
 import { ConfirmationModal } from '@/components/ui/ConfirmationModal';
 import { SkeletonProfile } from '@/components/skeletons/SkeletonLoaders';
 import { getImageUrl } from '@/lib/imageUtils';
+import { fetchProfileDetailsCached } from '@/lib/profileCache';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -124,19 +125,12 @@ export default function ProfileScreen() {
 
   const fetchProfile = useCallback(async () => {
     try {
-      const res = await fetch(`${API_URL}/users/profile/details/`, {
-        method: 'GET',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const p = data.profile || data;
-        const n = p?.full_name || `${p?.firstname || ''} ${p?.lastname || ''}`.trim();
-        const mechanicProfile = p?.current_role_profile?.mechanic || null;
-        if (n) setName(n);
-        setProfilePhotoUrl(mechanicProfile?.profile_photo || mechanicProfile?.profile_photo_url || null);
-      }
+      const p = await fetchProfileDetailsCached(false);
+      if (!p) return;
+      const n = p?.full_name || `${p?.firstname || ''} ${p?.lastname || ''}`.trim();
+      const mechanicProfile = p?.current_role_profile?.mechanic || null;
+      if (n) setName(n);
+      setProfilePhotoUrl(mechanicProfile?.profile_photo || mechanicProfile?.profile_photo_url || null);
     } catch (e) {
       console.error(e);
     }

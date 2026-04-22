@@ -8,8 +8,10 @@ import { styles } from '@/style/client/homeStyles';
 import { LineChart, BarChart } from 'react-native-chart-kit';
 import EmergencyModal from '@/components/EmergencyModal';
 import { SkeletonClientHome } from '@/components/skeletons/SkeletonLoaders';
+import NotificationBell from '@/components/notifications/NotificationBell';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import { getImageUrl } from '@/lib/imageUtils';
+import { fetchProfileDetailsCached } from '@/lib/profileCache';
 import { useLocation } from '@/context/LocationContext';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -147,17 +149,6 @@ interface ClientProfileRole {
   profile_photo_url?: string | null;
 }
 
-interface ProfileResponse {
-  profile?: {
-    full_name?: string;
-    firstname?: string;
-    lastname?: string;
-    current_role_profile?: {
-      client?: ClientProfileRole;
-    };
-  };
-}
-
 export default function HomeScreen() {
   const [data, setData] = useState<HomeData | null>(null);
   const [clientName, setClientName] = useState<string>('');
@@ -196,17 +187,13 @@ export default function HomeScreen() {
     try {
       setError(null);
 
-      const [homeRes, profileRes] = await Promise.all([
+      const [homeRes, profile] = await Promise.all([
         fetch(`${API_URL}/bookings/home/`, {
           method: 'GET',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
         }),
-        fetch(`${API_URL}/users/profile/details/`, {
-          method: 'GET',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        }),
+        fetchProfileDetailsCached(false),
       ]);
 
       if (homeRes.ok) {
@@ -214,9 +201,8 @@ export default function HomeScreen() {
         setData(result);
       }
 
-      if (profileRes.ok) {
-        const profileData = await profileRes.json() as ProfileResponse;
-        const p = profileData.profile || profileData;
+      if (profile) {
+        const p = profile;
         const n = p?.full_name || `${p?.firstname || ''} ${p?.lastname || ''}`.trim();
         if (n) setClientName(n);
         const clientProfile = p?.current_role_profile?.client;
@@ -354,16 +340,7 @@ export default function HomeScreen() {
               <ThemedText style={styles.clientName}>{clientName || 'Client'}</ThemedText>
             </View>
           </View>
-          <TouchableOpacity style={styles.notificationButton}>
-            <View style={styles.notifCircle}>
-              <FontAwesome name="bell-o" size={20} color="#fff" />
-            </View>
-            {pendingCount > 0 && (
-              <View style={styles.badge}>
-                <ThemedText style={styles.badgeText}>{pendingCount}</ThemedText>
-              </View>
-            )}
-          </TouchableOpacity>
+          <NotificationBell />
         </View>
         
       </View>

@@ -18,6 +18,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useNotification } from '@/hooks/useNotification';
+import { fetchProfileDetailsCached } from '@/lib/profileCache';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -30,16 +31,6 @@ interface ShopOwnerRegisterResponse {
 interface ContactSourceOption {
   label: string;
   value: string;
-}
-
-interface ProfileDetailsResponse {
-  profile?: {
-    current_role_profile?: {
-      client?: { contact_number?: string | null };
-      mechanic?: { contact_number?: string | null };
-      shop_owner?: { contact_number?: string | null };
-    };
-  };
 }
 
 interface RoleStatusResponse {
@@ -259,12 +250,8 @@ export default function ShopOwnerRegister() {
   useEffect(() => {
     const fetchContactSources = async () => {
       try {
-        const [profileResponse, roleStatusResponse] = await Promise.all([
-          fetch(`${API_URL}/users/profile/details/`, {
-            method: 'GET',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-          }),
+        const [profile, roleStatusResponse] = await Promise.all([
+          fetchProfileDetailsCached(false),
           fetch(`${API_URL}/users/profile/role-status/`, {
             method: 'GET',
             credentials: 'include',
@@ -272,13 +259,10 @@ export default function ShopOwnerRegister() {
           }),
         ]);
 
-        if (!profileResponse.ok) return;
-
-        const data = await profileResponse.json() as ProfileDetailsResponse;
         const roleStatus = roleStatusResponse.ok
           ? (await roleStatusResponse.json() as RoleStatusResponse)
           : null;
-        const profiles = data.profile?.current_role_profile;
+        const profiles = profile?.current_role_profile;
         const options: ContactSourceOption[] = [];
 
         if (

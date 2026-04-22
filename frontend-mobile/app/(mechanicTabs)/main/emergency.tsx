@@ -107,8 +107,17 @@ export default function EmergencyScreen() {
       const data = await response.json();
 
       if (response.ok) {
+        const acceptedBookingId = Number(
+          data?.booking_id ?? data?.bookingId ?? data?.booking?.id ?? data?.booking
+        );
         showNotification({ type: 'success', title: 'Emergency Accepted', message: 'You have accepted this emergency request. The booking has been created.' });
         fetchEmergencyRequests();
+        if (Number.isFinite(acceptedBookingId) && acceptedBookingId > 0) {
+          router.push({
+            pathname: '/mechanic/booking/booking_details',
+            params: { bookingId: String(acceptedBookingId) },
+          });
+        }
       } else {
         showNotification({ type: 'error', message: data.error || 'Failed to accept emergency request' });
       }

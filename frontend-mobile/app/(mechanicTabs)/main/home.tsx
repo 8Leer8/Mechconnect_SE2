@@ -15,8 +15,10 @@ import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/mechanic/homeStyles';
 import WalletSection from '@/components/wallet-section';
 import { SkeletonMechanicHome } from '@/components/skeletons/SkeletonLoaders';
+import NotificationBell from '@/components/notifications/NotificationBell';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import { getImageUrl } from '@/lib/imageUtils';
+import { fetchProfileDetailsCached } from '@/lib/profileCache';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -75,10 +77,6 @@ interface ProfilePayload {
   };
 }
 
-interface ProfileDetailsResponse {
-  profile?: ProfilePayload;
-}
-
 interface MyDisputeItem {
   booking_id: number;
   booking_dispute_status?: string;
@@ -116,22 +114,21 @@ export default function HomeScreen() {
 
       // All 4 requests in one round-trip; the no-status stats call now returns total_earnings
       // via a single SQL Sum aggregate — no need for a separate heavy fetch.
-      const [acceptedRes, onGoingRes, pendingRes, disputesRes, statsRes, profileRes] = await Promise.all([
+      const [acceptedRes, onGoingRes, pendingRes, disputesRes, statsRes, profile] = await Promise.all([
         fetch(`${API_URL}/bookings/mechanic/bookings/?status=accepted&page_size=5`, opts),
         fetch(`${API_URL}/bookings/mechanic/bookings/?status=on_going&page_size=5`, opts),
         fetch(`${API_URL}/bookings/mechanic/bookings/?status=pending&page_size=5`, opts),
         fetch(`${API_URL}/bookings/disputes/my/`, opts),
         fetch(`${API_URL}/bookings/mechanic/bookings/`, opts),
-        fetch(`${API_URL}/users/profile/details/`, opts),
+        fetchProfileDetailsCached(false),
       ]);
 
-      const [acceptedData, onGoingData, pendingData, disputesData, statsData, profileData] = await Promise.all([
+      const [acceptedData, onGoingData, pendingData, disputesData, statsData] = await Promise.all([
         acceptedRes.ok ? acceptedRes.json() : Promise.resolve({} as MechanicBookingsResponse),
         onGoingRes.ok ? onGoingRes.json() : Promise.resolve({} as MechanicBookingsResponse),
         pendingRes.ok ? pendingRes.json() : Promise.resolve({} as MechanicBookingsResponse),
         disputesRes.ok ? disputesRes.json() : Promise.resolve({} as MyDisputesResponse),
         statsRes.ok ? statsRes.json() : Promise.resolve({} as GroupedBookings),
-        profileRes.ok ? profileRes.json() : Promise.resolve({} as ProfileDetailsResponse),
       ]);
 
       // Merge accepted + on_going, sort newest first, cap at 5
@@ -156,9 +153,8 @@ export default function HomeScreen() {
         setStats(statsData as GroupedBookings);
       }
 
-      if (profileData && typeof profileData === 'object') {
-        const parsedProfile = profileData as ProfileDetailsResponse | ProfilePayload;
-        const p: ProfilePayload = (parsedProfile as ProfileDetailsResponse).profile || (parsedProfile as ProfilePayload);
+      if (profile && typeof profile === 'object') {
+        const p: ProfilePayload = profile as ProfilePayload;
         const n = p?.full_name || `${p?.firstname || ''} ${p?.lastname || ''}`.trim();
         if (n) setMechanicName(n);
         const mechanicProfile = p?.current_role_profile?.mechanic;
@@ -233,16 +229,7 @@ export default function HomeScreen() {
               <ThemedText style={styles.mechanicName}>{mechanicName}</ThemedText>
             </View>
           </View>
-          <TouchableOpacity style={styles.notificationButton}>
-            <View style={styles.notifCircle}>
-              <FontAwesome name="bell-o" size={20} color="#fff" />
-            </View>
-            {pendingCount > 0 && (
-              <View style={styles.badge}>
-                <ThemedText style={styles.badgeText}>{pendingCount}</ThemedText>
-              </View>
-            )}
-          </TouchableOpacity>
+          <NotificationBell />
         </View>
 
         {/* Quick Stats Row inside header */}

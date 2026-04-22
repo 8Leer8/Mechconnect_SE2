@@ -13,6 +13,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { SkeletonProfile } from '@/components/skeletons/SkeletonLoaders';
 import { useNotification } from '@/hooks/useNotification';
 import { ConfirmationModal } from '@/components/ui/ConfirmationModal';
+import { fetchProfileDetailsCached } from '@/lib/profileCache';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -48,19 +49,12 @@ export default function MechanicShopProfileScreen() {
 
   const fetchProfileData = useCallback(async () => {
     try {
-      // Fetch profile details
-      const profileResponse = await fetch(`${API_URL}/users/profile/details/`, {
-        method: 'GET',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
+      const profile = await fetchProfileDetailsCached(false);
+      if (profile) {
+        setProfileData(profile as ProfileData);
 
-      if (profileResponse.ok) {
-        const data = await profileResponse.json();
-        setProfileData(data.profile);
-        
         // Set shop info from profile
-        const mechanicProfile = data.profile?.current_role_profile?.mechanic;
+        const mechanicProfile = profile?.current_role_profile?.mechanic;
         if (mechanicProfile?.is_working_for_shop && mechanicProfile.shop_name) {
           setShopInfo({
             shop_id: mechanicProfile.shop_id,
