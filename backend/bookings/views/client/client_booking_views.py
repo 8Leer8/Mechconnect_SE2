@@ -1051,6 +1051,39 @@ def _serialize_single_booking(booking, viewer_account=None):
     if accepted_offer and accepted_offer.traffic_level:
         traffic_level_value = accepted_offer.traffic_level
 
+    is_mechanic_viewer = bool(viewer_account and hasattr(viewer_account, 'mechanic'))
+    is_completed_for_mechanic = is_mechanic_viewer and booking.status == 'completed'
+
+    service_location = None
+    location_payload = None
+    if booking.request.service_location:
+        service_location_obj = booking.request.service_location
+        service_location = {
+            'street_name': service_location_obj.street_name,
+            'subdivision_village': service_location_obj.subdivision_village,
+            'barangay': service_location_obj.barangay,
+            'city_municipality': service_location_obj.city_municipality,
+            'landmark': service_location_obj.landmark,
+        }
+
+        if is_completed_for_mechanic:
+            location_payload = {
+                'barangay': service_location_obj.barangay,
+                'lat': None,
+                'lng': None,
+                'navigation_allowed': False,
+            }
+            service_location = {
+                'barangay': service_location_obj.barangay,
+            }
+        else:
+            location_payload = {
+                'barangay': service_location_obj.barangay,
+                'lat': float(service_location_obj.latitude) if service_location_obj.latitude is not None else None,
+                'lng': float(service_location_obj.longitude) if service_location_obj.longitude is not None else None,
+                'navigation_allowed': True,
+            }
+
     booking_data = {
         'id': booking.id,
         'status': booking.status,
@@ -1098,13 +1131,8 @@ def _serialize_single_booking(booking, viewer_account=None):
             'username':booking.request.client.account.username,
             'email':booking.request.client.account.email,
             } if booking.request.client and hasattr(booking.request.client, 'account') else None,
-        'service_location': {
-            'street_name': booking.request.service_location.street_name,
-            'subdivision_village': booking.request.service_location.subdivision_village,
-            'barangay': booking.request.service_location.barangay,
-            'city_municipality': booking.request.service_location.city_municipality,
-            'landmark': booking.request.service_location.landmark,
-        } if booking.request.service_location else None,
+        'service_location': service_location,
+        'location': location_payload,
     }
     
     # Add active booking runtime details when ActiveBooking exists

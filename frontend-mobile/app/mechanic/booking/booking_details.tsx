@@ -82,6 +82,12 @@ interface BookingDetail {
     total_amount: number;
     notes: string;
   };
+  location?: {
+    barangay?: string | null;
+    lat?: number | null;
+    lng?: number | null;
+    navigation_allowed?: boolean;
+  } | null;
   cancellation_details?: {
     cancelled_by: { id: number; name: string };
     reason: string;
@@ -944,6 +950,11 @@ export default function BookingDetailScreen() {
   };
 
   const handleNavigateToClient = () => {
+    if (booking?.status === 'completed' || booking?.location?.navigation_allowed === false) {
+      showNotification({ type: 'warning', message: 'Navigation is unavailable after job completion.' });
+      return;
+    }
+
     if (!booking?.service_location) {
       showNotification({ type: 'warning', message: 'No service location available for this booking.' });
       return;
@@ -2209,6 +2220,19 @@ export default function BookingDetailScreen() {
                   </View>
                   <FontAwesome name="external-link" size={14} color="#FF8C00" />
                 </TouchableOpacity>
+              ) : booking.status === 'completed' || booking.location?.navigation_allowed === false ? (
+                <View style={[styles.navigateButton, { opacity: 0.7 }]}>
+                  <View style={styles.navigateIconCircle}>
+                    <FontAwesome name="lock" size={18} color="#fff" />
+                  </View>
+                  <View style={styles.navigateTextContainer}>
+                    <ThemedText style={styles.navigateTitle}>Navigation unavailable after job completion</ThemedText>
+                    <ThemedText style={styles.navigateSubtitle}>
+                      📍 Barangay {booking.location?.barangay || booking.service_location?.barangay || 'hidden'}
+                    </ThemedText>
+                  </View>
+                  <FontAwesome name="ban" size={14} color="#8E8E93" />
+                </View>
               ) : (
                 <TouchableOpacity
                   style={styles.navigateButton}

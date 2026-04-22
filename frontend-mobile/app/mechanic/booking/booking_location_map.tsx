@@ -51,6 +51,12 @@ type BookingDetail = {
   broadcast_longitude?: number | string | null;
   latitude?: number | string | null;
   longitude?: number | string | null;
+  location?: {
+    barangay?: string | null;
+    lat?: number | string | null;
+    lng?: number | string | null;
+    navigation_allowed?: boolean;
+  } | null;
   service_location?: ServiceLocation | null;
   convenience_fee?: number | string | null;
   distance_km?: number | string | null;
@@ -440,6 +446,10 @@ export default function BookingLocationMapScreen() {
   const resolveClientCoordinates = useCallback(async (bookingData: BookingDetail | null | undefined): Promise<Coordinates | null> => {
     if (!bookingData) return null;
 
+    if (bookingData.location?.navigation_allowed === false) {
+      return null;
+    }
+
     const broadcastLat =
       bookingData?.request?.broadcast_request?.latitude ??
       bookingData?.broadcast_latitude ??
@@ -704,6 +714,12 @@ export default function BookingLocationMapScreen() {
 
       setBooking(bookingData);
       setStatus(bookingStatus);
+
+      if (bookingData?.location?.navigation_allowed === false || bookingStatus === 'completed') {
+        setLocationError('Exact client location is hidden after job completion.');
+        setScreenLoading(false);
+        return;
+      }
 
       const resolvedClientCoords = await resolveClientCoordinates(bookingData);
       if (!resolvedClientCoords) {
@@ -1101,6 +1117,7 @@ export default function BookingLocationMapScreen() {
   }
 
   if (locationError) {
+    const isPrivacyLocked = locationError.toLowerCase().includes('hidden after job completion');
     return (
       <ThemedView style={styles.container}>
         <View style={styles.header}>
@@ -1113,10 +1130,12 @@ export default function BookingLocationMapScreen() {
 
         <View style={styles.errorContainer}>
           <FontAwesome name="exclamation-circle" size={48} color="#FF3B30" />
-          <ThemedText style={styles.errorText}>Unable to find client location</ThemedText>
-          <TouchableOpacity style={styles.retryButton} onPress={retryLocationResolution}>
-            <ThemedText style={styles.retryText}>Retry</ThemedText>
-          </TouchableOpacity>
+          <ThemedText style={styles.errorText}>{locationError}</ThemedText>
+          {!isPrivacyLocked && (
+            <TouchableOpacity style={styles.retryButton} onPress={retryLocationResolution}>
+              <ThemedText style={styles.retryText}>Retry</ThemedText>
+            </TouchableOpacity>
+          )}
         </View>
       </ThemedView>
     );
