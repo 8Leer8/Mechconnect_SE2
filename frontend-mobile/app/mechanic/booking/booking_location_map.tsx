@@ -314,9 +314,13 @@ export default function BookingLocationMapScreen() {
   const [permissionModalVisible, setPermissionModalVisible] = useState(false);
   const [permissionModalMessage, setPermissionModalMessage] = useState('Please enable location access to continue live tracking.');
   const [travelActionLoading, setTravelActionLoading] = useState<'arrived' | 'cancel' | null>(null);
+  const [routeAccordionOpen, setRouteAccordionOpen] = useState(false);
+  /** Device GPS speed (km/h) while mechanic is tracking; not the same as TomTom road-segment flow speed. */
+  const [gpsSpeedKmh, setGpsSpeedKmh] = useState<number | null>(null);
 
   const headerTitle = bookingStatusIsLiveTracking(status) ? 'Live Tracking' : 'Route to Client';
   const isOnTheWay = bookingStatusIsLiveTracking(status);
+  const isMechanicOnTheWay = role === 'mechanic' && String(status).toLowerCase() === 'on_the_way';
 
   useEffect(() => {
     clientCoordsRef.current = clientCoords;
@@ -378,6 +382,8 @@ export default function BookingLocationMapScreen() {
       watcherRef.current.remove();
       watcherRef.current = null;
     }
+
+    setGpsSpeedKmh(null);
   }, []);
 
   const openTrackingPermissionModal = useCallback((message: string) => {
@@ -731,6 +737,7 @@ export default function BookingLocationMapScreen() {
     setLocationError(null);
     setShowSignalLost(false);
     setLastMechanicUpdateAt(null);
+    setGpsSpeedKmh(null);
 
     try {
       const bookingData = await fetchBooking();
@@ -850,13 +857,6 @@ export default function BookingLocationMapScreen() {
       });
   }, []);
 
-  const goMechanicBookingDetails = useCallback(() => {
-    router.push({
-      pathname: '/mechanic/booking/booking_details',
-      params: { bookingId: String(bookingId) },
-    });
-  }, [bookingId]);
-
   const handleMechanicArrivedFromMap = useCallback(async () => {
     if (travelActionLoading) return;
     setTravelActionLoading('arrived');
@@ -971,6 +971,13 @@ export default function BookingLocationMapScreen() {
               setMechanicCoords(next);
               setLastMechanicUpdateAt(Date.now());
               pushLocationToBackend(next);
+
+              const speedMs = location.coords.speed;
+              if (speedMs != null && Number.isFinite(speedMs) && speedMs >= 0) {
+                setGpsSpeedKmh(Math.round(speedMs * 3.6));
+              } else {
+                setGpsSpeedKmh(null);
+              }
 
               // Near-realtime reroute while moving (GTA-like line updates), throttled to protect APIs.
               const to = clientCoordsRef.current;
@@ -1284,77 +1291,122 @@ export default function BookingLocationMapScreen() {
         </MapView>
       </View>
 
-      <View style={styles.infoCard}>
-        <ThemedText style={styles.infoTitle}>
-          {isOnTheWay ? 'Mechanic Route' : '📍 Route to Client'}
-        </ThemedText>
-
-        <ThemedText style={styles.infoRow}>
-          Distance: {isOnTheWay ? `${distanceLabel} remaining` : `${distanceLabel}${routeEstimated ? ' (estimated)' : ' (via road)'}`}
-        </ThemedText>
-        <ThemedText style={styles.infoRow}>ETA: {etaLabel}</ThemedText>
-
+      <View
+        style={[
+          styles.infoCard,
+          isOnTheWay && styles.infoCardLiveRouteCollapsed,
+          isOnTheWay && routeAccordionOpen && styles.infoCardLiveRouteExpanded,
+        ]}
+      >
         {isOnTheWay ? (
           <>
-            <ThemedText style={styles.infoRow}>
-              Traffic: {traffic ? `${traffic.label} ${traffic.emoji}` : '--'}
-            </ThemedText>
-            <ThemedText style={styles.infoRow}>
-              Current speed: {traffic && traffic.currentSpeed > 0 ? `${traffic.currentSpeed} km/h` : '--'}
-            </ThemedText>
-            <ThemedText style={styles.infoRow}>Last updated: {formattedLastUpdated}</ThemedText>
-            {trafficEstimatedNote && (
-              <ThemedText style={styles.noteText}>Traffic data is estimated.</ThemedText>
-            )}
-            {showSignalLost && role === 'client' && (
-              <ThemedText style={styles.warnText}>⚠️ Location signal lost. Mechanic may be in low signal area.</ThemedText>
-            )}
+            <TouchableOpacity
+              style={styles.accordionHeader}
+              onPress={() => setRouteAccordionOpen((open) => !open)}
+              activeOpacity={0.75}
+            >
+              <View style={styles.accordionHeaderTextWrap}>
+                <ThemedText style={styles.infoTitleAccordion}>Mechanic Route</ThemedText>
+                <ThemedText style={styles.accordionSummary}>
+                  Distance: {distanceLabel} remaining · ETA: {etaLabel}
+                </ThemedText>
+                <ThemedText style={styles.accordionTapHint}>Tap to show details</ThemedText>
+              </View>
+              <FontAwesome
+                name={routeAccordionOpen ? 'chevron-up' : 'chevron-down'}
+                size={18}
+                color="#A1A1AA"
+              />
+            </TouchableOpacity>
+
+            {routeAccordionOpen ? (
+              <View style={styles.accordionBody}>
+                <ThemedText style={styles.infoRow}>
+                  Traffic: {traffic ? `${traffic.label} ${traffic.emoji}` : '--'}
+                </ThemedText>
+                <ThemedText style={styles.infoRow}>
+                  Road traffic speed (TomTom):{' '}
+                  {traffic && traffic.currentSpeed > 0 ? `${traffic.currentSpeed} km/h` : '--'}
+                </ThemedText>
+                <ThemedText style={styles.noteText}>
+                  This is typical speed on the road segment near your route, not your vehicle speed.
+                </ThemedText>
+                {role === 'mechanic' ? (
+                  <ThemedText style={styles.infoRow}>
+                    Your speed (GPS):{' '}
+                    {gpsSpeedKmh !== null ? `${gpsSpeedKmh} km/h` : '--'}
+                  </ThemedText>
+                ) : null}
+                <ThemedText style={styles.infoRow}>Last updated: {formattedLastUpdated}</ThemedText>
+                {trafficEstimatedNote && (
+                  <ThemedText style={styles.noteText}>Traffic data is estimated.</ThemedText>
+                )}
+                {showSignalLost && role === 'client' && (
+                  <ThemedText style={styles.warnText}>
+                    ⚠️ Location signal lost. Mechanic may be in low signal area.
+                  </ThemedText>
+                )}
+                {isMechanicOnTheWay ? (
+                  <>
+                    <ThemedText style={styles.mechanicTravelHint}>
+                      Road route follows the orange line. Use Maps for voice turn-by-turn.
+                    </ThemedText>
+                    <TouchableOpacity style={styles.mtBtnMapsFull} onPress={openNavToClient} activeOpacity={0.85}>
+                      <FontAwesome name="external-link" size={14} color="#E4E4E7" />
+                      <ThemedText style={styles.mtBtnSecondaryText}>Maps app</ThemedText>
+                    </TouchableOpacity>
+                  </>
+                ) : null}
+                {routeEstimated && (
+                  <ThemedText style={styles.warnText}>⚠️ Showing estimated route.</ThemedText>
+                )}
+              </View>
+            ) : null}
+
+            {isMechanicOnTheWay ? (
+              <View style={styles.mechanicTravelBar}>
+                <View style={styles.mechanicTravelRow}>
+                  <TouchableOpacity
+                    style={[styles.mtBtnDanger, travelActionLoading && styles.mtBtnDisabled]}
+                    onPress={handleMechanicCancelTravelFromMap}
+                    disabled={!!travelActionLoading}
+                    activeOpacity={0.85}
+                  >
+                    <ThemedText style={styles.mtBtnDangerText}>Cancel travel</ThemedText>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.mtBtnPrimary, travelActionLoading && styles.mtBtnDisabled]}
+                    onPress={handleMechanicArrivedFromMap}
+                    disabled={!!travelActionLoading}
+                    activeOpacity={0.85}
+                  >
+                    {travelActionLoading === 'arrived' ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <ThemedText style={styles.mtBtnPrimaryText}>Arrived</ThemedText>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : null}
           </>
         ) : (
-          <ThemedText style={styles.infoRow}>Traffic: -- (checked on travel)</ThemedText>
-        )}
+          <>
+            <ThemedText style={styles.infoTitle}>📍 Route to Client</ThemedText>
 
-        {routeEstimated && (
-          <ThemedText style={styles.warnText}>⚠️ Showing estimated route.</ThemedText>
-        )}
+            <ThemedText style={styles.infoRow}>
+              Distance: {distanceLabel}
+              {routeEstimated ? ' (estimated)' : ' (via road)'}
+            </ThemedText>
+            <ThemedText style={styles.infoRow}>ETA: {etaLabel}</ThemedText>
 
-        {role === 'mechanic' && String(status).toLowerCase() === 'on_the_way' ? (
-          <View style={styles.mechanicTravelBar}>
-            <ThemedText style={styles.mechanicTravelHint}>Road route follows the orange line. Use Maps for voice turn-by-turn.</ThemedText>
-            <View style={styles.mechanicTravelRow}>
-              <TouchableOpacity style={styles.mtBtnSecondary} onPress={goMechanicBookingDetails} activeOpacity={0.85}>
-                <FontAwesome name="file-text-o" size={14} color="#E4E4E7" />
-                <ThemedText style={styles.mtBtnSecondaryText}>Details</ThemedText>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.mtBtnSecondary} onPress={openNavToClient} activeOpacity={0.85}>
-                <FontAwesome name="external-link" size={14} color="#E4E4E7" />
-                <ThemedText style={styles.mtBtnSecondaryText}>Maps app</ThemedText>
-              </TouchableOpacity>
-            </View>
-            <View style={styles.mechanicTravelRow}>
-              <TouchableOpacity
-                style={[styles.mtBtnDanger, travelActionLoading && styles.mtBtnDisabled]}
-                onPress={handleMechanicCancelTravelFromMap}
-                disabled={!!travelActionLoading}
-                activeOpacity={0.85}
-              >
-                <ThemedText style={styles.mtBtnDangerText}>Cancel travel</ThemedText>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.mtBtnPrimary, travelActionLoading && styles.mtBtnDisabled]}
-                onPress={handleMechanicArrivedFromMap}
-                disabled={!!travelActionLoading}
-                activeOpacity={0.85}
-              >
-                {travelActionLoading === 'arrived' ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <ThemedText style={styles.mtBtnPrimaryText}>Arrived</ThemedText>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        ) : null}
+            <ThemedText style={styles.infoRow}>Traffic: -- (checked on travel)</ThemedText>
+
+            {routeEstimated && (
+              <ThemedText style={styles.warnText}>⚠️ Showing estimated route.</ThemedText>
+            )}
+          </>
+        )}
       </View>
 
       <Modal
@@ -1480,6 +1532,55 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
     elevation: 3,
+  },
+  infoCardLiveRouteCollapsed: {
+    maxHeight: '36%',
+  },
+  infoCardLiveRouteExpanded: {
+    maxHeight: '52%',
+  },
+  accordionTapHint: {
+    marginTop: 6,
+    fontSize: 12,
+    color: '#71717A',
+  },
+  accordionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  accordionHeaderTextWrap: {
+    flex: 1,
+    marginRight: 10,
+  },
+  infoTitleAccordion: {
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 6,
+    color: '#FFFFFF',
+  },
+  accordionSummary: {
+    fontSize: 13,
+    color: '#A1A1AA',
+    lineHeight: 18,
+  },
+  accordionBody: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#2A2C2E',
+  },
+  mtBtnMapsFull: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 10,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#2A2C2E',
+    borderWidth: 1,
+    borderColor: '#3F4144',
+    width: '100%',
   },
   mechanicTravelBar: {
     marginTop: 12,
