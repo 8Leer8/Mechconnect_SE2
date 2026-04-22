@@ -10,6 +10,7 @@ import { TrustSafetyPage } from "../pages/main/TrustSafetyPage";
 import { UserManagementPage } from "../pages/main/UserManagementPage";
 import { VerificationQueuePage } from "../pages/main/VerificationQueuePage";
 import { WalletTokenLedgerPage } from "../pages/main/WalletTokenLedgerPage";
+import { VehicleManagementPage } from "../pages/main/VehicleManagementPage";
 
 export function AppRouter() {
   return (
@@ -85,6 +86,14 @@ export function AppRouter() {
           element={
             <AdminRoute>
               <WalletTokenLedgerPage />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path="/admin/vehicles"
+          element={
+            <AdminRoute>
+              <VehicleManagementPage />
             </AdminRoute>
           }
         />

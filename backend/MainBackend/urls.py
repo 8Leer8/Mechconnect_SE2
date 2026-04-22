@@ -24,6 +24,7 @@ from shops.urls import admin_urlpatterns as shops_admin_urlpatterns
 from services.urls import admin_urlpatterns as services_admin_urlpatterns
 from notification.urls import admin_urlpatterns as notification_admin_urlpatterns
 from pricing.urls import admin_urlpatterns as pricing_admin_urlpatterns
+from vehicles.urls import urlpatterns as vehicles_urlpatterns
 
 
 urlpatterns = [
@@ -36,6 +37,7 @@ urlpatterns = [
     path('api/chat/', include('chat.urls')),
     path('api/ai/', include('mechconnect_ai.urls')),  # added
     path('api/pricing/', include('pricing.urls')),
+    path('api/vehicles/', include(vehicles_urlpatterns)),
     # Admin Urls
     path('api/admin/users/', include(users_admin_urlpatterns)),
     path('api/admin/bookings/', include(bookings_admin_urlpatterns)),

@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     'storages',
     'mechconnect_ai',
     'pricing',
+    'vehicles',
 ]
 
 MIDDLEWARE = [

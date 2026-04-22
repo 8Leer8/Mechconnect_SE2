@@ -8,6 +8,7 @@ import {
   Bell,
   Briefcase,
   CalendarCheck,
+  Car,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -56,6 +57,7 @@ const allNavSections = [
       { label: "Verification Queue", to: "/admin/verification", icon: ShieldCheck },
       { label: "Requests & Bookings", to: "/admin/bookings", icon: CalendarCheck },
       { label: "Service & Specialty Catalog", to: "/admin/services", icon: Briefcase, headAdmin: true},
+      { label: "Vehicle Management", to: "/admin/vehicles", icon: Car },
     ],
   },
   {
