@@ -114,12 +114,21 @@ export default function ShopOwnerEmergencyScreen() {
       });
       const data = await response.json().catch(() => ({}));
       if (response.ok) {
+        const acceptedBookingId = Number(
+          data?.booking_id ?? data?.bookingId ?? data?.booking?.id ?? data?.booking
+        );
         showNotification({
           type: 'success',
           title: 'Emergency Accepted',
           message: 'Emergency request accepted and booking created.',
         });
         fetchEmergencyRequests();
+        if (Number.isFinite(acceptedBookingId) && acceptedBookingId > 0) {
+          router.push({
+            pathname: '/shopowner/booking/booking_details',
+            params: { bookingId: String(acceptedBookingId) },
+          });
+        }
       } else {
         const backendMessage =
           typeof data?.error === 'string' && data.error.trim()

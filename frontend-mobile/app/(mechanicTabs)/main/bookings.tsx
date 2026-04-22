@@ -332,8 +332,17 @@ export default function BookingsScreen() {
         const errData = raw as { error?: string };
         throw new Error(errData.error || 'Failed to accept request');
       }
-
+      const payload = await response.json().catch(() => ({} as any));
+      const acceptedBookingId = Number(
+        payload?.booking_id ?? payload?.bookingId ?? payload?.booking?.id ?? payload?.booking
+      );
       await fetchBookings();
+      if (Number.isFinite(acceptedBookingId) && acceptedBookingId > 0) {
+        router.push({
+          pathname: '/mechanic/booking/booking_details',
+          params: { bookingId: String(acceptedBookingId) },
+        });
+      }
     } catch (e: any) {
       console.error('Accept error', e);
       setError(e.message || 'Failed to accept request');

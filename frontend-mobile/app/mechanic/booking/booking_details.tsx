@@ -1367,9 +1367,22 @@ export default function BookingDetailScreen() {
         const err = await response.json().catch(() => null);
         throw new Error(parseApiErrorMessage(err, 'Failed to accept request'));
       }
+      const payload = await response.json().catch(() => ({} as any));
+      const acceptedBookingId = Number(
+        payload?.booking_id ?? payload?.bookingId ?? payload?.booking?.id ?? payload?.booking
+      );
       showNotification({ type: 'success', message: 'Request accepted' });
-      // Go back to bookings list — it will refresh on focus
-      router.back();
+      if (Number.isFinite(acceptedBookingId) && acceptedBookingId > 0) {
+        router.replace({
+          pathname: '/mechanic/booking/booking_details',
+          params: {
+            bookingId: String(acceptedBookingId),
+            ...(source ? { source } : {}),
+          },
+        });
+      } else {
+        router.back();
+      }
     } catch (err: any) {
       showNotification({ type: 'error', message: err.message || 'Failed to accept request' });
     } finally {
