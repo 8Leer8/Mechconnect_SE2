@@ -427,6 +427,45 @@ export default function ShopOwnerBookingDetailScreen() {
     return `${h}:${m}:${s}`;
   };
 
+  const locationText = (value?: string | null, fallback = 'Unavailable') => {
+    const text = String(value || '').trim();
+    if (!text) return fallback;
+    const normalized = text.toLowerCase();
+    if (normalized === 'emergency' || normalized === 'emergency location' || normalized === 'unknown barangay' || normalized === 'unknown city') {
+      return fallback;
+    }
+    return text;
+  };
+
+  const inferFromStreetAddress = (streetRaw?: string | null) => {
+    const streetText = String(streetRaw || '').trim();
+    if (!streetText.includes(',')) {
+      return { street: streetText, barangay: '', city: '' };
+    }
+    const parts = streetText
+      .split(',')
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (parts.length < 2) {
+      return { street: streetText, barangay: '', city: '' };
+    }
+
+    const primaryStreet = parts[0];
+    let barangay = '';
+    let city = '';
+    if (parts.length >= 3) {
+      if (/^brgy\.?\s|^barangay\s/i.test(parts[1])) {
+        barangay = parts[1];
+        city = parts[2];
+      } else {
+        city = parts[1];
+      }
+    } else {
+      city = parts[1];
+    }
+    return { street: primaryStreet, barangay, city };
+  };
+
   const getDisplayQuotation = () => {
     // Prefer server-saved quotation if available
     if (quotation && (quotation.items || []).length > 0) return quotation;
@@ -827,6 +866,17 @@ export default function ShopOwnerBookingDetailScreen() {
 
         {/* Service Location */}
         <View style={styles.sectionCard}>
+          {(() => {
+            const inferred = inferFromStreetAddress(booking.service_location?.street_name);
+            const fallbackStreet =
+              (booking.service_location as any)?.latitude != null && (booking.service_location as any)?.longitude != null
+                ? `${Number((booking.service_location as any).latitude).toFixed(6)}, ${Number((booking.service_location as any).longitude).toFixed(6)}`
+                : 'Unavailable';
+            const streetValue = locationText(inferred.street || booking.service_location?.street_name, fallbackStreet);
+            const barangayValue = locationText(booking.service_location?.barangay, locationText(inferred.barangay, 'Unavailable'));
+            const cityValue = locationText(booking.service_location?.city_municipality, locationText(inferred.city, 'Unavailable'));
+            return (
+              <>
           <View style={styles.sectionHeader}>
             <View style={[styles.sectionIcon, { backgroundColor: '#FF3B3015' }]}>
               <FontAwesome name="map-marker" size={16} color="#FF3B30" />
@@ -839,30 +889,30 @@ export default function ShopOwnerBookingDetailScreen() {
               <View style={styles.locationRow}>
                 <ThemedText style={styles.locationLabel}>Street</ThemedText>
                 <ThemedText style={styles.locationValue}>
-                  {booking.service_location.street_name}
+                  {streetValue}
                 </ThemedText>
               </View>
 
-              {booking.service_location.subdivision_village && (
+              {locationText(booking.service_location.subdivision_village, '') ? (
                 <View style={styles.locationRow}>
                   <ThemedText style={styles.locationLabel}>Subdivision</ThemedText>
                   <ThemedText style={styles.locationValue}>
-                    {booking.service_location.subdivision_village}
+                    {locationText(booking.service_location.subdivision_village)}
                   </ThemedText>
                 </View>
-              )}
+              ) : null}
 
               <View style={styles.locationRow}>
                 <ThemedText style={styles.locationLabel}>Barangay</ThemedText>
                 <ThemedText style={styles.locationValue}>
-                  {booking.service_location.barangay}
+                  {barangayValue}
                 </ThemedText>
               </View>
 
               <View style={styles.locationRow}>
                 <ThemedText style={styles.locationLabel}>City</ThemedText>
                 <ThemedText style={styles.locationValue}>
-                  {booking.service_location.city_municipality}
+                  {cityValue}
                 </ThemedText>
               </View>
 
@@ -881,6 +931,9 @@ export default function ShopOwnerBookingDetailScreen() {
               <ThemedText style={styles.noLocationText}>No location specified</ThemedText>
             </View>
           )}
+              </>
+            );
+          })()}
         </View>
 
         {/* Timeline */}
@@ -1376,60 +1429,167 @@ export default function ShopOwnerBookingDetailScreen() {
 
       <Modal visible={assignModalVisible} animationType="slide" transparent>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'flex-end' }}>
-          <View style={{ backgroundColor: '#1E1E1E', borderTopLeftRadius: 18, borderTopRightRadius: 18, maxHeight: '78%', padding: 16 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <ThemedText style={{ fontSize: 18, fontWeight: '700' }}>Assign Mechanics</ThemedText>
+          <View
+            style={{
+              backgroundColor: '#1E1E1E',
+              borderTopLeftRadius: 18,
+              borderTopRightRadius: 18,
+              maxHeight: '82%',
+              paddingHorizontal: 16,
+              paddingTop: 14,
+              paddingBottom: 18,
+            }}
+          >
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <View>
+                <ThemedText style={{ fontSize: 18, fontWeight: '700' }}>Assign Mechanics</ThemedText>
+                <ThemedText style={{ color: '#8E8E93', fontSize: 12, marginTop: 2 }}>
+                  {availableMechanics.length} available mechanic{availableMechanics.length === 1 ? '' : 's'}
+                </ThemedText>
+              </View>
               <TouchableOpacity onPress={() => setAssignModalVisible(false)}>
                 <FontAwesome name="times-circle" size={22} color="#888" />
               </TouchableOpacity>
             </View>
 
-            <ScrollView>
-              {assignments.map((a) => (
+            <ScrollView style={{ marginTop: 14 }} showsVerticalScrollIndicator={false}>
+              <ThemedText style={{ color: '#8E8E93', fontSize: 12, fontWeight: '700', marginBottom: 8 }}>
+                CURRENT TEAM
+              </ThemedText>
+              {assignments.length === 0 ? (
                 <View
-                  key={a.id}
-                  style={{ backgroundColor: '#252525', borderRadius: 10, padding: 12, marginBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
+                  style={{
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: '#2E2E2E',
+                    paddingVertical: 12,
+                    paddingHorizontal: 12,
+                    marginBottom: 14,
+                    backgroundColor: '#242424',
+                  }}
                 >
-                  <View>
-                    <ThemedText>{a.mechanic.firstname} {a.mechanic.lastname}</ThemedText>
-                    <ThemedText style={{ color: '#888', fontSize: 12 }}>{a.role === 'lead' ? 'Lead Mechanic' : 'Assisting Mechanic'}</ThemedText>
-                  </View>
-                  {assignLoading ? (
-                    <ActivityIndicator size="small" color="#FF9500" />
-                  ) : (
-                    <TouchableOpacity onPress={() => handleUnassign(a.id)}>
-                      <FontAwesome name="minus-circle" size={22} color="#FF3B30" />
-                    </TouchableOpacity>
-                  )}
+                  <ThemedText style={{ color: '#7F7F83', fontSize: 13 }}>
+                    No assigned mechanics yet.
+                  </ThemedText>
                 </View>
-              ))}
-
-              {availableMechanics.map((m) => (
-                <View
-                  key={m.account_id}
-                  style={{ backgroundColor: '#252525', borderRadius: 10, padding: 12, marginBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
-                >
-                  <ThemedText>{m.firstname} {m.lastname}</ThemedText>
-                  {assigningId === m.account_id ? (
-                    <ActivityIndicator size="small" color="#FF9500" />
-                  ) : (
-                    <View style={{ flexDirection: 'row', gap: 8 }}>
-                      <TouchableOpacity
-                        style={{ backgroundColor: '#FF9500', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
-                        onPress={() => handleAssignMechanic(m.account_id, 'lead')}
-                      >
-                        <ThemedText style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Lead Mechanic</ThemedText>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={{ backgroundColor: '#34C759', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
-                        onPress={() => handleAssignMechanic(m.account_id, 'assistant')}
-                      >
-                        <ThemedText style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Assisting Mechanic</ThemedText>
-                      </TouchableOpacity>
+              ) : (
+                assignments.map((a) => (
+                  <View
+                    key={a.id}
+                    style={{
+                      backgroundColor: '#252525',
+                      borderRadius: 10,
+                      paddingVertical: 10,
+                      paddingHorizontal: 12,
+                      marginBottom: 8,
+                      flexDirection: 'row',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <View style={{ flex: 1, paddingRight: 10 }}>
+                      <ThemedText numberOfLines={1} style={{ fontSize: 14, fontWeight: '600' }}>
+                        {a.mechanic.firstname} {a.mechanic.lastname}
+                      </ThemedText>
+                      <ThemedText style={{ color: '#888', fontSize: 12 }}>
+                        {a.role === 'lead' ? 'Lead Mechanic' : 'Assisting Mechanic'}
+                      </ThemedText>
                     </View>
-                  )}
+                    {assignLoading ? (
+                      <ActivityIndicator size="small" color="#FF9500" />
+                    ) : (
+                      <TouchableOpacity
+                        style={{
+                          width: 34,
+                          height: 34,
+                          borderRadius: 17,
+                          backgroundColor: '#FF3B301A',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                        onPress={() => handleUnassign(a.id)}
+                      >
+                        <FontAwesome name="minus" size={14} color="#FF6B63" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ))
+              )}
+
+              <ThemedText style={{ color: '#8E8E93', fontSize: 12, fontWeight: '700', marginTop: 2, marginBottom: 8 }}>
+                AVAILABLE MECHANICS
+              </ThemedText>
+              {availableMechanics.length === 0 ? (
+                <View
+                  style={{
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: '#2E2E2E',
+                    paddingVertical: 12,
+                    paddingHorizontal: 12,
+                    marginBottom: 10,
+                    backgroundColor: '#242424',
+                  }}
+                >
+                  <ThemedText style={{ color: '#7F7F83', fontSize: 13 }}>
+                    All shop mechanics are already assigned.
+                  </ThemedText>
                 </View>
-              ))}
+              ) : (
+                availableMechanics.map((m) => (
+                  <View
+                    key={m.account_id}
+                    style={{
+                      backgroundColor: '#252525',
+                      borderRadius: 12,
+                      padding: 12,
+                      marginBottom: 10,
+                    }}
+                  >
+                    <ThemedText numberOfLines={2} style={{ fontSize: 14, fontWeight: '600', marginBottom: 10 }}>
+                      {m.firstname} {m.lastname}
+                    </ThemedText>
+                    {assigningId === m.account_id ? (
+                      <View style={{ minHeight: 36, justifyContent: 'center', alignItems: 'center' }}>
+                        <ActivityIndicator size="small" color="#FF9500" />
+                      </View>
+                    ) : (
+                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                        <TouchableOpacity
+                          style={{
+                            flex: 1,
+                            backgroundColor: '#FF9500',
+                            paddingVertical: 8,
+                            borderRadius: 8,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                          onPress={() => handleAssignMechanic(m.account_id, 'lead')}
+                        >
+                          <ThemedText style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
+                            Lead
+                          </ThemedText>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={{
+                            flex: 1,
+                            backgroundColor: '#34C759',
+                            paddingVertical: 8,
+                            borderRadius: 8,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                          onPress={() => handleAssignMechanic(m.account_id, 'assistant')}
+                        >
+                          <ThemedText style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
+                            Assist
+                          </ThemedText>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+                ))
+              )}
             </ScrollView>
           </View>
         </View>

@@ -19,6 +19,7 @@ from shops.models import Shop                          # added
 
 EMERGENCY_COOLDOWN_MINUTES = 5
 MAX_EMERGENCY_PHOTOS = 5
+EMERGENCY_LOCATION_PLACEHOLDERS = {'emergency', 'emergency location', 'unknown barangay', 'unknown city'}
 
 
 def _extract_vehicle_fields(request):
@@ -27,6 +28,15 @@ def _extract_vehicle_fields(request):
     vehicle_model = str(request.data.get('vehicle_model') or '').strip()
     vehicle_description = str(request.data.get('vehicle_description') or '').strip()
     return vehicle_type, vehicle_brand, vehicle_model, vehicle_description
+
+
+def _clean_location_text(value, fallback='Unavailable'):
+    text = str(value or '').strip()
+    if not text:
+        return fallback
+    if text.lower() in EMERGENCY_LOCATION_PLACEHOLDERS:
+        return fallback
+    return text
 
 
 def _get_emergency_cooldown_seconds(client):
@@ -746,15 +756,25 @@ def create_emergency_request(request):
                     'error': 'Provider not found'
                 }, status=status.HTTP_404_NOT_FOUND)
         
+        latitude = service_location_data.get('latitude')
+        longitude = service_location_data.get('longitude')
+        if latitude in (None, '') or longitude in (None, ''):
+            return Response({
+                'error': 'Emergency location coordinates are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         # Create service location
         service_location = ServiceLocation.objects.create(
-            street_name=service_location_data.get('street_name', 'Emergency Location'),
+            street_name=_clean_location_text(
+                service_location_data.get('street_name') or service_location_data.get('address'),
+                fallback=f'{latitude}, {longitude}'
+            ),
             subdivision_village=service_location_data.get('subdivision_village'),
-            barangay=service_location_data.get('barangay', 'Emergency'),
-            city_municipality=service_location_data.get('city_municipality', 'Emergency'),
+            barangay=_clean_location_text(service_location_data.get('barangay')),
+            city_municipality=_clean_location_text(service_location_data.get('city_municipality')),
             landmark=service_location_data.get('landmark'),
-            latitude=service_location_data.get('latitude'),
-            longitude=service_location_data.get('longitude')
+            latitude=latitude,
+            longitude=longitude
         )
         
         # Create request

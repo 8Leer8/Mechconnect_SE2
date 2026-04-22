@@ -33,7 +33,11 @@ interface Booking {
     id: number;
     type: string;
     created_at: string;
-    assigned_mechanics?: { id: number; role: string; mechanic?: { id: number } }[];
+    assigned_mechanics?: {
+      id: number;
+      role: string;
+      mechanic?: { id: number; firstname?: string; lastname?: string; username?: string };
+    }[];
   };
   provider?: { id: number; name: string; email: string } | null;
   service_location?: {
@@ -74,7 +78,16 @@ type HomeResponse = {
   pending_requests: PendingRequest[];
 };
 
-type TabType = 'all' | 'pending' | 'booked' | 'on_going' | 'completed' | 'cancelled' | 'reworked' | 'disputed';
+type TabType =
+  | 'all'
+  | 'pending'
+  | 'booked'
+  | 'assigned'
+  | 'on_going'
+  | 'completed'
+  | 'cancelled'
+  | 'reworked'
+  | 'disputed';
 type RequestTabType = 'custom' | 'direct' | 'broadcast';
 
 type GroupedResponse = {
@@ -157,6 +170,8 @@ export default function ShopOwnerJobsScreen() {
           ? 'all'
           : activeTab === 'booked'
           ? 'accepted'
+          : activeTab === 'assigned'
+          ? 'accepted'
           : activeTab === 'on_going'
           ? 'on_going'
           : activeTab;
@@ -170,9 +185,20 @@ export default function ShopOwnerJobsScreen() {
       );
       if (!res.ok) throw new Error(`Failed to fetch ${activeTab} bookings`);
       const data = (await res.json()) as any;
-      setBookings(data.bookings || []);
-      setTotalCount(data.total_count || 0);
-      setTotalPages(data.total_pages || 1);
+      const fetchedBookings = data.bookings || [];
+      const filteredBookings =
+        activeTab === 'booked'
+          ? fetchedBookings.filter((booking: Booking) => !hasRequestAssignments(booking))
+          : activeTab === 'assigned'
+          ? fetchedBookings.filter((booking: Booking) => hasRequestAssignments(booking))
+          : fetchedBookings;
+      setBookings(filteredBookings);
+      setTotalCount(
+        activeTab === 'booked' || activeTab === 'assigned'
+          ? filteredBookings.length
+          : data.total_count || 0
+      );
+      setTotalPages(activeTab === 'booked' || activeTab === 'assigned' ? 1 : data.total_pages || 1);
 
       if (statusQuery === 'cancelled') {
         try {
@@ -194,18 +220,23 @@ export default function ShopOwnerJobsScreen() {
       }
 
       if (data.tab_counts) {
-        setCounts({
-          all: data.total_count || 0,
-          booked: data.tab_counts.accepted || 0,
-          on_going:
-            (data.tab_counts.on_the_way || 0) +
-            (data.tab_counts.at_location || 0) +
-            (data.tab_counts.diagnosing || 0) +
-            (data.tab_counts.active || 0),
-          completed: data.tab_counts.completed || 0,
-          cancelled: data.tab_counts.cancelled || 0,
-          reworked: data.tab_counts.reworked || 0,
-          disputed: data.tab_counts.disputed || 0,
+        const acceptedCount = data.tab_counts.accepted || 0;
+        setCounts((prev) => {
+          const assignedCount = activeTab === 'assigned' ? filteredBookings.length : prev.assigned || 0;
+          return {
+            all: data.total_count || 0,
+            booked: Math.max(0, acceptedCount - assignedCount),
+            assigned: assignedCount,
+            on_going:
+              (data.tab_counts.on_the_way || 0) +
+              (data.tab_counts.at_location || 0) +
+              (data.tab_counts.diagnosing || 0) +
+              (data.tab_counts.active || 0),
+            completed: data.tab_counts.completed || 0,
+            cancelled: data.tab_counts.cancelled || 0,
+            reworked: data.tab_counts.reworked || 0,
+            disputed: data.tab_counts.disputed || 0,
+          };
         });
       }
     } catch (e: any) {
@@ -334,26 +365,40 @@ export default function ShopOwnerJobsScreen() {
     return Array.isArray(am) && am.length > 0;
   };
 
-  /** Booked tab: still `accepted` in API, but show "Assigned" once mechanics are linked. */
+  /** Shop owner jobs view: show "Assigned" once mechanics are linked. */
   const getCardStatusLabel = (b: Booking) => {
-    if (activeTab === 'booked' && b.status === 'accepted' && hasRequestAssignments(b)) {
+    if (b.status === 'accepted' && hasRequestAssignments(b)) {
       return 'Assigned';
     }
     return getStatusLabel(b.status);
   };
 
   const getCardStatusColor = (b: Booking) => {
-    if (activeTab === 'booked' && b.status === 'accepted' && hasRequestAssignments(b)) {
+    if (b.status === 'accepted' && hasRequestAssignments(b)) {
       return '#34C759';
     }
     return getStatusColor(b.status);
   };
 
   const getCardStatusIcon = (b: Booking) => {
-    if (activeTab === 'booked' && b.status === 'accepted' && hasRequestAssignments(b)) {
+    if (b.status === 'accepted' && hasRequestAssignments(b)) {
       return 'users';
     }
     return getStatusIcon(b.status);
+  };
+
+  const getAssignedMechanicPreview = (b: Booking) => {
+    const assigned = b.request?.assigned_mechanics || [];
+    if (assigned.length === 0) return null;
+
+    const firstMechanic = assigned[0]?.mechanic;
+    const firstName = firstMechanic?.firstname || '';
+    const lastName = firstMechanic?.lastname || '';
+    const fullName = `${firstName} ${lastName}`.trim();
+    const displayName = fullName || firstMechanic?.username || 'Assigned mechanic';
+
+    if (assigned.length === 1) return displayName;
+    return `${displayName} +${assigned.length - 1} more`;
   };
 
   const formatDate = (d: string) =>
@@ -451,6 +496,7 @@ export default function ShopOwnerJobsScreen() {
           };
         })
       );
+      await fetchBookings({ silent: true });
     } catch {
       showNotification({ type: 'error', message: 'Network error' });
     } finally {
@@ -493,6 +539,7 @@ export default function ShopOwnerJobsScreen() {
           };
         })
       );
+      await fetchBookings({ silent: true });
     } catch {
       showNotification({ type: 'error', message: 'Network error' });
     }
@@ -602,6 +649,7 @@ export default function ShopOwnerJobsScreen() {
     { key: 'all', label: 'All', icon: 'th-list' },
     { key: 'pending', label: 'Pending', icon: 'envelope' },
     { key: 'booked', label: 'Booked', icon: 'calendar-check-o' },
+    { key: 'assigned', label: 'Assigned', icon: 'users' },
     { key: 'on_going', label: 'On Going', icon: 'play-circle' },
     { key: 'completed', label: 'Completed', icon: 'check-circle' },
     { key: 'cancelled', label: 'Cancelled', icon: 'times-circle' },
@@ -933,6 +981,14 @@ export default function ShopOwnerJobsScreen() {
                     <FontAwesome name="calendar-o" size={13} color="#888" />
                     <ThemedText style={styles.infoText}>{formatDate(b.booked_at)}</ThemedText>
                   </View>
+                  {hasRequestAssignments(b) ? (
+                    <View style={styles.infoRow}>
+                      <FontAwesome name="users" size={13} color="#888" />
+                      <ThemedText style={styles.infoText} numberOfLines={1}>
+                        {getAssignedMechanicPreview(b)}
+                      </ThemedText>
+                    </View>
+                  ) : null}
                 </View>
                 <View style={styles.cardFooter}>
                   <ThemedText style={styles.amount}>
@@ -940,7 +996,7 @@ export default function ShopOwnerJobsScreen() {
                   </ThemedText>
                   <View style={styles.footerActions}>
                     <TouchableOpacity
-                      style={[styles.assignBtn, { backgroundColor: '#FF8C0015' }]}
+                      style={styles.detailsPillBtn}
                       onPress={() =>
                         router.push({
                           pathname: '/shopowner/booking/booking_details',
@@ -948,7 +1004,8 @@ export default function ShopOwnerJobsScreen() {
                         })
                       }
                     >
-                      <ThemedText style={[styles.assignBtnText, { color: '#FF8C00' }]}>Details &gt;</ThemedText>
+                      <ThemedText style={styles.detailsPillBtnText}>Details</ThemedText>
+                      <FontAwesome name="chevron-right" size={10} color="#FF8C00" />
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -1023,6 +1080,14 @@ export default function ShopOwnerJobsScreen() {
                     <FontAwesome name="calendar-o" size={13} color="#888" />
                     <ThemedText style={styles.infoText}>{formatDate(b.booked_at)}</ThemedText>
                   </View>
+                  {hasRequestAssignments(b) ? (
+                    <View style={styles.infoRow}>
+                      <FontAwesome name="users" size={13} color="#888" />
+                      <ThemedText style={styles.infoText} numberOfLines={1}>
+                        {getAssignedMechanicPreview(b)}
+                      </ThemedText>
+                    </View>
+                  ) : null}
                 </View>
 
                 {/* Footer */}
@@ -1033,7 +1098,7 @@ export default function ShopOwnerJobsScreen() {
 
                   <View style={styles.footerActions}>
                     <TouchableOpacity
-                      style={[styles.assignBtn, { backgroundColor: '#FF8C0015' }]}
+                      style={styles.detailsPillBtn}
                       onPress={() =>
                         router.push({
                           pathname: '/shopowner/booking/booking_details',
@@ -1041,15 +1106,19 @@ export default function ShopOwnerJobsScreen() {
                         })
                       }
                     >
-                      <ThemedText style={[styles.assignBtnText, { color: '#FF8C00' }]}>Details &gt;</ThemedText>
+                      <ThemedText style={styles.detailsPillBtnText}>Details</ThemedText>
+                      <FontAwesome name="chevron-right" size={10} color="#FF8C00" />
                     </TouchableOpacity>
 
                     {b.status === 'accepted' ? (
                       <TouchableOpacity
-                        style={styles.assignBtn}
+                        style={styles.assignPrimaryBtn}
                         onPress={() => openAssignModal(b.request.id)}
                       >
-                        <ThemedText style={styles.assignBtnText}>Assign</ThemedText>
+                        <FontAwesome name="users" size={11} color="#fff" />
+                        <ThemedText style={styles.assignPrimaryBtnText}>
+                          {hasRequestAssignments(b) ? 'Reassign' : 'Assign'}
+                        </ThemedText>
                       </TouchableOpacity>
                     ) : null}
                   </View>
@@ -1085,21 +1154,27 @@ export default function ShopOwnerJobsScreen() {
 
       {/* ── Assign Mechanics Modal ── */}
       <Modal visible={assignModalVisible} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <TouchableOpacity
-                  onPress={closeAssignModal}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                  activeOpacity={0.7}
-                >
-                  <FontAwesome name="chevron-left" size={18} color="#FF8C00" />
-                </TouchableOpacity>
-                <ThemedText style={styles.modalTitle}>Assign Mechanics</ThemedText>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'flex-end' }}>
+          <View
+            style={{
+              backgroundColor: '#1E1E1E',
+              borderTopLeftRadius: 18,
+              borderTopRightRadius: 18,
+              maxHeight: '82%',
+              paddingHorizontal: 16,
+              paddingTop: 14,
+              paddingBottom: 18,
+            }}
+          >
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <View>
+                <ThemedText style={{ fontSize: 18, fontWeight: '700' }}>Assign Mechanics</ThemedText>
+                <ThemedText style={{ color: '#8E8E93', fontSize: 12, marginTop: 2 }}>
+                  {availableMechanics.length} available mechanic{availableMechanics.length === 1 ? '' : 's'}
+                </ThemedText>
               </View>
               <TouchableOpacity onPress={closeAssignModal}>
-                <IconSymbol name="xmark.circle.fill" size={28} color="#888" />
+                <FontAwesome name="times-circle" size={22} color="#888" />
               </TouchableOpacity>
             </View>
 
@@ -1108,77 +1183,142 @@ export default function ShopOwnerJobsScreen() {
                 <ActivityIndicator size="large" color="#FF9500" />
               </View>
             ) : (
-              <ScrollView style={styles.modalBody}>
-                {assignments.length > 0 && (
-                  <>
-                    <ThemedText style={styles.sectionLabel}>Assigned</ThemedText>
-                    {assignments.map((a) => (
-                      <View key={a.id} style={styles.mechRow}>
-                        <View style={styles.mechInfo}>
-                          <FontAwesome name="user-circle" size={18} color="#34C759" />
-                          <ThemedText style={styles.mechName}>
-                            {a.mechanic.firstname} {a.mechanic.lastname}
-                          </ThemedText>
-                          <View
-                            style={[
-                              styles.roleBadge,
-                              a.role === 'lead' ? styles.roleLead : styles.roleAssist,
-                            ]}
-                          >
-                            <ThemedText style={styles.roleText}>
-                              {a.role === 'lead' ? 'Lead Mechanic' : 'Assisting Mechanic'}
-                            </ThemedText>
-                          </View>
-                        </View>
-                        <TouchableOpacity onPress={() => handleUnassign(a.id)}>
-                          <FontAwesome name="minus-circle" size={22} color="#FF3B30" />
-                        </TouchableOpacity>
+              <ScrollView style={{ marginTop: 14 }} showsVerticalScrollIndicator={false}>
+                <ThemedText style={{ color: '#8E8E93', fontSize: 12, fontWeight: '700', marginBottom: 8 }}>
+                  CURRENT TEAM
+                </ThemedText>
+                {assignments.length === 0 ? (
+                  <View
+                    style={{
+                      borderRadius: 10,
+                      borderWidth: 1,
+                      borderColor: '#2E2E2E',
+                      paddingVertical: 12,
+                      paddingHorizontal: 12,
+                      marginBottom: 14,
+                      backgroundColor: '#242424',
+                    }}
+                  >
+                    <ThemedText style={{ color: '#7F7F83', fontSize: 13 }}>
+                      No assigned mechanics yet.
+                    </ThemedText>
+                  </View>
+                ) : (
+                  assignments.map((a) => (
+                    <View
+                      key={a.id}
+                      style={{
+                        backgroundColor: '#252525',
+                        borderRadius: 10,
+                        paddingVertical: 10,
+                        paddingHorizontal: 12,
+                        marginBottom: 8,
+                        flexDirection: 'row',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <View style={{ flex: 1, paddingRight: 10 }}>
+                        <ThemedText numberOfLines={1} style={{ fontSize: 14, fontWeight: '600' }}>
+                          {a.mechanic.firstname} {a.mechanic.lastname}
+                        </ThemedText>
+                        <ThemedText style={{ color: '#888', fontSize: 12 }}>
+                          {a.role === 'lead' ? 'Lead Mechanic' : 'Assisting Mechanic'}
+                        </ThemedText>
                       </View>
-                    ))}
-                  </>
+                      <TouchableOpacity
+                        style={{
+                          width: 34,
+                          height: 34,
+                          borderRadius: 17,
+                          backgroundColor: '#FF3B301A',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                        onPress={() => handleUnassign(a.id)}
+                      >
+                        <FontAwesome name="minus" size={14} color="#FF6B63" />
+                      </TouchableOpacity>
+                    </View>
+                  ))
                 )}
 
-                <ThemedText
-                  style={[styles.sectionLabel, { marginTop: assignments.length > 0 ? 20 : 0 }]}
-                >
-                  Shop Mechanics{availableMechanics.length === 0 ? ' (none available)' : ''}
+                <ThemedText style={{ color: '#8E8E93', fontSize: 12, fontWeight: '700', marginTop: 2, marginBottom: 8 }}>
+                  AVAILABLE MECHANICS
                 </ThemedText>
-                {availableMechanics.map((m) => (
-                  <View key={m.account_id} style={styles.mechRow}>
-                    <View style={styles.mechInfo}>
-                      <FontAwesome name="user-circle-o" size={18} color="#888" />
-                      <ThemedText style={styles.mechName}>
+                {availableMechanics.length === 0 ? (
+                  <View
+                    style={{
+                      borderRadius: 10,
+                      borderWidth: 1,
+                      borderColor: '#2E2E2E',
+                      paddingVertical: 12,
+                      paddingHorizontal: 12,
+                      marginBottom: 10,
+                      backgroundColor: '#242424',
+                    }}
+                  >
+                    <ThemedText style={{ color: '#7F7F83', fontSize: 13 }}>
+                      All shop mechanics are already assigned.
+                    </ThemedText>
+                  </View>
+                ) : (
+                  availableMechanics.map((m) => (
+                    <View
+                      key={m.account_id}
+                      style={{
+                        backgroundColor: '#252525',
+                        borderRadius: 12,
+                        padding: 12,
+                        marginBottom: 10,
+                      }}
+                    >
+                      <ThemedText numberOfLines={2} style={{ fontSize: 14, fontWeight: '600', marginBottom: 10 }}>
                         {m.firstname} {m.lastname}
                       </ThemedText>
-                    </View>
-                    <View style={styles.assignActions}>
                       {assigningId === m.account_id ? (
-                        <ActivityIndicator size="small" color="#FF9500" />
+                        <View style={{ minHeight: 36, justifyContent: 'center', alignItems: 'center' }}>
+                          <ActivityIndicator size="small" color="#FF9500" />
+                        </View>
                       ) : (
-                        <>
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
                           <TouchableOpacity
-                            style={styles.leadBtn}
+                            style={{
+                              flex: 1,
+                              backgroundColor: '#FF9500',
+                              paddingVertical: 8,
+                              borderRadius: 8,
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
                             onPress={() => handleAssignMechanic(m.account_id, 'lead')}
                           >
-                            <ThemedText style={styles.btnLabel}>Lead Mechanic</ThemedText>
+                            <ThemedText style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
+                              Lead
+                            </ThemedText>
                           </TouchableOpacity>
                           <TouchableOpacity
-                            style={styles.assistBtn}
+                            style={{
+                              flex: 1,
+                              backgroundColor: '#34C759',
+                              paddingVertical: 8,
+                              borderRadius: 8,
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
                             onPress={() => handleAssignMechanic(m.account_id, 'assistant')}
                           >
-                            <ThemedText style={styles.btnLabel}>Assisting Mechanic</ThemedText>
+                            <ThemedText style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
+                              Assist
+                            </ThemedText>
                           </TouchableOpacity>
-                        </>
+                        </View>
                       )}
                     </View>
-                  </View>
-                ))}
+                  ))
+                )}
               </ScrollView>
             )}
-
-            <TouchableOpacity style={styles.doneBtn} onPress={closeAssignModal}>
-              <ThemedText style={styles.doneBtnText}>Done</ThemedText>
-            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -1382,6 +1522,29 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   assignBtnText: { fontSize: 13, fontWeight: '700', color: '#FF9500' },
+  detailsPillBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#FF8C0015',
+    borderWidth: 1,
+    borderColor: '#FF8C0030',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  detailsPillBtnText: { fontSize: 12, fontWeight: '700', color: '#FF8C00' },
+  assignPrimaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#FF9500',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  assignPrimaryBtnText: { fontSize: 12, fontWeight: '700', color: '#fff' },
 
   // Modal
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },

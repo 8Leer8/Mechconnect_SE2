@@ -62,6 +62,8 @@ interface BookingDetail {
     barangay: string;
     city_municipality: string;
     landmark?: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
   } | null;
   active_details?: {
     before_picture?: string | null;
@@ -82,6 +84,12 @@ interface BookingDetail {
     total_amount: number;
     notes: string;
   };
+  location?: {
+    barangay?: string | null;
+    lat?: number | null;
+    lng?: number | null;
+    navigation_allowed?: boolean;
+  } | null;
   cancellation_details?: {
     cancelled_by: { id: number; name: string };
     reason: string;
@@ -217,6 +225,11 @@ export default function BookingDetailScreen() {
   const [chatPreview, setChatPreview] = useState<string | null>(null);
   const [visibleBeforePhotoCount, setVisibleBeforePhotoCount] = useState(6);
   const [visibleAfterPhotoCount, setVisibleAfterPhotoCount] = useState(6);
+  const [resolvedEmergencyLocation, setResolvedEmergencyLocation] = useState<{
+    street_name?: string;
+    barangay?: string;
+    city_municipality?: string;
+  } | null>(null);
   const routerHook = useRouter();
   const isMechanicShopSource = source === 'mechanic_shop';
   const [quotation, setQuotation] = useState<any | null>(null);
@@ -227,6 +240,70 @@ export default function BookingDetailScreen() {
     setVisibleBeforePhotoCount(6);
     setVisibleAfterPhotoCount(6);
   }, [booking?.id]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const isEmergencyPlaceholder = (value: string | null | undefined) => {
+      const text = String(value || '').trim().toLowerCase();
+      return text === 'emergency' || text === 'emergency location';
+    };
+
+    const resolveEmergencyLocationText = async () => {
+      const isEmergency = String(booking?.request?.type || '').toLowerCase() === 'emergency';
+      if (!isEmergency || !booking?.service_location) {
+        setResolvedEmergencyLocation(null);
+        return;
+      }
+
+      const street = booking.service_location.street_name;
+      const barangay = booking.service_location.barangay;
+      const city = booking.service_location.city_municipality;
+      const needsOverride =
+        isEmergencyPlaceholder(street) ||
+        isEmergencyPlaceholder(barangay) ||
+        isEmergencyPlaceholder(city);
+
+      if (!needsOverride) {
+        setResolvedEmergencyLocation(null);
+        return;
+      }
+
+      const lat =
+        (booking.service_location as any)?.latitude ??
+        (booking.location as any)?.lat;
+      const lng =
+        (booking.service_location as any)?.longitude ??
+        (booking.location as any)?.lng;
+
+      if (lat == null || lng == null) {
+        setResolvedEmergencyLocation(null);
+        return;
+      }
+
+      try {
+        const [addressResult] = await Location.reverseGeocodeAsync({
+          latitude: Number(lat),
+          longitude: Number(lng),
+        });
+
+        if (!isMounted) return;
+
+        setResolvedEmergencyLocation({
+          street_name: addressResult?.street || addressResult?.name || street || undefined,
+          barangay: addressResult?.district || addressResult?.subregion || barangay || undefined,
+          city_municipality: addressResult?.city || addressResult?.subregion || addressResult?.region || city || undefined,
+        });
+      } catch {
+        if (isMounted) setResolvedEmergencyLocation(null);
+      }
+    };
+
+    resolveEmergencyLocationText();
+    return () => {
+      isMounted = false;
+    };
+  }, [booking]);
 
   useEffect(() => {
     let mounted = true;
@@ -944,6 +1021,11 @@ export default function BookingDetailScreen() {
   };
 
   const handleNavigateToClient = () => {
+    if (booking?.status === 'completed' || booking?.location?.navigation_allowed === false) {
+      showNotification({ type: 'warning', message: 'Navigation is unavailable after job completion.' });
+      return;
+    }
+
     if (!booking?.service_location) {
       showNotification({ type: 'warning', message: 'No service location available for this booking.' });
       return;
@@ -1382,9 +1464,55 @@ export default function BookingDetailScreen() {
     (booking.request as any)?.request_details?.vehicle_model ||
     (booking.request as any)?.request_details?.vehicle?.model ||
     null;
+  const locationText = (value?: string | null, fallback = 'Unavailable') => {
+    const text = String(value || '').trim();
+    if (!text) return fallback;
+    const normalized = text.toLowerCase();
+    if (normalized === 'emergency' || normalized === 'emergency location' || normalized === 'unknown barangay' || normalized === 'unknown city') {
+      return fallback;
+    }
+    return text;
+  };
+
+  const inferFromStreetAddress = (streetRaw?: string | null) => {
+    const streetText = String(streetRaw || '').trim();
+    if (!streetText.includes(',')) {
+      return { street: streetText, barangay: '', city: '' };
+    }
+    const parts = streetText
+      .split(',')
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (parts.length < 2) {
+      return { street: streetText, barangay: '', city: '' };
+    }
+
+    const primaryStreet = parts[0];
+    let barangay = '';
+    let city = '';
+    if (parts.length >= 3) {
+      if (/^brgy\.?\s|^barangay\s/i.test(parts[1])) {
+        barangay = parts[1];
+        city = parts[2];
+      } else {
+        city = parts[1];
+      }
+    } else {
+      city = parts[1];
+    }
+    return { street: primaryStreet, barangay, city };
+  };
+
+  const displayServiceLocation = booking.service_location
+    ? {
+        ...booking.service_location,
+        ...resolvedEmergencyLocation,
+      }
+    : null;
 
   const convenienceFeeTotal = convenienceBreakdown ? convenienceBreakdown.totalConvenienceFee : 0;
   const totalFee = convenienceFeeTotal + quotationEstimatedTotal;
+  const inferredStreetParts = inferFromStreetAddress(displayServiceLocation?.street_name);
 
   const acceptedByAssoc: Record<string, any> = {};
   const acceptedRows: any[] = [];
@@ -2150,40 +2278,45 @@ export default function BookingDetailScreen() {
             <ThemedText style={styles.sectionTitle}>Service Location</ThemedText>
           </View>
 
-          {booking.service_location ? (
+          {displayServiceLocation ? (
             <>
               <View style={styles.locationDetails}>
                 <View style={styles.locationRow}>
                   <ThemedText style={styles.locationLabel}>Street</ThemedText>
                   <ThemedText style={styles.locationValue}>
-                    {booking.service_location.street_name}
+                    {locationText(
+                      inferredStreetParts.street || displayServiceLocation.street_name,
+                      displayServiceLocation.latitude != null && displayServiceLocation.longitude != null
+                        ? `${Number(displayServiceLocation.latitude).toFixed(6)}, ${Number(displayServiceLocation.longitude).toFixed(6)}`
+                        : 'Unavailable'
+                    )}
                   </ThemedText>
                 </View>
-                {booking.service_location.subdivision_village && (
+                {locationText(displayServiceLocation.subdivision_village, '') ? (
                   <View style={styles.locationRow}>
                     <ThemedText style={styles.locationLabel}>Subdivision</ThemedText>
                     <ThemedText style={styles.locationValue}>
-                      {booking.service_location.subdivision_village}
+                      {locationText(displayServiceLocation.subdivision_village)}
                     </ThemedText>
                   </View>
-                )}
+                ) : null}
                 <View style={styles.locationRow}>
                   <ThemedText style={styles.locationLabel}>Barangay</ThemedText>
                   <ThemedText style={styles.locationValue}>
-                    {booking.service_location.barangay}
+                    {locationText(displayServiceLocation.barangay, locationText(inferredStreetParts.barangay, 'Unavailable'))}
                   </ThemedText>
                 </View>
                 <View style={styles.locationRow}>
                   <ThemedText style={styles.locationLabel}>City</ThemedText>
                   <ThemedText style={styles.locationValue}>
-                    {booking.service_location.city_municipality}
+                    {locationText(displayServiceLocation.city_municipality, locationText(inferredStreetParts.city, 'Unavailable'))}
                   </ThemedText>
                 </View>
-                {booking.service_location.landmark && (
+                {displayServiceLocation.landmark && (
                   <View style={styles.locationRow}>
                     <ThemedText style={styles.locationLabel}>Landmark</ThemedText>
                     <ThemedText style={styles.locationValue}>
-                      {booking.service_location.landmark}
+                      {displayServiceLocation.landmark}
                     </ThemedText>
                   </View>
                 )}
@@ -2209,6 +2342,19 @@ export default function BookingDetailScreen() {
                   </View>
                   <FontAwesome name="external-link" size={14} color="#FF8C00" />
                 </TouchableOpacity>
+              ) : booking.status === 'completed' || booking.location?.navigation_allowed === false ? (
+                <View style={[styles.navigateButton, { opacity: 0.7 }]}>
+                  <View style={styles.navigateIconCircle}>
+                    <FontAwesome name="lock" size={18} color="#fff" />
+                  </View>
+                  <View style={styles.navigateTextContainer}>
+                    <ThemedText style={styles.navigateTitle}>Navigation unavailable after job completion</ThemedText>
+                    <ThemedText style={styles.navigateSubtitle}>
+                      📍 Barangay {booking.location?.barangay || displayServiceLocation?.barangay || 'hidden'}
+                    </ThemedText>
+                  </View>
+                  <FontAwesome name="ban" size={14} color="#8E8E93" />
+                </View>
               ) : (
                 <TouchableOpacity
                   style={styles.navigateButton}

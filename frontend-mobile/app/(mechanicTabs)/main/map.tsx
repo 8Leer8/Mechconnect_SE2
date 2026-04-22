@@ -17,7 +17,7 @@ import * as Location from 'expo-location';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
-import { router, useFocusEffect, usePathname } from 'expo-router';
+import { router, useFocusEffect, usePathname, useSegments } from 'expo-router';
 import WalletBadge from '@/components/wallet-badge';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import { eventBus } from '@/utils/eventBus';
@@ -160,7 +160,12 @@ export default function MapScreen() {
   const lastBroadcastFetchLocationRef = useRef<{ latitude: number; longitude: number } | null>(null);
   const { showNotification } = useNotification();
   const pathname = usePathname();
-  const isShopOwnerMap = pathname.includes('(shopownerTabs)');
+  const segments = useSegments();
+  const isShopOwnerMap =
+    pathname.includes('(shopownerTabs)') ||
+    pathname.includes('/main/shop') ||
+    segments.includes('(shopownerTabs)') ||
+    (segments.includes('main') && segments.includes('shop'));
 
   const [broadcasts, setBroadcasts] = useState<BroadcastRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -594,6 +599,16 @@ export default function MapScreen() {
     setModalVisible(true); void fetchTokensBalance();
   };
 
+  const getVehiclePreview = (broadcast: BroadcastRequest) => {
+    const vehicleType = broadcast.vehicle_type || '';
+    const vehicleModel = broadcast.vehicle_model || '';
+
+    if (vehicleType && vehicleModel) return `${vehicleType} - ${vehicleModel}`;
+    if (vehicleType) return vehicleType;
+    if (vehicleModel) return vehicleModel;
+    return 'Vehicle not specified';
+  };
+
   const handleBroadcastMarkerPress = (broadcast: BroadcastRequest) => {
     const now = Date.now(); const lastTap = markerTapRef.current[broadcast.id] ?? 0;
     markerTapRef.current[broadcast.id] = now;
@@ -656,7 +671,32 @@ export default function MapScreen() {
   return (
     <ThemedView style={styles.container}>
       <View style={styles.header}>
-        <ThemedText style={styles.headerTitle}>Nearby Jobs</ThemedText>
+        <View>
+          <ThemedText style={styles.headerTitle}>Nearby Jobs</ThemedText>
+          {isShopOwnerMap && (
+            <TouchableOpacity
+              onPress={() => router.push('/main/emergency')}
+              style={{
+                marginTop: 8,
+                alignSelf: 'flex-start',
+                paddingHorizontal: 10,
+                paddingVertical: 5,
+                borderRadius: 12,
+                backgroundColor: '#FF3B301F',
+                borderWidth: 1,
+                borderColor: '#FF3B3044',
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              <FontAwesome name="exclamation-triangle" size={12} color="#FF3B30" />
+              <ThemedText style={{ color: '#FFD2CC', fontSize: 12, fontWeight: '600' }}>
+                Emergency Bookings
+              </ThemedText>
+            </TouchableOpacity>
+          )}
+        </View>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <TouchableOpacity style={styles.locationButton}>
             <FontAwesome name="crosshairs" size={20} color="#fff" />
@@ -779,6 +819,12 @@ export default function MapScreen() {
                     <View style={styles.urgentBadge}><ThemedText style={styles.urgentText}>NEW</ThemedText></View>
                   </View>
                   <ThemedText style={styles.broadcastDescription} numberOfLines={2}>{broadcast.description}</ThemedText>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, marginBottom: 2 }}>
+                    <FontAwesome name="car" size={12} color="#8E8E93" style={{ marginRight: 6 }} />
+                    <ThemedText style={{ fontSize: 12, color: '#8E8E93' }} numberOfLines={1}>
+                      {getVehiclePreview(broadcast)}
+                    </ThemedText>
+                  </View>
                   <View style={styles.servicesContainer}>
                     {broadcast.services.slice(0, 2).map((service) => (
                       <View key={service.id} style={styles.serviceTag}><ThemedText style={styles.serviceTagText}>{service.name}</ThemedText></View>

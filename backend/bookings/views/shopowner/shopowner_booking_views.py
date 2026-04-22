@@ -8,6 +8,8 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from django.db.models import Prefetch, Q
+from django.utils import timezone
+from datetime import timedelta
 
 from ...models import (
     Booking,
@@ -30,6 +32,8 @@ from users.models import Account
 from services.models import ShopService
 from ..client.client_booking_views import _serialize_single_booking, _serialize_bookings
 from ...ws_utils import notify_user
+
+EMERGENCY_REQUEST_TTL_MINUTES = 5
 
 
 def _get_shopowner_account(request):
@@ -193,6 +197,111 @@ def list_shopowner_declined_requests(request):
         {"declined_requests": data},
         status=status.HTTP_200_OK,
     )
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def list_shopowner_emergency_requests(request):
+    """
+    List active emergency requests for shop owners.
+    """
+    account, err = _get_shopowner_account(request)
+    if err:
+        return err
+
+    emergency_expiry_cutoff = timezone.now() - timedelta(minutes=EMERGENCY_REQUEST_TTL_MINUTES)
+
+    Request.objects.filter(
+        request_type="emergency",
+        provider__isnull=True,
+        booking__isnull=True,
+        created_at__lt=emergency_expiry_cutoff,
+    ).delete()
+
+    emergency_requests = (
+        Request.objects.filter(
+            request_type="emergency",
+            provider__isnull=True,
+            created_at__gte=emergency_expiry_cutoff,
+        )
+        .exclude(booking__isnull=False)
+        .select_related("client", "client__account", "service_location")
+        .prefetch_related(Prefetch("emergencyrequest", queryset=EmergencyRequest.objects.all()))
+        .order_by("-created_at")
+    )
+
+    serialized_data = RequestSerializer(emergency_requests, many=True, context={"request": request}).data
+    return Response(
+        {
+            "emergency_requests": serialized_data,
+            "count": len(serialized_data),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def shopowner_accept_emergency_request(request, request_id):
+    """
+    Shop owner accepts an emergency request and creates a booking.
+    """
+    account, err = _get_shopowner_account(request)
+    if err:
+        return err
+
+    try:
+        req = Request.objects.get(id=request_id, request_type="emergency")
+    except Request.DoesNotExist:
+        return Response({"error": "Emergency request not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    if (
+        req.provider_id is None
+        and not hasattr(req, "booking")
+        and req.created_at < timezone.now() - timedelta(minutes=EMERGENCY_REQUEST_TTL_MINUTES)
+    ):
+        req.delete()
+        return Response({"error": "Emergency request expired"}, status=status.HTTP_400_BAD_REQUEST)
+
+    if req.provider and req.provider != account:
+        return Response({"error": "Request already assigned to another provider"}, status=status.HTTP_400_BAD_REQUEST)
+
+    if hasattr(req, "booking"):
+        return Response({"error": "Request already has a booking"}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        shop = account.shopowner.shop
+    except Exception:
+        shop = None
+
+    req.provider = account
+    if getattr(req, "shop_id", None) is None and shop is not None:
+        req.shop = shop
+        req.save(update_fields=["provider", "shop"])
+    else:
+        req.save(update_fields=["provider"])
+
+    amount_fee = 0
+    body_amount = request.data.get("amount_fee")
+    if body_amount is not None:
+        try:
+            amount_fee = float(body_amount)
+        except (TypeError, ValueError):
+            amount_fee = 0
+
+    booking = Booking.objects.create(request=req, status=Booking.Status.ACCEPTED, amount_fee=amount_fee)
+    ActiveBooking.objects.create(booking=booking)
+
+    data = _serialize_single_booking(booking)
+
+    notify_user(
+        req.client_id,
+        booking.id,
+        booking.status,
+        "Your emergency request has been accepted by a shop",
+    )
+
+    return Response({"message": "Emergency request accepted", "booking": data}, status=status.HTTP_201_CREATED)
 
 
 def _get_shopowner_request(request_id, request_type, account):

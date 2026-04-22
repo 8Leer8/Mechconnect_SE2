@@ -71,6 +71,7 @@ export default function ShopOwnerTabLayout() {
         }}
       />
       {/* Hide non-tab routes */}
+      <Tabs.Screen name="main/emergency" options={{ href: null }} />
       <Tabs.Screen name="index" options={{ href: null }} />
     </Tabs>
   );

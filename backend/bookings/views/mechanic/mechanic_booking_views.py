@@ -1951,7 +1951,7 @@ def list_mechanic_bookings(request):
                     _mechanic_booking_access_q(account),
                     backjob__status=Booking.Status.REWORKED,
                 ).distinct().order_by("-booked_at")
-                backjob_pending = _serialize_bookings(backjob_qs)
+                backjob_pending = _serialize_bookings(backjob_qs, viewer_account=account)
                 all_pending = direct_pending + backjob_pending
                 pending_slice = all_pending[start_index:min(end_index, pending_count)]
                 paginated.extend(pending_slice)
@@ -1961,7 +1961,7 @@ def list_mechanic_bookings(request):
                 booking_start = max(0, start_index - pending_count)
                 booking_end = end_index - pending_count
                 bookings_slice = bookings_queryset.exclude(backjob__isnull=False)[booking_start:booking_end]
-                paginated.extend(_serialize_bookings(bookings_slice))
+                paginated.extend(_serialize_bookings(bookings_slice, viewer_account=account))
 
             # Include tab counts so frontend doesn't need a separate request
             accepted_count = bookings_queryset.filter(status="accepted").count()
@@ -2014,7 +2014,7 @@ def list_mechanic_bookings(request):
                 _mechanic_booking_access_q(account),
                 backjob__status=Booking.Status.REWORKED,
             ).distinct().order_by("-booked_at")
-            backjob_pending = _serialize_bookings(backjob_qs)
+            backjob_pending = _serialize_bookings(backjob_qs, viewer_account=account)
             all_pending = direct_pending + backjob_pending
             total_count = len(all_pending)
             total_pages = (total_count + page_size - 1) // page_size if page_size > 0 else 0
@@ -2046,7 +2046,7 @@ def list_mechanic_bookings(request):
             start_index = (page - 1) * page_size
             end_index = start_index + page_size
             paginated_bookings = bookings_queryset[start_index:end_index]
-            bookings_data = _serialize_bookings(paginated_bookings)
+            bookings_data = _serialize_bookings(paginated_bookings, viewer_account=account)
             return Response(
                 {
                     "status": "on_going",
@@ -2104,7 +2104,7 @@ def list_mechanic_bookings(request):
         start_index = (page - 1) * page_size
         end_index = start_index + page_size
         paginated_bookings = bookings_queryset[start_index:end_index]
-        bookings_data = _serialize_bookings(paginated_bookings)
+        bookings_data = _serialize_bookings(paginated_bookings, viewer_account=account)
 
         return Response(
             {
@@ -2210,7 +2210,7 @@ def get_mechanic_booking_detail(request, booking_id):
         except Exception:
             pass
 
-    data = _serialize_single_booking(booking)
+    data = _serialize_single_booking(booking, viewer_account=account)
     return Response({"booking": data}, status=status.HTTP_200_OK)
 
 
@@ -2302,7 +2302,7 @@ def mechanic_accept_direct_request(request, request_id):
     )
     ActiveBooking.objects.create(booking=booking)
 
-    data = _serialize_single_booking(booking)
+    data = _serialize_single_booking(booking, viewer_account=account)
 
     notify_booking_parties(
         account.id,
@@ -2421,7 +2421,7 @@ def mechanic_accept_emergency_request(request, request_id):
     booking = Booking.objects.create(request=req, status=Booking.Status.ACCEPTED, amount_fee=0)
     ActiveBooking.objects.create(booking=booking)
 
-    data = _serialize_single_booking(booking)
+    data = _serialize_single_booking(booking, viewer_account=account)
 
     notify_booking_parties(
         account.id,
@@ -2535,7 +2535,7 @@ def mechanic_complete_booking(request, booking_id):
         booking.activebooking.is_job_done = True
         booking.activebooking.save(update_fields=["is_job_done"])
 
-    data = _serialize_single_booking(booking)
+    data = _serialize_single_booking(booking, viewer_account=account)
     completion_message = "Backjob completed" if booking_has_backjob(booking) else "Your booking has been completed"
 
     notify_booking_parties(

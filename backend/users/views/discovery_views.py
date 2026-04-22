@@ -177,6 +177,7 @@ def list_nearby_mechanics(request):
     lat_raw = request.GET.get('lat')
     lng_raw = request.GET.get('lng')
     radius_raw = request.GET.get('radius_km', '5')
+    emergency_mode = str(request.GET.get('emergency', '')).strip().lower() in {'1', 'true', 'yes'}
 
     if lat_raw is None or lng_raw is None:
         return Response({'error': 'lat and lng are required'}, status=status.HTTP_400_BAD_REQUEST)
@@ -190,7 +191,16 @@ def list_nearby_mechanics(request):
 
     if radius_km <= 0:
         radius_km = 5.0
-    radius_km = min(radius_km, 5.0)
+
+    # Default discovery stays tight. Emergency searches can expand farther.
+    default_max_radius_km = 5.0
+    emergency_max_radius_km = 20.0
+    expansion_step_km = 5.0
+    requested_radius_km = radius_km
+    if emergency_mode:
+        base_radius_km = min(radius_km, emergency_max_radius_km)
+    else:
+        base_radius_km = min(radius_km, default_max_radius_km)
 
     live_lat_sq = MechanicLocation.objects.filter(
         booking__request__provider=OuterRef('account')
@@ -240,7 +250,7 @@ def list_nearby_mechanics(request):
         if msvc.service and msvc.service.name not in service_map[msvc.mechanic_id]:
             service_map[msvc.mechanic_id].append(msvc.service.name)
 
-    nearby_mechanics = []
+    all_mechanics_with_distance = []
     shop_candidates = {}
 
     for mechanic in mechanics:
@@ -256,14 +266,11 @@ def list_nearby_mechanics(request):
             continue
 
         distance_km = _haversine_km(selected_lat, selected_lng, mech_lat, mech_lng)
-        if distance_km > radius_km:
-            continue
-
         specialties = specialty_map.get(mechanic.id) or service_map.get(mechanic.id) or []
         specialization = ', '.join(specialties[:2]) if specialties else None
         rating_value = float(mechanic.average_rating) if mechanic.average_rating is not None else 0.0
 
-        nearby_mechanics.append({
+        all_mechanics_with_distance.append({
             'id': mechanic.id,
             'provider_type': 'mechanic',
             'name': f"{mechanic.account.firstname} {mechanic.account.lastname}".strip(),
@@ -285,6 +292,13 @@ def list_nearby_mechanics(request):
                 existing['distance_km'] = min(existing['distance_km'], distance_km)
                 if rating_value > 0:
                     existing['ratings'].append(rating_value)
+
+    applied_radius_km = base_radius_km
+    nearby_mechanics = [m for m in all_mechanics_with_distance if m['distance_km'] <= applied_radius_km]
+    if emergency_mode and not nearby_mechanics:
+        while applied_radius_km < emergency_max_radius_km and not nearby_mechanics:
+            applied_radius_km = min(applied_radius_km + expansion_step_km, emergency_max_radius_km)
+            nearby_mechanics = [m for m in all_mechanics_with_distance if m['distance_km'] <= applied_radius_km]
 
     nearby_shops = []
     if shop_candidates:
@@ -316,6 +330,9 @@ def list_nearby_mechanics(request):
             services = shop_service_map.get(shop_id, [])
             specialization = ', '.join(services[:2]) if services else None
 
+            if float(info['distance_km']) > applied_radius_km:
+                continue
+
             nearby_shops.append({
                 'id': shop.id,
                 'provider_type': 'shop',
@@ -334,6 +351,9 @@ def list_nearby_mechanics(request):
             'mechanics': [p for p in providers if p['provider_type'] == 'mechanic'],
             'shops': [p for p in providers if p['provider_type'] == 'shop'],
             'count': len(providers),
+            'requested_radius_km': round(requested_radius_km, 2),
+            'applied_radius_km': round(applied_radius_km, 2),
+            'is_radius_expanded': bool(emergency_mode and applied_radius_km > base_radius_km),
         },
         status=status.HTTP_200_OK,
     )

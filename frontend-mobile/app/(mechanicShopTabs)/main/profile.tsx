@@ -239,6 +239,33 @@ export default function MechanicShopProfileScreen() {
           </TouchableOpacity>
 
           <TouchableOpacity 
+            style={styles.menuItem} 
+            onPress={() => router.push('/mechanic/others/privacy')}
+          >
+            <FontAwesome name="shield" size={20} color="#FF8C00" />
+            <ThemedText style={styles.menuText}>Privacy & Security</ThemedText>
+            <FontAwesome name="chevron-right" size={16} color="#8E8E93" />
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={styles.menuItem} 
+            onPress={() => router.push('/mechanic/others/terms')}
+          >
+            <FontAwesome name="file-text" size={20} color="#FF8C00" />
+            <ThemedText style={styles.menuText}>Terms & Regulation</ThemedText>
+            <FontAwesome name="chevron-right" size={16} color="#8E8E93" />
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={styles.menuItem} 
+            onPress={() => router.push('/mechanic/others/about')}
+          >
+            <FontAwesome name="info-circle" size={20} color="#FF8C00" />
+            <ThemedText style={styles.menuText}>About</ThemedText>
+            <FontAwesome name="chevron-right" size={16} color="#8E8E93" />
+          </TouchableOpacity>
+
+          <TouchableOpacity 
             style={[styles.menuItem, styles.logoutItem]} 
             onPress={handleLogout}
           >

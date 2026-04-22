@@ -51,6 +51,12 @@ type BookingDetail = {
   broadcast_longitude?: number | string | null;
   latitude?: number | string | null;
   longitude?: number | string | null;
+  location?: {
+    barangay?: string | null;
+    lat?: number | string | null;
+    lng?: number | string | null;
+    navigation_allowed?: boolean;
+  } | null;
   service_location?: ServiceLocation | null;
   convenience_fee?: number | string | null;
   distance_km?: number | string | null;
@@ -121,6 +127,11 @@ function toValidCoordinate(lat: unknown, lng: unknown): Coordinates | null {
   if (latitude === null || longitude === null) return null;
   if (!isValidCoordinate(latitude, longitude)) return null;
   return { latitude, longitude };
+}
+
+function isEmergencyPlaceholderText(value: unknown): boolean {
+  const text = String(value || '').trim().toLowerCase();
+  return text === 'emergency' || text === 'emergency location';
 }
 
 function hasValidCoord(lat: unknown, lng: unknown): lat is number {
@@ -440,6 +451,22 @@ export default function BookingLocationMapScreen() {
   const resolveClientCoordinates = useCallback(async (bookingData: BookingDetail | null | undefined): Promise<Coordinates | null> => {
     if (!bookingData) return null;
 
+    if (bookingData.location?.navigation_allowed === false) {
+      return null;
+    }
+
+    const serviceLat = bookingData?.service_location?.latitude;
+    const serviceLng = bookingData?.service_location?.longitude;
+    if (hasValidCoord(serviceLat, serviceLng)) {
+      return toValidCoordinate(serviceLat, serviceLng);
+    }
+
+    const bookingLocLat = bookingData?.location?.lat;
+    const bookingLocLng = bookingData?.location?.lng;
+    if (hasValidCoord(bookingLocLat, bookingLocLng)) {
+      return toValidCoordinate(bookingLocLat, bookingLocLng);
+    }
+
     const broadcastLat =
       bookingData?.request?.broadcast_request?.latitude ??
       bookingData?.broadcast_latitude ??
@@ -456,18 +483,25 @@ export default function BookingLocationMapScreen() {
     const loc = bookingData.service_location;
     if (!loc) return null;
 
-    if (hasValidCoord(loc.latitude, loc.longitude)) {
-      return toValidCoordinate(loc.latitude, loc.longitude);
+    const street = String(loc.street_name || '').trim();
+    const barangay = String(loc.barangay || '').trim();
+    const city = String(loc.city_municipality || '').trim();
+    const looksLikeEmergencyPlaceholder =
+      isEmergencyPlaceholderText(street) ||
+      isEmergencyPlaceholderText(barangay) ||
+      isEmergencyPlaceholderText(city);
+
+    if (looksLikeEmergencyPlaceholder) {
+      return null;
     }
 
-    const street = String(loc.street_name || '').trim();
     const isPlusCode = street.includes('+') || /^[A-Z0-9]{4,8}\+[A-Z0-9]{2,3}$/i.test(street);
 
     if (!isPlusCode) {
       const strictAddress = [
         street,
-        loc.barangay,
-        loc.city_municipality,
+        barangay,
+        city,
         'Philippines',
       ]
         .filter(Boolean)
@@ -491,7 +525,6 @@ export default function BookingLocationMapScreen() {
       }
     }
 
-    const city = String(loc.city_municipality || '').trim();
     if (city) {
       const cityQuery = encodeURIComponent(`${city}, Philippines`);
       const cityUrl = `https://nominatim.openstreetmap.org/search?q=${cityQuery}&format=json&limit=1&countrycodes=ph`;
@@ -704,6 +737,12 @@ export default function BookingLocationMapScreen() {
 
       setBooking(bookingData);
       setStatus(bookingStatus);
+
+      if (bookingData?.location?.navigation_allowed === false || bookingStatus === 'completed') {
+        setLocationError('Exact client location is hidden after job completion.');
+        setScreenLoading(false);
+        return;
+      }
 
       const resolvedClientCoords = await resolveClientCoordinates(bookingData);
       if (!resolvedClientCoords) {
@@ -1101,6 +1140,7 @@ export default function BookingLocationMapScreen() {
   }
 
   if (locationError) {
+    const isPrivacyLocked = locationError.toLowerCase().includes('hidden after job completion');
     return (
       <ThemedView style={styles.container}>
         <View style={styles.header}>
@@ -1113,10 +1153,12 @@ export default function BookingLocationMapScreen() {
 
         <View style={styles.errorContainer}>
           <FontAwesome name="exclamation-circle" size={48} color="#FF3B30" />
-          <ThemedText style={styles.errorText}>Unable to find client location</ThemedText>
-          <TouchableOpacity style={styles.retryButton} onPress={retryLocationResolution}>
-            <ThemedText style={styles.retryText}>Retry</ThemedText>
-          </TouchableOpacity>
+          <ThemedText style={styles.errorText}>{locationError}</ThemedText>
+          {!isPrivacyLocked && (
+            <TouchableOpacity style={styles.retryButton} onPress={retryLocationResolution}>
+              <ThemedText style={styles.retryText}>Retry</ThemedText>
+            </TouchableOpacity>
+          )}
         </View>
       </ThemedView>
     );

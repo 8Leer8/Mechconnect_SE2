@@ -23,6 +23,16 @@ interface Booking {
     id: number;
     type: string;
     created_at: string;
+    vehicle_type?: string | null;
+    vehicle_model?: string | null;
+    request_details?: {
+      vehicle_type?: string | null;
+      vehicle_model?: string | null;
+      vehicle?: {
+        type?: string | null;
+        model?: string | null;
+      };
+    } | null;
   };
   provider?: {
     id: number;
@@ -428,6 +438,24 @@ export default function BookingsScreen() {
     return `${Math.floor(seconds / 86400)}d ago`;
   };
 
+  const getVehiclePreview = (booking: Booking) => {
+    const vehicleType =
+      booking.request?.vehicle_type ||
+      booking.request?.request_details?.vehicle_type ||
+      booking.request?.request_details?.vehicle?.type ||
+      '';
+    const vehicleModel =
+      booking.request?.vehicle_model ||
+      booking.request?.request_details?.vehicle_model ||
+      booking.request?.request_details?.vehicle?.model ||
+      '';
+
+    if (vehicleType && vehicleModel) return `${vehicleType} - ${vehicleModel}`;
+    if (vehicleType) return vehicleType;
+    if (vehicleModel) return vehicleModel;
+    return 'Vehicle not specified';
+  };
+
   return (
     <ThemedView style={styles.container}>
       {/* Header */}
@@ -539,6 +567,12 @@ export default function BookingsScreen() {
 
                 {/* Info Rows */}
                 <View style={styles.cardInfoSection}>
+                  <View style={styles.infoRow}>
+                    <FontAwesome name="car" size={13} color="#8E8E93" />
+                    <ThemedText style={styles.infoText} numberOfLines={1}>
+                      {getVehiclePreview(booking)}
+                    </ThemedText>
+                  </View>
                   <View style={styles.infoRow}>
                     <FontAwesome name="map-marker" size={14} color="#8E8E93" />
                     <ThemedText style={styles.infoText} numberOfLines={1}>
