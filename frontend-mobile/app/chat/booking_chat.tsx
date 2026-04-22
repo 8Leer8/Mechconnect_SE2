@@ -4,6 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, router, useNavigation } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { FontAwesome } from '@expo/vector-icons';
+import { getImageUrl } from '@/lib/imageUtils';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -969,7 +970,7 @@ export default function BookingChatScreen() {
     const isMe = Boolean(item?.is_mine) || (senderId != null && accountId != null && Number(senderId) === Number(accountId));
     const senderName = [item?.sender?.firstname, item?.sender?.lastname].filter(Boolean).join(' ').trim() || item?.sender?.username || 'User';
     const senderInitial = (senderName || 'U').charAt(0).toUpperCase();
-    const senderPhoto = item?.sender?.profile_photo || null;
+    const senderPhoto = getImageUrl(item?.sender?.profile_photo) || null;
     const senderRole = String(item?.sender?.chat_role || 'participant');
     const senderRoleLabelMap: Record<string, string> = {
       lead_mechanic: 'Lead',
@@ -1041,7 +1042,7 @@ export default function BookingChatScreen() {
               const others = conversationData.participants.filter((p: any) => String(p.id) !== String(accountId));
               const pick = others.length ? others[0] : conversationData.participants[0];
               if (pick?.profile_photo) {
-                return <Image source={{ uri: pick.profile_photo }} style={styles.headerAvatarImage} />;
+                return <Image source={{ uri: getImageUrl(pick.profile_photo) || '' }} style={styles.headerAvatarImage} />;
               }
               const initial = (pick?.firstname || pick?.username || '?').toString().charAt(0).toUpperCase();
               return <ThemedText style={styles.headerAvatarText}>{initial || '?'}</ThemedText>;

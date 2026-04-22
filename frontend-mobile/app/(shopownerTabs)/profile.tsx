@@ -20,6 +20,7 @@ import { useConfirmation } from '@/hooks/useConfirmation';
 import { ConfirmationModal } from '@/components/ui/ConfirmationModal';
 import { styles as clientProfileStyles } from '@/style/client/profileStyles';
 import { ShopProductsPanel } from '@/components/shopowner/ShopProductsPanel';
+import { getImageUrl } from '@/lib/imageUtils';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -438,7 +439,7 @@ export default function ShopOwnerProfileScreen() {
         {/* Profile Card copied from client profile, with shop-owner data */}
         <View style={clientProfileStyles.profileCard}>
           {currentProfile?.profile_photo ? (
-            <Image source={{ uri: currentProfile.profile_photo }} style={clientProfileStyles.profilePhoto} />
+            <Image source={{ uri: getImageUrl(currentProfile.profile_photo) || '' }} style={clientProfileStyles.profilePhoto} />
           ) : (
             <View style={clientProfileStyles.profilePhotoPlaceholder}>
               <FontAwesome name="user" size={36} color="#FF8C00" />
