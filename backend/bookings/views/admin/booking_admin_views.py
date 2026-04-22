@@ -295,12 +295,84 @@ def admin_list_bookings(request):
                 'photo_url': broadcast_request.concern_picture.url if broadcast_request.concern_picture else None,
             }
 
+        # Build vehicle information string
+        vehicle_parts = []
+        if request_obj.vehicle_brand:
+            vehicle_parts.append(request_obj.vehicle_brand)
+        if request_obj.vehicle_model:
+            vehicle_parts.append(request_obj.vehicle_model)
+        if request_obj.vehicle_type:
+            vehicle_parts.append(f"({request_obj.vehicle_type})")
+        vehicle_information = " ".join(vehicle_parts) if vehicle_parts else None
+
+        # Build services list
+        services_list = []
+        if request_obj.request_type == Request.Type.BROADCAST and hasattr(request_obj, 'broadcast_request'):
+            services_list = [service.name for service in request_obj.broadcast_request.services.all()]
+        elif request_obj.request_type == Request.Type.DIRECT and hasattr(request_obj, 'directrequest'):
+            direct_service = request_obj.directrequest.service
+            if direct_service:
+                services_list = [direct_service.name]
+
+        # Build payment breakdown
+        convenience_fee = booking.convenience_fee or 0
+        distance_km = booking.distance_km or 0
+        traffic_surcharge = booking.traffic_surcharge or 0
+        total_fee = booking.amount_fee or 0
+        base_fee = convenience_fee - (distance_km * 10) - traffic_surcharge if convenience_fee > 0 else 0
+
+        payment_breakdown = {
+            'distance_km': booking.distance_km,
+            'traffic_surcharge': booking.traffic_surcharge,
+            'convenience_fee_total': booking.convenience_fee,
+            'service_fee': total_fee - convenience_fee,
+            'total_fee': booking.amount_fee,
+        }
+
+        # Build quotation details
+        quotation_details = None
+        if hasattr(booking, 'quotation'):
+            try:
+                quotation = booking.quotation
+                q_items = []
+                for item in quotation.items.all():
+                    q_items.append({
+                        'description': item.description or (item.service.name if item.service else ''),
+                        'quantity': item.quantity,
+                        'unit_price': item.unit_price,
+                        'line_total': item.line_total,
+                    })
+                quotation_details = {
+                    'total_amount': quotation.total_amount,
+                    'items': q_items,
+                }
+            except Exception:
+                pass
+
+        # Build receipt/payment info
+        receipt_info = None
+        if hasattr(booking, 'receipt'):
+            try:
+                receipt = booking.receipt
+                receipt_info = {
+                    'payment_method': receipt.payment_method,
+                    'payment_received': receipt.payment_received,
+                    'paid_at': receipt.paid_at,
+                    'transaction_id': receipt.transaction_id,
+                }
+            except Exception:
+                pass
+
         results.append(
             {
                 'id': booking.id,
                 'request_id': booking.request_id,
                 'status': booking.status,
                 'amount_fee': booking.amount_fee,
+                'convenience_fee': booking.convenience_fee,
+                'distance_km': booking.distance_km,
+                'traffic_surcharge': booking.traffic_surcharge,
+                'base_fee': base_fee,
                 'booked_at': booking.booked_at,
                 'completed_at': booking.completed_at,
                 'request_created_at': request_obj.created_at,
@@ -311,6 +383,11 @@ def admin_list_bookings(request):
                 'shop_id': shop.id if shop else None,
                 'shop_name': shop.shop_name if shop else None,
                 'request_type': request_obj.request_type,
+                'vehicle_information': vehicle_information,
+                'services_list': services_list,
+                'payment_breakdown': payment_breakdown,
+                'quotation_details': quotation_details,
+                'receipt_info': receipt_info,
                 'service_location': {
                     'id': location.id,
                     'street_name': location.street_name,

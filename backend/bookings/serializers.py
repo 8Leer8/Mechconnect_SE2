@@ -243,6 +243,9 @@ class BookingSerializer(serializers.ModelSerializer):
     vehicle_type = serializers.SerializerMethodField()
     base_fee = serializers.SerializerMethodField()
     services_list = serializers.SerializerMethodField()
+    vehicle_information = serializers.SerializerMethodField()
+    payment_breakdown = serializers.SerializerMethodField()
+    quotation_details = serializers.SerializerMethodField()
 
     class Meta:
         model = Booking
@@ -250,7 +253,8 @@ class BookingSerializer(serializers.ModelSerializer):
             'id', 'request', 'status', 'dispute_status', 'amount_fee', 'convenience_fee',
             'distance_km', 'estimated_eta_minutes', 'traffic_level', 'traffic_surcharge',
             'booked_at', 'updated_at', 'completed_at', 'active_details', 'quotation',
-            'vehicle_type', 'base_fee', 'services_list'
+            'vehicle_type', 'base_fee', 'services_list', 'vehicle_information',
+            'payment_breakdown', 'quotation_details'
         ]
         read_only_fields = ['id', 'request', 'amount_fee', 'booked_at', 'updated_at', 'completed_at', 'active_details']
 
@@ -314,6 +318,54 @@ class BookingSerializer(serializers.ModelSerializer):
                 return [service.name]
 
         return []
+
+    def get_vehicle_information(self, obj):
+        """Combine vehicle brand, model, and type into a single string"""
+        if not hasattr(obj, 'request') or not obj.request:
+            return None
+
+        request = obj.request
+        parts = []
+
+        if request.vehicle_brand:
+            parts.append(request.vehicle_brand)
+        if request.vehicle_model:
+            parts.append(request.vehicle_model)
+        if request.vehicle_type:
+            parts.append(f"({request.vehicle_type})")
+
+        return " ".join(parts) if parts else None
+
+    def get_payment_breakdown(self, obj):
+        """Return payment breakdown details"""
+        convenience_fee = obj.convenience_fee or 0
+        total_fee = obj.amount_fee or 0
+        return {
+            'distance_km': obj.distance_km,
+            'traffic_surcharge': obj.traffic_surcharge,
+            'convenience_fee_total': obj.convenience_fee,
+            'service_fee': total_fee - convenience_fee,
+            'total_fee': obj.amount_fee,
+        }
+
+    def get_quotation_details(self, obj):
+        """Return quotation details if exists"""
+        try:
+            quotation = obj.quotation
+            items = []
+            for item in quotation.items.all():
+                items.append({
+                    'description': item.description or (item.service.name if item.service else ''),
+                    'quantity': item.quantity,
+                    'unit_price': item.unit_price,
+                    'line_total': item.line_total,
+                })
+            return {
+                'total_amount': quotation.total_amount,
+                'items': items,
+            }
+        except Quotation.DoesNotExist:
+            return None
 
     def update(self, instance, validated_data):
         # Allow status update via PATCH
