@@ -1,10 +1,12 @@
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { View, TouchableOpacity, ScrollView, ActivityIndicator, Alert, Linking, AppState } from 'react-native';
-import { Stack, useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
+import { Stack, useLocalSearchParams, usePathname, useRouter, useFocusEffect } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { eventBus } from '@/utils/eventBus';
+import { fetchUnifiedWalletBalance } from '@/lib/walletBalance';
 import { styles } from '@/style/mechanic/walletScreenStyles';
 import CreditsEWalletModal from '@/components/payment/CreditsEWalletModal';
 
@@ -81,10 +83,19 @@ function getStatusMeta(rawStatus: string) {
   return { label: status || 'Unknown', style: styles.statusPending, textStyle: styles.statusPendingText };
 }
 
+function formatCreditsDisplay(value: number | null) {
+  if (value === null) return '…';
+  return value.toLocaleString('en-US');
+}
+
 export default function WalletScreen() {
   const router = useRouter();
+  const pathname = usePathname() ?? '';
+  const insets = useSafeAreaInsets();
   const { shop_owner: shopOwnerParam } = useLocalSearchParams<{ shop_owner?: string | string[] }>();
-  const shopOwnerCreditsView = paramIsTruthy(shopOwnerParam);
+  const shopOwnerCreditsView =
+    paramIsTruthy(shopOwnerParam) || pathname.includes('shopowner/wallet');
+  const appStateRef = useRef(AppState.currentState);
 
   const [balance, setBalance] = useState<number | null>(null);
   const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
@@ -104,28 +115,16 @@ export default function WalletScreen() {
     );
   }, [tokenPricing]);
 
-  useEffect(() => {
-    fetchBalance();
-  }, [shopOwnerCreditsView]);
-
-  useEffect(() => {
-    fetchTokenPricing();
-    fetchTransactions();
-  }, [shopOwnerCreditsView]);
-
-  async function fetchBalance() {
+  const fetchBalance = useCallback(async () => {
     try {
-      const res = await fetch(
-        shopOwnerCreditsView ? SHOP_OWNER_WALLET.balance() : MECHANIC_WALLET.balance(),
-        { credentials: 'include' }
-      );
-      if (!res.ok) return;
-      const data = await res.json();
-      setBalance(data.tokens_balance ?? 0);
-    } catch (e) {}
-  }
+      const amount = await fetchUnifiedWalletBalance('mechanic');
+      setBalance(amount ?? 0);
+    } catch {
+      setBalance(0);
+    }
+  }, [shopOwnerCreditsView]);
 
-  async function fetchTokenPricing() {
+  const fetchTokenPricing = useCallback(async () => {
     try {
       const res = await fetch(`${API_URL}/users/mechanic/wallet/token-pricing/`, { credentials: 'include' });
       if (!res.ok) return;
@@ -143,10 +142,12 @@ export default function WalletScreen() {
               .filter((item: { tokens: number; price: number }) => item.tokens > 0 && item.price >= 0)
           : [],
       });
-    } catch (e) {}
-  }
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
-  async function fetchTransactions() {
+  const fetchTransactions = useCallback(async () => {
     try {
       const res = await fetch(
         shopOwnerCreditsView ? SHOP_OWNER_WALLET.transactions() : MECHANIC_WALLET.transactions(),
@@ -165,8 +166,10 @@ export default function WalletScreen() {
           }))
         : [];
       setTransactions(normalized);
-    } catch (e) {}
-  }
+    } catch {
+      /* ignore */
+    }
+  }, [shopOwnerCreditsView]);
 
   async function initiateTokenPurchase(pkg: { tokens: number; price: number }, method: 'gcash' | 'maya') {
     try {
@@ -228,20 +231,38 @@ export default function WalletScreen() {
     setSelectedPackage(null);
   }
 
-  // Refresh data when screen comes into focus (after returning from payment)
+  const syncAll = useCallback(async () => {
+    await Promise.all([fetchBalance(), fetchTransactions(), fetchTokenPricing()]);
+    try {
+      eventBus.emit('walletChanged');
+    } catch {
+      /* ignore */
+    }
+  }, [fetchBalance, fetchTransactions, fetchTokenPricing]);
+
+  // Refresh when returning from payment browser or switching apps
   useFocusEffect(
     useCallback(() => {
-      fetchBalance();
-      fetchTransactions();
-    }, [])
+      syncAll();
+    }, [syncAll])
   );
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (appStateRef.current.match(/inactive|background/) && next === 'active') {
+        syncAll();
+      }
+      appStateRef.current = next;
+    });
+    return () => sub.remove();
+  }, [syncAll]);
 
   return (
     <ThemedView style={styles.container}>
       <Stack.Screen options={{ headerShown: false }} />
 
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: Math.max(insets.top, 12) + 8 }]}>
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
           <FontAwesome name="chevron-left" size={16} color="#FF8C00" />
         </TouchableOpacity>
@@ -251,22 +272,24 @@ export default function WalletScreen() {
             {shopOwnerCreditsView ? 'Manage your shop credits' : 'Manage your credits'}
           </ThemedText>
         </View>
-        <TouchableOpacity style={styles.refreshBtn} onPress={fetchBalance}>
+        <TouchableOpacity style={styles.refreshBtn} onPress={() => void syncAll()}>
           <FontAwesome name="refresh" size={18} color="#FF8C00" />
         </TouchableOpacity>
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Balance Card */}
-        <View style={styles.balanceCard}>
-          <View style={styles.balanceIconCircle}>
-            <FontAwesome name="database" size={28} color="#FF8C00" />
+        {/* Hero balance */}
+        <View style={styles.heroShell}>
+          <View style={styles.heroCard}>
+            <View style={styles.balanceIconCircle}>
+              <FontAwesome name="database" size={24} color="#FF8C00" />
+            </View>
+            <ThemedText style={styles.balanceLabel}>Credit Balance</ThemedText>
+            <ThemedText style={styles.balanceValue}>{formatCreditsDisplay(balance)}</ThemedText>
+            <ThemedText style={styles.balanceSub}>
+              {shopOwnerCreditsView ? 'Available shop credits' : 'Available credits'}
+            </ThemedText>
           </View>
-          <ThemedText style={styles.balanceLabel}>Credit Balance</ThemedText>
-          <ThemedText style={styles.balanceValue}>{balance === null ? '...' : balance}</ThemedText>
-          <ThemedText style={styles.balanceSub}>
-            {shopOwnerCreditsView ? 'Available shop credits' : 'Available credits'}
-          </ThemedText>
         </View>
 
         {/* Buy Credits */}
@@ -275,7 +298,7 @@ export default function WalletScreen() {
             <View style={[styles.sectionDot, { backgroundColor: '#FF8C00' }]} />
             <ThemedText style={styles.sectionTitle}>Buy Credits</ThemedText>
           </View>
-          <ThemedText style={styles.balanceSub}>
+          <ThemedText style={styles.sectionSubtitle}>
             {tokenPricing.token_packages.length > 0
               ? 'Select from configured credit packages'
               : `Min ${tokenPricing.min_token_purchase} • Max ${tokenPricing.max_token_purchase} • ₱${tokenPricing.base_token_price.toFixed(2)} / credit`}
@@ -290,10 +313,11 @@ export default function WalletScreen() {
                 activeOpacity={0.7}
               >
                 <View style={styles.packageIconCircle}>
-                  <FontAwesome name="database" size={20} color="#FF8C00" />
+                  <FontAwesome name="database" size={18} color="#FF8C00" />
                 </View>
-                <ThemedText style={styles.packageAmount}>{pkg.tokens}</ThemedText>
-                <ThemedText style={styles.packageLabel}>credits • ₱{pkg.price.toFixed(2)}</ThemedText>
+                <ThemedText style={styles.packageAmount}>{pkg.tokens.toLocaleString('en-US')}</ThemedText>
+                <ThemedText style={styles.packageMeta}>credits</ThemedText>
+                <ThemedText style={styles.packagePrice}>PHP {pkg.price.toFixed(2)}</ThemedText>
                 <View style={styles.packageBuyBtn}>
                   {topUpLoading === pkg.tokens ? (
                     <ActivityIndicator size="small" color="#fff" />

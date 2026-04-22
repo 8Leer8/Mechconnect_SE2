@@ -15,21 +15,20 @@ async function readWallet(endpoint: string): Promise<number | null> {
 }
 
 /**
- * Unified wallet balance resolver.
- * For accounts with both mechanic and shop-owner roles, mechanic wallet is canonical.
+ * Unified wallet balance for the logged-in account.
+ *
+ * Token purchases (`TokenPurchase`) are stored per account; on completion the backend credits
+ * **Mechanic.tokens_balance first** when a mechanic profile exists, otherwise **ShopOwner.tokens_balance**
+ * (`_finalize_token_purchase`). So the spendable balance users care about is always read **mechanic first,
+ * then shop owner** as fallback — the `source` argument is kept for call-site clarity only.
  */
-export async function fetchUnifiedWalletBalance(source: WalletSource): Promise<number | null> {
+export async function fetchUnifiedWalletBalance(_source: WalletSource): Promise<number | null> {
   if (!API_URL) return null;
 
   const mechanicEndpoint = `${API_URL}/users/mechanic/wallet/`;
   const shopOwnerEndpoint = `${API_URL}/users/shop-owner/wallet/`;
 
-  const order =
-    source === 'mechanic'
-      ? [mechanicEndpoint, shopOwnerEndpoint]
-      : [mechanicEndpoint, shopOwnerEndpoint];
-
-  for (const endpoint of order) {
+  for (const endpoint of [mechanicEndpoint, shopOwnerEndpoint]) {
     const balance = await readWallet(endpoint);
     if (balance !== null) return balance;
   }

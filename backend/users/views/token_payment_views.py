@@ -139,6 +139,92 @@ def create_paymongo_source_for_tokens(amount, payment_method, purchase_id, accou
     return data["data"]["attributes"]["redirect"]["checkout_url"], data["data"]["id"]
 
 
+def create_paymongo_maya_intent_for_tokens(amount, purchase_id, account_id, is_shop_owner=False):
+    """Maya (PayMaya) checkout for token purchases — Payment Intent flow (same as booking Maya).
+
+    PayMongo's Sources API with type ``paymaya`` is unreliable; booking payments use
+    Payment Intents + ``paymaya`` payment method instead.
+    """
+    secret_key = settings.PAYMONGO_SECRET_KEY
+    encoded_key = base64.b64encode(f"{secret_key}:".encode()).decode()
+    headers = {
+        "Authorization": f"Basic {encoded_key}",
+        "Content-Type": "application/json",
+    }
+
+    amount_centavos = int(Decimal(amount) * 100)
+    success_redirect, _failed_redirect = _build_token_paymongo_redirect_urls(is_shop_owner)
+
+    intent_payload = {
+        "data": {
+            "attributes": {
+                "amount": amount_centavos,
+                "currency": "PHP",
+                "payment_method_allowed": ["paymaya"],
+                "metadata": {
+                    "purchase_id": str(purchase_id),
+                    "account_id": str(account_id),
+                    "purpose": "token_purchase",
+                    "is_shop_owner": str(is_shop_owner),
+                },
+            }
+        }
+    }
+    intent_response = requests.post(
+        "https://api.paymongo.com/v1/payment_intents",
+        json=intent_payload,
+        headers=headers,
+        timeout=30,
+    )
+    intent_response.raise_for_status()
+    intent_data = intent_response.json()
+    intent_id = intent_data["data"]["id"]
+    intent_client_key = intent_data["data"]["attributes"]["client_key"]
+
+    method_payload = {
+        "data": {
+            "attributes": {
+                "type": "paymaya",
+            }
+        }
+    }
+    method_response = requests.post(
+        "https://api.paymongo.com/v1/payment_methods",
+        json=method_payload,
+        headers=headers,
+        timeout=30,
+    )
+    method_response.raise_for_status()
+    method_data = method_response.json()
+    method_id = method_data["data"]["id"]
+
+    attach_payload = {
+        "data": {
+            "attributes": {
+                "payment_method": method_id,
+                "client_key": intent_client_key,
+                "return_url": success_redirect,
+            }
+        }
+    }
+    attach_response = requests.post(
+        f"https://api.paymongo.com/v1/payment_intents/{intent_id}/attach",
+        json=attach_payload,
+        headers=headers,
+        timeout=30,
+    )
+    attach_response.raise_for_status()
+    attach_data = attach_response.json()
+
+    next_action = attach_data["data"]["attributes"].get("next_action") or {}
+    redirect_url = (next_action.get("redirect", {}) or {}).get("url")
+
+    if not redirect_url:
+        raise ValueError("No redirect URL returned from PayMongo Maya intent for token purchase")
+
+    return redirect_url, intent_id
+
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def initiate_token_purchase(request):
@@ -182,17 +268,25 @@ def initiate_token_purchase(request):
     is_shop_owner = shop_owner is not None
 
     try:
-        checkout_url, source_id = create_paymongo_source_for_tokens(
-            amount=computed_price,
-            payment_method=raw_method,
-            purchase_id=purchase.id,
-            account_id=account.id,
-            is_shop_owner=is_shop_owner,
-        )
-        
-        # Update purchase with source_id
-        purchase.ewallet_source_id = source_id
-        purchase.save(update_fields=['ewallet_source_id'])
+        if raw_method == "maya":
+            checkout_url, intent_id = create_paymongo_maya_intent_for_tokens(
+                amount=computed_price,
+                purchase_id=purchase.id,
+                account_id=account.id,
+                is_shop_owner=is_shop_owner,
+            )
+            purchase.ewallet_source_id = intent_id
+            purchase.save(update_fields=["ewallet_source_id"])
+        else:
+            checkout_url, source_id = create_paymongo_source_for_tokens(
+                amount=computed_price,
+                payment_method=raw_method,
+                purchase_id=purchase.id,
+                account_id=account.id,
+                is_shop_owner=is_shop_owner,
+            )
+            purchase.ewallet_source_id = source_id
+            purchase.save(update_fields=["ewallet_source_id"])
 
         return Response({
             'checkout_url': checkout_url,
@@ -288,6 +382,9 @@ def token_purchase_webhook(request):
         _charge_token_purchase_source(resource.get('id'), purchase, resource_attributes)
     elif event_type == 'payment.paid':
         # Mark purchase as completed and add tokens
+        _finalize_token_purchase(purchase, resource_attributes)
+    elif event_type == 'payment_intent.succeeded':
+        # Maya token top-ups use Payment Intents (same as booking Maya flow)
         _finalize_token_purchase(purchase, resource_attributes)
 
     return Response({'status': 'processed'}, status=status.HTTP_200_OK)
