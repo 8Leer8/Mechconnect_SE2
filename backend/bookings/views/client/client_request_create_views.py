@@ -9,7 +9,7 @@ from datetime import timedelta
 import json
 
 from ...models import (
-    Request, CustomRequest, DirectRequest, EmergencyRequest,
+    Request, CustomRequest, DirectRequest, EmergencyRequest, EmergencyRequestPhoto,
     ServiceLocation, DirectRequestAddOn
 )
 from users.models import Account, Mechanic, ShopOwner
@@ -18,13 +18,15 @@ from shops.models import Shop                          # added
 
 
 EMERGENCY_COOLDOWN_MINUTES = 5
+MAX_EMERGENCY_PHOTOS = 5
 
 
 def _extract_vehicle_fields(request):
     vehicle_type = str(request.data.get('vehicle_type') or '').strip()
     vehicle_brand = str(request.data.get('vehicle_brand') or '').strip()
     vehicle_model = str(request.data.get('vehicle_model') or '').strip()
-    return vehicle_type, vehicle_brand, vehicle_model
+    vehicle_description = str(request.data.get('vehicle_description') or '').strip()
+    return vehicle_type, vehicle_brand, vehicle_model, vehicle_description
 
 
 def _get_emergency_cooldown_seconds(client):
@@ -35,6 +37,16 @@ def _get_emergency_cooldown_seconds(client):
 
     if not latest_emergency:
         return 0
+
+    # No cooldown when the latest emergency booking was cancelled by a mechanic.
+    try:
+        booking = latest_emergency.booking
+        cancel_record = booking.cancelbooking
+        cancelled_by = getattr(cancel_record, "cancelled_by", None)
+        if cancelled_by is not None and hasattr(cancelled_by, "mechanic"):
+            return 0
+    except Exception:
+        pass
 
     cooldown_window = timedelta(minutes=EMERGENCY_COOLDOWN_MINUTES)
     elapsed = timezone.now() - latest_emergency.created_at
@@ -103,7 +115,7 @@ def create_custom_request(request):
         description = request.data.get('description')
         service_location_data = request.data.get('service_location')
         concern_picture = request.FILES.get('concern_picture')
-        vehicle_type, vehicle_brand, vehicle_model = _extract_vehicle_fields(request)
+        vehicle_type, vehicle_brand, vehicle_model, _vehicle_description = _extract_vehicle_fields(request)
         
         # Parse service_location JSON string when sent via FormData
         # (same lng sa broadcast_request_views)
@@ -218,7 +230,7 @@ def create_mechanic_direct_request(request):
         service_location_data = request.data.get('service_location')
         add_on_ids = request.data.get('add_on_ids', [])
         _scheduled_time = request.data.get('scheduled_time')
-        vehicle_type, vehicle_brand, vehicle_model = _extract_vehicle_fields(request)
+        vehicle_type, vehicle_brand, vehicle_model, _vehicle_description = _extract_vehicle_fields(request)
 
         if not provider_id:
             return Response({'error': 'Provider is required'}, status=status.HTTP_400_BAD_REQUEST)
@@ -554,7 +566,7 @@ def create_shop_direct_request(request):
         service_location_data = request.data.get('service_location')
         add_on_ids = request.data.get('add_on_ids', [])
         _scheduled_time = request.data.get('scheduled_time')
-        vehicle_type, vehicle_brand, vehicle_model = _extract_vehicle_fields(request)
+        vehicle_type, vehicle_brand, vehicle_model, _vehicle_description = _extract_vehicle_fields(request)
 
         if isinstance(service_location_data, str):
             try:
@@ -690,7 +702,14 @@ def create_emergency_request(request):
         description = request.data.get('description', '')  # Optional
         service_location_data = request.data.get('service_location')
         concern_picture = request.FILES.get('concern_picture')
-        vehicle_type, vehicle_brand, vehicle_model = _extract_vehicle_fields(request)
+        concern_pictures = request.FILES.getlist('concern_pictures')
+        vehicle_type, vehicle_brand, vehicle_model, vehicle_description = _extract_vehicle_fields(request)
+
+        total_photos = len(concern_pictures) + (1 if concern_picture and not concern_pictures else 0)
+        if total_photos > MAX_EMERGENCY_PHOTOS:
+            return Response({
+                'error': f'You can upload up to {MAX_EMERGENCY_PHOTOS} photos only'
+            }, status=status.HTTP_400_BAD_REQUEST)
         
         # Parse service_location JSON string when sent via FormData
         if isinstance(service_location_data, str):
@@ -710,6 +729,11 @@ def create_emergency_request(request):
         if not vehicle_type or not vehicle_brand or not vehicle_model:
             return Response({
                 'error': 'Vehicle type, brand, and model are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        if not vehicle_description:
+            return Response({
+                'error': 'Vehicle description is required'
             }, status=status.HTTP_400_BAD_REQUEST)
         
         # Get provider if specified
@@ -742,14 +766,21 @@ def create_emergency_request(request):
             vehicle_type=vehicle_type,
             vehicle_brand=vehicle_brand,
             vehicle_model=vehicle_model,
+            vehicle_description=vehicle_description,
         )
         
         # Create emergency request
         emergency_request = EmergencyRequest.objects.create(
             request=new_request,
             description=description if description else None,
-            concern_picture=concern_picture,
+            concern_picture=concern_picture or (concern_pictures[0] if concern_pictures else None),
         )
+
+        if concern_pictures:
+            EmergencyRequestPhoto.objects.bulk_create([
+                EmergencyRequestPhoto(emergency_request=emergency_request, photo=image)
+                for image in concern_pictures
+            ])
         
         return Response({
             'message': 'Emergency request created successfully',

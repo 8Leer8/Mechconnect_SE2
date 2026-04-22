@@ -240,8 +240,8 @@ export const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   concernImage: {
-    width: '100%',
-    height: 180,
+    width: 180,
+    height: 130,
     borderRadius: 10,
   },
 });

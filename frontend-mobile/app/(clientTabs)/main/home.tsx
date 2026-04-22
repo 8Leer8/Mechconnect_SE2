@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import {View, ScrollView, TouchableOpacity, RefreshControl, Dimensions, Animated} from 'react-native';
-import { router } from 'expo-router';
+import {View, ScrollView, TouchableOpacity, RefreshControl, Dimensions, Animated, Image} from 'react-native';
+import { router, useLocalSearchParams } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -9,6 +9,8 @@ import { LineChart, BarChart } from 'react-native-chart-kit';
 import EmergencyModal from '@/components/EmergencyModal';
 import { SkeletonClientHome } from '@/components/skeletons/SkeletonLoaders';
 import { useWebSocketContext } from '@/context/WebSocketContext';
+import { getImageUrl } from '@/lib/imageUtils';
+import { useLocation } from '@/context/LocationContext';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const screenWidth = Dimensions.get('window').width;
@@ -140,14 +142,33 @@ interface HomeData {
   statistics?: Statistics;
 }
 
+interface ClientProfileRole {
+  profile_photo?: string | null;
+  profile_photo_url?: string | null;
+}
+
+interface ProfileResponse {
+  profile?: {
+    full_name?: string;
+    firstname?: string;
+    lastname?: string;
+    current_role_profile?: {
+      client?: ClientProfileRole;
+    };
+  };
+}
+
 export default function HomeScreen() {
   const [data, setData] = useState<HomeData | null>(null);
   const [clientName, setClientName] = useState<string>('');
+  const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [showEmergencyModal, setShowEmergencyModal] = useState(false);
   const { lastMessage } = useWebSocketContext();
+  const { selectedLocation, setSelectedLocation } = useLocation();
+  const params = useLocalSearchParams<{ openEmergency?: string; emLat?: string; emLng?: string; emAddr?: string }>();
 
   // Emergency button pulse animation
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -194,10 +215,12 @@ export default function HomeScreen() {
       }
 
       if (profileRes.ok) {
-        const profileData = await profileRes.json() as any;
+        const profileData = await profileRes.json() as ProfileResponse;
         const p = profileData.profile || profileData;
         const n = p?.full_name || `${p?.firstname || ''} ${p?.lastname || ''}`.trim();
         if (n) setClientName(n);
+        const clientProfile = p?.current_role_profile?.client;
+        setProfilePhotoUrl(clientProfile?.profile_photo || clientProfile?.profile_photo_url || null);
       }
     } catch (err: any) {
       setError(err.message || 'Failed to load dashboard');
@@ -220,6 +243,38 @@ export default function HomeScreen() {
       fetchAllData();
     }
   }, [lastMessage]);
+
+  useEffect(() => {
+    // If user returns from map picker with a selected location,
+    // reopen the emergency modal so they can continue filling the form.
+    if (selectedLocation && !showEmergencyModal) {
+      setShowEmergencyModal(true);
+    }
+  }, [selectedLocation, showEmergencyModal]);
+
+  useEffect(() => {
+    if (params.emLat && params.emLng) {
+      const lat = Number(params.emLat);
+      const lng = Number(params.emLng);
+      if (!Number.isNaN(lat) && !Number.isNaN(lng)) {
+        const addr = typeof params.emAddr === 'string' ? decodeURIComponent(params.emAddr) : `${lat}, ${lng}`;
+        setSelectedLocation({
+          latitude: lat,
+          longitude: lng,
+          address: addr,
+          streetName: '',
+          city: '',
+          barangay: '',
+          radiusKm: 5,
+          radius_km: 5,
+        });
+      }
+    }
+
+    if (params.openEmergency === '1') {
+      setShowEmergencyModal(true);
+    }
+  }, [params.openEmergency, params.emLat, params.emLng, params.emAddr, setSelectedLocation]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -287,8 +342,17 @@ export default function HomeScreen() {
       <View style={styles.headerContainer}>
         <View style={styles.headerTop}>
           <View style={styles.headerLeft}>
-            <ThemedText style={styles.greeting}>{getGreeting()}</ThemedText>
-            <ThemedText style={styles.clientName}>{clientName || 'Client'}</ThemedText>
+            <View style={styles.profileCircle}>
+              {profilePhotoUrl ? (
+                <Image source={{ uri: getImageUrl(profilePhotoUrl) || '' }} style={styles.profileImage} />
+              ) : (
+                <FontAwesome name="user" size={20} color="#FF8C00" />
+              )}
+            </View>
+            <View style={{ flex: 1 }}>
+              <ThemedText style={styles.greeting}>{getGreeting()}</ThemedText>
+              <ThemedText style={styles.clientName}>{clientName || 'Client'}</ThemedText>
+            </View>
           </View>
           <TouchableOpacity style={styles.notificationButton}>
             <View style={styles.notifCircle}>

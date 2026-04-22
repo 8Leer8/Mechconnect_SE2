@@ -1494,14 +1494,46 @@ def _get_mechanic_account(request):
 
 
 def _reject_if_mechanic_locked(account):
-    if getattr(account.mechanic, 'is_locked', False):
+    mechanic = account.mechanic
+    if not getattr(mechanic, "is_locked", False):
+        return None
+
+    now = timezone.now()
+
+    # Keep lock active only while a no-show penalty cooldown is still valid.
+    cooldown_until = getattr(mechanic, "cooldown_until", None)
+    if cooldown_until and cooldown_until > now:
         return Response(
             {
-                'error': 'Your account is locked due to an active dispute. Resolve it before accepting new jobs.',
-                'code': 'mechanic_locked',
+                "error": "Your account is temporarily locked due to a recent no-show penalty. Please try again later.",
+                "code": "mechanic_locked_cooldown",
+                "cooldown_until": cooldown_until,
             },
             status=status.HTTP_403_FORBIDDEN,
         )
+
+    # Keep lock active only while dispute is unresolved.
+    has_active_dispute = DisputeBooking.objects.filter(
+        complaint_against=account,
+        status__in=[
+            DisputeBooking.Status.ACTIVE,
+            DisputeBooking.Status.UNDER_ADMIN_REVIEW,
+            DisputeBooking.Status.WAITING_FOR_MECHANIC_PAYMENT,
+            DisputeBooking.Status.WAITING_FOR_CLIENT_VERIFICATION,
+        ],
+    ).exists()
+    if has_active_dispute:
+        return Response(
+            {
+                "error": "Your account is locked due to an active dispute. Resolve it before accepting new jobs.",
+                "code": "mechanic_locked_dispute",
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    # Stale lock safety: clear lock so mechanics are not blocked incorrectly.
+    mechanic.is_locked = False
+    mechanic.save(update_fields=["is_locked", "updated_at"])
     return None
 
 

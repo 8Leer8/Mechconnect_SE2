@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { StyleSheet, View, ScrollView, RefreshControl, Dimensions, TouchableOpacity } from 'react-native';
+import { StyleSheet, View, ScrollView, RefreshControl, Dimensions, TouchableOpacity, Image } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -7,6 +7,7 @@ import { SkeletonDashboard } from '@/components/skeletons/SkeletonLoaders';
 import WalletSection from '@/components/wallet-section';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import { useFocusEffect } from '@react-navigation/native';
+import { getImageUrl } from '@/lib/imageUtils';
 
 const { width } = Dimensions.get('window');
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -23,6 +24,18 @@ interface DashboardData {
   is_verified: boolean;
 }
 
+interface ShopOwnerProfileResponse {
+  profile?: {
+    current_role_profile?: {
+      shop_owner?: {
+        shop?: {
+          service_banner?: string | null;
+        };
+      };
+    };
+  };
+}
+
 const getGreeting = () => {
   const hour = new Date().getHours();
   if (hour < 12) return 'Good Morning';
@@ -34,17 +47,25 @@ export default function ShopOwnerHome() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
+  const [shopBannerUrl, setShopBannerUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { lastMessage } = useWebSocketContext();
 
   const fetchDashboardData = useCallback(async () => {
     try {
       setError(null);
-      const response = await fetch(`${API_URL}/shops/dashboard/`, {
-        method: 'GET',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
+      const [response, profileResponse] = await Promise.all([
+        fetch(`${API_URL}/shops/dashboard/`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        }),
+        fetch(`${API_URL}/users/profile/details/`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ]);
 
       const payload = (await response.json().catch(() => ({}))) as DashboardData & { error?: string };
 
@@ -57,6 +78,11 @@ export default function ShopOwnerHome() {
       }
 
       setDashboardData(payload as DashboardData);
+
+      if (profileResponse.ok) {
+        const profileData = (await profileResponse.json().catch(() => ({}))) as ShopOwnerProfileResponse;
+        setShopBannerUrl(profileData.profile?.current_role_profile?.shop_owner?.shop?.service_banner || null);
+      }
     } catch (err) {
       const message =
         err instanceof Error
@@ -179,6 +205,17 @@ export default function ShopOwnerHome() {
                 {dashboardData.shop_status === 'open' ? 'Open' : 'Closed'}
               </ThemedText>
             </View>
+          </View>
+
+          <View style={styles.bannerWrap}>
+            {shopBannerUrl ? (
+              <Image source={{ uri: getImageUrl(shopBannerUrl) || '' }} style={styles.bannerImage} />
+            ) : (
+              <View style={styles.bannerPlaceholder}>
+                <FontAwesome name="image" size={22} color="#8E8E93" />
+                <ThemedText style={styles.bannerPlaceholderText}>Shop banner unavailable</ThemedText>
+              </View>
+            )}
           </View>
 
           {/* Verification Badge */}
@@ -441,6 +478,32 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#fff',
     letterSpacing: 0.2,
+  },
+  bannerWrap: {
+    marginTop: 2,
+    marginBottom: 14,
+  },
+  bannerImage: {
+    width: '100%',
+    height: 150,
+    borderRadius: 18,
+    backgroundColor: '#1E1E1E',
+  },
+  bannerPlaceholder: {
+    width: '100%',
+    height: 150,
+    borderRadius: 18,
+    backgroundColor: '#151515',
+    borderWidth: 1,
+    borderColor: '#252525',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+  },
+  bannerPlaceholderText: {
+    fontSize: 12,
+    color: '#8E8E93',
+    fontWeight: '600',
   },
   verifiedBadge: {
     flexDirection: 'row',

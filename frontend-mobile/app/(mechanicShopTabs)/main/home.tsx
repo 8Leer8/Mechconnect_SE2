@@ -5,6 +5,7 @@ import {
   RefreshControl,
   TouchableOpacity,
   StyleSheet,
+  Image,
 } from 'react-native';
 import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
@@ -12,6 +13,7 @@ import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { SkeletonMechanicShopHome } from '@/components/skeletons/SkeletonLoaders';
 import { useWebSocketContext } from '@/context/WebSocketContext';
+import { getImageUrl } from '@/lib/imageUtils';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -29,6 +31,8 @@ interface ProfileData {
       average_rating: number;
       shop_id: number | null;
       shop_name: string | null;
+      profile_photo?: string | null;
+      profile_photo_url?: string | null;
     };
   };
 }
@@ -69,6 +73,7 @@ export default function MechanicShopDashboardScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [shopInfo, setShopInfo] = useState<ShopInfo>({ shop_id: null, shop_name: null });
   const [mechanicName, setMechanicName] = useState<string>('Mechanic');
+  const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null);
   const [rating, setRating] = useState<number>(0);
   const [assignedCount, setAssignedCount] = useState<number>(0);
   const [onGoingCount, setOnGoingCount] = useState<number>(0);
@@ -146,6 +151,7 @@ export default function MechanicShopDashboardScreen() {
         setRating(Number(profile.current_role_profile?.mechanic?.average_rating) || 0);
 
         const mechanicProfile = profile.current_role_profile?.mechanic;
+        setProfilePhotoUrl(mechanicProfile?.profile_photo || mechanicProfile?.profile_photo_url || null);
         if (mechanicProfile?.is_working_for_shop && mechanicProfile.shop_name) {
           setShopInfo({
             shop_id: mechanicProfile.shop_id,
@@ -251,12 +257,21 @@ export default function MechanicShopDashboardScreen() {
       >
         {/* Shop Header */}
         <View style={styles.shopHeader}>
-          <FontAwesome name="building" size={28} color="#FF8C00" />
-          <View style={styles.shopInfo}>
-            <ThemedText style={styles.shopLabel}>{getGreeting()}</ThemedText>
-            <ThemedText style={styles.shopName}>
-              {shopInfo.shop_name || 'No Shop Assigned'}
-            </ThemedText>
+            <View style={styles.shopHeaderLeft}>
+              <View style={styles.profileCircle}>
+                {profilePhotoUrl ? (
+                  <Image source={{ uri: getImageUrl(profilePhotoUrl) || '' }} style={styles.profileImage} />
+                ) : (
+                  <FontAwesome name="user" size={20} color="#FF8C00" />
+                )}
+              </View>
+              <FontAwesome name="building" size={28} color="#FF8C00" />
+              <View style={styles.shopInfo}>
+                <ThemedText style={styles.shopLabel}>{getGreeting()}</ThemedText>
+                <ThemedText style={styles.shopName}>
+                  {shopInfo.shop_name || 'No Shop Assigned'}
+                </ThemedText>
+              </View>
           </View>
           <View style={styles.ratingBadge}>
             <FontAwesome name="star" size={12} color="#FFD700" />
@@ -476,6 +491,28 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#2A2C2E',
+  },
+  shopHeaderLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginRight: 12,
+  },
+  profileCircle: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: '#2A2C2E',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#34363A',
+    overflow: 'hidden',
+  },
+  profileImage: {
+    width: '100%',
+    height: '100%',
   },
   ratingBadge: {
     flexDirection: 'row',

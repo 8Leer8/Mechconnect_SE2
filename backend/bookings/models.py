@@ -28,6 +28,7 @@ class Request(models.Model):
     vehicle_type = models.CharField(max_length=80, null=True, blank=True)
     vehicle_brand = models.CharField(max_length=80, null=True, blank=True)
     vehicle_model = models.CharField(max_length=120, null=True, blank=True)
+    vehicle_description = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
 class CustomRequest(models.Model):
@@ -62,6 +63,16 @@ class EmergencyRequest(models.Model):
     description = models.TextField(null=True, blank=True)
     concern_picture = models.ImageField(upload_to='requests/emergency/', null=True, blank=True)
     providers_note = models.TextField(null=True, blank=True)
+
+
+class EmergencyRequestPhoto(models.Model):
+    emergency_request = models.ForeignKey(
+        EmergencyRequest,
+        on_delete=models.CASCADE,
+        related_name='photos',
+    )
+    photo = models.ImageField(upload_to='requests/emergency/multiple/')
+    created_at = models.DateTimeField(auto_now_add=True)
 
 class Booking(models.Model):
     class Status(models.TextChoices):
@@ -144,8 +155,6 @@ class ActiveBooking(models.Model):
     # Legacy/staging fields present in DB; keep in model so ORM supplies values
     stage = models.CharField(max_length=50, default="")
     stage_updated_at = models.DateTimeField(default=timezone.now)
-    paused_at = models.DateTimeField(null=True, blank=True)
-    total_pause_duration = models.DurationField(default=timezone.timedelta(0))
 
 class ActiveBookingPhoto(models.Model):
     class PhotoType(models.TextChoices):

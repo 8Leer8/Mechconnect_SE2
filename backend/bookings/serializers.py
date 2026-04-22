@@ -2,6 +2,7 @@ from rest_framework import serializers
 from .models import (
     Booking, Request, CustomRequest, DirectRequest, EmergencyRequest,
     ActiveBooking, ServiceLocation, DirectRequestAddOn, BroadcastRequest, BroadcastOffer,
+    EmergencyRequestPhoto,
     RequestAssignment, Receipt, Quotation, QuotationItem
 )
 from services.models import Service, ServiceAddOn
@@ -83,10 +84,12 @@ class DirectRequestSerializer(serializers.ModelSerializer):
 
 class EmergencyRequestSerializer(serializers.ModelSerializer):
     concern_picture = serializers.SerializerMethodField()
+    vehicle_description = serializers.CharField(source='request.vehicle_description', read_only=True, allow_null=True)
+    concern_pictures = serializers.SerializerMethodField()
     
     class Meta:
         model = EmergencyRequest
-        fields = ['id', 'description', 'concern_picture', 'providers_note']
+        fields = ['id', 'description', 'vehicle_description', 'concern_picture', 'concern_pictures', 'providers_note']
     
     def get_concern_picture(self, obj):
         """Return full URL for concern picture"""
@@ -94,6 +97,11 @@ class EmergencyRequestSerializer(serializers.ModelSerializer):
             request = self.context.get('request')
             return get_media_url(obj.concern_picture, request)
         return None
+
+    def get_concern_pictures(self, obj):
+        request = self.context.get('request')
+        photos = EmergencyRequestPhoto.objects.filter(emergency_request=obj).order_by('id')
+        return [get_media_url(photo.photo, request) for photo in photos if photo.photo]
 
 
 class BroadcastRequestDetailSerializer(serializers.ModelSerializer):
@@ -134,12 +142,13 @@ class RequestSerializer(serializers.ModelSerializer):
     vehicle_type = serializers.CharField(read_only=True, allow_null=True)
     vehicle_brand = serializers.CharField(read_only=True, allow_null=True)
     vehicle_model = serializers.CharField(read_only=True, allow_null=True)
+    vehicle_description = serializers.CharField(read_only=True, allow_null=True)
     
     class Meta:
         model = Request
-        fields = ['id', 'type', 'request_type', 'broadcast_request', 'client', 'provider', 'shop', 
-                  'service_location', 'created_at', 'request_details', 'assigned_mechanics',
-                  'vehicle_type', 'vehicle_brand', 'vehicle_model']
+        fields = ['id', 'type', 'request_type', 'broadcast_request', 'client', 'provider', 'shop',
+                  'service_location', 'vehicle_type', 'vehicle_brand', 'vehicle_model',
+                  'vehicle_description', 'created_at', 'request_details', 'assigned_mechanics']
 
     def get_broadcast_request(self, obj):
         if not hasattr(obj, 'broadcast_request') or obj.broadcast_request is None:

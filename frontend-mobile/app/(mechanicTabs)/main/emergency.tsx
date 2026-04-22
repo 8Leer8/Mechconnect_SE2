@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, ScrollView, TouchableOpacity, RefreshControl, Linking } from 'react-native';
+import { View, ScrollView, TouchableOpacity, RefreshControl } from 'react-native';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
@@ -15,6 +15,7 @@ interface EmergencyRequest {
   id: number;
   request_type: string;
   created_at: string;
+  vehicle_description?: string;
   service_location: {
     street_name: string;
     barangay: string;
@@ -28,7 +29,9 @@ interface EmergencyRequest {
   };
   request_details?: {
     description?: string;
+    vehicle_description?: string;
     concern_picture?: string;
+    concern_pictures?: string[];
     urgency_level?: string;
   };
 }
@@ -72,12 +75,6 @@ export default function EmergencyScreen() {
   const onRefresh = () => {
     setRefreshing(true);
     fetchEmergencyRequests();
-  };
-
-  const handleCall = (phone?: string) => {
-    if (phone) {
-      Linking.openURL(`tel:${phone}`);
-    }
   };
 
   const handleNavigate = (request: EmergencyRequest) => {
@@ -218,14 +215,23 @@ export default function EmergencyScreen() {
                     </View>
                   </View>
 
-                  {request.request_details?.concern_picture && (
-                    <View style={styles.imageContainer}>
-                      <Image 
-                        source={{ uri: request.request_details.concern_picture }} 
-                        style={styles.concernImage}
-                        contentFit="cover"
-                      />
-                    </View>
+                  {((request.request_details?.concern_pictures?.length || 0) > 0 ||
+                    request.request_details?.concern_picture) && (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imageContainer}>
+                      {(request.request_details?.concern_pictures?.length
+                        ? request.request_details.concern_pictures
+                        : request.request_details?.concern_picture
+                          ? [request.request_details.concern_picture]
+                          : []
+                      ).map((photoUri, idx) => (
+                        <Image
+                          key={`${request.id}-photo-${idx}`}
+                          source={{ uri: photoUri }}
+                          style={[styles.concernImage, { marginRight: 8 }]}
+                          contentFit="cover"
+                        />
+                      ))}
+                    </ScrollView>
                   )}
                 </View>
 
@@ -238,6 +244,15 @@ export default function EmergencyScreen() {
                   </View>
                 )}
 
+                {(request.request_details?.vehicle_description || request.vehicle_description) && (
+                  <View style={styles.descriptionBox}>
+                    <ThemedText style={styles.descriptionLabel}>Vehicle:</ThemedText>
+                    <ThemedText style={styles.descriptionText}>
+                      {request.request_details?.vehicle_description || request.vehicle_description}
+                    </ThemedText>
+                  </View>
+                )}
+
                 <View style={styles.actionButtons}>
                   <TouchableOpacity 
                     style={[styles.actionBtn, styles.acceptBtn]}
@@ -246,16 +261,6 @@ export default function EmergencyScreen() {
                     <FontAwesome name="check" size={16} color="#fff" />
                     <ThemedText style={styles.actionBtnText}>Accept</ThemedText>
                   </TouchableOpacity>
-
-                  {request.client?.phone && (
-                    <TouchableOpacity 
-                      style={[styles.actionBtn, styles.callBtn]}
-                      onPress={() => handleCall(request.client.phone)}
-                    >
-                      <FontAwesome name="phone" size={16} color="#fff" />
-                      <ThemedText style={styles.actionBtnText}>Call</ThemedText>
-                    </TouchableOpacity>
-                  )}
 
                   <TouchableOpacity 
                     style={[styles.actionBtn, styles.navigateBtn]}
