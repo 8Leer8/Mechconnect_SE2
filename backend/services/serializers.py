@@ -1,7 +1,6 @@
 from rest_framework import serializers
-<<<<<<< HEAD
-from .models import ServiceCategory, Service, Specialty
-
+from MainBackend.storage_utils import get_media_url
+from .models import ServiceCategory, Service, Specialty, ServiceAddOn
 
 class ServiceCategorySerializer(serializers.ModelSerializer):
     class Meta:
@@ -42,11 +41,6 @@ class SpecialtySerializer(serializers.ModelSerializer):
         model = Specialty
         fields = ['id', 'name', 'description', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at']
-=======
-
-from MainBackend.storage_utils import get_media_url
-
-from .models import ServiceAddOn
 
 
 class ServiceAddOnPublicSerializer(serializers.ModelSerializer):
@@ -74,4 +68,3 @@ class ServiceAddOnPublicSerializer(serializers.ModelSerializer):
     def get_service_name(self, obj):
         service = getattr(obj, "service", None)
         return service.name if service else None
->>>>>>> 180ee47cd0de9b70869d2b155f25e1db2166b8a3
