@@ -594,6 +594,16 @@ export default function MapScreen() {
     setModalVisible(true); void fetchTokensBalance();
   };
 
+  const getVehiclePreview = (broadcast: BroadcastRequest) => {
+    const vehicleType = broadcast.vehicle_type || '';
+    const vehicleModel = broadcast.vehicle_model || '';
+
+    if (vehicleType && vehicleModel) return `${vehicleType} - ${vehicleModel}`;
+    if (vehicleType) return vehicleType;
+    if (vehicleModel) return vehicleModel;
+    return 'Vehicle not specified';
+  };
+
   const handleBroadcastMarkerPress = (broadcast: BroadcastRequest) => {
     const now = Date.now(); const lastTap = markerTapRef.current[broadcast.id] ?? 0;
     markerTapRef.current[broadcast.id] = now;
@@ -779,6 +789,12 @@ export default function MapScreen() {
                     <View style={styles.urgentBadge}><ThemedText style={styles.urgentText}>NEW</ThemedText></View>
                   </View>
                   <ThemedText style={styles.broadcastDescription} numberOfLines={2}>{broadcast.description}</ThemedText>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, marginBottom: 2 }}>
+                    <FontAwesome name="car" size={12} color="#8E8E93" style={{ marginRight: 6 }} />
+                    <ThemedText style={{ fontSize: 12, color: '#8E8E93' }} numberOfLines={1}>
+                      {getVehiclePreview(broadcast)}
+                    </ThemedText>
+                  </View>
                   <View style={styles.servicesContainer}>
                     {broadcast.services.slice(0, 2).map((service) => (
                       <View key={service.id} style={styles.serviceTag}><ThemedText style={styles.serviceTagText}>{service.name}</ThemedText></View>

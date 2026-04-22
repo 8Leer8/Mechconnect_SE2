@@ -16,6 +16,7 @@ interface EmergencyRequest {
   request_type: string;
   created_at: string;
   vehicle_description?: string;
+  vehicle_type?: string;
   service_location: {
     street_name: string;
     barangay: string;
@@ -30,6 +31,7 @@ interface EmergencyRequest {
   request_details?: {
     description?: string;
     vehicle_description?: string;
+    vehicle_type?: string;
     concern_picture?: string;
     concern_pictures?: string[];
     urgency_level?: string;
@@ -127,6 +129,14 @@ export default function EmergencyScreen() {
     return `${Math.floor(seconds / 86400)}d ago`;
   };
 
+  const getVehicleType = (request: EmergencyRequest) => {
+    return request.request_details?.vehicle_type || request.vehicle_type || 'Not specified';
+  };
+
+  const getVehicleDescription = (request: EmergencyRequest) => {
+    return request.request_details?.vehicle_description || request.vehicle_description || 'Not specified';
+  };
+
   return (
     <ThemedView style={styles.container}>
       {/* Header */}
@@ -194,6 +204,11 @@ export default function EmergencyScreen() {
                     <ThemedText style={styles.clientName}>{request.client?.name || 'Client'}</ThemedText>
                   </View>
 
+                  <View style={styles.infoRow}>
+                    <FontAwesome name="car" size={16} color="#8E8E93" />
+                    <ThemedText style={styles.phoneNumber}>Vehicle Type: {getVehicleType(request)}</ThemedText>
+                  </View>
+
                   {request.client?.phone && (
                     <View style={styles.infoRow}>
                       <FontAwesome name="phone" size={16} color="#34C759" />
@@ -244,14 +259,12 @@ export default function EmergencyScreen() {
                   </View>
                 )}
 
-                {(request.request_details?.vehicle_description || request.vehicle_description) && (
-                  <View style={styles.descriptionBox}>
-                    <ThemedText style={styles.descriptionLabel}>Vehicle:</ThemedText>
-                    <ThemedText style={styles.descriptionText}>
-                      {request.request_details?.vehicle_description || request.vehicle_description}
-                    </ThemedText>
-                  </View>
-                )}
+                <View style={styles.descriptionBox}>
+                  <ThemedText style={styles.descriptionLabel}>Vehicle:</ThemedText>
+                  <ThemedText style={styles.descriptionText}>
+                    {getVehicleDescription(request)}
+                  </ThemedText>
+                </View>
 
                 <View style={styles.actionButtons}>
                   <TouchableOpacity 

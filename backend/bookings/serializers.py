@@ -410,6 +410,8 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
     add_ons = serializers.SerializerMethodField()
     concern_picture = serializers.SerializerMethodField()
     required_tokens = serializers.SerializerMethodField()
+    search_radius_km = serializers.FloatField(read_only=True)
+    radius_km = serializers.SerializerMethodField()
     latitude = serializers.FloatField()
     longitude = serializers.FloatField()
     vehicle_type = serializers.CharField(source='request.vehicle_type', read_only=True, allow_null=True)
@@ -421,7 +423,8 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'description', 'latitude', 'longitude', 
             'vehicle_type', 'vehicle_brand', 'vehicle_model',
-            'services', 'add_ons', 'created_at', 'expires_at', 'accepted_at',
+            'services', 'add_ons', 'search_radius_km', 'radius_km',
+            'created_at', 'expires_at', 'accepted_at',
             'status', 'concern_picture', 'required_tokens'
         ]
     
@@ -436,6 +439,10 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
         from .models import BroadcastRequestAddOn
         add_ons = BroadcastRequestAddOn.objects.filter(broadcast_request=obj).select_related('service_add_on')
         return ServiceAddOnSerializer([addon.service_add_on for addon in add_ons], many=True).data
+
+    def get_radius_km(self, obj):
+        # Backward-compatible alias used by some mobile screens.
+        return float(obj.search_radius_km or 0)
 
     def get_required_tokens(self, obj):
         """Calculate required tokens (2% of total service price) rounded up to integer."""
@@ -663,7 +670,6 @@ class QuotationSerializer(serializers.Serializer):
         # load existing items mapping
         existing_items_qs = QuotationItem.objects.filter(quotation=instance)
         existing_items = {it.id: it for it in existing_items_qs}
-        print(f"DEBUG: Updating Quotation {instance.id}. Mapping {len(existing_items)} existing items.")
 
         incoming_ids = set()
 
@@ -675,9 +681,6 @@ class QuotationSerializer(serializers.Serializer):
 
             desc = raw.get('description') or raw.get('name') or 'Item'
             if item_id and item_id in existing_items:
-                item_instance = existing_items[item_id]
-                print(f"DEBUG: Processing item {item_id}. Incoming status: {raw.get('status')}, Existing status: {item_instance.status}")
-                print(f"DEBUG: Item {desc} has ID {item_id}. Updating...")
                 qitem = existing_items[item_id]
                 existing_status = str(qitem.status or '').lower()
                 existing_desc = qitem.description or ''
@@ -744,8 +747,6 @@ class QuotationSerializer(serializers.Serializer):
                 qitem.save()
                 incoming_ids.add(item_id)
             else:
-                print(f"DEBUG: Processing item NEW. Incoming status: {raw.get('status')}, Existing status: NEW")
-                print(f"DEBUG: Item {desc} has no ID. Creating new QuotationItem for '{desc}'.")
                 service_id = raw.get('service') if raw.get('service') else None
                 default_status = Quotation.Status.ACCEPTED if service_id and int(service_id) in requested_service_ids else Quotation.Status.PENDING
                 qitem = QuotationItem.objects.create(
@@ -789,13 +790,11 @@ class QuotationSerializer(serializers.Serializer):
                         status=Quotation.Status.REJECTED,
                         change_type='removed',
                     )
-                    print(f"DEBUG: Marked {len(to_mark_removed)} accepted items as removed proposals.")
 
                 if to_delete:
                     QuotationItem.objects.filter(id__in=to_delete).delete()
-                    print(f"DEBUG: Deleted {len(to_delete)} non-accepted removed items.")
-        except Exception as e:
-            print(f"DEBUG: Error while deleting missing items: {e}")
+        except Exception:
+            pass
 
         # Recalculate total
         try:
@@ -803,7 +802,6 @@ class QuotationSerializer(serializers.Serializer):
         except Exception:
             total = 0
 
-        print(f"DEBUG: Root Quotation status before save: {instance.status}")
         instance.total_amount = total
         instance.notes = validated_data.get('notes', instance.notes)
         instance.is_final = validated_data.get('is_final', instance.is_final)
@@ -824,5 +822,4 @@ class QuotationSerializer(serializers.Serializer):
             except Exception:
                 instance.status = Quotation.Status.PENDING
         instance.save()
-        print(f"DEBUG: Update complete for Quotation {instance.id}. Total items now: {QuotationItem.objects.filter(quotation=instance).count()}")
         return instance
