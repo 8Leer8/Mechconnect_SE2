@@ -5,7 +5,6 @@ import { FontAwesome } from '@expo/vector-icons';
 
 import { API_URL } from '@/config';
 import { ThemedText } from '@/components/themed-text';
-import { buildAuthHeaders } from '@/lib/authHeaders';
 
 export interface QRScanResult {
   token: string;
@@ -37,11 +36,10 @@ export default function QRScannerModal({ visible, onClose, onScanSuccess }: QRSc
     setScanning(false);
 
     try {
-      const headers = await buildAuthHeaders({ 'Content-Type': 'application/json' });
       const response = await fetch(`${API_URL}/bookings/payments/qr/scan/`, {
         method: 'POST',
         credentials: 'include',
-        headers,
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: data }),
       });
 
@@ -128,9 +126,6 @@ export default function QRScannerModal({ visible, onClose, onScanSuccess }: QRSc
 
         <View style={styles.bottomBar}>
           <ThemedText style={styles.hintText}>Point your camera at the mechanic QR code</ThemedText>
-          <TouchableOpacity style={styles.backButton} onPress={onClose}>
-            <ThemedText style={styles.backButtonText}>Back</ThemedText>
-          </TouchableOpacity>
         </View>
       </View>
     </Modal>
@@ -209,18 +204,6 @@ const styles = StyleSheet.create({
   hintText: {
     color: '#9BA1A6',
     textAlign: 'center',
-  },
-  backButton: {
-    marginTop: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#3A3D40',
-    paddingVertical: 10,
-    alignItems: 'center',
-  },
-  backButtonText: {
-    color: '#ECEDEE',
-    fontWeight: '700',
   },
   permissionRoot: {
     flex: 1,

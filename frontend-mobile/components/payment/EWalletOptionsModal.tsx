@@ -4,7 +4,6 @@ import { FontAwesome } from '@expo/vector-icons';
 
 import { API_URL } from '@/config';
 import { ThemedText } from '@/components/themed-text';
-import { buildAuthHeaders } from '@/lib/authHeaders';
 
 interface EWalletOptionsModalProps {
   visible: boolean;
@@ -41,11 +40,10 @@ export default function EWalletOptionsModal({
   const initiate = async (method: 'gcash' | 'maya') => {
     try {
       setLoadingMethod(method);
-      const headers = await buildAuthHeaders({ 'Content-Type': 'application/json' });
       const response = await fetch(`${API_URL}/bookings/payments/initiate/`, {
         method: 'POST',
         credentials: 'include',
-        headers,
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify((() => {
           const payload: Record<string, unknown> = {
             booking_id: bookingId,

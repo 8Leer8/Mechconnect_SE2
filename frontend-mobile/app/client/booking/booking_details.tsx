@@ -23,7 +23,6 @@ import {
 import ReportNoShowModal from '@/components/booking/ReportNoShowModal';
 import MechanicRatingModal from '@/components/booking/MechanicRatingModal';
 import { bookingHasBackjob, canOpenBookingChat } from '@/lib/bookingAccess';
-import { fetchBookingChatPreview } from '@/lib/bookingChatPreview';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -65,8 +64,6 @@ interface BookingDetail {
   active_details?: {
     before_picture: string | null;
     after_picture: string | null;
-    before_pictures?: string[];
-    after_pictures?: string[];
     is_job_done: boolean;
     is_rescheduled: boolean;
     reason: string | null;
@@ -145,9 +142,7 @@ interface PricingConfig {
   convenience_fee_fixed?: number;
 }
 
-const LIVE_PRICING_STATUSES = new Set([
-  'accepted', 'on_the_way', 'at_location', 'diagnosing', 'active', 'paused', 'finished',
-]);
+const LIVE_PRICING_STATUSES = new Set(['accepted', 'on_the_way', 'active', 'paused', 'finished']);
 
 const shouldUseLiveAdditivePricing = (statusValue?: string | null): boolean => {
   const normalized = String(statusValue || '').toLowerCase();
@@ -217,8 +212,6 @@ export default function ClientBookingDetailScreen() {
   const [expandedQuoteItems, setExpandedQuoteItems] = useState<Record<string, boolean>>({});
   const [quotationListExpanded, setQuotationListExpanded] = useState(false);
   const [pricingConfig, setPricingConfig] = useState<PricingConfig>({});
-  const [chatPreview, setChatPreview] = useState<string | null>(null);
-  const [viewerPhotoUri, setViewerPhotoUri] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -527,8 +520,7 @@ export default function ClientBookingDetailScreen() {
       trafficFee = hasPersistedTrafficSurcharge ? persistedTrafficSurcharge : estimatedTrafficFee;
     }
 
-    const st = String(booking.status || '').toLowerCase();
-    const useLockedTravelEta = st === 'on_the_way' || st === 'at_location' || st === 'diagnosing';
+    const isOnTheWay = booking.status === 'on_the_way';
     const serviceSubtotal = quotationEstimatedTotal > 0
       ? quotationEstimatedTotal
       : (shouldUseLiveAdditivePricing(booking.status)
@@ -542,7 +534,7 @@ export default function ClientBookingDetailScreen() {
 
     const persistedEta = Number((booking as any).estimated_eta_minutes || 0);
     const derivedEta = Math.max(1, Math.ceil((distanceKm / Math.max(1, trafficMeta.speedKmh)) * 60));
-    const etaMinutes = useLockedTravelEta && Number.isFinite(persistedEta) && persistedEta > 0
+    const etaMinutes = isOnTheWay && Number.isFinite(persistedEta) && persistedEta > 0
       ? Math.round(persistedEta)
       : derivedEta;
 
@@ -556,7 +548,7 @@ export default function ClientBookingDetailScreen() {
       totalConvenienceFee,
       trafficLabel: trafficMeta.label,
       etaMinutes,
-      estimated: !useLockedTravelEta,
+      estimated: !isOnTheWay,
       isLocked: hasPersistedConvenience,
     };
   }, [booking, pricingConfig, quotationEstimatedTotal]);
@@ -639,21 +631,6 @@ export default function ClientBookingDetailScreen() {
     }
   }, [resolvedBookingId]);
 
-  const refreshChatPreview = useCallback(async () => {
-    if (!resolvedBookingId) return;
-    const res = await fetchBookingChatPreview(Number(resolvedBookingId));
-    if (!res) return;
-    setChatPreview(res.lastPreview);
-  }, [resolvedBookingId]);
-
-  useEffect(() => {
-    if (!booking || !canOpenBookingChat(booking)) {
-      setChatPreview(null);
-      return;
-    }
-    refreshChatPreview();
-  }, [booking, refreshChatPreview]);
-
   // ticking effect for live timer
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | null = null;
@@ -681,25 +658,23 @@ export default function ClientBookingDetailScreen() {
   useEffect(() => {
     try {
       if (!lastMessage) return;
-      const message = lastMessage as unknown as Record<string, unknown>;
-      const bid = Number(message.booking_id ?? message.bookingId ?? message.booking);
+      const bid = Number(lastMessage.booking_id);
       if (!bid || !resolvedBookingId) return;
       if (bid === Number(resolvedBookingId)) {
-        const action = String(lastMessage.action || lastMessage.type || '').toLowerCase();
+        const action = String(lastMessage.action || '').toLowerCase();
         if (action === 'booking.pending_payment' && !bookingHasBackjob(booking)) {
           setShowPaymentModal(true);
         }
         if (action === 'payment.completed') {
           setShowSuccess(true);
         }
-        // lightweight refresh (covers booking_update and other events)
+        // lightweight refresh
         fetchBookingDetail(true);
-        refreshChatPreview();
       }
     } catch (e) {
       // ignore
     }
-  }, [lastMessage, resolvedBookingId, fetchBookingDetail, booking?.has_backjob, booking?.backjob?.status, refreshChatPreview]);
+  }, [lastMessage, resolvedBookingId, fetchBookingDetail, booking?.has_backjob, booking?.backjob?.status]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -718,9 +693,6 @@ export default function ClientBookingDetailScreen() {
       case 'accepted': return 'Booked';
       case 'active': return 'In Progress';
       case 'on_the_way': return 'Mechanic on the Way';
-      case 'at_location': return 'Mechanic at Location';
-      case 'diagnosing': return 'Diagnosing';
-      case 'paused': return 'Paused';
       case 'completed': return 'Completed';
       case 'cancelled': return 'Cancelled';
       case 'pending': return 'Pending';
@@ -735,9 +707,6 @@ export default function ClientBookingDetailScreen() {
       case 'accepted': return '#00B8D9';
       case 'active': return '#FF8C00';
       case 'on_the_way': return '#007AFF';
-      case 'at_location': return '#5AC8FA';
-      case 'diagnosing': return '#AF52DE';
-      case 'paused': return '#8E8E93';
       case 'reworked': return '#FFD60A';
       case 'completed': return '#34C759';
       case 'cancelled': return '#FF3B30';
@@ -752,9 +721,6 @@ export default function ClientBookingDetailScreen() {
       case 'accepted': return 'calendar-check-o';
       case 'active': return 'play-circle';
       case 'on_the_way': return 'car';
-      case 'at_location': return 'map-marker';
-      case 'diagnosing': return 'search';
-      case 'paused': return 'pause-circle';
       case 'completed': return 'check-circle';
       case 'cancelled': return 'times-circle';
       case 'pending': return 'clock-o';
@@ -1029,7 +995,7 @@ export default function ClientBookingDetailScreen() {
     String(booking.dispute_status || 'none').toLowerCase() === 'none';
 
   const isNoShowEligible =
-    (booking.status === 'accepted' || booking.status === 'on_the_way' || booking.status === 'at_location') &&
+    (booking.status === 'accepted' || booking.status === 'on_the_way') &&
     !reportingNoShow;
 
   const handleOpenDisputeForm = () => {
@@ -1573,7 +1539,7 @@ export default function ClientBookingDetailScreen() {
         )}
 
         {/* Chat Section */}
-        {canOpenBookingChat(booking) ? (
+        {booking.provider && canOpenBookingChat(booking) ? (
           <TouchableOpacity
             style={styles.sectionCard}
             onPress={openChatWithMechanic}
@@ -1587,13 +1553,7 @@ export default function ClientBookingDetailScreen() {
               <FontAwesome name="chevron-right" size={16} color="#8E8E93" style={{ marginLeft: 'auto' }} />
             </View>
             <View style={{ paddingVertical: 8 }}>
-              {chatPreview ? (
-                <ThemedText style={{ color: '#aaa' }} numberOfLines={3}>
-                  {chatPreview}
-                </ThemedText>
-              ) : (
-                <ThemedText style={{ color: '#666' }}>No messages yet. Tap to open chat.</ThemedText>
-              )}
+              <ThemedText style={{ color: '#666' }}>Open the booking chat to message the mechanic.</ThemedText>
             </View>
           </TouchableOpacity>
         ) : null}
@@ -1678,14 +1638,14 @@ export default function ClientBookingDetailScreen() {
                 )}
               </View>
 
-              {(booking.status === 'on_the_way' || booking.status === 'at_location' || booking.status === 'diagnosing') && (
+              {booking.status === 'on_the_way' && (
                 <TouchableOpacity style={styles.navigateButton} onPress={handleNavigateToLocation} activeOpacity={0.7}>
                   <View style={styles.navigateIconCircle}>
                     <FontAwesome name="location-arrow" size={18} color="#fff" />
                   </View>
                   <View style={styles.navigateTextContainer}>
-                    <ThemedText style={styles.navigateTitle}>Track mechanic</ThemedText>
-                    <ThemedText style={styles.navigateSubtitle}>Live map while they are on the way or on site</ThemedText>
+                    <ThemedText style={styles.navigateTitle}>Open Live Location Map</ThemedText>
+                    <ThemedText style={styles.navigateSubtitle}>Track mechanic and booking location</ThemedText>
                   </View>
                   <FontAwesome name="map" size={14} color="#FF8C00" />
                 </TouchableOpacity>
@@ -2001,7 +1961,7 @@ export default function ClientBookingDetailScreen() {
         </View>
 
         {/* Active Details */}
-        {(booking.status === 'active' || booking.status === 'paused') && booking.active_details && (
+        {(booking.status === 'active' || booking.status === 'on_the_way') && booking.active_details && (
           <View style={styles.sectionCard}>
             <View style={styles.sectionHeader}>
               <View style={[styles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
@@ -2036,57 +1996,6 @@ export default function ClientBookingDetailScreen() {
           </View>
         )}
 
-        {/* Before-Service Photos */}
-        {booking.active_details && (
-          <View style={styles.sectionCard}>
-            <View style={styles.sectionHeader}>
-              <View style={[styles.sectionIcon, { backgroundColor: '#4F8CFF15' }]}>
-                <FontAwesome name="camera" size={16} color="#4F8CFF" />
-              </View>
-              <ThemedText style={styles.sectionTitle}>Before-Service Photos</ThemedText>
-            </View>
-
-            {(
-              (booking.active_details.before_pictures && booking.active_details.before_pictures.length > 0) ||
-              booking.active_details.before_picture
-            ) ? (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingVertical: 8 }}>
-                {(booking.active_details.before_pictures && booking.active_details.before_pictures.length > 0
-                  ? booking.active_details.before_pictures
-                  : booking.active_details.before_picture
-                  ? [booking.active_details.before_picture]
-                  : []
-                ).map((uri, idx) => (
-                  <TouchableOpacity key={`${uri}-${idx}`} activeOpacity={0.85} onPress={() => setViewerPhotoUri(uri)}>
-                    <Image
-                      source={{ uri }}
-                      style={{ width: 220, height: 220, borderRadius: 12 }}
-                      contentFit="cover"
-                    />
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            ) : (
-              <View
-                style={{
-                  marginTop: 8,
-                  height: 140,
-                  borderRadius: 12,
-                  borderWidth: 1,
-                  borderColor: '#2A2C2E',
-                  backgroundColor: '#111214',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 8,
-                }}
-              >
-                <FontAwesome name="image" size={26} color="#6C6C70" />
-                <ThemedText style={{ color: '#8E8E93' }}>No before-service photos uploaded yet</ThemedText>
-              </View>
-            )}
-          </View>
-        )}
-
         {/* After-Service Photo */}
         {booking.active_details && (
           <View style={styles.sectionCard}>
@@ -2098,13 +2007,11 @@ export default function ClientBookingDetailScreen() {
             </View>
 
             {booking.active_details.after_picture ? (
-              <TouchableOpacity activeOpacity={0.85} onPress={() => setViewerPhotoUri(booking.active_details?.after_picture || null)}>
-                <Image
-                  source={{ uri: booking.active_details.after_picture }}
-                  style={{ width: '100%', height: 220, borderRadius: 12, marginTop: 8 }}
-                  contentFit="cover"
-                />
-              </TouchableOpacity>
+              <Image
+                source={{ uri: booking.active_details.after_picture }}
+                style={{ width: '100%', height: 220, borderRadius: 12, marginTop: 8 }}
+                contentFit="cover"
+              />
             ) : (
               <View
                 style={{
@@ -2421,10 +2328,6 @@ export default function ClientBookingDetailScreen() {
           setShowSuccess(true);
           fetchBookingDetail(true);
         }}
-        onClose={() => {
-          setShowQRConfirm(false);
-          setShowQRScanner(false);
-        }}
         onCancel={() => {
           setShowQRConfirm(false);
           setShowQRScanner(true);
@@ -2462,19 +2365,6 @@ export default function ClientBookingDetailScreen() {
         }}
         onSubmit={handleSubmitMechanicRating}
       />
-
-      <Modal visible={Boolean(viewerPhotoUri)} transparent animationType="fade" onRequestClose={() => setViewerPhotoUri(null)}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' }}>
-          <TouchableOpacity style={{ position: 'absolute', top: 56, right: 20, zIndex: 2 }} onPress={() => setViewerPhotoUri(null)}>
-            <FontAwesome name="times-circle" size={30} color="#fff" />
-          </TouchableOpacity>
-          <TouchableOpacity style={{ width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center' }} activeOpacity={1} onPress={() => setViewerPhotoUri(null)}>
-            {viewerPhotoUri ? (
-              <Image source={{ uri: viewerPhotoUri }} style={{ width: '94%', height: '80%', borderRadius: 12 }} contentFit="contain" />
-            ) : null}
-          </TouchableOpacity>
-        </View>
-      </Modal>
     </ThemedView>
   );
 }

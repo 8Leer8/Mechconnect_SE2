@@ -5,7 +5,6 @@ import QRCode from 'react-native-qrcode-svg';
 import { API_URL } from '@/config';
 import { ThemedText } from '@/components/themed-text';
 import { useWebSocketContext } from '@/context/WebSocketContext';
-import { buildAuthHeaders } from '@/lib/authHeaders';
 
 interface CashQRDisplayModalProps {
   visible: boolean;
@@ -33,11 +32,10 @@ export default function CashQRDisplayModal({
     try {
       setLoading(true);
       setError('');
-      const headers = await buildAuthHeaders({ 'Content-Type': 'application/json' });
       const response = await fetch(`${API_URL}/bookings/payments/qr/${bookingId}/`, {
         method: 'GET',
         credentials: 'include',
-        headers,
+        headers: { 'Content-Type': 'application/json' },
       });
       const rawPayload: unknown = await response.json().catch(() => ({}));
       const payload: Record<string, unknown> =
