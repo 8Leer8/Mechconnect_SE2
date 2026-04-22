@@ -6,6 +6,7 @@ from rest_framework import status
 from bookings.models import Request, RequestAssignment, Booking
 from bookings.ws_utils import notify_user
 from users.models import Account
+from django.db.models import Q
 
 
 def _get_provider_account(request):
@@ -42,6 +43,34 @@ def _notify_assignment_change(request_obj, target_account_ids, message, booking=
             continue
 
 
+def _get_provider_request_or_error(account, request_id):
+    """
+    Return (request_obj, error_response) for assignment actions.
+    Shop owner scope matches shop owner booking visibility:
+      - requests directly owned by this shop owner account
+      - requests linked to this shop
+      - requests where provider is a mechanic under this shop
+    """
+    try:
+        if hasattr(account, 'shopowner'):
+            shop = account.shopowner.shop
+            req = Request.objects.filter(
+                Q(id=request_id),
+                Q(provider=account) | Q(shop=shop) | Q(provider__mechanic__shop=shop),
+            ).first()
+        else:
+            req = Request.objects.filter(id=request_id, provider=account).first()
+    except Exception:
+        req = None
+
+    if not req:
+        return None, Response(
+            {"error": "Request not found or you are not the provider."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    return req, None
+
+
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def list_request_assignments(request, request_id):
@@ -49,14 +78,9 @@ def list_request_assignments(request, request_id):
     account, err = _get_provider_account(request)
     if err:
         return err
-    try:
-        if hasattr(account, 'shopowner'):
-            shop = account.shopowner.shop
-            req = Request.objects.get(id=request_id, shop=shop)
-        else:
-            req = Request.objects.get(id=request_id, provider=account)
-    except Request.DoesNotExist:
-        return Response({"error": "Request not found or you are not the provider."}, status=status.HTTP_404_NOT_FOUND)
+    req, req_err = _get_provider_request_or_error(account, request_id)
+    if req_err:
+        return req_err
 
     assignments = RequestAssignment.objects.filter(request=req).select_related('mechanic')
     data = [
@@ -87,15 +111,9 @@ def assign_mechanic(request, request_id):
     if err:
         return err
     
-    # Get request filtering by shop if shop owner, or provider if mechanic
-    try:
-        if hasattr(account, 'shopowner'):
-            shop = account.shopowner.shop
-            req = Request.objects.get(id=request_id, shop=shop)
-        else:
-            req = Request.objects.get(id=request_id, provider=account)
-    except Request.DoesNotExist:
-        return Response({"error": "Request not found or you are not the provider."}, status=status.HTTP_404_NOT_FOUND)
+    req, req_err = _get_provider_request_or_error(account, request_id)
+    if req_err:
+        return req_err
 
     mechanic_id = request.data.get('mechanic_id')
     role = request.data.get('role', RequestAssignment.Role.ASSISTANT)
@@ -162,15 +180,9 @@ def unassign_mechanic(request, request_id, assignment_id):
     if err:
         return err
     
-    # Get request filtering by shop if shop owner, or provider if mechanic
-    try:
-        if hasattr(account, 'shopowner'):
-            shop = account.shopowner.shop
-            req = Request.objects.get(id=request_id, shop=shop)
-        else:
-            req = Request.objects.get(id=request_id, provider=account)
-    except Request.DoesNotExist:
-        return Response({"error": "Request not found or you are not the provider."}, status=status.HTTP_404_NOT_FOUND)
+    req, req_err = _get_provider_request_or_error(account, request_id)
+    if req_err:
+        return req_err
 
     try:
         assignment = RequestAssignment.objects.get(id=assignment_id, request=req)
@@ -195,15 +207,9 @@ def update_assignment_role(request, request_id, assignment_id):
     if err:
         return err
     
-    # Get request filtering by shop if shop owner, or provider if mechanic
-    try:
-        if hasattr(account, 'shopowner'):
-            shop = account.shopowner.shop
-            req = Request.objects.get(id=request_id, shop=shop)
-        else:
-            req = Request.objects.get(id=request_id, provider=account)
-    except Request.DoesNotExist:
-        return Response({"error": "Request not found or you are not the provider."}, status=status.HTTP_404_NOT_FOUND)
+    req, req_err = _get_provider_request_or_error(account, request_id)
+    if req_err:
+        return req_err
 
     try:
         assignment = RequestAssignment.objects.get(id=assignment_id, request=req)

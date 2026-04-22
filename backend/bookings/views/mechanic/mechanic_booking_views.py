@@ -1003,10 +1003,14 @@ def mechanic_booking_quotation(request, booking_id):
         return Response({"error": "Booking not found or you do not have permission to access it"}, status=status.HTTP_404_NOT_FOUND)
 
     # Assistants can view quotation data but cannot create/update/delete quotation.
+    has_assignments = RequestAssignment.objects.filter(request=booking.request).exists()
     assignment = RequestAssignment.objects.filter(
         request=booking.request,
         mechanic=account,
     ).first()
+    is_lead_mechanic = bool(
+        assignment and assignment.role == RequestAssignment.Role.LEAD
+    )
     is_assistant_mechanic = bool(
         assignment and assignment.role == RequestAssignment.Role.ASSISTANT
     )
@@ -1033,6 +1037,13 @@ def mechanic_booking_quotation(request, booking_id):
             return Response(
                 {
                     "error": "Assistant mechanics are view-only and cannot create or edit quotations for this booking."
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if has_assignments and not is_lead_mechanic:
+            return Response(
+                {
+                    "error": "Only lead mechanics can create or edit quotations for this booking."
                 },
                 status=status.HTTP_403_FORBIDDEN,
             )

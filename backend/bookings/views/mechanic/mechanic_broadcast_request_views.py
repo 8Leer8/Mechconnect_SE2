@@ -11,6 +11,8 @@ from ...models import (
 )
 from ...serializers import BroadcastRequestSerializer
 from ...ws_utils import notify_booking_parties
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
 from users.models import Account, TokenTransaction
 from services.pricing_utils import (
     get_distance_fee,
@@ -293,6 +295,23 @@ def accept_broadcast_request(request, broadcast_id):
                 booking.status,
                 "A mechanic has accepted your broadcast request",
             )
+
+            # Notify other mechanics viewing broadcasts so they can remove this
+            # broadcast from their maps/lists without manual refresh. We send a
+            # lightweight 'broadcast_removed' booking_update event to the
+            # 'broadcasts' group which mechanic clients subscribe to.
+            try:
+                channel_layer = get_channel_layer()
+                if channel_layer is not None:
+                    async_to_sync(channel_layer.group_send)('broadcasts', {
+                        'type': 'booking_update',
+                        'action': 'broadcast_removed',
+                        'broadcast_id': broadcast_request.id,
+                        'booking_id': booking.id,
+                        'message': 'Broadcast accepted',
+                    })
+            except Exception:
+                pass
             
             return Response({
                 'message': 'Broadcast request accepted successfully',

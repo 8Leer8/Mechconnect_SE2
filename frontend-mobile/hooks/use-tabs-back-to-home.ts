@@ -13,9 +13,26 @@ export function useTabsBackToHome(homeRoute: string) {
         return undefined;
       }
 
+      const safeReplaceHome = () => {
+        if (!homeRoute) return;
+        try {
+          // Defer navigation to avoid calling replace while React Navigation
+          // is rehydrating state during fast refresh (can crash with stale undefined).
+          setTimeout(() => {
+            try {
+              router.replace(homeRoute as any);
+            } catch {
+              // ignore navigation failures during transient rehydration
+            }
+          }, 0);
+        } catch {
+          // ignore
+        }
+      };
+
       const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-        if (pathname !== homeRoute) {
-          router.replace(homeRoute as any);
+        if (pathname && pathname !== homeRoute) {
+          safeReplaceHome();
           return true;
         }
 

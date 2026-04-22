@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 export const screenOptions = { headerShown: false } as const;
-import { View, ScrollView, TouchableOpacity, RefreshControl } from 'react-native';
+import { View, ScrollView, TouchableOpacity, RefreshControl, Modal, ActivityIndicator } from 'react-native';
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { FontAwesome } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
@@ -9,6 +9,7 @@ import { ThemedView } from '@/components/themed-view';
 import { SkeletonDetailPage } from '@/components/skeletons/SkeletonLoaders';
 import { styles } from '@/style/mechanic/bookingDetailsStyles';
 import { canOpenBookingChat } from '@/lib/bookingAccess';
+import { useNotification } from '@/hooks/useNotification';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -27,6 +28,12 @@ interface BookingDetail {
     vehicle_model?: string | null;
     created_at: string;
     request_details?: any;
+    assigned_mechanics?: {
+      id: number;
+      role: 'lead' | 'assistant';
+      mechanic: { id: number; firstname: string; lastname: string; username: string };
+      assigned_at?: string;
+    }[];
   };
   client?: {
     firstname?: string;
@@ -61,6 +68,20 @@ interface BookingDetail {
   };
 }
 
+interface ShopMechanic {
+  id: number;
+  account_id: number;
+  firstname: string;
+  lastname: string;
+}
+
+interface Assignment {
+  id: number;
+  mechanic: { id: number; firstname: string; lastname: string; username: string };
+  role: 'lead' | 'assistant';
+  assigned_at: string;
+}
+
 export default function ShopOwnerBookingDetailScreen() {
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
   const navigation = useNavigation();
@@ -70,6 +91,12 @@ export default function ShopOwnerBookingDetailScreen() {
   const [error, setError] = useState<string | null>(null);
   const [timer, setTimer] = useState(0);
   const [quotation, setQuotation] = useState<any | null>(null);
+  const [assignModalVisible, setAssignModalVisible] = useState(false);
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [shopMechanics, setShopMechanics] = useState<ShopMechanic[]>([]);
+  const [assignLoading, setAssignLoading] = useState(false);
+  const [assigningId, setAssigningId] = useState<number | null>(null);
+  const { showNotification } = useNotification();
   const { lastMessage } = useWebSocketContext();
 
   useEffect(() => {
@@ -93,10 +120,13 @@ export default function ShopOwnerBookingDetailScreen() {
       });
       const data = await res.json() as { booking?: BookingDetail; error?: string };
       if (!res.ok) throw new Error(data?.error || 'Failed to fetch booking details');
-      setBooking(data.booking || (data as unknown as BookingDetail));
+      const bookingData = data.booking || (data as unknown as BookingDetail);
+      setBooking(bookingData);
+      if (bookingData?.request?.id) {
+        loadAssignmentData(bookingData.request.id);
+      }
 
       // Initialize elapsed timer immediately for active status (view-only)
-      const bookingData = data.booking || (data as unknown as BookingDetail);
       if (
         bookingData?.status === 'active' &&
         bookingData?.active_details?.started_at
@@ -115,6 +145,97 @@ export default function ShopOwnerBookingDetailScreen() {
       setRefreshing(false);
     }
   }, [bookingId]);
+
+  const loadAssignmentData = useCallback(async (requestId: number) => {
+    try {
+      const [mechRes, assignRes] = await Promise.all([
+        fetch(`${API_URL}/shops/mechanics/`, {
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        }),
+        fetch(`${API_URL}/bookings/requests/${requestId}/assignments/`, {
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ]);
+
+      if (mechRes.ok) {
+        const md = (await mechRes.json()) as { mechanics?: ShopMechanic[] };
+        setShopMechanics(md.mechanics || []);
+      }
+      if (assignRes.ok) {
+        const ad = (await assignRes.json()) as Assignment[];
+        setAssignments(Array.isArray(ad) ? ad : []);
+      }
+    } catch {
+      setAssignments([]);
+    }
+  }, []);
+
+  const canManageAssignment = (status: string) =>
+    ['accepted', 'on_the_way', 'active', 'paused', 'reworked'].includes(status);
+
+  const handleAssignMechanic = async (accountId: number, role: 'lead' | 'assistant') => {
+    if (!booking?.request?.id) return;
+    const leadCount = assignments.filter((a) => a.role === 'lead').length;
+    if (role === 'assistant' && assignments.length === 0) {
+      showNotification({ type: 'error', message: 'First assigned mechanic must be a lead.' });
+      return;
+    }
+    if (role === 'assistant' && leadCount === 0) {
+      showNotification({ type: 'error', message: 'At least one lead is required.' });
+      return;
+    }
+
+    setAssigningId(accountId);
+    try {
+      const res = await fetch(`${API_URL}/bookings/requests/${booking.request.id}/assignments/add/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mechanic_id: accountId, role }),
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        showNotification({ type: 'error', message: data?.error || 'Failed to assign mechanic.' });
+        return;
+      }
+      await loadAssignmentData(booking.request.id);
+      await fetchBookingDetail(true);
+      showNotification({ type: 'success', message: 'Mechanic assigned.' });
+    } finally {
+      setAssigningId(null);
+    }
+  };
+
+  const handleUnassign = async (assignmentId: number) => {
+    if (!booking?.request?.id) return;
+    const target = assignments.find((a) => a.id === assignmentId);
+    if (target?.role === 'lead') {
+      const leadCount = assignments.filter((a) => a.role === 'lead').length;
+      if (leadCount <= 1) {
+        showNotification({ type: 'error', message: 'At least one lead must remain assigned.' });
+        return;
+      }
+    }
+    setAssignLoading(true);
+    try {
+      const res = await fetch(
+        `${API_URL}/bookings/requests/${booking.request.id}/assignments/${assignmentId}/remove/`,
+        { method: 'DELETE', credentials: 'include', headers: { 'Content-Type': 'application/json' } }
+      );
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        showNotification({ type: 'error', message: data?.error || 'Failed to remove assignment.' });
+        return;
+      }
+      await loadAssignmentData(booking.request.id);
+      await fetchBookingDetail(true);
+      showNotification({ type: 'success', message: 'Assignment removed.' });
+    } finally {
+      setAssignLoading(false);
+    }
+  };
 
   useEffect(() => {
     fetchBookingDetail();
@@ -445,6 +566,8 @@ export default function ShopOwnerBookingDetailScreen() {
     booking.request?.request_details?.vehicle_model ||
     booking.request?.request_details?.vehicle?.model ||
     null;
+  const assignedIds = new Set(assignments.map((a) => a.mechanic.id));
+  const availableMechanics = shopMechanics.filter((m) => !assignedIds.has(m.account_id));
 
   return (
     <ThemedView style={styles.container}>
@@ -545,6 +668,54 @@ export default function ShopOwnerBookingDetailScreen() {
             </View>
           </TouchableOpacity>
         ) : null}
+
+        {/* Assignment Section */}
+        <View style={styles.sectionCard}>
+          <View style={styles.sectionHeader}>
+            <View style={[styles.sectionIcon, { backgroundColor: '#34C75915' }]}>
+              <FontAwesome name="users" size={16} color="#34C759" />
+            </View>
+            <ThemedText style={styles.sectionTitle}>Assigned Team</ThemedText>
+          </View>
+          {assignments.length === 0 ? (
+            <ThemedText style={{ color: '#888', marginTop: 6 }}>No mechanics assigned yet.</ThemedText>
+          ) : (
+            <View style={{ gap: 8, marginTop: 8 }}>
+              {assignments.map((a) => (
+                <View
+                  key={a.id}
+                  style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
+                >
+                  <ThemedText style={{ color: '#ddd' }}>
+                    {a.mechanic.firstname} {a.mechanic.lastname}
+                  </ThemedText>
+                  <View
+                    style={{
+                      backgroundColor: a.role === 'lead' ? '#FF950030' : '#34C75930',
+                      paddingHorizontal: 8,
+                      paddingVertical: 3,
+                      borderRadius: 8,
+                    }}
+                  >
+                    <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#fff' }}>
+                      {a.role === 'lead' ? 'Lead' : 'Assistant'}
+                    </ThemedText>
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
+          {canManageAssignment(booking.status) ? (
+            <TouchableOpacity
+              style={[styles.refreshBtn, { marginTop: 14, alignSelf: 'flex-start', width: 'auto', paddingHorizontal: 14 }]}
+              onPress={() => setAssignModalVisible(true)}
+            >
+              <ThemedText style={{ color: '#FF8C00', fontWeight: '700' }}>
+                {booking.status === 'accepted' ? 'Assign' : 'Reassign'}
+              </ThemedText>
+            </TouchableOpacity>
+          ) : null}
+        </View>
 
         <View style={styles.sectionCard}>
           <View style={styles.sectionHeader}>
@@ -1019,6 +1190,67 @@ export default function ShopOwnerBookingDetailScreen() {
 
         <View style={{ height: 28 }} />
       </ScrollView>
+
+      <Modal visible={assignModalVisible} animationType="slide" transparent>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'flex-end' }}>
+          <View style={{ backgroundColor: '#1E1E1E', borderTopLeftRadius: 18, borderTopRightRadius: 18, maxHeight: '78%', padding: 16 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <ThemedText style={{ fontSize: 18, fontWeight: '700' }}>Assign Mechanics</ThemedText>
+              <TouchableOpacity onPress={() => setAssignModalVisible(false)}>
+                <FontAwesome name="times-circle" size={22} color="#888" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView>
+              {assignments.map((a) => (
+                <View
+                  key={a.id}
+                  style={{ backgroundColor: '#252525', borderRadius: 10, padding: 12, marginBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
+                >
+                  <View>
+                    <ThemedText>{a.mechanic.firstname} {a.mechanic.lastname}</ThemedText>
+                    <ThemedText style={{ color: '#888', fontSize: 12 }}>{a.role === 'lead' ? 'Lead' : 'Assistant'}</ThemedText>
+                  </View>
+                  {assignLoading ? (
+                    <ActivityIndicator size="small" color="#FF9500" />
+                  ) : (
+                    <TouchableOpacity onPress={() => handleUnassign(a.id)}>
+                      <FontAwesome name="minus-circle" size={22} color="#FF3B30" />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ))}
+
+              {availableMechanics.map((m) => (
+                <View
+                  key={m.account_id}
+                  style={{ backgroundColor: '#252525', borderRadius: 10, padding: 12, marginBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
+                >
+                  <ThemedText>{m.firstname} {m.lastname}</ThemedText>
+                  {assigningId === m.account_id ? (
+                    <ActivityIndicator size="small" color="#FF9500" />
+                  ) : (
+                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                      <TouchableOpacity
+                        style={{ backgroundColor: '#FF9500', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
+                        onPress={() => handleAssignMechanic(m.account_id, 'lead')}
+                      >
+                        <ThemedText style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Lead</ThemedText>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={{ backgroundColor: '#34C759', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
+                        onPress={() => handleAssignMechanic(m.account_id, 'assistant')}
+                      >
+                        <ThemedText style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Assist</ThemedText>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </ThemedView>
   );
 }

@@ -19,6 +19,7 @@ import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { router, useFocusEffect, usePathname } from 'expo-router';
 import WalletBadge from '@/components/wallet-badge';
+import { useWebSocketContext } from '@/context/WebSocketContext';
 import { eventBus } from '@/utils/eventBus';
 import { getDistanceKm } from '@/context/LocationContext';
 import { styles } from '@/style/mechanic/mapStyles';
@@ -189,7 +190,17 @@ export default function MapScreen() {
     latitude: number;
     longitude: number;
   } | null>(null);
+  const { lastMessage } = useWebSocketContext();
 
+  useEffect(() => {
+    if (!lastMessage) return;
+    if (lastMessage.action === 'broadcast_removed' || (lastMessage.type === 'booking_update' && lastMessage.status === 'accepted')) {
+      if (broadcastFetchEnabled && userLocationRef.current) {
+        fetchBroadcasts(true);
+      }
+    }
+  }, [lastMessage]);
+  
   useEffect(() => {
     initializeMap();
     fetchPricingConfig();

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   StyleSheet,
   View,
@@ -13,6 +13,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import { useNotification } from '@/hooks/useNotification';
 import { useConfirmation } from '@/hooks/useConfirmation';
@@ -32,7 +33,7 @@ interface Booking {
     id: number;
     type: string;
     created_at: string;
-    assigned_mechanics?: { id: number; role: string }[];
+    assigned_mechanics?: { id: number; role: string; mechanic?: { id: number } }[];
   };
   provider?: { id: number; name: string; email: string } | null;
   service_location?: {
@@ -73,7 +74,7 @@ type HomeResponse = {
   pending_requests: PendingRequest[];
 };
 
-type TabType = 'all' | 'requests' | 'accepted' | 'on_going' | 'completed' | 'cancelled';
+type TabType = 'all' | 'pending' | 'booked' | 'on_going' | 'completed' | 'cancelled' | 'reworked' | 'disputed';
 type RequestTabType = 'custom' | 'direct' | 'broadcast';
 
 type GroupedResponse = {
@@ -137,153 +138,78 @@ export default function ShopOwnerJobsScreen() {
   const [assigningId, setAssigningId] = useState<number | null>(null);
   const [acceptLoadingId, setAcceptLoadingId] = useState<number | null>(null);
   const [declineLoadingId, setDeclineLoadingId] = useState<number | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const pageSize = 8;
 
   useEffect(() => {
-    if (activeTab === 'requests') {
-      fetchRequests();
-    } else {
-      fetchBookings();
-    }
+    setCurrentPage(1);
   }, [activeTab]);
 
   // Re-fetch when a WebSocket booking update arrives (e.g., lead mechanic starts/finishes job)
   useEffect(() => {
     if (lastMessage?.type === 'booking_update') {
-      if (activeTab === 'requests') {
-        fetchRequests();
-      } else {
-        fetchBookings();
-      }
+      if (activeTab === 'pending') fetchRequests();
+      else fetchBookings();
     }
-  }, [lastMessage, activeTab]);
+  }, [lastMessage, activeTab, currentPage]);
 
   const fetchBookings = async () => {
     try {
       setLoading(true);
       setError(null);
+      const statusQuery =
+        activeTab === 'all'
+          ? 'all'
+          : activeTab === 'booked'
+          ? 'accepted'
+          : activeTab === 'on_going'
+          ? 'on_going'
+          : activeTab;
 
-      if (activeTab === 'all') {
-        const res = await fetch(`${API_URL}/bookings/shopowner/bookings/`, {
+      const res = await fetch(
+        `${API_URL}/bookings/shopowner/bookings/?status=${statusQuery}&page=${currentPage}&page_size=${pageSize}`,
+        {
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-        });
-        if (!res.ok) throw new Error('Failed to fetch bookings');
-        const data = (await res.json()) as GroupedResponse;
+        }
+      );
+      if (!res.ok) throw new Error(`Failed to fetch ${activeTab} bookings`);
+      const data = (await res.json()) as any;
+      setBookings(data.bookings || []);
+      setTotalCount(data.total_count || 0);
+      setTotalPages(data.total_pages || 1);
 
-        const rawAll: Booking[] = [
-          ...(data.accepted?.bookings || []),
-          ...(data.on_the_way?.bookings || []),
-          ...(data.active?.bookings || []),
-          ...(data.paused?.bookings || []),
-          ...(data.finished?.bookings || []),
-          ...(data.pending_payment?.bookings || []),
-          ...(data.completed?.bookings || []),
-          ...(data.cancelled?.bookings || []),
-          ...(data.reworked?.bookings || []),
-          ...(data.disputed?.bookings || []),
-        ];
-        const seen = new Set<number>();
-        const all = rawAll.filter((b) => {
-          if (seen.has(b.id)) return false;
-          seen.add(b.id);
-          return true;
-        });
-        setBookings(all);
-        setCounts({
-          all: data.total_count || all.length,
-          accepted: (data.accepted?.count || 0),
-          on_going:
-            (data.on_the_way?.count || 0) +
-            (data.active?.count || 0) +
-            (data.paused?.count || 0),
-          completed: (data.completed?.count || 0),
-          cancelled: (data.cancelled?.count || 0),
-        });
-      } else if (activeTab === 'on_going') {
-        const [r1, r2] = await Promise.all([
-          fetch(`${API_URL}/bookings/shopowner/bookings/?status=on_the_way`, {
+      if (statusQuery === 'cancelled') {
+        try {
+          const declRes = await fetch(`${API_URL}/bookings/shopowner/requests/declined/`, {
             credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
-          }),
-          fetch(`${API_URL}/bookings/shopowner/bookings/?status=active`, {
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-          }),
-        ]);
-        if (!r1.ok || !r2.ok) throw new Error('Failed to fetch on-going bookings');
-        const d1 = (await r1.json()) as FilteredResponse;
-        const d2 = (await r2.json()) as FilteredResponse;
-        const merged = [...(d1.bookings || [])];
-        const ids = new Set(merged.map((b) => b.id));
-        (d2.bookings || []).forEach((b) => {
-          if (!ids.has(b.id)) merged.push(b);
-        });
-        setBookings(merged);
-      } else {
-        if (activeTab === 'completed') {
-          // Mechanic "Finish Job" moves booking to `pending_payment`.
-          // For the shop owner UX, we show both pending_payment + completed
-          // inside the "Completed" tab.
-          const [r1, r2, r3] = await Promise.all([
-            fetch(`${API_URL}/bookings/shopowner/bookings/?status=completed`, {
-              credentials: 'include',
-              headers: { 'Content-Type': 'application/json' },
-            }),
-            fetch(`${API_URL}/bookings/shopowner/bookings/?status=pending_payment`, {
-              credentials: 'include',
-              headers: { 'Content-Type': 'application/json' },
-            }),
-            fetch(`${API_URL}/bookings/shopowner/bookings/?status=finished`, {
-              credentials: 'include',
-              headers: { 'Content-Type': 'application/json' },
-            }),
-          ]);
-          if (!r1.ok || !r2.ok || !r3.ok) throw new Error('Failed to fetch completed bookings');
-
-          const d1 = (await r1.json()) as FilteredResponse;
-          const d2 = (await r2.json()) as FilteredResponse;
-          const d3 = (await r3.json()) as FilteredResponse;
-
-          const merged = [...(d1.bookings || []), ...(d2.bookings || []), ...(d3.bookings || [])];
-          const seen = new Set<number>();
-          const deduped = merged.filter((b) => {
-            if (seen.has(b.id)) return false;
-            seen.add(b.id);
-            return true;
           });
-          setBookings(deduped);
-        } else {
-          const statusQuery = activeTab;
-          const res = await fetch(
-            `${API_URL}/bookings/shopowner/bookings/?status=${statusQuery}`,
-            {
-              credentials: 'include',
-              headers: { 'Content-Type': 'application/json' },
-            }
-          );
-          if (!res.ok) throw new Error(`Failed to fetch ${activeTab} bookings`);
-          const data = (await res.json()) as FilteredResponse;
-          setBookings(data.bookings || []);
-
-          if (statusQuery === 'cancelled') {
-            try {
-              const declRes = await fetch(`${API_URL}/bookings/shopowner/requests/declined/`, {
-                credentials: 'include',
-                headers: { 'Content-Type': 'application/json' },
-              });
-              if (declRes.ok) {
-                const declData = (await declRes.json()) as { declined_requests: PendingRequest[] };
-                setDeclinedRequests(declData.declined_requests || []);
-              } else {
-                setDeclinedRequests([]);
-              }
-            } catch {
-              setDeclinedRequests([]);
-            }
+          if (declRes.ok) {
+            const declData = (await declRes.json()) as { declined_requests: PendingRequest[] };
+            setDeclinedRequests(declData.declined_requests || []);
           } else {
             setDeclinedRequests([]);
           }
+        } catch {
+          setDeclinedRequests([]);
         }
+      } else {
+        setDeclinedRequests([]);
+      }
+
+      if (data.tab_counts) {
+        setCounts({
+          all: data.total_count || 0,
+          booked: data.tab_counts.accepted || 0,
+          on_going: (data.tab_counts.on_the_way || 0) + (data.tab_counts.active || 0),
+          completed: data.tab_counts.completed || 0,
+          cancelled: data.tab_counts.cancelled || 0,
+          reworked: data.tab_counts.reworked || 0,
+          disputed: data.tab_counts.disputed || 0,
+        });
       }
     } catch (e: any) {
       setError(e.message);
@@ -316,17 +242,32 @@ export default function ShopOwnerJobsScreen() {
 
   const onRefresh = () => {
     setRefreshing(true);
-    if (activeTab === 'requests') {
+    if (activeTab === 'pending') {
       fetchRequests();
     } else {
       fetchBookings();
     }
   };
 
+  const fetchData = useCallback(() => {
+    if (activeTab === 'pending') fetchRequests();
+    else fetchBookings();
+  }, [activeTab, currentPage]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchData();
+    }, [fetchData])
+  );
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
   // ── Status helpers ──
   const getStatusLabel = (s: string) => {
     const map: Record<string, string> = {
-      accepted: 'Accepted',
+      accepted: 'Booked',
       active: 'Active',
       on_the_way: 'On the Way',
       paused: 'Paused',
@@ -377,23 +318,23 @@ export default function ShopOwnerJobsScreen() {
     return Array.isArray(am) && am.length > 0;
   };
 
-  /** Accepted tab: still `accepted` in API, but show "Assigned" once mechanics are linked. */
+  /** Booked tab: still `accepted` in API, but show "Assigned" once mechanics are linked. */
   const getCardStatusLabel = (b: Booking) => {
-    if (activeTab === 'accepted' && b.status === 'accepted' && hasRequestAssignments(b)) {
+    if (activeTab === 'booked' && b.status === 'accepted' && hasRequestAssignments(b)) {
       return 'Assigned';
     }
     return getStatusLabel(b.status);
   };
 
   const getCardStatusColor = (b: Booking) => {
-    if (activeTab === 'accepted' && b.status === 'accepted' && hasRequestAssignments(b)) {
+    if (activeTab === 'booked' && b.status === 'accepted' && hasRequestAssignments(b)) {
       return '#34C759';
     }
     return getStatusColor(b.status);
   };
 
   const getCardStatusIcon = (b: Booking) => {
-    if (activeTab === 'accepted' && b.status === 'accepted' && hasRequestAssignments(b)) {
+    if (activeTab === 'booked' && b.status === 'accepted' && hasRequestAssignments(b)) {
       return 'users';
     }
     return getStatusIcon(b.status);
@@ -450,6 +391,15 @@ export default function ShopOwnerJobsScreen() {
 
   const handleAssignMechanic = async (accountId: number, role: 'lead' | 'assistant') => {
     if (!assignRequestId) return;
+    const leadCount = assignments.filter((a) => a.role === 'lead').length;
+    if (role === 'assistant' && assignments.length === 0) {
+      showNotification({ type: 'error', message: 'First assigned mechanic must be a lead.' });
+      return;
+    }
+    if (role === 'assistant' && leadCount === 0) {
+      showNotification({ type: 'error', message: 'At least one lead is required.' });
+      return;
+    }
     setAssigningId(accountId);
     try {
       const res = await fetch(
@@ -477,7 +427,10 @@ export default function ShopOwnerJobsScreen() {
             ...booking,
             request: {
               ...booking.request,
-              assigned_mechanics: [...am, { id: row.id, role: row.role }],
+              assigned_mechanics: [
+                ...am,
+                { id: row.id, role: row.role, mechanic: { id: row.mechanic.id } },
+              ],
             },
           };
         })
@@ -491,6 +444,14 @@ export default function ShopOwnerJobsScreen() {
 
   const handleUnassign = async (assignmentId: number) => {
     if (!assignRequestId) return;
+    const target = assignments.find((a) => a.id === assignmentId);
+    if (target?.role === 'lead') {
+      const leadCount = assignments.filter((a) => a.role === 'lead').length;
+      if (leadCount <= 1) {
+        showNotification({ type: 'error', message: 'At least one lead must remain assigned.' });
+        return;
+      }
+    }
     try {
       const res = await fetch(
         `${API_URL}/bookings/requests/${assignRequestId}/assignments/${assignmentId}/remove/`,
@@ -568,7 +529,7 @@ export default function ShopOwnerJobsScreen() {
       setPendingRequests((prev) => prev.filter((p) => p.id !== r.id));
       // After accepting, move job to Accepted tab and refresh bookings there
       showNotification({ type: 'success', message: data.message || 'Request accepted' });
-      setActiveTab('accepted');
+      setActiveTab('booked');
     } catch {
       showNotification({ type: 'error', message: 'Network error' });
     } finally {
@@ -623,11 +584,13 @@ export default function ShopOwnerJobsScreen() {
   // ── Tab bar ──
   const tabConfig: { key: TabType; label: string; icon: string }[] = [
     { key: 'all', label: 'All', icon: 'th-list' },
-    { key: 'requests', label: 'Pending', icon: 'envelope' },
-    { key: 'accepted', label: 'Accepted', icon: 'calendar-check-o' },
+    { key: 'pending', label: 'Pending', icon: 'envelope' },
+    { key: 'booked', label: 'Booked', icon: 'calendar-check-o' },
     { key: 'on_going', label: 'On Going', icon: 'play-circle' },
     { key: 'completed', label: 'Completed', icon: 'check-circle' },
     { key: 'cancelled', label: 'Cancelled', icon: 'times-circle' },
+    { key: 'reworked', label: 'Reworked', icon: 'refresh' },
+    { key: 'disputed', label: 'Disputed', icon: 'exclamation-circle' },
   ];
 
   return (
@@ -637,7 +600,7 @@ export default function ShopOwnerJobsScreen() {
         <View>
           <ThemedText style={styles.headerTitle}>Jobs</ThemedText>
           <ThemedText style={styles.headerSub}>
-            {activeTab === 'requests'
+            {activeTab === 'pending'
               ? `${listToShow.length} pending request${listToShow.length !== 1 ? 's' : ''}`
               : `${bookings.length} ${activeTab === 'all' ? 'total' : activeTab} job${
                   bookings.length !== 1 ? 's' : ''
@@ -704,7 +667,7 @@ export default function ShopOwnerJobsScreen() {
               <ThemedText style={styles.retryText}>Retry</ThemedText>
             </TouchableOpacity>
           </View>
-        ) : activeTab === 'requests' ? (
+        ) : activeTab === 'pending' ? (
           <>
             {/* Inner tabs for Requests: Custom / Direct / Broadcast */}
             <View style={styles.requestTabsWrapper}>
@@ -969,8 +932,7 @@ export default function ShopOwnerJobsScreen() {
                         })
                       }
                     >
-                      <ThemedText style={[styles.assignBtnText, { color: '#FF8C00' }]}>Details</ThemedText>
-                      <FontAwesome name="chevron-right" size={11} color="#FF8C00" />
+                      <ThemedText style={[styles.assignBtnText, { color: '#FF8C00' }]}>Details &gt;</ThemedText>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -1063,27 +1025,44 @@ export default function ShopOwnerJobsScreen() {
                         })
                       }
                     >
-                      <ThemedText style={[styles.assignBtnText, { color: '#FF8C00' }]}>Details</ThemedText>
-                      <FontAwesome name="chevron-right" size={11} color="#FF8C00" />
+                      <ThemedText style={[styles.assignBtnText, { color: '#FF8C00' }]}>Details &gt;</ThemedText>
                     </TouchableOpacity>
 
-                    {activeTab === 'on_going' || activeTab === 'all' ? null : (
-                      ['accepted', 'on_the_way', 'active', 'paused'].includes(b.status) && (
-                        <TouchableOpacity
-                          style={styles.assignBtn}
-                          onPress={() => openAssignModal(b.request.id)}
-                        >
-                          <FontAwesome name="users" size={12} color="#FF9500" />
-                          <ThemedText style={styles.assignBtnText}>Assign</ThemedText>
-                        </TouchableOpacity>
-                      )
-                    )}
+                    {b.status === 'accepted' ? (
+                      <TouchableOpacity
+                        style={styles.assignBtn}
+                        onPress={() => openAssignModal(b.request.id)}
+                      >
+                        <ThemedText style={styles.assignBtnText}>Assign</ThemedText>
+                      </TouchableOpacity>
+                    ) : null}
                   </View>
                 </View>
               </View>
             ))}
           </View>
         )}
+        {activeTab !== 'pending' && !loading && !error && totalPages > 1 ? (
+          <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 12, marginTop: 14 }}>
+            <TouchableOpacity
+              style={[styles.assignBtn, currentPage <= 1 ? { opacity: 0.45 } : null]}
+              onPress={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              disabled={currentPage <= 1}
+            >
+              <ThemedText style={styles.assignBtnText}>Prev</ThemedText>
+            </TouchableOpacity>
+            <ThemedText style={{ color: '#A0A0A0', fontSize: 12 }}>
+              Page {currentPage} of {totalPages} ({totalCount})
+            </ThemedText>
+            <TouchableOpacity
+              style={[styles.assignBtn, currentPage >= totalPages ? { opacity: 0.45 } : null]}
+              onPress={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              disabled={currentPage >= totalPages}
+            >
+              <ThemedText style={styles.assignBtnText}>Next</ThemedText>
+            </TouchableOpacity>
+          </View>
+        ) : null}
           <View style={{ height: 20 }} />
         </ScrollView>
       </View>
@@ -1381,7 +1360,6 @@ const styles = StyleSheet.create({
   assignBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
     backgroundColor: '#FF950020',
     paddingHorizontal: 14,
     paddingVertical: 8,
