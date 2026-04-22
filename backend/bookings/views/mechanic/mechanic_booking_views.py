@@ -1885,6 +1885,52 @@ def _serialize_pending_direct_requests(account):
     return results
 
 
+def _serialize_mechanic_booking_list(bookings_queryset):
+    """
+    Lightweight booking serializer for mechanic list endpoints.
+    Keeps payload small and avoids heavy per-booking queries used by detail views.
+    """
+    rows = []
+    for booking in bookings_queryset:
+        loc = booking.request.service_location
+        rows.append(
+            {
+                "id": booking.id,
+                "status": booking.status,
+                "dispute_status": booking.dispute_status,
+                "amount_fee": float(booking.amount_fee),
+                "booked_at": booking.booked_at.isoformat() if booking.booked_at else None,
+                "updated_at": booking.updated_at.isoformat() if booking.updated_at else None,
+                "completed_at": booking.completed_at.isoformat() if booking.completed_at else None,
+                "request": {
+                    "id": booking.request.id,
+                    "type": booking.request.request_type,
+                    "created_at": booking.request.created_at.isoformat() if booking.request.created_at else None,
+                },
+                "service_location": (
+                    {
+                        "street_name": loc.street_name,
+                        "barangay": loc.barangay,
+                        "city_municipality": loc.city_municipality,
+                    }
+                    if loc
+                    else None
+                ),
+                "active_details": (
+                    {"is_job_done": bool(getattr(booking.activebooking, "is_job_done", False))}
+                    if hasattr(booking, "activebooking")
+                    else None
+                ),
+                "dispute_details": (
+                    {"dispute_status": booking.disputebooking.status}
+                    if hasattr(booking, "disputebooking")
+                    else None
+                ),
+            }
+        )
+    return rows
+
+
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def list_mechanic_bookings(request):
@@ -1905,6 +1951,8 @@ def list_mechanic_bookings(request):
     page = int(request.query_params.get("page", 1))
     # Default page size for mechanic listing set to 5
     page_size = int(request.query_params.get("page_size", 5))
+    compact_param = str(request.query_params.get("compact", "1")).strip().lower()
+    compact_mode = compact_param not in {"0", "false", "no"}
 
     # All bookings where this mechanic is the provider
     bookings_queryset = (
@@ -1923,6 +1971,11 @@ def list_mechanic_bookings(request):
         .distinct()
         .order_by("-booked_at")
     )
+
+    def serialize_booking_list(rows_queryset):
+        if compact_mode:
+            return _serialize_mechanic_booking_list(rows_queryset)
+        return _serialize_bookings(rows_queryset, viewer_account=account)
 
     if status_filter:
         # "all" status: paginate across every booking + pending requests
@@ -1951,7 +2004,7 @@ def list_mechanic_bookings(request):
                     _mechanic_booking_access_q(account),
                     backjob__status=Booking.Status.REWORKED,
                 ).distinct().order_by("-booked_at")
-                backjob_pending = _serialize_bookings(backjob_qs, viewer_account=account)
+                backjob_pending = serialize_booking_list(backjob_qs)
                 all_pending = direct_pending + backjob_pending
                 pending_slice = all_pending[start_index:min(end_index, pending_count)]
                 paginated.extend(pending_slice)
@@ -1961,7 +2014,7 @@ def list_mechanic_bookings(request):
                 booking_start = max(0, start_index - pending_count)
                 booking_end = end_index - pending_count
                 bookings_slice = bookings_queryset.exclude(backjob__isnull=False)[booking_start:booking_end]
-                paginated.extend(_serialize_bookings(bookings_slice, viewer_account=account))
+                paginated.extend(serialize_booking_list(bookings_slice))
 
             # Include tab counts so frontend doesn't need a separate request
             accepted_count = bookings_queryset.filter(status="accepted").count()
@@ -2014,7 +2067,7 @@ def list_mechanic_bookings(request):
                 _mechanic_booking_access_q(account),
                 backjob__status=Booking.Status.REWORKED,
             ).distinct().order_by("-booked_at")
-            backjob_pending = _serialize_bookings(backjob_qs, viewer_account=account)
+            backjob_pending = serialize_booking_list(backjob_qs)
             all_pending = direct_pending + backjob_pending
             total_count = len(all_pending)
             total_pages = (total_count + page_size - 1) // page_size if page_size > 0 else 0
@@ -2046,7 +2099,7 @@ def list_mechanic_bookings(request):
             start_index = (page - 1) * page_size
             end_index = start_index + page_size
             paginated_bookings = bookings_queryset[start_index:end_index]
-            bookings_data = _serialize_bookings(paginated_bookings, viewer_account=account)
+            bookings_data = serialize_booking_list(paginated_bookings)
             return Response(
                 {
                     "status": "on_going",
@@ -2104,7 +2157,7 @@ def list_mechanic_bookings(request):
         start_index = (page - 1) * page_size
         end_index = start_index + page_size
         paginated_bookings = bookings_queryset[start_index:end_index]
-        bookings_data = _serialize_bookings(paginated_bookings, viewer_account=account)
+        bookings_data = serialize_booking_list(paginated_bookings)
 
         return Response(
             {

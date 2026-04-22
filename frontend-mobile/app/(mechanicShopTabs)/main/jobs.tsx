@@ -155,7 +155,7 @@ export default function MechanicShopJobsScreen() {
       else if (activeTab !== 'all') statusQuery = activeTab;
 
       const response = await fetch(
-        `${API_URL}/bookings/mechanic/bookings/?status=${statusQuery}&page=${currentPage}&page_size=${pageSize}`,
+        `${API_URL}/bookings/mechanic/bookings/?status=${statusQuery}&page=${currentPage}&page_size=${pageSize}&compact=1`,
         {
           method: 'GET',
           credentials: 'include',
@@ -479,15 +479,8 @@ export default function MechanicShopJobsScreen() {
                 style={{ marginRight: 6 }}
               />
               <ThemedText style={[styles.tabText, isActive && styles.activeTabText]}>
-                {JOB_TAB_LABELS[tabKey]}
+                {`${JOB_TAB_LABELS[tabKey]} ${count}`}
               </ThemedText>
-              {count > 0 && activeTab === 'all' && (
-                <View style={[styles.tabCount, isActive && styles.activeTabCount]}>
-                  <ThemedText style={[styles.tabCountText, isActive && styles.activeTabCountText]}>
-                    {count}
-                  </ThemedText>
-                </View>
-              )}
             </TouchableOpacity>
           );
         })}

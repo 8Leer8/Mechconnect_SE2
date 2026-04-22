@@ -18,6 +18,7 @@ import { Image } from 'expo-image';
 import { CashQRDisplayModal, PendingPaymentModal } from '@/components/payment';
 import { bookingHasBackjob, canOpenBookingChat } from '@/lib/bookingAccess';
 import { fetchBookingChatPreview } from '@/lib/bookingChatPreview';
+import { ensureForegroundLocationAccess } from '@/lib/locationPermission';
 import { fetchProfileDetailsCached } from '@/lib/profileCache';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -1084,8 +1085,8 @@ export default function BookingDetailScreen() {
 
   const buildMechanicLocationPayload = async (): Promise<Record<string, any>> => {
     try {
-      const permission = await Location.requestForegroundPermissionsAsync();
-      if (permission.status !== 'granted') return {};
+      const permission = await ensureForegroundLocationAccess();
+      if (!permission.granted) return {};
 
       const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       return {

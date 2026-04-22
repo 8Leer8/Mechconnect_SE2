@@ -7,6 +7,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { getDistanceKm } from '@/context/LocationContext';
+import { ensureForegroundLocationAccess } from '@/lib/locationPermission';
 // @ts-ignore
 import { styles } from '@/style/mechanic/emergencyLocationMapStyles.js';
 
@@ -54,8 +55,8 @@ export default function EmergencyLocationMapScreen() {
   const initializeMap = async () => {
     try {
       // Get user's current location
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status === 'granted') {
+      const permission = await ensureForegroundLocationAccess();
+      if (permission.granted) {
         const location = await Location.getCurrentPositionAsync({});
         setUserLocation({
           latitude: location.coords.latitude,

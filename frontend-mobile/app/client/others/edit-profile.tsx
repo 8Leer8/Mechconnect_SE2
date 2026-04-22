@@ -21,6 +21,7 @@ import { ThemedView } from '@/components/themed-view';
 import { ThemedText } from '@/components/themed-text';
 import { useNotification } from '@/hooks/useNotification';
 import { getImageUrl } from '@/lib/imageUtils';
+import { ensureForegroundLocationAccess } from '@/lib/locationPermission';
 import { reverseGeocodeAddress, type ParsedLocationAddress } from '@/lib/locationAddress';
 import { fetchProfileDetailsCached } from '@/lib/profileCache';
 import { geocodeAddressFields } from '@/utils/geocodeAddress';
@@ -490,8 +491,8 @@ export default function EditProfileScreen() {
     setMapLocating(true);
 
     try {
-      const permission = await Location.requestForegroundPermissionsAsync();
-      if (permission.status === 'granted') {
+      const permission = await ensureForegroundLocationAccess();
+      if (permission.granted) {
         const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
         const nextRegion: Region = {
           latitude: current.coords.latitude,

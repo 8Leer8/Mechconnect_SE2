@@ -6,6 +6,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { FontAwesome } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { ensureForegroundLocationAccess } from '@/lib/locationPermission';
 
 export const screenOptions = { headerShown: false } as const;
 
@@ -571,8 +572,8 @@ export default function BookingLocationMapScreen() {
           return MANILA_FALLBACK;
         }
 
-        const permission = await Location.requestForegroundPermissionsAsync();
-        if (permission.status !== 'granted') {
+        const permission = await ensureForegroundLocationAccess();
+        if (!permission.granted) {
           if (bookingStatusIsLiveTracking(currentStatus)) {
             openTrackingPermissionModal('Location permission is required for live tracking. Please allow location access.');
           }
@@ -951,8 +952,8 @@ export default function BookingLocationMapScreen() {
             return;
           }
 
-          const permission = await Location.requestForegroundPermissionsAsync();
-          if (permission.status !== 'granted') {
+          const permission = await ensureForegroundLocationAccess();
+          if (!permission.granted) {
             openTrackingPermissionModal('Location permission is required for live tracking. Please allow location access.');
             return;
           }

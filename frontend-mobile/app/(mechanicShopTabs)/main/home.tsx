@@ -71,6 +71,7 @@ interface MechanicStatsResponse {
 
 export default function MechanicShopDashboardScreen() {
   const [loading, setLoading] = useState(true);
+  const [jobsLoading, setJobsLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [shopInfo, setShopInfo] = useState<ShopInfo>({ shop_id: null, shop_name: null });
   const [mechanicName, setMechanicName] = useState<string>('Mechanic');
@@ -130,18 +131,16 @@ export default function MechanicShopDashboardScreen() {
     return 'Good Evening';
   };
 
-  const fetchDashboardData = useCallback(async () => {
+  const fetchProfileAndStats = useCallback(async () => {
     try {
       const options = {
         method: 'GET',
         credentials: 'include' as RequestCredentials,
         headers: { 'Content-Type': 'application/json' },
       };
-
-      const [profileResponse, statsResponse, allBookingsResponse] = await Promise.all([
+      const [profileResponse, statsResponse] = await Promise.all([
         fetchProfileDetailsCached(false),
         fetch(`${API_URL}/bookings/mechanic/bookings/`, options),
-        fetch(`${API_URL}/bookings/mechanic/bookings/?status=all&page=1&page_size=25`, options),
       ]);
 
       if (profileResponse) {
@@ -168,31 +167,55 @@ export default function MechanicShopDashboardScreen() {
         setCompletedCount(Number(statsData.completed?.count) || 0);
         setTotalEarnings(Number(statsData.total_earnings) || 0);
       }
-
-      if (allBookingsResponse.ok) {
-        const allBookingsData = (await allBookingsResponse.json()) as BookingListResponse;
-        const bookings = allBookingsData.bookings || [];
-        setAllJobs(bookings);
-        setRecentJobs(bookings.slice(0, 4));
-
-        const today = dateKey(new Date().toISOString());
-        const todays = bookings.filter((booking) => dateKey(booking.booked_at) === today);
-        setTodayCount(todays.length);
-
-        const openStatuses = new Set(['accepted', 'on_the_way', 'at_location', 'diagnosing', 'active', 'paused', 'pending_payment']);
-        const nextOpen = bookings
-          .filter((booking) => openStatuses.has(booking.status))
-          .sort((a, b) => new Date(a.booked_at).getTime() - new Date(b.booked_at).getTime());
-
-        setNextJob(nextOpen.length > 0 ? nextOpen[0] : null);
-      }
     } catch (error) {
-      console.error('Error fetching dashboard data:', error);
+      console.error('Error fetching profile/stats:', error);
+    }
+  }, []);
+
+  const fetchJobsData = useCallback(async () => {
+    try {
+      const options = {
+        method: 'GET',
+        credentials: 'include' as RequestCredentials,
+        headers: { 'Content-Type': 'application/json' },
+      };
+      setJobsLoading(true);
+      const allBookingsResponse = await fetch(
+        `${API_URL}/bookings/mechanic/bookings/?status=all&page=1&page_size=12&compact=1`,
+        options
+      );
+      if (!allBookingsResponse.ok) return;
+
+      const allBookingsData = (await allBookingsResponse.json()) as BookingListResponse;
+      const bookings = allBookingsData.bookings || [];
+      setAllJobs(bookings);
+      setRecentJobs(bookings.slice(0, 4));
+
+      const today = dateKey(new Date().toISOString());
+      const todays = bookings.filter((booking) => dateKey(booking.booked_at) === today);
+      setTodayCount(todays.length);
+
+      const openStatuses = new Set(['accepted', 'on_the_way', 'at_location', 'diagnosing', 'active', 'paused', 'pending_payment']);
+      const nextOpen = bookings
+        .filter((booking) => openStatuses.has(booking.status))
+        .sort((a, b) => new Date(a.booked_at).getTime() - new Date(b.booked_at).getTime());
+      setNextJob(nextOpen.length > 0 ? nextOpen[0] : null);
+    } catch (error) {
+      console.error('Error fetching jobs list:', error);
+    } finally {
+      setJobsLoading(false);
+    }
+  }, []);
+
+  const fetchDashboardData = useCallback(async () => {
+    try {
+      await fetchProfileAndStats();
+      await fetchJobsData();
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [fetchProfileAndStats, fetchJobsData]);
 
   useEffect(() => {
     fetchDashboardData();
@@ -201,9 +224,10 @@ export default function MechanicShopDashboardScreen() {
   // Re-fetch when a WebSocket booking update arrives
   useEffect(() => {
     if (lastMessage?.type === 'booking_update') {
-      fetchDashboardData();
+      fetchJobsData();
+      fetchProfileAndStats();
     }
-  }, [lastMessage, fetchDashboardData]);
+  }, [lastMessage, fetchJobsData, fetchProfileAndStats]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -334,7 +358,11 @@ export default function MechanicShopDashboardScreen() {
         {/* Next Assigned Job */}
         <View style={styles.section}>
           <ThemedText style={styles.sectionTitle}>Next Assigned Job</ThemedText>
-          {nextJob ? (
+          {jobsLoading ? (
+            <View style={styles.emptyStateCompact}>
+              <ThemedText style={styles.emptyCompactText}>Loading next job...</ThemedText>
+            </View>
+          ) : nextJob ? (
             <TouchableOpacity style={styles.nextJobCard} onPress={() => router.push('/(mechanicShopTabs)/main/jobs')}>
               <View style={styles.nextJobTop}>
                 <View style={[styles.nextJobStatusDot, { backgroundColor: getStatusColor(nextJob.status) }]} />
@@ -404,7 +432,11 @@ export default function MechanicShopDashboardScreen() {
         {/* Recent Activity */}
         <View style={styles.section}>
           <ThemedText style={styles.sectionTitle}>Recent Activity</ThemedText>
-          {recentJobs.length > 0 ? (
+          {jobsLoading ? (
+            <View style={styles.emptyState}>
+              <ThemedText style={styles.emptyText}>Loading recent activity...</ThemedText>
+            </View>
+          ) : recentJobs.length > 0 ? (
             recentJobs.map((job) => (
               <View key={job.id} style={styles.activityRow}>
                 <View style={[styles.activityDot, { backgroundColor: getStatusColor(job.status) }]} />

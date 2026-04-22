@@ -8,6 +8,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { useNotification } from '@/hooks/useNotification';
 import { reverseGeocodeAddress } from '@/lib/locationAddress';
+import { ensureForegroundLocationAccess } from '@/lib/locationPermission';
 import { styles } from '@/style/client/directRequestMapStyles';
 import { useLocation } from '@/context/LocationContext';
 
@@ -90,8 +91,8 @@ export default function DirectRequestMapScreen() {
     setAsSelected: boolean;
   }) => {
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
+      const permission = await ensureForegroundLocationAccess();
+      if (!permission.granted) {
         showNotification({
           type: 'warning',
           message: 'Location permission is needed. Showing default map area.',
