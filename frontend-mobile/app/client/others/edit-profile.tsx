@@ -15,7 +15,6 @@ import * as ImagePicker from 'expo-image-picker';
 import { FontAwesome } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import MapView, { PROVIDER_GOOGLE, type Region } from 'react-native-maps';
-import { useFocusEffect } from '@react-navigation/native';
 
 import ThemedSelectModal from '@/components/ThemedSelectModal';
 import { ThemedView } from '@/components/themed-view';
@@ -181,10 +180,9 @@ const EMPTY_FORM: FormState = {
 export default function EditProfileScreen() {
   const { showNotification } = useNotification();
   const {
-    selectedLocation,
     setSelectedLocation,
-    selectedLocationPurpose,
     setSelectedLocationPurpose,
+    branchMutationToken,
   } = useLocation();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -622,11 +620,11 @@ export default function EditProfileScreen() {
     if (branchSaving) return;
     setSelectedLocation(null);
     setSelectedLocationPurpose('branch');
-    router.push('/client/request/direct/map');
+    router.push(`/client/request/direct/map?purpose=branch&role=${activeRole}`);
   };
 
   const refreshBranches = useCallback(async () => {
-    const response = await fetch(`${API_URL}/users/profile/branches/`, {
+    const response = await fetch(`${API_URL}/users/profile/branches/?branch_type=${activeRole}`, {
       method: 'GET',
       credentials: 'include',
     });
@@ -639,64 +637,11 @@ export default function EditProfileScreen() {
     setBranchAddresses(payload.addresses || []);
   }, [API_URL]);
 
-  const syncBranchFromSelectedLocation = useCallback(async () => {
-    if (selectedLocationPurpose !== 'branch' || !selectedLocation) {
-      return;
-    }
-
-    setBranchSaving(true);
-    try {
-      const response = await fetch(`${API_URL}/users/profile/branches/`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          lat: selectedLocation.latitude,
-          lng: selectedLocation.longitude,
-          formatted_address: selectedLocation.address,
-          barangay: selectedLocation.barangay || '',
-        }),
-      });
-
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(payload?.error || 'Failed to add branch');
-      }
-
-      await refreshBranches();
-      showNotification({ type: 'success', message: 'Branch added successfully.' });
-    } catch (error) {
-      showNotification({
-        type: 'error',
-        title: 'Branch Add Failed',
-        message: error instanceof Error ? error.message : 'Failed to add branch',
-      });
-    } finally {
-      setBranchSaving(false);
-      setSelectedLocationPurpose(null);
-      setSelectedLocation(null);
-    }
-  }, [
-    API_URL,
-    refreshBranches,
-    selectedLocation,
-    selectedLocationPurpose,
-    setSelectedLocation,
-    setSelectedLocationPurpose,
-    showNotification,
-  ]);
-
   useEffect(() => {
-    void syncBranchFromSelectedLocation();
-  }, [syncBranchFromSelectedLocation]);
-
-  useFocusEffect(
-    useCallback(() => {
-      if (selectedLocationPurpose === 'branch' && !selectedLocation) {
-        setSelectedLocationPurpose(null);
-      }
-    }, [selectedLocation, selectedLocationPurpose, setSelectedLocationPurpose])
-  );
+    if (branchMutationToken > 0) {
+      void refreshBranches();
+    }
+  }, [branchMutationToken, refreshBranches]);
 
   const buildFile = (uri: string, fallbackName: string) => {
     const fileName = uri.split('/').pop() || fallbackName;

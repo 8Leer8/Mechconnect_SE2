@@ -13,7 +13,7 @@ from services.serializers import ServiceAddOnPublicSerializer
 from MainBackend.storage_utils import get_media_url
 
 
-def _serialize_addresses(account):
+def _serialize_addresses(account, branch_type='shop_owner'):
     addresses = []
     main_address = getattr(account, 'accountaddress', None)
     if main_address:
@@ -24,6 +24,8 @@ def _serialize_addresses(account):
     branch_locations = getattr(account, 'branch_locations', None)
     if branch_locations is not None:
         for branch in branch_locations.all().order_by('created_at'):
+            if branch.branch_type != branch_type:
+                continue
             branch_data = AccountBranchLocationSerializer(branch).data
             branch_data['address_type'] = 'branch'
             addresses.append(branch_data)

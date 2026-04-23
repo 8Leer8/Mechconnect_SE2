@@ -55,12 +55,17 @@ class AccountAddress(models.Model):
 
 
 class AccountBranchLocation(models.Model):
+    class BranchType(models.TextChoices):
+        MECHANIC = 'mechanic', 'Mechanic'
+        SHOP_OWNER = 'shop_owner', 'Shop Owner'
+
     account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name='branch_locations')
     lat = models.FloatField(null=True, blank=True)
     lng = models.FloatField(null=True, blank=True)
     formatted_address = models.TextField(null=True, blank=True)
     barangay = models.CharField(max_length=100, null=True, blank=True)
     label = models.CharField(max_length=50)
+    branch_type = models.CharField(max_length=20, choices=BranchType.choices, null=True, blank=True)
     is_main = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

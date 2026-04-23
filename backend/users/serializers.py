@@ -27,7 +27,7 @@ class AccountBranchLocationSerializer(serializers.ModelSerializer):
     class Meta:
         model = AccountBranchLocation
         fields = [
-            'id', 'label', 'is_main', 'lat', 'lng', 'formatted_address', 'barangay',
+            'id', 'label', 'branch_type', 'is_main', 'lat', 'lng', 'formatted_address', 'barangay',
             'created_at', 'updated_at'
         ]
 
@@ -182,6 +182,8 @@ class ProfileDetailSerializer(serializers.ModelSerializer):
 
     def get_addresses(self, obj):
         addresses = []
+        request = self.context.get('request')
+        active_role = request.session.get('active_role') if request else None
 
         main_address = getattr(obj, 'accountaddress', None)
         if main_address:
@@ -190,6 +192,8 @@ class ProfileDetailSerializer(serializers.ModelSerializer):
         branch_locations = getattr(obj, 'branch_locations', None)
         if branch_locations is not None:
             for branch in branch_locations.all().order_by('created_at'):
+                if active_role in {'mechanic', 'shop_owner'} and branch.branch_type != active_role:
+                    continue
                 branch_data = AccountBranchLocationSerializer(branch).data
                 branch_data['address_type'] = 'branch'
                 addresses.append(branch_data)
@@ -714,6 +718,8 @@ class MechanicProfileSerializer(serializers.ModelSerializer):
         branch_locations = getattr(account, 'branch_locations', None)
         if branch_locations is not None:
             for branch in branch_locations.all().order_by('created_at'):
+                if branch.branch_type != 'mechanic':
+                    continue
                 branch_data = AccountBranchLocationSerializer(branch).data
                 branch_data['address_type'] = 'branch'
                 addresses.append(branch_data)

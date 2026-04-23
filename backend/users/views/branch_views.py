@@ -15,6 +15,7 @@ class BranchUpsertSerializer(serializers.Serializer):
     formatted_address = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     barangay = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=100)
     label = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=50)
+    branch_type = serializers.ChoiceField(required=False, allow_blank=True, allow_null=True, choices=[('mechanic', 'Mechanic'), ('shop_owner', 'Shop Owner')])
 
 
 def _get_authenticated_account(request):
@@ -31,6 +32,13 @@ def _get_authenticated_account(request):
 
 def _can_manage_branches(account):
     return hasattr(account, 'mechanic') or hasattr(account, 'shopowner')
+
+
+def _branch_type_from_request(request):
+    branch_type = request.query_params.get('branch_type') or request.data.get('branch_type')
+    if branch_type in {'mechanic', 'shop_owner'}:
+        return branch_type
+    return None
 
 
 def _has_meaningful_address(instance):
@@ -67,7 +75,7 @@ def _renumber_branches(account):
             branch.save(update_fields=['label', 'updated_at'])
 
 
-def _serialize_addresses(account):
+def _serialize_addresses(account, branch_type=None):
     addresses = []
 
     main_address = getattr(account, 'accountaddress', None)
@@ -78,6 +86,8 @@ def _serialize_addresses(account):
 
     branches = account.branch_locations.order_by('created_at')
     for branch in branches:
+        if branch_type and branch.branch_type != branch_type:
+            continue
         branch_data = AccountBranchLocationSerializer(branch).data
         branch_data['address_type'] = 'branch'
         addresses.append(branch_data)
@@ -116,8 +126,10 @@ def profile_branches(request):
     if not _can_manage_branches(account):
         return Response({'error': 'Branch management is only available for mechanics and shop owners'}, status=status.HTTP_400_BAD_REQUEST)
 
+    branch_type = _branch_type_from_request(request)
+
     if request.method == 'GET':
-        return Response({'addresses': _serialize_addresses(account)}, status=status.HTTP_200_OK)
+        return Response({'addresses': _serialize_addresses(account, branch_type=branch_type)}, status=status.HTTP_200_OK)
 
     serializer = BranchUpsertSerializer(data=request.data)
     if not serializer.is_valid():
@@ -133,6 +145,7 @@ def profile_branches(request):
         formatted_address=(data.get('formatted_address') or '').strip() or None,
         barangay=(data.get('barangay') or '').strip() or None,
         label=label,
+        branch_type=data.get('branch_type') or branch_type,
         is_main=False,
     )
 
@@ -141,7 +154,7 @@ def profile_branches(request):
     return Response({
         'message': 'Branch added successfully',
         'branch': AccountBranchLocationSerializer(branch).data,
-        'addresses': _serialize_addresses(account),
+        'addresses': _serialize_addresses(account, branch_type=branch.branch_type),
     }, status=status.HTTP_201_CREATED)
 
 
@@ -162,7 +175,7 @@ def profile_branch_detail(request, branch_id):
     if request.method == 'DELETE':
         branch.delete()
         _renumber_branches(account)
-        return Response({'message': 'Branch deleted successfully', 'addresses': _serialize_addresses(account)}, status=status.HTTP_200_OK)
+        return Response({'message': 'Branch deleted successfully', 'addresses': _serialize_addresses(account, branch_type=branch.branch_type)}, status=status.HTTP_200_OK)
 
     serializer = BranchUpsertSerializer(data=request.data, partial=True)
     if not serializer.is_valid():
@@ -196,7 +209,7 @@ def profile_branch_detail(request, branch_id):
     return Response({
         'message': 'Branch updated successfully',
         'branch': AccountBranchLocationSerializer(branch).data,
-        'addresses': _serialize_addresses(account),
+        'addresses': _serialize_addresses(account, branch_type=branch.branch_type),
     }, status=status.HTTP_200_OK)
 
 
@@ -255,6 +268,7 @@ def set_main_branch(request, branch_id):
                 formatted_address=previous_main_snapshot.get('formatted_address'),
                 barangay=previous_main_snapshot.get('barangay'),
                 label=_next_branch_label(account),
+                branch_type=branch.branch_type,
                 is_main=False,
             )
 
@@ -263,4 +277,4 @@ def set_main_branch(request, branch_id):
     return Response({
         'message': 'Main branch updated successfully',
         'addresses': _serialize_addresses(account),
-    }, status=status.HTTP_200_OK)
+    }, status=status.HTTP_200_OK)   

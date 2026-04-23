@@ -20,6 +20,8 @@ interface LocationContextType {
   setSelectedLocation: (location: LocationData | null) => void;
   selectedLocationPurpose: 'branch' | null;
   setSelectedLocationPurpose: (purpose: 'branch' | null) => void;
+  branchMutationToken: number;
+  notifyBranchMutation: () => void;
   mechanicLocation: MechanicLocation | null;
   setMechanicLocation: (location: MechanicLocation | null) => void;
 }
@@ -29,7 +31,12 @@ const LocationContext = createContext<LocationContextType | undefined>(undefined
 export function LocationProvider({ children }: { children: ReactNode }) {
   const [selectedLocation, setSelectedLocation] = useState<LocationData | null>(null);
   const [selectedLocationPurpose, setSelectedLocationPurpose] = useState<'branch' | null>(null);
+  const [branchMutationToken, setBranchMutationToken] = useState(0);
   const [mechanicLocation, setMechanicLocation] = useState<MechanicLocation | null>(null);
+
+  const notifyBranchMutation = () => {
+    setBranchMutationToken((current) => current + 1);
+  };
 
   const value = useMemo(
     () => ({
@@ -37,10 +44,12 @@ export function LocationProvider({ children }: { children: ReactNode }) {
       setSelectedLocation,
       selectedLocationPurpose,
       setSelectedLocationPurpose,
+      branchMutationToken,
+      notifyBranchMutation,
       mechanicLocation,
       setMechanicLocation,
     }),
-    [selectedLocation, selectedLocationPurpose, mechanicLocation]
+    [selectedLocation, selectedLocationPurpose, branchMutationToken, mechanicLocation]
   );
 
   return (
