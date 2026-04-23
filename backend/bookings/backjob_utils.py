@@ -4,6 +4,7 @@ from .models import Backjob, Booking
 
 
 LIVE_BACKJOB_STATUSES = {
+    Booking.Status.BACKJOB_PENDING,
     Booking.Status.REWORKED,
     Booking.Status.ACCEPTED,
     Booking.Status.ON_THE_WAY,

@@ -85,6 +85,7 @@ class Booking(models.Model):
         FINISHED = "finished"        # Job finished, pending payment
         PENDING_PAYMENT = "pending_payment" # Pending payment
         COMPLETED = "completed"
+        BACKJOB_PENDING = "backjob_pending"
         REWORKED = "reworked"
         CANCELLED = "cancelled"
         DISPUTED = "disputed"
@@ -395,14 +396,58 @@ class Quotation(models.Model):
         REJECTED = "rejected"
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     notes = models.TextField(null=True, blank=True)
+    is_backjob = models.BooleanField(default=False)
+    original_labor_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    backjob_discount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    final_labor_total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     is_final = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    def recalculate_totals(self):
+        """
+        Keep labor and parts separated so backjob math is consistent.
+        For backjobs:
+        - labor is always discounted to 0
+        - parts remain payable
+        """
+        labor_total = 0
+        parts_total = 0
+        for item in self.items.exclude(status=self.Status.REJECTED):
+            line_total = item.line_total
+            if item.line_kind == QuotationItem.LineKind.SERVICE:
+                labor_total += line_total
+            else:
+                parts_total += line_total
+
+        self.original_labor_cost = labor_total
+        if self.is_backjob:
+            self.backjob_discount = -labor_total
+            self.final_labor_total = 0
+        else:
+            self.backjob_discount = 0
+            self.final_labor_total = labor_total
+
+        self.total_amount = parts_total + self.final_labor_total
+
 
 class QuotationItem(models.Model):
     quotation = models.ForeignKey(Quotation, on_delete=models.CASCADE, related_name='items')
+
+    class LineKind(models.TextChoices):
+        SERVICE = "service", "Service"
+        ITEM = "item", "Item"
+
+    class ItemSource(models.TextChoices):
+        ON_HAND = "on_hand", "On-hand (mechanic stock)"
+        TO_BE_PURCHASED = "to_be_purchased", "To be purchased"
+        MECHANIC_SELLING = "mechanic_selling", "Mechanic selling / owned spare"
+
+    line_kind = models.CharField(max_length=20, choices=LineKind.choices, default=LineKind.ITEM)
+    # For line_kind=item: where the part comes from (affects pricing / warranty flows later).
+    source = models.CharField(max_length=30, choices=ItemSource.choices, null=True, blank=True)
+
     # one of service or service_add_on may be set, or neither for free-text items
     service = models.ForeignKey('services.Service', on_delete=models.SET_NULL, null=True, blank=True)
     service_add_on = models.ForeignKey('services.ServiceAddOn', on_delete=models.SET_NULL, null=True, blank=True)
@@ -417,6 +462,8 @@ class QuotationItem(models.Model):
     previous_description = models.CharField(max_length=255, null=True, blank=True)
     previous_quantity = models.PositiveIntegerField(null=True, blank=True)
     previous_unit_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    purchase_receipt_image = models.ImageField(upload_to='bookings/quotation/receipts/', null=True, blank=True)
+    receipt_submitted_at = models.DateTimeField(null=True, blank=True)
 
     @property
     def line_total(self):

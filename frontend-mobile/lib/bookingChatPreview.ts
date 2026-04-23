@@ -15,6 +15,17 @@ export function formatChatPreviewContent(raw: string): string {
     try {
       const j = JSON.parse(trimmed) as Record<string, unknown>;
       const rawType = String(j.type || j.action || '').toLowerCase();
+      if (rawType === 'backjob_request') {
+        const who = typeof j.requested_by_name === 'string' && j.requested_by_name.trim() ? j.requested_by_name.trim() : 'Client';
+        const reason = typeof j.reason === 'string' ? j.reason.trim() : '';
+        return reason ? truncate(`Backjob request: ${who} - ${reason}`, 140) : `Backjob request from ${who}`;
+      }
+      if (rawType === 'backjob_accepted') {
+        return 'Backjob accepted';
+      }
+      if (rawType === 'backjob_declined') {
+        return 'Backjob declined';
+      }
       if (rawType.includes('quotation')) {
         if (rawType.includes('request')) return 'Quotation request sent';
         if (rawType.includes('accepted')) return 'Quotation accepted';

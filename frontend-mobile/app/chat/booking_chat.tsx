@@ -32,6 +32,7 @@ export default function BookingChatScreen() {
   const [accepting, setAccepting] = useState(false);
   const [acceptedLocks, setAcceptedLocks] = useState<number[]>([]);
   const [quotationActionLoading, setQuotationActionLoading] = useState<'accept' | 'reject' | null>(null);
+  const [backjobActionLoading, setBackjobActionLoading] = useState<'accept' | 'decline' | null>(null);
   const [expandedQuoteCards, setExpandedQuoteCards] = useState<Record<string, boolean>>({});
   const [isAssignedMechanicForBooking, setIsAssignedMechanicForBooking] = useState(false);
   const [didInitialScrollToLatest, setDidInitialScrollToLatest] = useState(false);
@@ -61,6 +62,28 @@ export default function BookingChatScreen() {
     });
     setVisibleMessageKeys(nextVisible);
   });
+
+  const parseStructuredContent = (raw: any): any | null => {
+    if (typeof raw !== 'string') return null;
+    try {
+      const first = JSON.parse(raw);
+      if (first && typeof first === 'object') return first;
+      if (typeof first === 'string') {
+        const nested = first.trim();
+        if (nested.startsWith('{')) {
+          try {
+            const second = JSON.parse(nested);
+            return second && typeof second === 'object' ? second : null;
+          } catch (e) {
+            return null;
+          }
+        }
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  };
 
   // Fetch profile or stored account id
   const fetchProfile = async (): Promise<number | null> => {
@@ -213,13 +236,17 @@ export default function BookingChatScreen() {
   const hasBackjobRequest = useMemo(() => {
     try {
       return messages.some(m => {
-        try {
-          const p = typeof m.content === 'string' ? JSON.parse(m.content) : null;
-          return p && p.type === 'backjob_request';
-        } catch (e) { return false; }
+        const p = parseStructuredContent(m.content);
+        return p && p.type === 'backjob_request';
       });
     } catch (e) { return false; }
   }, [messages]);
+
+  const canModerateBackjobRequest = useMemo(() => {
+    if (!canSendMessages) return false;
+    if (myChatRole === 'client' || myChatRole === 'assistant_mechanic' || myChatRole === 'shop_owner') return false;
+    return Boolean(isAssignedMechanicForBooking || myChatRole === 'lead_mechanic' || myChatRole === 'provider_mechanic');
+  }, [canSendMessages, myChatRole, isAssignedMechanicForBooking]);
 
   const canOpenQuotationEditor = useMemo(() => {
     if (!canSendMessages) return false;
@@ -276,6 +303,7 @@ export default function BookingChatScreen() {
 
   const handleAcceptConfirm = async () => {
     setAccepting(true);
+    setBackjobActionLoading('accept');
     try {
       const headers: any = { 'Content-Type': 'application/json' };
       try {
@@ -317,6 +345,45 @@ export default function BookingChatScreen() {
       Alert.alert('Error', 'Unable to accept backjob.');
     } finally {
       setAccepting(false);
+      setBackjobActionLoading(null);
+    }
+  };
+
+  const handleDeclineBackjobRequest = async () => {
+    if (!conversationId || !canModerateBackjobRequest) return;
+    setBackjobActionLoading('decline');
+    try {
+      const headers: any = { 'Content-Type': 'application/json' };
+      try {
+        const token = await AsyncStorage.getItem('auth_token');
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+      } catch (e) {}
+
+      const payload = {
+        type: 'backjob_declined',
+        message: 'Backjob request declined by mechanic.',
+      };
+
+      const res = await fetch(`${API_URL}/chat/${conversationId}/messages/`, {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+        body: JSON.stringify({ content: JSON.stringify(payload) }),
+      });
+
+      if (!res.ok) {
+        throw new Error('Failed to decline backjob request');
+      }
+
+      const m = await res.json();
+      forceFollowNextUpdateRef.current = true;
+      setMessages(prev => [...prev, m]);
+      setShowAcceptModal(false);
+      Alert.alert('Declined', 'Backjob request was declined.');
+    } catch (e) {
+      Alert.alert('Error', 'Unable to decline backjob right now.');
+    } finally {
+      setBackjobActionLoading(null);
     }
   };
 
@@ -669,8 +736,7 @@ export default function BookingChatScreen() {
     const shouldLoadImages = Boolean(visibleMessageKeys[messageKey]);
 
     // try parse structured content (system messages like backjob_request)
-    let parsed: any = null;
-    try { parsed = JSON.parse(item.content); } catch (e) { parsed = null; }
+    const parsed = parseStructuredContent(item.content);
 
     if (parsed && parsed.type === 'backjob_request') {
       return (
@@ -687,6 +753,37 @@ export default function BookingChatScreen() {
                   ))}
                 </View>
               )}
+              {canModerateBackjobRequest ? (
+                <View style={styles.actionButtonsRow}>
+                  <TouchableOpacity
+                    style={[styles.actionBtnBase, styles.actionBtnAccept]}
+                    onPress={() => setShowAcceptModal(true)}
+                    disabled={backjobActionLoading !== null}
+                  >
+                    {backjobActionLoading === 'accept'
+                      ? <ActivityIndicator color="#fff" />
+                      : <ThemedText style={styles.actionBtnAcceptText}>Accept</ThemedText>}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.actionBtnBase, styles.actionBtnReject]}
+                    onPress={() => {
+                      Alert.alert(
+                        'Decline backjob?',
+                        'This will post a declined update in the chat.',
+                        [
+                          { text: 'Cancel', style: 'cancel' },
+                          { text: 'Decline', style: 'destructive', onPress: handleDeclineBackjobRequest },
+                        ]
+                      );
+                    }}
+                    disabled={backjobActionLoading !== null}
+                  >
+                    {backjobActionLoading === 'decline'
+                      ? <ActivityIndicator color="#fff" />
+                      : <ThemedText style={styles.actionBtnRejectText}>Decline</ThemedText>}
+                  </TouchableOpacity>
+                </View>
+              ) : null}
               <ThemedText style={styles.messageTime}>{new Date(item.created_at).toLocaleTimeString()}</ThemedText>
             </View>
           </View>
@@ -753,6 +850,17 @@ export default function BookingChatScreen() {
       }
 
       const orderedPreviousItems = sortQuotationItems(previousItems);
+      const isActionablePendingLine = (it: any) => {
+        const st = String(it?.status || '').toLowerCase();
+        const ch = String(it?.change_type || '').toLowerCase();
+        return st === 'pending' || st === 'rejected' || ch === 'added' || ch === 'edited' || ch === 'removed';
+      };
+      const visibleOrderedItemList = isPending
+        ? orderedItemList.filter((it: any) => isActionablePendingLine(it))
+        : orderedItemList;
+      const visibleOrderedPreviousItems = isPending
+        ? orderedPreviousItems.filter((it: any) => isActionablePendingLine(it))
+        : orderedPreviousItems;
 
       const normalizeText = (v: any) => String(v ?? '').trim().toLowerCase();
       const normalizeNum = (v: any) => Number(v ?? 0);
@@ -785,11 +893,11 @@ export default function BookingChatScreen() {
       // 1) same id, 2) same service/add-on identity, 3) exact content, 4) same description.
       // This avoids false Added/Removed when backend regenerates IDs for edited rows.
       const usedPrevIndexes = new Set<number>();
-      const matchedRows = orderedItemList.map((currentIt: any) => {
+      const matchedRows = visibleOrderedItemList.map((currentIt: any) => {
         let matchIdx = -1;
 
         if (currentIt?.id != null) {
-          matchIdx = orderedPreviousItems.findIndex((prevIt: any, prevIdx: number) => (
+          matchIdx = visibleOrderedPreviousItems.findIndex((prevIt: any, prevIdx: number) => (
             !usedPrevIndexes.has(prevIdx) && prevIt?.id != null && String(prevIt.id) === String(currentIt.id)
           ));
         }
@@ -797,14 +905,14 @@ export default function BookingChatScreen() {
         if (matchIdx < 0) {
           const currentAssoc = getAssocKey(currentIt);
           if (currentAssoc) {
-            matchIdx = orderedPreviousItems.findIndex((prevIt: any, prevIdx: number) => (
+            matchIdx = visibleOrderedPreviousItems.findIndex((prevIt: any, prevIdx: number) => (
               !usedPrevIndexes.has(prevIdx) && getAssocKey(prevIt) === currentAssoc
             ));
           }
         }
 
         if (matchIdx < 0) {
-          matchIdx = orderedPreviousItems.findIndex((prevIt: any, prevIdx: number) => (
+          matchIdx = visibleOrderedPreviousItems.findIndex((prevIt: any, prevIdx: number) => (
             !usedPrevIndexes.has(prevIdx) &&
             normalizeText(prevIt?.description) === normalizeText(currentIt?.description) &&
             normalizeNum(prevIt?.quantity) === normalizeNum(currentIt?.quantity) &&
@@ -813,7 +921,7 @@ export default function BookingChatScreen() {
         }
 
         if (matchIdx < 0) {
-          matchIdx = orderedPreviousItems.findIndex((prevIt: any, prevIdx: number) => (
+          matchIdx = visibleOrderedPreviousItems.findIndex((prevIt: any, prevIdx: number) => (
             !usedPrevIndexes.has(prevIdx) &&
             normalizeNum(prevIt?.quantity) === normalizeNum(currentIt?.quantity) &&
             normalizeNum(prevIt?.unit_price) === normalizeNum(currentIt?.unit_price) &&
@@ -825,7 +933,7 @@ export default function BookingChatScreen() {
           const currAssoc = getAssocKey(currentIt);
           const currIndex = Number(currentIt?.__sourceIndex);
           if (!currAssoc && Number.isFinite(currIndex)) {
-            matchIdx = orderedPreviousItems.findIndex((prevIt: any, prevIdx: number) => (
+            matchIdx = visibleOrderedPreviousItems.findIndex((prevIt: any, prevIdx: number) => (
               !usedPrevIndexes.has(prevIdx) &&
               !getAssocKey(prevIt) &&
               Number(prevIt?.__sourceIndex) === currIndex
@@ -834,13 +942,13 @@ export default function BookingChatScreen() {
         }
 
         if (matchIdx < 0) {
-          matchIdx = orderedPreviousItems.findIndex((prevIt: any, prevIdx: number) => (
+          matchIdx = visibleOrderedPreviousItems.findIndex((prevIt: any, prevIdx: number) => (
             !usedPrevIndexes.has(prevIdx) &&
             normalizeText(prevIt?.description) === normalizeText(currentIt?.description)
           ));
         }
 
-        const previousIt = matchIdx >= 0 ? orderedPreviousItems[matchIdx] : null;
+        const previousIt = matchIdx >= 0 ? visibleOrderedPreviousItems[matchIdx] : null;
         if (matchIdx >= 0) usedPrevIndexes.add(matchIdx);
 
         const isAdded = !previousIt;
@@ -853,7 +961,21 @@ export default function BookingChatScreen() {
         return { currentIt, previousIt, isAdded, isEdited };
       });
 
-      const removedItems = orderedPreviousItems.filter((_: any, prevIdx: number) => !usedPrevIndexes.has(prevIdx));
+      const removedItems = visibleOrderedPreviousItems.filter((_: any, prevIdx: number) => !usedPrevIndexes.has(prevIdx));
+      const visibleTotalAmount = Number(parsed.total_amount) || 0;
+      const isBackjobQuote = Boolean(parsed.is_backjob);
+      const pendingChargeTotal = Math.max(0, matchedRows.reduce((sum: number, row: any) => {
+        const currentLine = Number(row?.currentIt?.line_total) || 0;
+        const previousLine = Number(row?.previousIt?.line_total) || 0;
+        if (row?.isAdded) return sum + currentLine;
+        if (row?.isEdited) return sum + (currentLine - previousLine);
+        return sum;
+      }, 0) - removedItems.reduce((sum: number, it: any) => sum + (Number(it?.line_total) || 0), 0));
+      const displayTotalAmount = isPending && isBackjobQuote ? pendingChargeTotal : visibleTotalAmount;
+      const shouldHideLegacyEmptyPendingCard = isPending && visibleOrderedItemList.length === 0 && removedItems.length === 0;
+      if (shouldHideLegacyEmptyPendingCard) {
+        return null;
+      }
 
       return (
         <View style={styles.messageRow}>
@@ -866,13 +988,18 @@ export default function BookingChatScreen() {
               >
                 <View style={styles.quotationCompactRow}>
                   <ThemedText style={compactTitleStyle}>{compactTitle}</ThemedText>
-                  <ThemedText style={styles.quotationCompactAmount}>₱{(Number(parsed.total_amount) || 0).toFixed(2)}</ThemedText>
+                  <ThemedText style={styles.quotationCompactAmount}>₱{displayTotalAmount.toFixed(2)}</ThemedText>
                   <FontAwesome name={isExpanded ? 'chevron-up' : 'chevron-down'} size={12} color="#9CA3AF" />
                 </View>
 
                 {isExpanded ? (
                   <>
                     <View style={{ height: 1, backgroundColor: '#2f3338', marginVertical: 8 }} />
+                    {isPending ? (
+                      <ThemedText style={{ color: '#8E8E93', fontSize: 11, marginBottom: 8 }}>
+                        {isBackjobQuote ? 'Backjob: only new changes will be charged' : 'Requested changes only'}
+                      </ThemedText>
+                    ) : null}
                     {matchedRows.map(({ currentIt: it, previousIt: prevIt, isAdded, isEdited }: any, idx: number) => {
                       return (
                         <View key={idx}>
@@ -913,10 +1040,23 @@ export default function BookingChatScreen() {
                     ))}
 
                     <View style={{ height: 1, backgroundColor: '#2f3338', marginVertical: 8 }} />
+                    {isPending && isBackjobQuote ? (
+                      <>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                          <ThemedText style={styles.quoteGhostLabel}>Previous quotation total</ThemedText>
+                          <ThemedText style={styles.quoteGhostValue}>₱{visibleTotalAmount.toFixed(2)}</ThemedText>
+                        </View>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <ThemedText style={styles.quoteTotalLabel}>Pending additional charge</ThemedText>
+                          <ThemedText style={styles.quoteTotalValue}>₱{displayTotalAmount.toFixed(2)}</ThemedText>
+                        </View>
+                      </>
+                    ) : (
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                       <ThemedText style={styles.quoteTotalLabel}>Total</ThemedText>
-                      <ThemedText style={styles.quoteTotalValue}>₱{(Number(parsed.total_amount) || 0).toFixed(2)}</ThemedText>
+                      <ThemedText style={styles.quoteTotalValue}>₱{displayTotalAmount.toFixed(2)}</ThemedText>
                     </View>
+                    )}
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
                       <ThemedText style={styles.quoteTotalLabel}>Status</ThemedText>
                       <ThemedText style={statusTextStyle}>{statusText}</ThemedText>
@@ -926,9 +1066,9 @@ export default function BookingChatScreen() {
               </TouchableOpacity>
 
               {isPending && !amIMechanic ? (
-                <View style={{ flexDirection: 'row', marginTop: 10, justifyContent: 'flex-end' }}>
+                <View style={styles.actionButtonsRow}>
                   <TouchableOpacity
-                    style={styles.actionBtnAccept}
+                    style={[styles.actionBtnBase, styles.actionBtnAccept]}
                     onPress={() => {
                       setQuotationDecisionAction('accept');
                       setShowQuotationDecisionModal(true);
@@ -939,7 +1079,7 @@ export default function BookingChatScreen() {
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    style={styles.actionBtnReject}
+                    style={[styles.actionBtnBase, styles.actionBtnReject]}
                     onPress={() => {
                         setQuotationDecisionAction('reject');
                         setShowQuotationDecisionModal(true);
@@ -966,6 +1106,20 @@ export default function BookingChatScreen() {
                 <ThemedText style={styles.systemTitle}>Backjob Accepted</ThemedText>
                 <ThemedText style={styles.systemText}>{parsed.mechanic_name || 'Mechanic'} accepted the backjob</ThemedText>
                 {parsed.message ? <ThemedText style={styles.systemText}>{parsed.message}</ThemedText> : null}
+                <ThemedText style={styles.messageTime}>{new Date(item.created_at).toLocaleTimeString()}</ThemedText>
+              </View>
+            </View>
+          </View>
+        );
+      }
+
+      if (parsed && parsed.type === 'backjob_declined') {
+        return (
+          <View style={styles.messageRow}>
+            <View style={[styles.systemBubbleContainer, styles.systemBubbleContainerAligned]}>
+              <View style={styles.systemBubble}>
+                <ThemedText style={styles.systemTitle}>Backjob Declined</ThemedText>
+                <ThemedText style={styles.systemText}>{parsed.message || 'Backjob request was declined.'}</ThemedText>
                 <ThemedText style={styles.messageTime}>{new Date(item.created_at).toLocaleTimeString()}</ThemedText>
               </View>
             </View>
@@ -1137,13 +1291,22 @@ export default function BookingChatScreen() {
             <View style={styles.modalOverlay}>
               <View style={styles.modalBox}>
                 <ThemedText style={styles.modalTitle}>Accept Backjob</ThemedText>
-                <ThemedText style={styles.modalText}>By accepting this backjob you acknowledge you'll take responsibility to perform the requested work. Confirm to notify the client.</ThemedText>
+                <ThemedText style={styles.modalText}>Choose what to do with this backjob request.</ThemedText>
                 <View style={styles.modalActions}>
                   <TouchableOpacity style={[styles.modalBtn, { backgroundColor: '#111214' }]} onPress={() => setShowAcceptModal(false)} disabled={accepting}>
                     <ThemedText style={styles.modalBtnText}>Cancel</ThemedText>
                   </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.modalBtn, { backgroundColor: '#B03A48' }]}
+                    onPress={handleDeclineBackjobRequest}
+                    disabled={accepting || backjobActionLoading !== null}
+                  >
+                    {backjobActionLoading === 'decline'
+                      ? <ActivityIndicator color="#fff" />
+                      : <ThemedText style={[styles.modalBtnText, { color: '#fff' }]}>Decline</ThemedText>}
+                  </TouchableOpacity>
                   <TouchableOpacity style={[styles.modalBtn, { backgroundColor: '#FF8C00' }]} onPress={handleAcceptConfirm} disabled={accepting}>
-                    {accepting ? <ActivityIndicator color="#fff" /> : <ThemedText style={[styles.modalBtnText, { color: '#fff' }]}>I'll do it</ThemedText>}
+                    {accepting ? <ActivityIndicator color="#fff" /> : <ThemedText style={[styles.modalBtnText, { color: '#fff' }]}>Accept</ThemedText>}
                   </TouchableOpacity>
                 </View>
               </View>
@@ -1702,18 +1865,27 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
+  actionButtonsRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignSelf: 'center',
+    width: '100%',
+    marginTop: 10,
+    gap: 8,
+  },
+  actionBtnBase: {
+    minWidth: 92,
+    height: 40,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
   actionBtnReject: {
     backgroundColor: '#E53935',
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    marginLeft: 8,
   },
   actionBtnAccept: {
     backgroundColor: '#FF8C00',
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
   },
   actionBtnRejectText: {
     color: '#FFFFFF',

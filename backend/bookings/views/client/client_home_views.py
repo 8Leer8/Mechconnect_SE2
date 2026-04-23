@@ -45,7 +45,7 @@ def home_page(request):
             print(f"[DEBUG] Account has client role, Client ID: {client.id}")
             current_bookings = Booking.objects.filter(
                 request__client=client,
-                status__in=['accepted', 'on_the_way', 'at_location', 'diagnosing', 'active', 'reworked']
+                status__in=['accepted', 'on_the_way', 'at_location', 'diagnosing', 'active', 'reworked', 'backjob_pending']
             ).select_related(
                 'request',
                 'request__client',

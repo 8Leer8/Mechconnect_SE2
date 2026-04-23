@@ -357,6 +357,13 @@ export const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
   },
+  addLineButtonsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 2,
+    marginBottom: 16,
+  },
   addItemButtonSmall: {
     alignSelf: 'flex-start',
     flexDirection: 'row',
@@ -368,11 +375,27 @@ export const styles = StyleSheet.create({
     borderRadius: 18,
     paddingHorizontal: 12,
     paddingVertical: 7,
-    marginTop: 2,
-    marginBottom: 16,
+  },
+  addServiceButtonSmall: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#2F4D3D',
+    backgroundColor: '#1E2622',
+    borderRadius: 18,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
   },
   addItemButtonSmallText: {
     color: '#D6D6D6',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
+  addServiceButtonSmallText: {
+    color: '#9ECFB0',
     fontSize: 12,
     fontWeight: '700',
     letterSpacing: 0.2,
@@ -637,5 +660,83 @@ export const styles = StyleSheet.create({
   modalBtnPrimaryText: {
     color: '#FFFFFF',
     fontWeight: '800',
+  },
+  lineKindBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#2A3140',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    marginBottom: 8,
+  },
+  lineKindBadgeService: {
+    backgroundColor: '#1E3A2F',
+  },
+  lineKindBadgeText: {
+    color: '#9ECFB0',
+    fontSize: 10,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  sourceChipsWrap: {
+    marginTop: 10,
+  },
+  sourceChipsLabel: {
+    color: '#AFAFAF',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  sourceChipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  sourceChip: {
+    borderWidth: 1,
+    borderColor: '#3A3A3A',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: '#1E1E1E',
+  },
+  sourceChipActive: {
+    borderColor: '#FF8C00',
+    backgroundColor: '#2A2418',
+  },
+  sourceChipText: {
+    color: '#C9CDD2',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  sourceChipTextActive: {
+    color: '#FFB357',
+  },
+  receiptRowWrap: {
+    marginTop: 10,
+  },
+  receiptButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#2F6B48',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+  },
+  receiptButtonDisabled: {
+    backgroundColor: '#3A3A3A',
+  },
+  receiptButtonText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  receiptHintText: {
+    color: '#9CA3AF',
+    fontSize: 11,
+    marginTop: 6,
   },
 });

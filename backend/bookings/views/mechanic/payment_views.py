@@ -40,7 +40,7 @@ def _build_paymongo_redirect_urls():
 
 
 def _is_payment_open(booking):
-    if booking_has_backjob(booking):
+    if booking_has_backjob(booking) and _to_money(booking.amount_fee) <= Decimal("0.00"):
         return False
     return booking.status in PAYMENT_OPEN_STATUSES
 
@@ -167,6 +167,16 @@ def _compute_request_service_subtotal(booking):
 def _compute_overall_payable_total(booking):
     current_total = _to_money(booking.amount_fee)
     quotation = getattr(booking, "quotation", None)
+    if booking_has_backjob(booking):
+        if quotation is None:
+            return Decimal("0.00")
+        try:
+            quotation.is_backjob = True
+            quotation.recalculate_totals()
+            return _to_money(quotation.total_amount)
+        except Exception:
+            return Decimal("0.00")
+
     accepted_total = Decimal("0.00")
 
     if quotation is not None:
@@ -314,7 +324,7 @@ def _build_installment_plan(booking, use_initial_payment=False, initial_payment_
 
 
 def _ensure_installments_for_booking(booking, use_initial_payment=False, initial_payment_amount=None):
-    if booking_has_backjob(booking):
+    if booking_has_backjob(booking) and _to_money(booking.amount_fee) <= Decimal("0.00"):
         return False
 
     # Respect an existing installment plan unless caller explicitly asks to seed initial/final.
@@ -372,7 +382,7 @@ def _ensure_installments_for_booking(booking, use_initial_payment=False, initial
 
 
 def _get_payment_summary(booking):
-    if booking_has_backjob(booking):
+    if booking_has_backjob(booking) and _to_money(booking.amount_fee) <= Decimal("0.00"):
         return {
             "total_amount": 0.0,
             "total_paid": 0.0,
@@ -481,7 +491,7 @@ def _finalize_payment_success(
     method = str(method or "qr").lower().strip() or "qr"
     reference = str(external_reference).strip() if external_reference else None
 
-    if booking_has_backjob(booking):
+    if booking_has_backjob(booking) and _to_money(booking.amount_fee) <= Decimal("0.00"):
         summary = _get_payment_summary(booking)
         return {
             "installment": None,
@@ -1014,8 +1024,8 @@ def initiate_payment(request):
     if booking.request.client.account_id != account.id:
         return Response({"error": "Unauthorized"}, status=403)
 
-    if booking_has_backjob(booking):
-        return Response({"error": "Backjob bookings are free of charge"}, status=400)
+    if booking_has_backjob(booking) and _to_money(booking.amount_fee) <= Decimal("0.00"):
+        return Response({"error": "This backjob has no payable amount"}, status=400)
 
     use_initial_payment = bool(request.data.get("use_initial_payment", False))
     initial_payment_amount = request.data.get("initial_payment_amount")

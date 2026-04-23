@@ -77,6 +77,7 @@ urlpatterns = [
     path('mechanic/bookings/<int:booking_id>/resume-job/', views.mechanic_resume_job, name='mechanic-resume-job'),
     path('mechanic/bookings/<int:booking_id>/finish-job/', views.mechanic_finish_job, name='mechanic-finish-job'),
     path('mechanic/bookings/<int:booking_id>/disputes/upload-receipt/', views.mechanic_upload_dispute_receipt, name='mechanic-upload-dispute-receipt'),
+    path('mechanic/bookings/<int:booking_id>/quotation/items/<int:item_id>/receipt/', views.mechanic_upload_quotation_item_receipt, name='mechanic-upload-quotation-item-receipt'),
     path('mechanic/bookings/<int:booking_id>/disputes/submit-defense/', views.SubmitDisputeDefenseView.as_view(), name='mechanic-submit-dispute-defense'),
     path('mechanic/bookings/<int:booking_id>/payment-received/', views.mechanic_payment_received, name='mechanic-payment-received'),
     path('mechanic/bookings/<int:booking_id>/quotation/', views.mechanic_booking_quotation, name='mechanic-booking-quotation'),

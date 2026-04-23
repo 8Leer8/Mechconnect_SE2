@@ -827,62 +827,89 @@ def mechanic_finish_job(request, booking_id):
         )
 
     if booking_has_backjob(booking):
-        now = timezone.now()
-        complete, created = CompleteBooking.objects.get_or_create(
-            booking=booking,
-            defaults={"total_amount": 0, "notes": "Backjob completed"},
-        )
-        if not created:
-            complete.total_amount = 0
-            complete.notes = "Backjob completed"
-            complete.save(update_fields=["total_amount", "notes"])
+        backjob_total = Decimal("0.00")
+        quotation = getattr(booking, "quotation", None)
+        if quotation is not None:
+            quotation.is_backjob = True
+            quotation.recalculate_totals()
+            quotation.save(update_fields=[
+                "is_backjob",
+                "original_labor_cost",
+                "backjob_discount",
+                "final_labor_total",
+                "total_amount",
+                "updated_at",
+            ])
+            backjob_total = Decimal(str(quotation.total_amount or 0)).quantize(Decimal("0.01"))
 
-        booking.status = Booking.Status.COMPLETED
-        booking.payment_status = Booking.PaymentStatus.FULLY_PAID
-        booking.amount_fee = Decimal("0.00")
-        booking.completed_at = now
+        if backjob_total <= Decimal("0.00"):
+            now = timezone.now()
+            complete, created = CompleteBooking.objects.get_or_create(
+                booking=booking,
+                defaults={"total_amount": 0, "notes": "Backjob completed (no payable parts)"},
+            )
+            if not created:
+                complete.total_amount = 0
+                complete.notes = "Backjob completed (no payable parts)"
+                complete.save(update_fields=["total_amount", "notes"])
+
+            booking.status = Booking.Status.COMPLETED
+            booking.payment_status = Booking.PaymentStatus.FULLY_PAID
+            booking.amount_fee = Decimal("0.00")
+            booking.completed_at = now
+            booking.save(update_fields=["status", "payment_status", "amount_fee", "completed_at", "updated_at"])
+
+            try:
+                if hasattr(booking, "activebooking"):
+                    booking.activebooking.is_job_done = True
+                    booking.activebooking.save(update_fields=["is_job_done"])
+            except Exception:
+                pass
+
+            Receipt.objects.filter(booking=booking).delete()
+            PaymentInstallment.objects.filter(booking=booking).delete()
+
+            notify_booking_parties(
+                account.id,
+                booking.request.client.account_id,
+                booking.id,
+                booking.status,
+                "Backjob completed",
+            )
+
+            return Response(
+                {"message": "Backjob completed.", "booking_id": booking.id, "status": booking.status},
+                status=status.HTTP_200_OK,
+            )
+
+        booking.status = Booking.Status.PENDING_PAYMENT
+        booking.payment_status = Booking.PaymentStatus.UNPAID
+        booking.amount_fee = backjob_total
+        booking.completed_at = None
         booking.save(update_fields=["status", "payment_status", "amount_fee", "completed_at", "updated_at"])
 
-        try:
-            if hasattr(booking, "activebooking"):
-                booking.activebooking.is_job_done = True
-                booking.activebooking.save(update_fields=["is_job_done"])
-        except Exception:
-            pass
-
-        Receipt.objects.filter(booking=booking).delete()
-        PaymentInstallment.objects.filter(booking=booking).delete()
+        Receipt.objects.get_or_create(booking=booking)
+        PaymentInstallment.objects.update_or_create(
+            booking=booking,
+            installment_type=PaymentInstallment.Type.FULL,
+            defaults={"amount": booking.amount_fee, "status": PaymentInstallment.Status.PENDING},
+        )
 
         notify_booking_parties(
             account.id,
             booking.request.client.account_id,
             booking.id,
             booking.status,
-            "Backjob completed",
+            "Backjob finished. Waiting for parts payment.",
         )
 
-        try:
-            from channels.layers import get_channel_layer
-            from asgiref.sync import async_to_sync
-
-            channel_layer = get_channel_layer()
-            payload = {
-                "type": "booking_update",
-                "action": "booking.completed",
+        return Response(
+            {
+                "message": "Backjob finished. Pending payment for parts only.",
                 "booking_id": booking.id,
                 "status": booking.status,
-                "amount": 0,
-                "message": "Backjob completed",
-            }
-            targets = {account.id, booking.request.client.account_id}
-            for target in targets:
-                if target and channel_layer:
-                    async_to_sync(channel_layer.group_send)(f"user_{target}", payload)
-        except Exception:
-            pass
-
-        return Response(
-            {"message": "Backjob completed.", "booking_id": booking.id, "status": booking.status},
+                "amount_fee": float(booking.amount_fee),
+            },
             status=status.HTTP_200_OK,
         )
 
@@ -1099,6 +1126,115 @@ def mechanic_upload_dispute_receipt(request, booking_id):
     )
 
 
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
+def mechanic_upload_quotation_item_receipt(request, booking_id, item_id):
+    """Upload part receipt and propose final price update for sourced items."""
+    account, err = _get_mechanic_account(request)
+    if err:
+        return err
+
+    try:
+        booking = _get_accessible_booking(account, booking_id)
+    except Booking.DoesNotExist:
+        return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        quotation = booking.quotation
+    except Quotation.DoesNotExist:
+        return Response({"error": "No quotation found for this booking"}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        qitem = quotation.items.get(id=item_id)
+    except QuotationItem.DoesNotExist:
+        return Response({"error": "Quotation item not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    if qitem.line_kind != QuotationItem.LineKind.ITEM:
+        return Response({"error": "Receipt upload is only allowed for item quotations"}, status=status.HTTP_400_BAD_REQUEST)
+
+    if qitem.source != QuotationItem.ItemSource.TO_BE_PURCHASED:
+        return Response({"error": "Receipt upload is only required for 'to be purchased' items"}, status=status.HTTP_400_BAD_REQUEST)
+
+    receipt_image = request.FILES.get("receipt_image")
+    if receipt_image is None:
+        return Response({"error": "receipt_image is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+    actual_unit_price_raw = request.data.get("actual_unit_price")
+    if actual_unit_price_raw in (None, ""):
+        actual_unit_price = Decimal(str(qitem.unit_price or 0))
+    else:
+        try:
+            actual_unit_price = Decimal(str(actual_unit_price_raw))
+        except Exception:
+            return Response({"error": "actual_unit_price must be a valid number"}, status=status.HTTP_400_BAD_REQUEST)
+
+    if actual_unit_price < 0:
+        return Response({"error": "actual_unit_price must be non-negative"}, status=status.HTTP_400_BAD_REQUEST)
+
+    old_price = Decimal(str(qitem.unit_price or 0))
+    price_changed = actual_unit_price != old_price
+
+    with transaction.atomic():
+        qitem.purchase_receipt_image = receipt_image
+        qitem.receipt_submitted_at = timezone.now()
+
+        if price_changed:
+            qitem.previous_description = qitem.description
+            qitem.previous_quantity = qitem.quantity
+            qitem.previous_unit_price = old_price
+            qitem.unit_price = actual_unit_price
+            qitem.status = Quotation.Status.PENDING
+            qitem.change_type = "edited"
+
+        qitem.save()
+
+        try:
+            has_pending_like = quotation.items.filter(status__in=[Quotation.Status.PENDING, Quotation.Status.REJECTED]).exists()
+            quotation.status = Quotation.Status.PENDING if has_pending_like else Quotation.Status.ACCEPTED
+        except Exception:
+            pass
+
+        try:
+            quotation.total_amount = sum(float(i.line_total) for i in quotation.items.exclude(status=Quotation.Status.REJECTED))
+        except Exception:
+            quotation.total_amount = 0
+        quotation.save(update_fields=["status", "total_amount", "updated_at"])
+
+    try:
+        post_quotation_chat_message(account, booking, quotation, action="updated")
+    except Exception:
+        pass
+
+    try:
+        notify_booking_parties(
+            account.id,
+            booking.request.client.account_id,
+            booking.id,
+            booking.status,
+            "Quotation receipt uploaded. Please review updated item price." if price_changed else "Quotation receipt uploaded.",
+        )
+    except Exception:
+        pass
+
+    return Response(
+        {
+            "message": "Receipt uploaded and price-difference request sent." if price_changed else "Receipt uploaded.",
+            "quotation_id": quotation.id,
+            "item": {
+                "id": qitem.id,
+                "description": qitem.description,
+                "unit_price": float(qitem.unit_price),
+                "previous_unit_price": float(qitem.previous_unit_price) if qitem.previous_unit_price is not None else None,
+                "status": qitem.status,
+                "change_type": qitem.change_type,
+                "purchase_receipt_image": qitem.purchase_receipt_image.url if qitem.purchase_receipt_image else None,
+            },
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
 class SubmitDisputeDefenseView(APIView):
     permission_classes = [AllowAny]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
@@ -1203,7 +1339,9 @@ class SubmitDisputeDefenseView(APIView):
 @permission_classes([AllowAny])
 def mechanic_booking_quotation(request, booking_id):
     """GET returns existing quotation for booking; POST creates/updates quotation and its items.
-    Expected POST payload: {"notes": "...", "is_final": true/false, "items": [{"service": <id>|null, "service_add_on": <id>|null, "description": "", "quantity": 1, "unit_price": 100.0}, ...]}"""
+    Expected POST payload: {"notes": "...", "is_final": true/false, "items": [
+      {"line_kind": "service"|"item", "source": "on_hand"|"to_be_purchased"|"mechanic_selling"|null,
+       "service": <id>|null, "service_add_on": <id>|null, "description": "", "quantity": 1, "unit_price": 100.0}, ...]}"""
     account, err = _get_mechanic_account(request)
     if err:
         return err
@@ -1316,6 +1454,8 @@ def mechanic_booking_quotation(request, booking_id):
                                     for it in quotation.items.exclude(status='rejected'):
                                         payload['items'].append({
                                             'id': it.id,
+                                            'line_kind': getattr(it, 'line_kind', 'item'),
+                                            'source': getattr(it, 'source', None),
                                             'service': it.service_id,
                                             'service_add_on': it.service_add_on_id,
                                             'description': it.description,
@@ -1323,6 +1463,8 @@ def mechanic_booking_quotation(request, booking_id):
                                             'unit_price': float(it.unit_price),
                                             'line_total': float(it.line_total),
                                             'status': getattr(it, 'status', None),
+                                            'purchase_receipt_image': it.purchase_receipt_image.url if getattr(it, 'purchase_receipt_image', None) else None,
+                                            'receipt_submitted_at': it.receipt_submitted_at.isoformat() if getattr(it, 'receipt_submitted_at', None) else None,
                                         })
                                 except Exception:
                                     pass
@@ -1383,6 +1525,8 @@ def mechanic_booking_quotation(request, booking_id):
                                     for it in quotation.items.exclude(status='rejected'):
                                         payload['items'].append({
                                             'id': it.id,
+                                            'line_kind': getattr(it, 'line_kind', 'item'),
+                                            'source': getattr(it, 'source', None),
                                             'service': it.service_id,
                                             'service_add_on': it.service_add_on_id,
                                             'description': it.description,
@@ -1390,6 +1534,8 @@ def mechanic_booking_quotation(request, booking_id):
                                             'unit_price': float(it.unit_price),
                                             'line_total': float(it.line_total),
                                             'status': getattr(it, 'status', None),
+                                            'purchase_receipt_image': it.purchase_receipt_image.url if getattr(it, 'purchase_receipt_image', None) else None,
+                                            'receipt_submitted_at': it.receipt_submitted_at.isoformat() if getattr(it, 'receipt_submitted_at', None) else None,
                                         })
                                 except Exception:
                                     pass
@@ -1641,9 +1787,11 @@ def mechanic_accept_backjob(request, booking_id):
     ]:
         try:
             booking.status = Booking.Status.ACCEPTED
-            booking.amount_fee = 0
+            booking.amount_fee = Decimal("0.00")
+            booking.convenience_fee = Decimal("0.00")
+            booking.traffic_surcharge = Decimal("0.00")
             booking.completed_at = None
-            booking.save(update_fields=["status", "amount_fee", "completed_at", "updated_at"])
+            booking.save(update_fields=["status", "amount_fee", "convenience_fee", "traffic_surcharge", "completed_at", "updated_at"])
             try:
                 CompleteBooking.objects.filter(booking=booking).delete()
             except Exception:
@@ -1672,13 +1820,15 @@ def mechanic_accept_backjob(request, booking_id):
         # don't fail the request if notify fails
         pass
 
-    # Mark the underlying booking as accepted for the backjob flow and set cost to free
+    # Mark the underlying booking as accepted for the backjob flow.
     try:
         booking.status = Booking.Status.ACCEPTED
-        booking.amount_fee = 0
+        booking.amount_fee = Decimal("0.00")
+        booking.convenience_fee = Decimal("0.00")
+        booking.traffic_surcharge = Decimal("0.00")
         # clear any completion state so booking appears as accepted/booked
         booking.completed_at = None
-        booking.save(update_fields=["status", "amount_fee", "completed_at", "updated_at"])
+        booking.save(update_fields=["status", "amount_fee", "convenience_fee", "traffic_surcharge", "completed_at", "updated_at"])
         # remove any CompleteBooking/Receipt records related to this booking
         try:
             CompleteBooking.objects.filter(booking=booking).delete()
@@ -2092,7 +2242,7 @@ def list_mechanic_bookings(request):
             # Only count backjobs that are still requested (not yet accepted)
             backjob_count = Booking.objects.filter(
                 _mechanic_booking_access_q(account),
-                backjob__status=Booking.Status.REWORKED,
+                backjob__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
             ).distinct().count()
             pending_count = pending_direct_count + backjob_count
             bookings_count = bookings_queryset.count()
@@ -2106,10 +2256,10 @@ def list_mechanic_bookings(request):
             if start_index < pending_count:
                 # Need some pending items on this page
                 direct_pending = _serialize_pending_direct_requests(account)
-                # Only include backjob bookings that are in 'reworked' state (pending mechanic acceptance)
+                # Only include backjob bookings that are pending mechanic acceptance.
                 backjob_qs = Booking.objects.filter(
                     _mechanic_booking_access_q(account),
-                    backjob__status=Booking.Status.REWORKED,
+                    backjob__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
                 ).distinct().order_by("-booked_at")
                 backjob_pending = serialize_booking_list(backjob_qs)
                 all_pending = direct_pending + backjob_pending
@@ -2169,10 +2319,10 @@ def list_mechanic_bookings(request):
         if status_filter.lower() == "pending":
             # include both direct pending requests and bookings that have backjob requests
             direct_pending = _serialize_pending_direct_requests(account)
-            # Only include backjob bookings that are pending acceptance (reworked)
+            # Only include backjob bookings that are pending acceptance.
             backjob_qs = Booking.objects.filter(
                 _mechanic_booking_access_q(account),
-                backjob__status=Booking.Status.REWORKED,
+                backjob__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
             ).distinct().order_by("-booked_at")
             backjob_pending = serialize_booking_list(backjob_qs)
             all_pending = direct_pending + backjob_pending
@@ -2254,7 +2404,7 @@ def list_mechanic_bookings(request):
             # Include bookings explicitly marked reworked OR any bookings
             # that have a Backjob (so accepted/completed backjobs also appear)
             bookings_queryset = bookings_queryset.filter(
-                Q(status='reworked') | Q(backjob__isnull=False)
+                Q(status__in=['reworked', 'backjob_pending']) | Q(backjob__isnull=False)
             )
         else:
             bookings_queryset = bookings_queryset.filter(status=status_filter.lower())
@@ -2295,10 +2445,10 @@ def list_mechanic_bookings(request):
         Q(status="reworked") | Q(backjob__isnull=False)
     ).count()
     disputed_count = bookings_queryset.filter(dispute_status=Booking.DisputeState.ACTIVE).count()
-    # Include backjob bookings in the pending count, but only those not yet accepted (reworked)
+    # Include backjob bookings in the pending count, but only those not yet accepted.
     pending_count = _count_pending_direct_requests(account) + Booking.objects.filter(
         _mechanic_booking_access_q(account),
-        backjob__status=Booking.Status.REWORKED,
+        backjob__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
     ).distinct().count()
 
     # Single DB aggregate — much cheaper than fetching all completed records

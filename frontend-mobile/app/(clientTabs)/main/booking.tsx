@@ -85,18 +85,26 @@ export default function BookingScreen() {
       setLoading(true);
       setError(null);
 
-      const response = await fetch(
-        `${API_URL}/bookings/bookings/?status=${activeTab}&page=${currentPage}&page_size=${pageSize}`,
-        {
-          method: 'GET',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        }
-      );
+      const fetchByStatus = async (statusValue: string, page = currentPage, size = pageSize) => {
+        const response = await fetch(
+          `${API_URL}/bookings/bookings/?status=${statusValue}&page=${page}&page_size=${size}`,
+          {
+            method: 'GET',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+          }
+        );
+        if (!response.ok) throw new Error('Failed to fetch bookings');
+        return response.json() as Promise<BookingsResponse>;
+      };
 
-      if (!response.ok) throw new Error('Failed to fetch bookings');
-      const data = await response.json() as BookingsResponse;
-      setBookings(data.bookings || []);
+      const data = await fetchByStatus(activeTab);
+      const sortedBookings = [...(data.bookings || [])].sort((a, b) => {
+        const aTime = new Date(a.updated_at || a.completed_at || a.booked_at || a.request?.created_at || 0).getTime();
+        const bTime = new Date(b.updated_at || b.completed_at || b.booked_at || b.request?.created_at || 0).getTime();
+        return bTime - aTime; // most recent first
+      });
+      setBookings(sortedBookings);
       setTotalPages(data.total_pages || 1);
       setTotalCount(data.total_count || 0);
     } catch (err) {

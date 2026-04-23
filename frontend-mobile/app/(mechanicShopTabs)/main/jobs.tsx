@@ -16,6 +16,10 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL;
 interface Booking {
   id: number;
   status: string;
+  has_backjob?: boolean;
+  backjob?: { id?: number; status?: string } | null;
+  backjob_status?: string | null;
+  is_backjob?: boolean;
   dispute_status?: 'none' | 'active' | 'resolved' | string;
   amount_fee: number;
   booked_at: string;
@@ -371,11 +375,13 @@ export default function MechanicShopJobsScreen() {
   };
 
   const getStatusLabel = (status: string) => {
-    if (isShopMechanic && status === 'pending') {
+    const normalized = String(status || '').toLowerCase();
+    if (isShopMechanic && normalized === 'pending') {
       return 'Booked';
     }
-    switch (status) {
+    switch (normalized) {
       case 'accepted': return 'Booked';
+      case 'backjob_pending': return 'Backjob Pending';
       case 'active': return 'On Going';
       case 'on_the_way': return 'On the Way';
       case 'at_location': return 'At Location';
@@ -388,13 +394,15 @@ export default function MechanicShopJobsScreen() {
       case 'pending': return 'Pending';
       case 'reworked': return 'Reworked';
       case 'disputed': return 'Disputed';
-      default: return status.charAt(0).toUpperCase() + status.slice(1);
+      default: return String(status || '').charAt(0).toUpperCase() + String(status || '').slice(1);
     }
   };
 
   const getStatusIcon = (status: string) => {
-    switch (status) {
+    const normalized = String(status || '').toLowerCase();
+    switch (normalized) {
       case 'accepted': return 'calendar-check-o';
+      case 'backjob_pending': return 'refresh';
       case 'active': return 'play-circle';
       case 'on_the_way': return 'car';
       case 'at_location': return 'map-marker';
@@ -412,8 +420,10 @@ export default function MechanicShopJobsScreen() {
   };
 
   const getStatusColor = (status: string) => {
-    switch (status) {
+    const normalized = String(status || '').toLowerCase();
+    switch (normalized) {
       case 'accepted': return '#00B8D9';
+      case 'backjob_pending': return '#FFD60A';
       case 'active': return '#FF8C00';
       case 'on_the_way': return '#007AFF';
       case 'at_location': return '#5AC8FA';
@@ -546,21 +556,35 @@ export default function MechanicShopJobsScreen() {
         ) : (
           <View style={styles.bookingsList}>
             {bookings.map((booking) => (
+              (() => {
+                const statusKey = String(booking.status || '').toLowerCase();
+                const isBackjobBooking = Boolean(
+                  (booking as any).has_backjob ||
+                  (booking as any).is_backjob ||
+                  (booking as any).backjob ||
+                  String((booking as any).backjob_status || '').trim() ||
+                  activeTab === 'reworked' ||
+                  statusKey === 'backjob_pending' ||
+                  statusKey === 'reworked'
+                );
+                return (
               <TouchableOpacity
                 key={booking.id}
                 style={styles.bookingCard}
                 activeOpacity={0.7}
                 onPress={() => {
+                  const statusKey = String(booking.status || '').toLowerCase();
                   if (
-                    booking.status === 'active' ||
-                    booking.status === 'on_the_way' ||
-                    booking.status === 'at_location' ||
-                    booking.status === 'diagnosing' ||
-                    booking.status === 'paused' ||
-                    booking.status === 'completed' ||
-                    booking.status === 'reworked' ||
-                    booking.status === 'pending_payment' ||
-                    booking.status === 'accepted'
+                    statusKey === 'active' ||
+                    statusKey === 'on_the_way' ||
+                    statusKey === 'at_location' ||
+                    statusKey === 'diagnosing' ||
+                    statusKey === 'paused' ||
+                    statusKey === 'completed' ||
+                    statusKey === 'reworked' ||
+                    statusKey === 'backjob_pending' ||
+                    statusKey === 'pending_payment' ||
+                    statusKey === 'accepted'
                   ) {
                     handleViewDetails(booking.id);
                   }
@@ -585,6 +609,11 @@ export default function MechanicShopJobsScreen() {
                         <View style={[styles.statusBadge, { backgroundColor: getStatusColor(booking.status) }]}>
                           <ThemedText style={styles.statusText}>{getStatusLabel(booking.status)}</ThemedText>
                         </View>
+                        {isBackjobBooking ? (
+                          <View style={styles.backjobBadge}>
+                            <ThemedText style={styles.backjobText}>Backjob</ThemedText>
+                          </View>
+                        ) : null}
                         <ThemedText style={styles.bookingId}>#{booking.id}</ThemedText>
                       </View>
                       <ThemedText style={styles.requestType}>
@@ -615,7 +644,7 @@ export default function MechanicShopJobsScreen() {
                 <View style={styles.cardFooter}>
                   <ThemedText style={styles.amount}>P{parseFloat(String(booking.amount_fee || '0')).toFixed(2)}</ThemedText>
 
-                  {booking.status === 'pending' ? (
+                  {String(booking.status || '').toLowerCase() === 'pending' ? (
                     <View style={styles.pendingActions}>
                       <TouchableOpacity
                         style={styles.declineBtn}
@@ -639,17 +668,19 @@ export default function MechanicShopJobsScreen() {
                         )}
                       </TouchableOpacity>
                     </View>
-                  ) : (
-                    booking.status === 'accepted' ||
-                    booking.status === 'on_the_way' ||
-                    booking.status === 'at_location' ||
-                    booking.status === 'diagnosing' ||
-                    booking.status === 'active' ||
-                    booking.status === 'paused' ||
-                    booking.status === 'completed' ||
-                    booking.status === 'reworked' ||
-                    booking.status === 'pending_payment'
-                  ) ? (
+                  ) : ((() => {
+                    const statusKey = String(booking.status || '').toLowerCase();
+                    return statusKey === 'accepted' ||
+                      statusKey === 'on_the_way' ||
+                      statusKey === 'at_location' ||
+                      statusKey === 'diagnosing' ||
+                      statusKey === 'active' ||
+                      statusKey === 'paused' ||
+                      statusKey === 'completed' ||
+                      statusKey === 'reworked' ||
+                      statusKey === 'backjob_pending' ||
+                      statusKey === 'pending_payment';
+                  })()) ? (
                     <TouchableOpacity style={styles.detailsBtn} onPress={() => handleViewDetails(booking.id)}>
                       <ThemedText style={styles.detailsBtnText}>Details</ThemedText>
                       <FontAwesome name="chevron-right" size={11} color="#FF8C00" />
@@ -685,6 +716,8 @@ export default function MechanicShopJobsScreen() {
                   </View>
                 ) : null}
               </TouchableOpacity>
+                );
+              })()
             ))}
           </View>
         )}

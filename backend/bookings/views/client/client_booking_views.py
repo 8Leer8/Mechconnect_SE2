@@ -216,15 +216,6 @@ def _build_rescue_description(original_request, booking):
 
 
 def _build_booking_payment_summary(booking):
-    if booking_has_backjob(booking):
-        return {
-            'payment_status': Booking.PaymentStatus.FULLY_PAID,
-            'total_amount': 0.0,
-            'total_paid': 0.0,
-            'remaining_balance': 0.0,
-            'installments': [],
-        }
-
     total_amount = _to_money(booking.amount_fee)
 
     quotation = getattr(booking, 'quotation', None)
@@ -367,18 +358,21 @@ def list_client_bookings(request):
         # Apply status filter if provided
         if status_filter:
             valid_statuses = [
-                'active', 'on_the_way', 'at_location', 'diagnosing',
-                'pending_payment', 'completed', 'cancelled', 'reworked', 'disputed',
+                'all', 'accepted', 'active', 'on_the_way', 'at_location', 'diagnosing',
+                'pending_payment', 'completed', 'cancelled', 'reworked', 'backjob_pending', 'disputed',
             ]
             if status_filter.lower() not in valid_statuses:
                 return Response({
                     'error': f'Invalid status. Must be one of: {", ".join(valid_statuses)}'
                 }, status=status.HTTP_400_BAD_REQUEST)
 
+            # For 'all', keep full queryset and use normal pagination below.
+            if status_filter.lower() == 'all':
+                bookings_queryset = bookings_queryset
             # For 'active' tab, merge in-progress statuses through payment pending
-            if status_filter.lower() == 'active':
+            elif status_filter.lower() == 'active':
                 bookings_queryset = bookings_queryset.filter(status__in=[
-                    'accepted', 'active', 'on_the_way', 'at_location', 'diagnosing', 'pending_payment',
+                    'accepted', 'active', 'on_the_way', 'at_location', 'diagnosing', 'pending_payment', 'backjob_pending',
                 ])
             else:
                 bookings_queryset = bookings_queryset.filter(status=status_filter.lower())
@@ -410,7 +404,7 @@ def list_client_bookings(request):
         # If no filter, return bookings grouped by status (no pagination for grouped view)
         else:
             active_bookings = bookings_queryset.filter(status__in=[
-                'accepted', 'active', 'on_the_way', 'at_location', 'diagnosing', 'pending_payment',
+                'accepted', 'active', 'on_the_way', 'at_location', 'diagnosing', 'pending_payment', 'backjob_pending',
             ])
             completed_bookings = bookings_queryset.filter(status='completed')
             cancelled_bookings = bookings_queryset.filter(status='cancelled')
@@ -1361,6 +1355,8 @@ def _serialize_single_booking(booking, viewer_account=None):
             for it in items_qs:
                 qd['items'].append({
                     'id': it.id,
+                    'line_kind': getattr(it, 'line_kind', 'item'),
+                    'source': getattr(it, 'source', None),
                     'service': it.service.id if it.service else None,
                     'service_add_on': it.service_add_on.id if it.service_add_on else None,
                     'description': it.description,
@@ -1372,6 +1368,8 @@ def _serialize_single_booking(booking, viewer_account=None):
                     'previous_description': getattr(it, 'previous_description', None),
                     'previous_quantity': getattr(it, 'previous_quantity', None),
                     'previous_unit_price': float(it.previous_unit_price) if getattr(it, 'previous_unit_price', None) is not None else None,
+                    'purchase_receipt_image': it.purchase_receipt_image.url if getattr(it, 'purchase_receipt_image', None) else None,
+                    'receipt_submitted_at': it.receipt_submitted_at.isoformat() if getattr(it, 'receipt_submitted_at', None) else None,
                 })
             booking_data['quotation'] = qd
         except Exception:
@@ -1566,6 +1564,8 @@ def client_accept_quotation(request, booking_id):
                             for it in quotation.items.filter(status=Quotation.Status.ACCEPTED):
                                 payload['items'].append({
                                     'id': it.id,
+                                    'line_kind': getattr(it, 'line_kind', 'item'),
+                                    'source': getattr(it, 'source', None),
                                     'service': it.service_id,
                                     'service_add_on': it.service_add_on_id,
                                     'description': it.description,
@@ -1573,6 +1573,8 @@ def client_accept_quotation(request, booking_id):
                                     'unit_price': float(it.unit_price),
                                     'line_total': float(it.line_total),
                                     'status': 'accepted',
+                                    'purchase_receipt_image': it.purchase_receipt_image.url if getattr(it, 'purchase_receipt_image', None) else None,
+                                    'receipt_submitted_at': it.receipt_submitted_at.isoformat() if getattr(it, 'receipt_submitted_at', None) else None,
                                 })
                         except Exception:
                             pass
@@ -1589,33 +1591,28 @@ def client_accept_quotation(request, booking_id):
         except Exception as e:
             print(f"DEBUG: Error while updating chat messages for quotation {quotation.id}: {e}")
 
-        # Recalculate totals from accepted rows only.
-        accepted_total = 0
-        try:
-            accepted_total = sum(float(it.line_total) for it in quotation.items.filter(status=Quotation.Status.ACCEPTED))
-        except Exception:
-            accepted_total = 0
-
-        quotation.total_amount = accepted_total
-        quotation.save(update_fields=['total_amount', 'updated_at'])
+        # Recalculate totals from accepted rows only and enforce backjob pricing rules.
+        quotation.is_backjob = booking_has_backjob(booking)
+        quotation.recalculate_totals()
+        quotation.save(update_fields=[
+            'is_backjob',
+            'original_labor_cost',
+            'backjob_discount',
+            'final_labor_total',
+            'total_amount',
+            'updated_at',
+        ])
 
         # Update booking amount and complete/receipt if present
-        booking.amount_fee = accepted_total
+        booking.amount_fee = quotation.total_amount
         booking.save(update_fields=['amount_fee', 'updated_at'])
 
         # Update CompleteBooking if exists
         try:
             complete = CompleteBooking.objects.filter(booking=booking).first()
             if complete:
-                complete.total_amount = accepted_total
+                complete.total_amount = quotation.total_amount
                 complete.save(update_fields=['total_amount'])
-        except Exception:
-            pass
-
-        # post system chat message about acceptance
-        try:
-            from ...ws_utils import post_quotation_chat_message
-            post_quotation_chat_message(account, booking, quotation, action='accepted')
         except Exception:
             pass
 
@@ -1771,6 +1768,8 @@ def client_reject_quotation(request, booking_id):
                     # Reject means rollback to baseline state, so restored rows must be accepted.
                     item_status = Quotation.Status.ACCEPTED
                     quotation.items.create(
+                        line_kind=snap.get('line_kind') or QuotationItem.LineKind.ITEM,
+                        source=snap.get('source'),
                         service_id=snap.get('service') if snap.get('service') is not None else None,
                         service_add_on_id=snap.get('service_add_on') if snap.get('service_add_on') is not None else None,
                         description=snap.get('description', ''),
@@ -1793,6 +1792,8 @@ def client_reject_quotation(request, booking_id):
                     pit.description = snap.get('description', pit.description)
                     pit.quantity = snap.get('quantity', pit.quantity)
                     pit.unit_price = snap.get('unit_price', pit.unit_price)
+                    pit.line_kind = snap.get('line_kind') or pit.line_kind
+                    pit.source = snap.get('source')
                     pit.service_id = snap.get('service') if snap.get('service') is not None else None
                     pit.service_add_on_id = snap.get('service_add_on') if snap.get('service_add_on') is not None else None
                     pit.status = Quotation.Status.ACCEPTED

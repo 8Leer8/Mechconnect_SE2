@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Animated } from 'react-native';
+import { View, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Animated, Alert, Linking } from 'react-native';
 import { Image } from 'expo-image';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -220,11 +220,54 @@ export default function MainRequestFormScreen() {
     );
   };
 
+  const ensureCameraPermission = async () => {
+    const current = await ImagePicker.getCameraPermissionsAsync();
+    if (current.granted) return true;
+
+    const requested = await ImagePicker.requestCameraPermissionsAsync();
+    if (requested.granted) return true;
+
+    if (!requested.canAskAgain) {
+      Alert.alert(
+        'Camera Permission Needed',
+        'Please enable camera permission in app settings to take a photo.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Open Settings', onPress: () => Linking.openSettings() },
+        ]
+      );
+    } else {
+      showNotification({ type: 'warning', title: 'Permission Denied', message: 'Camera permission is required' });
+    }
+    return false;
+  };
+
+  const ensureLibraryPermission = async () => {
+    const current = await ImagePicker.getMediaLibraryPermissionsAsync();
+    if (current.granted) return true;
+
+    const requested = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (requested.granted) return true;
+
+    if (!requested.canAskAgain) {
+      Alert.alert(
+        'Photo Library Permission Needed',
+        'Please enable photo library permission in app settings to select a picture.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Open Settings', onPress: () => Linking.openSettings() },
+        ]
+      );
+    } else {
+      showNotification({ type: 'warning', title: 'Permission Denied', message: 'Photo library permission is required' });
+    }
+    return false;
+  };
+
   const takePhoto = async () => {
     try {
-      const { status } = await ImagePicker.requestCameraPermissionsAsync();
-      if (status !== 'granted') {
-        showNotification({ type: 'warning', title: 'Permission Denied', message: 'Camera permission is required' });
+      const hasPermission = await ensureCameraPermission();
+      if (!hasPermission) {
         return;
       }
       const result = await ImagePicker.launchCameraAsync({
@@ -235,6 +278,24 @@ export default function MainRequestFormScreen() {
       if (!result.canceled && result.assets[0]) setConcernPicture(result.assets[0].uri);
     } catch (error) {
       showNotification({ type: 'error', message: 'Failed to take photo' });
+    }
+  };
+
+  const pickFromGallery = async () => {
+    try {
+      const hasPermission = await ensureLibraryPermission();
+      if (!hasPermission) {
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.8,
+      });
+      if (!result.canceled && result.assets[0]) setConcernPicture(result.assets[0].uri);
+    } catch (error) {
+      showNotification({ type: 'error', message: 'Failed to select photo' });
     }
   };
 
@@ -712,6 +773,10 @@ export default function MainRequestFormScreen() {
             <TouchableOpacity style={styles.imageBtn} onPress={takePhoto} activeOpacity={0.7}>
               <FontAwesome name="camera" size={16} color="#FF8C00" />
               <ThemedText style={styles.imageBtnText}>Take Photo</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.imageBtn} onPress={pickFromGallery} activeOpacity={0.7}>
+              <FontAwesome name="image" size={16} color="#FF8C00" />
+              <ThemedText style={styles.imageBtnText}>Choose Photo</ThemedText>
             </TouchableOpacity>
           </View>
           {concernPicture && (

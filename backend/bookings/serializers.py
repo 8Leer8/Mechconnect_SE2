@@ -9,6 +9,7 @@ from services.models import Service, ServiceAddOn
 from users.models import Account, Client
 from shops.models import Shop
 from MainBackend.storage_utils import get_media_url
+from .backjob_utils import booking_has_backjob
 
 
 class ServiceLocationSerializer(serializers.ModelSerializer):
@@ -484,6 +485,10 @@ class QuotationItemSerializer(serializers.ModelSerializer):
         model = booking_models.QuotationItem
         fields = [
             'id',
+            'line_kind',
+            'source',
+            'purchase_receipt_image',
+            'receipt_submitted_at',
             'service',
             'service_add_on',
             'description',
@@ -513,6 +518,33 @@ class QuotationItemSerializer(serializers.ModelSerializer):
             return None
 
 
+def _quotation_line_shape(raw, existing_item=None):
+    """Pick line_kind, source, and quantity for a quotation row (service vs item)."""
+    QI = booking_models.QuotationItem
+    lk = raw.get('line_kind')
+    if lk is None and existing_item is not None:
+        lk = getattr(existing_item, 'line_kind', None)
+    lk = str(lk or QI.LineKind.ITEM).lower()
+    if lk not in (QI.LineKind.SERVICE, QI.LineKind.ITEM):
+        lk = QI.LineKind.ITEM
+    if lk == QI.LineKind.SERVICE:
+        return lk, None, 1
+    allowed_src = {c[0] for c in QI.ItemSource.choices}
+    src = raw.get('source')
+    if src is None and existing_item is not None:
+        src = getattr(existing_item, 'source', None)
+    if src not in allowed_src:
+        src = QI.ItemSource.ON_HAND
+    qty = raw.get('quantity')
+    if qty is None and existing_item is not None:
+        qty = existing_item.quantity
+    try:
+        qty = max(1, int(qty or 1))
+    except Exception:
+        qty = 1
+    return lk, src, qty
+
+
 class QuotationSerializer(serializers.Serializer):
     id = serializers.IntegerField(read_only=True)
     booking = serializers.IntegerField(read_only=True)
@@ -536,6 +568,10 @@ class QuotationSerializer(serializers.Serializer):
             'mechanic': AccountBasicSerializer(instance.mechanic).data,
             'notes': instance.notes,
             'status': instance.status,
+            'is_backjob': bool(getattr(instance, 'is_backjob', False)),
+            'original_labor_cost': float(getattr(instance, 'original_labor_cost', 0) or 0),
+            'backjob_discount': float(getattr(instance, 'backjob_discount', 0) or 0),
+            'final_labor_total': float(getattr(instance, 'final_labor_total', 0) or 0),
             'total_amount': float(instance.total_amount),
             'is_final': instance.is_final,
             'created_at': instance.created_at,
@@ -575,7 +611,9 @@ class QuotationSerializer(serializers.Serializer):
             'notes': validated_data.get('notes', ''),
             'is_final': validated_data.get('is_final', False),
             'status': Quotation.Status.PENDING,
+            'is_backjob': booking_has_backjob(booking),
         })
+        quotation.is_backjob = booking_has_backjob(booking)
         requested_service_ids = get_requested_service_ids(booking)
         # If quotation is newly created, create provided items; if it already exists, append/update items without deleting existing ones
         total = 0
@@ -586,9 +624,19 @@ class QuotationSerializer(serializers.Serializer):
                 qitem = existing_items[int(it.get('id'))]
                 qitem.service_id = it.get('service') if it.get('service') is not None else qitem.service_id
                 qitem.service_add_on_id = it.get('service_add_on') if it.get('service_add_on') is not None else qitem.service_add_on_id
-                if 'description' in it: qitem.description = it.get('description', qitem.description)
-                if 'quantity' in it: qitem.quantity = it.get('quantity', qitem.quantity)
-                if 'unit_price' in it: qitem.unit_price = it.get('unit_price', qitem.unit_price)
+                if 'description' in it:
+                    qitem.description = it.get('description', qitem.description)
+                if 'unit_price' in it:
+                    qitem.unit_price = it.get('unit_price', qitem.unit_price)
+                merge_for_shape = {
+                    'line_kind': it.get('line_kind', qitem.line_kind),
+                    'source': it.get('source', qitem.source),
+                    'quantity': it.get('quantity', qitem.quantity),
+                }
+                lk, src, qty = _quotation_line_shape(merge_for_shape, qitem)
+                qitem.line_kind = lk
+                qitem.source = src
+                qitem.quantity = qty
                 if 'status' in it:
                     qitem.status = it.get('status') or qitem.status
                 if qitem.status != Quotation.Status.PENDING:
@@ -600,39 +648,31 @@ class QuotationSerializer(serializers.Serializer):
             else:
                 # create new item (defaults to pending)
                 service_id = it.get('service') if it.get('service') else None
-                default_status = Quotation.Status.ACCEPTED if service_id and int(service_id) in requested_service_ids else Quotation.Status.PENDING
+                lk, src, qty = _quotation_line_shape(it, None)
+                is_booked_service = (
+                    lk == QuotationItem.LineKind.SERVICE
+                    and service_id
+                    and int(service_id) in requested_service_ids
+                )
+                default_status = Quotation.Status.ACCEPTED if is_booked_service else Quotation.Status.PENDING
                 qitem = QuotationItem.objects.create(
                     quotation=quotation,
+                    line_kind=lk,
+                    source=src,
                     service_id=service_id,
                     service_add_on_id=it.get('service_add_on') if it.get('service_add_on') else None,
                     description=it.get('description', ''),
-                    quantity=it.get('quantity', 1),
+                    quantity=qty,
                     unit_price=it.get('unit_price', 0),
                     status=default_status,
                     change_type='added' if default_status == Quotation.Status.PENDING else None,
                 )
-            # Post a system chat message for this new item so chat shows each addition
-            try:
-                mechanic = self.context.get('mechanic')
-                booking = self.context.get('booking')
-                if mechanic and booking:
-                    from .ws_utils import post_quotation_chat_message
-                    try:
-                        post_quotation_chat_message(mechanic, booking, quotation, action='item_created')
-                    except Exception:
-                        pass
-            except Exception:
-                pass
             try:
                 total += float(qitem.line_total)
             except Exception:
                 pass
 
-        try:
-            total = sum([float(it.line_total) for it in QuotationItem.objects.filter(quotation=quotation)])
-        except Exception:
-            total = 0
-        quotation.total_amount = total
+        quotation.recalculate_totals()
         quotation.notes = validated_data.get('notes', quotation.notes)
         quotation.is_final = validated_data.get('is_final', quotation.is_final)
         try:
@@ -665,6 +705,7 @@ class QuotationSerializer(serializers.Serializer):
             return ids
 
         requested_service_ids = get_requested_service_ids(instance.booking)
+        instance.is_backjob = booking_has_backjob(instance.booking)
         items_data = validated_data.pop('items', []) if isinstance(validated_data, dict) else []
 
         # load existing items mapping
@@ -688,21 +729,32 @@ class QuotationSerializer(serializers.Serializer):
                 existing_price = float(qitem.unit_price or 0)
                 existing_service = qitem.service_id
                 existing_add_on = qitem.service_add_on_id
+                existing_line_kind = getattr(qitem, 'line_kind', QuotationItem.LineKind.ITEM)
+                existing_source = getattr(qitem, 'source', None)
 
                 qitem.service_id = raw.get('service') if raw.get('service') is not None else qitem.service_id
                 qitem.service_add_on_id = raw.get('service_add_on') if raw.get('service_add_on') is not None else qitem.service_add_on_id
                 if 'description' in raw:
                     qitem.description = raw.get('description', qitem.description)
-                if 'quantity' in raw:
-                    qitem.quantity = raw.get('quantity', qitem.quantity)
                 if 'unit_price' in raw:
                     qitem.unit_price = raw.get('unit_price', qitem.unit_price)
+                shape_merge = {
+                    'line_kind': raw.get('line_kind', qitem.line_kind),
+                    'source': raw.get('source', qitem.source),
+                    'quantity': raw.get('quantity', qitem.quantity),
+                }
+                lk, src, qty = _quotation_line_shape(shape_merge, qitem)
+                qitem.line_kind = lk
+                qitem.source = src
+                qitem.quantity = qty
                 changed = (
                     (qitem.description or '') != existing_desc or
                     int(qitem.quantity or 0) != existing_qty or
                     float(qitem.unit_price or 0) != existing_price or
                     qitem.service_id != existing_service or
-                    qitem.service_add_on_id != existing_add_on
+                    qitem.service_add_on_id != existing_add_on or
+                    str(existing_line_kind or '') != str(qitem.line_kind or '') or
+                    (existing_source or '') != (qitem.source or '')
                 )
                 # Preserve existing status unless payload explicitly provides a non-null value
                 if 'status' in raw:
@@ -748,13 +800,38 @@ class QuotationSerializer(serializers.Serializer):
                 incoming_ids.add(item_id)
             else:
                 service_id = raw.get('service') if raw.get('service') else None
-                default_status = Quotation.Status.ACCEPTED if service_id and int(service_id) in requested_service_ids else Quotation.Status.PENDING
+                lk, src, qty = _quotation_line_shape(raw, None)
+                is_booked_service = (
+                    lk == QuotationItem.LineKind.SERVICE
+                    and service_id
+                    and int(service_id) in requested_service_ids
+                )
+                # Do not duplicate baseline booked service rows.
+                if is_booked_service:
+                    existing_service_row = QuotationItem.objects.filter(
+                        quotation=instance,
+                        line_kind=QuotationItem.LineKind.SERVICE,
+                        service_id=service_id,
+                    ).exclude(id__in=incoming_ids).order_by('id').first()
+                    if existing_service_row is not None:
+                        if 'description' in raw:
+                            existing_service_row.description = raw.get('description', existing_service_row.description)
+                        if 'unit_price' in raw:
+                            existing_service_row.unit_price = raw.get('unit_price', existing_service_row.unit_price)
+                        existing_service_row.quantity = 1
+                        existing_service_row.source = None
+                        existing_service_row.save()
+                        incoming_ids.add(existing_service_row.id)
+                        continue
+                default_status = Quotation.Status.ACCEPTED if is_booked_service else Quotation.Status.PENDING
                 qitem = QuotationItem.objects.create(
                     quotation=instance,
+                    line_kind=lk,
+                    source=src,
                     service_id=service_id,
                     service_add_on_id=raw.get('service_add_on') if raw.get('service_add_on') else None,
                     description=raw.get('description', ''),
-                    quantity=raw.get('quantity', 1),
+                    quantity=qty,
                     unit_price=raw.get('unit_price', 0),
                     status=default_status,
                     change_type='added' if default_status == Quotation.Status.PENDING else None,
@@ -780,6 +857,14 @@ class QuotationSerializer(serializers.Serializer):
                 to_delete = []
                 for mid in missing_ids:
                     ex = existing_items.get(mid)
+                    if (
+                        ex
+                        and str(getattr(ex, 'line_kind', '') or '') == QuotationItem.LineKind.SERVICE
+                        and getattr(ex, 'service_id', None) in requested_service_ids
+                        and str(getattr(ex, 'status', '') or '').lower() == Quotation.Status.ACCEPTED
+                    ):
+                        # Keep baseline booked service rows stable across later edits.
+                        continue
                     if str(getattr(ex, 'status', '') or '').lower() == Quotation.Status.ACCEPTED:
                         to_mark_removed.append(mid)
                     else:
@@ -797,12 +882,7 @@ class QuotationSerializer(serializers.Serializer):
             pass
 
         # Recalculate total
-        try:
-            total = sum([float(i.line_total) for i in QuotationItem.objects.filter(quotation=instance).exclude(status='rejected')])
-        except Exception:
-            total = 0
-
-        instance.total_amount = total
+        instance.recalculate_totals()
         instance.notes = validated_data.get('notes', instance.notes)
         instance.is_final = validated_data.get('is_final', instance.is_final)
         # If status is explicitly provided, honor it.

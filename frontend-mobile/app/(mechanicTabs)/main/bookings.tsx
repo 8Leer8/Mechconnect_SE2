@@ -16,6 +16,10 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL;
 interface Booking {
   id: number;
   status: string;
+  has_backjob?: boolean;
+  backjob?: { id?: number; status?: string } | null;
+  backjob_status?: string | null;
+  is_backjob?: boolean;
   amount_fee: number;
   booked_at: string;
   updated_at?: string;
@@ -260,8 +264,10 @@ export default function BookingsScreen() {
 
   // Map backend status to user-friendly label and color
   const getStatusLabel = (status: string) => {
-    switch (status) {
+    const normalized = String(status || '').toLowerCase();
+    switch (normalized) {
       case 'accepted': return 'Booked';
+      case 'backjob_pending': return 'Backjob Pending';
       case 'active': return 'On Going';
       case 'on_the_way': return 'On the Way';
       case 'at_location': return 'At Location';
@@ -274,12 +280,14 @@ export default function BookingsScreen() {
       case 'pending': return 'Pending';
       case 'reworked': return 'Reworked';
       case 'disputed': return 'Disputed';
-      default: return status.charAt(0).toUpperCase() + status.slice(1);
+      default: return String(status || '').charAt(0).toUpperCase() + String(status || '').slice(1);
     }
   };
   const getStatusColor = (status: string) => {
-    switch (status) {
+    const normalized = String(status || '').toLowerCase();
+    switch (normalized) {
       case 'accepted': return '#00B8D9';
+      case 'backjob_pending': return '#FFD60A';
       case 'active': return '#FF8C00';
       case 'on_the_way': return '#007AFF';
       case 'at_location': return '#5AC8FA';
@@ -297,8 +305,10 @@ export default function BookingsScreen() {
   };
 
   const getStatusIcon = (status: string) => {
-    switch (status) {
+    const normalized = String(status || '').toLowerCase();
+    switch (normalized) {
       case 'accepted': return 'calendar-check-o';
+      case 'backjob_pending': return 'refresh';
       case 'active': return 'play-circle';
       case 'on_the_way': return 'car';
       case 'at_location': return 'map-marker';
@@ -521,25 +531,39 @@ export default function BookingsScreen() {
         ) : (
           <View style={styles.bookingsList}>
             {bookings.map((booking) => (
+              (() => {
+                const statusKey = String(booking.status || '').toLowerCase();
+                const isBackjobBooking = Boolean(
+                  (booking as any).has_backjob ||
+                  (booking as any).is_backjob ||
+                  (booking as any).backjob ||
+                  String((booking as any).backjob_status || '').trim() ||
+                  activeTab === 'reworked' ||
+                  statusKey === 'backjob_pending' ||
+                  statusKey === 'reworked'
+                );
+                return (
               <TouchableOpacity
                 key={booking.id}
                 style={styles.bookingCard}
                 activeOpacity={0.7}
                 onPress={() => {
+                    const statusKey = String(booking.status || '').toLowerCase();
                     // Allow viewing details for active flows as well as
                     // pending direct requests so mechanics can inspect
                     // the incoming direct booking before accepting/declining.
                     if (
-                          booking.status === 'active' ||
-                          booking.status === 'on_the_way' ||
-                          booking.status === 'at_location' ||
-                          booking.status === 'diagnosing' ||
-                          booking.status === 'paused' ||
-                          booking.status === 'completed' ||
-                          booking.status === 'reworked' ||
-                          booking.status === 'pending_payment' ||
+                          statusKey === 'active' ||
+                          statusKey === 'on_the_way' ||
+                          statusKey === 'at_location' ||
+                          statusKey === 'diagnosing' ||
+                          statusKey === 'paused' ||
+                          statusKey === 'completed' ||
+                          statusKey === 'reworked' ||
+                          statusKey === 'backjob_pending' ||
+                          statusKey === 'pending_payment' ||
                           // allow pending direct-type requests to be opened
-                          (booking.status === 'pending' && booking.request && booking.request.type === 'direct')
+                          (statusKey === 'pending' && booking.request && booking.request.type === 'direct')
                         ) {
                       handleViewDetails(booking);
                     }
@@ -556,15 +580,11 @@ export default function BookingsScreen() {
                         <View style={[styles.statusBadge, { backgroundColor: getStatusColor(booking.status) }]}> 
                           <ThemedText style={styles.statusText}>{getStatusLabel(booking.status)}</ThemedText>
                         </View>
-                                        { (booking as any).has_backjob && booking.status === 'completed' ? (
-                                          <View style={styles.backjobBadge}>
-                                            <ThemedText style={styles.backjobText}>Reworked</ThemedText>
-                                          </View>
-                                        ) : (booking as any).has_backjob ? (
-                                          <View style={styles.backjobBadge}>
-                                            <ThemedText style={styles.backjobText}>Backjob</ThemedText>
-                                          </View>
-                                        ) : null}
+                        {isBackjobBooking ? (
+                          <View style={styles.backjobBadge}>
+                            <ThemedText style={styles.backjobText}>Backjob</ThemedText>
+                          </View>
+                        ) : null}
                         <ThemedText style={styles.bookingId}>#{booking.id}</ThemedText>
                       </View>
                       <ThemedText style={styles.requestType}>
@@ -622,7 +642,7 @@ export default function BookingsScreen() {
                 <View style={styles.cardFooter}>
                   <ThemedText style={styles.amount}>₱{parseFloat(String(booking.amount_fee || '0')).toFixed(2)}</ThemedText>
 
-                  {booking.status === 'pending' ? (
+                  {String(booking.status || '').toLowerCase() === 'pending' ? (
                     <View style={styles.pendingActions}>
                       <TouchableOpacity
                         style={styles.declineBtn}
@@ -646,7 +666,10 @@ export default function BookingsScreen() {
                         )}
                       </TouchableOpacity>
                     </View>
-                  ) : (booking.status === 'accepted' || booking.status === 'on_the_way' || booking.status === 'at_location' || booking.status === 'diagnosing' || booking.status === 'active' || booking.status === 'paused' || booking.status === 'completed' || booking.status === 'reworked' || booking.status === 'pending_payment') ? (
+                  ) : ((() => {
+                    const statusKey = String(booking.status || '').toLowerCase();
+                    return statusKey === 'accepted' || statusKey === 'on_the_way' || statusKey === 'at_location' || statusKey === 'diagnosing' || statusKey === 'active' || statusKey === 'paused' || statusKey === 'completed' || statusKey === 'reworked' || statusKey === 'backjob_pending' || statusKey === 'pending_payment';
+                  })()) ? (
                     <View style={{ flexDirection: 'row', gap: 8 }}>
                       <TouchableOpacity
                         style={styles.detailsBtn}
@@ -667,6 +690,8 @@ export default function BookingsScreen() {
                   </View>
                 )}
               </TouchableOpacity>
+                );
+              })()
             ))}
           </View>
         )}

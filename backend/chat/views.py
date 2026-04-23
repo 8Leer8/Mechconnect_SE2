@@ -188,15 +188,8 @@ def request_backjob(request, booking_id):
             permitted = True
     except Exception:
         pass
-    if not permitted and booking.request.provider and booking.request.provider.id == account.id:
-        permitted = True
-    try:
-        if not permitted and booking.request.shop and booking.request.shop.shop_owner and booking.request.shop.shop_owner.account.id == account.id:
-            permitted = True
-    except Exception:
-        pass
     if not permitted:
-        return Response({'detail': 'Not permitted'}, status=status.HTTP_403_FORBIDDEN)
+        return Response({'detail': 'Only the client can request a backjob'}, status=status.HTTP_403_FORBIDDEN)
 
     # Get or create conversation for this booking
     conv = Conversation.objects.filter(booking_id=booking_id).first()
@@ -256,9 +249,14 @@ def request_backjob(request, booking_id):
                 'requested_by': account,
                 'reason': reason,
                 'images': image_urls,
-                'status': Booking.Status.REWORKED,
+                'status': Booking.Status.BACKJOB_PENDING,
             },
         )
+        # Re-open booking state for backjob diagnostic flow while preserving history.
+        if booking.status == Booking.Status.COMPLETED:
+            booking.status = Booking.Status.BACKJOB_PENDING
+            booking.completed_at = None
+            booking.save(update_fields=["status", "completed_at", "updated_at"])
     except Exception:
         # don't block message creation if backjob record fails
         pass

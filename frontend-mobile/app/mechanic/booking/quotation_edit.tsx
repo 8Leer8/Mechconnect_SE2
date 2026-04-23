@@ -2,10 +2,19 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Modal, LayoutAnimation, Platform, UIManager } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { FontAwesome } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { styles } from '../../../style/mechanic/quotation_edit';
 import { useNotification } from '@/hooks/useNotification';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
+
+const ITEM_SOURCES = [
+  { value: 'on_hand', label: 'On-hand (stock)' },
+  { value: 'to_be_purchased', label: 'To be purchased' },
+  { value: 'mechanic_selling', label: 'Mechanic selling / owned' },
+] as const;
+
+type ItemSourceValue = (typeof ITEM_SOURCES)[number]['value'];
 
 type QuotationItem = {
   id?: number;
@@ -13,11 +22,19 @@ type QuotationItem = {
   created_at?: string;
   status?: string;
   change_type?: 'added' | 'edited' | 'removed' | null;
+  line_kind: 'service' | 'item';
+  source?: ItemSourceValue | null;
   description: string;
   quantity: number;
   unit_price: number;
   service?: number | null;
   service_add_on?: number | null;
+  purchase_receipt_image?: string | null;
+};
+
+const getSourceLabel = (v: string | null | undefined) => {
+  const row = ITEM_SOURCES.find((s) => s.value === v);
+  return row ? row.label : String(v || '');
 };
 
 const formatMoney = (amount: number) => {
@@ -32,7 +49,6 @@ export default function QuotationEdit() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [items, setItems] = useState<QuotationItem[]>([]);
-  const [availedServiceIds, setAvailedServiceIds] = useState<number[]>([]);
   const [quantityText, setQuantityText] = useState<Record<string, string>>({});
   const [unitPriceText, setUnitPriceText] = useState<Record<string, string>>({});
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
@@ -45,6 +61,9 @@ export default function QuotationEdit() {
   const [selectMode, setSelectMode] = useState(false);
   const [showSaveReviewModal, setShowSaveReviewModal] = useState(false);
   const [roleChecked, setRoleChecked] = useState(false);
+  const [receiptUploadingKey, setReceiptUploadingKey] = useState<string | null>(null);
+  const [hasQuotationOnServer, setHasQuotationOnServer] = useState<boolean | null>(null);
+  const [bookedServiceIds, setBookedServiceIds] = useState<number[]>([]);
 
   useEffect(() => {
     let mounted = true;
@@ -95,14 +114,13 @@ export default function QuotationEdit() {
 
   const makeClientKey = () => `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-  const orderItems = (rawItems: QuotationItem[], serviceIds: number[]) => {
+  const orderItems = (rawItems: QuotationItem[]) => {
     if (!rawItems.length) return [];
-    const serviceSet = new Set((serviceIds || []).map(v => Number(v)).filter(v => Number.isFinite(v) && v > 0));
     return rawItems
       .map((it, index) => ({ ...it, _sourceIndex: index }))
       .sort((a: any, b: any) => {
-        const aIsService = a.service != null && serviceSet.has(Number(a.service));
-        const bIsService = b.service != null && serviceSet.has(Number(b.service));
+        const aIsService = a.line_kind === 'service';
+        const bIsService = b.line_kind === 'service';
         if (aIsService !== bIsService) return aIsService ? -1 : 1;
 
         const aId = Number(a.id);
@@ -137,22 +155,42 @@ export default function QuotationEdit() {
         });
         if (!res.ok) {
           setItems([]);
+          setHasQuotationOnServer(false);
           return;
         }
         const data = await res.json();
-        const mappedItemsRaw = (data.items || []).map((it: any, index: number) => ({
+        setHasQuotationOnServer(!(data && data.has_quotation === false));
+        const mappedItemsRaw = (data.items || []).map((it: any, index: number) => {
+          const lineKind =
+            it.line_kind === 'service' || it.line_kind === 'item'
+              ? it.line_kind
+              : it.service
+                ? 'service'
+                : 'item';
+          return {
             id: it.id,
             client_key: `existing-${it.id ?? index}`,
             created_at: it.created_at,
             status: it.status,
-                change_type: null,
+            change_type: null,
             description: it.description || '',
             quantity: Number(it.quantity || 1),
             unit_price: Number(it.unit_price || 0),
             service: it.service || null,
             service_add_on: it.service_add_on || null,
-          }));
-        const mappedItems = orderItems(mappedItemsRaw, availedServiceIds);
+            line_kind: lineKind,
+            source: lineKind === 'service' ? null : (it.source as ItemSourceValue) || 'on_hand',
+            purchase_receipt_image: it.purchase_receipt_image || null,
+          };
+        });
+        const bookedSet = new Set(bookedServiceIds);
+        const mappedItems = orderItems(
+          mappedItemsRaw.filter((row: QuotationItem) => {
+            const sid = Number(row.service || 0);
+            const isBookedBaseService = row.line_kind === 'service' && Number.isFinite(sid) && bookedSet.has(sid);
+            return !isBookedBaseService;
+          })
+        );
         setItems(mappedItems);
         const initialMap: Record<string, QuotationItem> = {};
         mappedItems.forEach((it: QuotationItem) => {
@@ -174,14 +212,15 @@ export default function QuotationEdit() {
       }
     };
     fetchQuotation();
-  }, [bookingId]);
+  }, [bookingId, bookedServiceIds]);
 
   // If there is no existing quotation, prefill an item with the availed service from booking
   useEffect(() => {
     const prefillFromBooking = async () => {
       if (!bookingId) return;
-      // only prefill when items are empty and not loading
+      // only prefill when there is really no quotation yet
       if (loading) return;
+      if (hasQuotationOnServer !== false) return;
       try {
         // fetch booking detail
         const res = await fetch(`${API_URL}/bookings/mechanic/bookings/${bookingId}/`, {
@@ -196,29 +235,51 @@ export default function QuotationEdit() {
         const details = booking.request?.request_details;
         if (!details) return;
         const ids: number[] = [];
-        if (details.service?.id) ids.push(Number(details.service.id));
+        const single = Number(details?.service?.id);
+        if (Number.isFinite(single) && single > 0) ids.push(single);
         if (Array.isArray(details.services)) {
           details.services.forEach((svc: any) => {
             const sid = Number(svc?.id);
             if (Number.isFinite(sid) && sid > 0) ids.push(sid);
           });
         }
-        setAvailedServiceIds(Array.from(new Set(ids)));
-        // If direct request, use the service
-        if (details.service && items.length === 0) {
+        setBookedServiceIds(Array.from(new Set(ids)));
+        if (items.length !== 0) return;
+
+        let prefilled: QuotationItem[] = [];
+        if (Array.isArray(details.services) && details.services.length > 0) {
+          prefilled = details.services.map((svc: any) => {
+            const sid = Number(svc?.id);
+            return {
+              client_key: makeClientKey(),
+              description: svc.name || 'Service',
+              quantity: 1,
+              unit_price: Number(svc.minimum_price || booking.amount_fee || 0),
+              service: Number.isFinite(sid) ? sid : null,
+              line_kind: 'service' as const,
+              status: 'pending',
+            };
+          });
+        } else if (details.service) {
           const svc = details.service;
           const unit = Number(svc.minimum_price || booking.amount_fee || 0);
-          const prefilled = [{ client_key: makeClientKey(), description: svc.name || 'Service', quantity: 1, unit_price: unit, service: svc.id } as QuotationItem];
-          setItems(prefilled);
-          initializeInputText(prefilled);
+          prefilled = [
+            {
+              client_key: makeClientKey(),
+              description: svc.name || 'Service',
+              quantity: 1,
+              unit_price: unit,
+              service: svc.id,
+              line_kind: 'service',
+              status: 'pending',
+            },
+          ];
         }
-        // For broadcast, there may be services array
-        if (details.services && Array.isArray(details.services) && items.length === 0) {
-          const primary = details.services[0];
-          const unit = Number(primary.minimum_price || booking.amount_fee || 0);
-          const prefilled = [{ client_key: makeClientKey(), description: primary.name || 'Service', quantity: 1, unit_price: unit, service: primary.id } as QuotationItem];
-          setItems(prefilled);
-          initializeInputText(prefilled);
+
+        if (prefilled.length) {
+          const ordered = orderItems(prefilled);
+          setItems(ordered);
+          initializeInputText(ordered);
         }
       } catch (e) {
         // ignore
@@ -226,20 +287,41 @@ export default function QuotationEdit() {
     };
     prefillFromBooking();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, bookingId]);
-
-  useEffect(() => {
-    if (!items.length || !availedServiceIds.length) return;
-    setItems(prev => orderItems(prev, availedServiceIds));
-    // keep existing text maps; keys are stable via id/client_key
-  }, [availedServiceIds]);
+  }, [loading, bookingId, hasQuotationOnServer]);
 
   const updateItem = (index: number, patch: any) => {
     setItems(prev => prev.map((it, i) => i === index ? { ...it, ...patch } : it));
   };
 
+  const addServiceLine = () => {
+    const newItem: QuotationItem = {
+      client_key: makeClientKey(),
+      line_kind: 'service',
+      description: '',
+      quantity: 1,
+      unit_price: 0,
+      service: null,
+      service_add_on: null,
+      status: 'pending',
+      change_type: 'added',
+    };
+    setItems(prev => [...prev, newItem]);
+    const newKey = getItemKey(newItem, items.length);
+    setQuantityText(prev => ({ ...prev, [newKey]: '1' }));
+    setUnitPriceText(prev => ({ ...prev, [newKey]: '0' }));
+  };
+
   const addItem = () => {
-    const newItem: QuotationItem = { client_key: makeClientKey(), description: '', quantity: 1, unit_price: 0, status: 'pending', change_type: 'added' };
+    const newItem: QuotationItem = {
+      client_key: makeClientKey(),
+      line_kind: 'item',
+      source: 'on_hand',
+      description: '',
+      quantity: 1,
+      unit_price: 0,
+      status: 'pending',
+      change_type: 'added',
+    };
     setItems(prev => [...prev, newItem]);
     const newKey = getItemKey(newItem, items.length);
     setQuantityText(prev => ({ ...prev, [newKey]: '1' }));
@@ -293,7 +375,9 @@ export default function QuotationEdit() {
       Number(snapshot.quantity || 0) !== Number(current.quantity || 0) ||
       Number(snapshot.unit_price || 0) !== Number(current.unit_price || 0) ||
       Number(snapshot.service || 0) !== Number(current.service || 0) ||
-      Number(snapshot.service_add_on || 0) !== Number(current.service_add_on || 0)
+      Number(snapshot.service_add_on || 0) !== Number(current.service_add_on || 0) ||
+      String(snapshot.line_kind || '') !== String(current.line_kind || '') ||
+      String(snapshot.source || '') !== String(current.source || '')
     );
 
     if (wasAccepted && changed && !removedAcceptedItems[key]) {
@@ -412,7 +496,9 @@ export default function QuotationEdit() {
       const changedFromInitial = !!previous && (
         String(previous.description || '') !== String(it.description || '') ||
         Number(previous.quantity || 0) !== Number(it.quantity || 0) ||
-        Number(previous.unit_price || 0) !== Number(it.unit_price || 0)
+        Number(previous.unit_price || 0) !== Number(it.unit_price || 0) ||
+        String(previous.line_kind || '') !== String(it.line_kind || '') ||
+        String(previous.source || '') !== String(it.source || '')
       );
 
       if (removedAcceptedItems[key] || change === 'removed') {
@@ -451,11 +537,18 @@ export default function QuotationEdit() {
             const key = getItemKey(it, idx);
             return !removedAcceptedItems[key];
           })
-          .map(({ client_key, created_at, ...it }) => ({
-            ...it,
-            quantity: Math.max(1, Number(it.quantity || 1)),
-            unit_price: Math.max(0, Number(it.unit_price || 0)),
-          })),
+          .map(({ client_key, created_at, ...it }) => {
+            const line_kind = it.line_kind === 'service' ? 'service' : 'item';
+            const quantity = line_kind === 'service' ? 1 : Math.max(1, Number(it.quantity || 1));
+            const unit_price = Math.max(0, Number(it.unit_price || 0));
+            return {
+              ...it,
+              line_kind,
+              quantity,
+              unit_price,
+              source: line_kind === 'service' ? null : (it.source || 'on_hand'),
+            };
+          }),
       };
       const res = await fetch(`${API_URL}/bookings/mechanic/bookings/${bookingId}/quotation/`, {
         method: 'POST',
@@ -495,6 +588,52 @@ export default function QuotationEdit() {
     }
   };
 
+  const uploadItemReceipt = async (item: QuotationItem, key: string) => {
+    if (!bookingId || !item.id) {
+      showNotification({ type: 'error', message: 'Save the quotation item first before uploading receipt.' });
+      return;
+    }
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (permission.status !== 'granted') {
+        showNotification({ type: 'error', message: 'Gallery permission is required to upload receipt.' });
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.9,
+      });
+      if (result.canceled || !result.assets?.[0]?.uri) return;
+
+      const uri = result.assets[0].uri;
+      const fileName = uri.split('/').pop() || `receipt-${item.id}.jpg`;
+      const ext = fileName.split('.').pop()?.toLowerCase();
+      const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+
+      const formData = new FormData();
+      formData.append('receipt_image', { uri, name: fileName, type: mime } as any);
+      formData.append('actual_unit_price', String(Math.max(0, Number(item.unit_price || 0))));
+
+      setReceiptUploadingKey(key);
+      const res = await fetch(`${API_URL}/bookings/mechanic/bookings/${bookingId}/quotation/items/${item.id}/receipt/`, {
+        method: 'POST',
+        credentials: 'include',
+        body: formData as any,
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(payload?.error || 'Failed to upload receipt');
+
+      showNotification({ type: 'success', message: payload?.message || 'Receipt uploaded' });
+      router.replace({ pathname: '/mechanic/booking/quotation_edit', params: { bookingId: String(bookingId) } });
+    } catch (e: any) {
+      showNotification({ type: 'error', message: e?.message || 'Failed to upload receipt' });
+    } finally {
+      setReceiptUploadingKey(null);
+    }
+  };
+
   if (loading || !roleChecked) {
     return (
       <View style={styles.container}>
@@ -526,7 +665,13 @@ export default function QuotationEdit() {
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
         <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionTitle}>Quoted Services & Add-ons</Text>
+          <Text style={styles.sectionTitle}>Service & item quotations</Text>
+          <Text style={{ color: '#6FE29D', fontSize: 11, marginTop: 4, fontWeight: '600' }}>
+            Booked service is auto-included in final total.
+          </Text>
+          <Text style={{ color: '#8E8E93', fontSize: 12, marginTop: 4 }}>
+            Booked service stays in client pricing/quotation. This page only shows editable/new lines.
+          </Text>
         </View>
 
         {items.map((it, idx) => (
@@ -539,6 +684,7 @@ export default function QuotationEdit() {
             const usesEditFlow = isAccepted || isRemovedGhost;
             const isEditable = !usesEditFlow || isEditing;
             const isExpanded = expandedItems[key] ?? !isAccepted;
+            const isServiceLine = it.line_kind === 'service';
             return (
               <View key={key} style={styles.itemSelectableRow}>
                 <View style={[styles.itemCard, styles.itemCardFlex, isAccepted ? styles.acceptedItemCard : null, isEditing ? styles.editingItemCard : null, isRemovedGhost ? styles.removedGhostItemCard : null]}>
@@ -554,7 +700,11 @@ export default function QuotationEdit() {
                           <View style={styles.pendingBadge}><Text style={styles.pendingBadgeText}>Pending</Text></View>
                         )}
                       </View>
-                      <Text style={styles.itemAccordionMeta}>Qty {it.quantity || 1} x PHP {formatMoney(Number(it.unit_price || 0))}</Text>
+                      <Text style={styles.itemAccordionMeta}>
+                        {isServiceLine
+                          ? `Service • PHP ${formatMoney(Number(it.unit_price || 0))}`
+                          : `Qty ${it.quantity || 1} × PHP ${formatMoney(Number(it.unit_price || 0))} • ${getSourceLabel(it.source)}`}
+                      </Text>
                     </View>
                     <View style={styles.itemAccordionRight}>
                       {it.change_type === 'edited' ? (
@@ -571,7 +721,7 @@ export default function QuotationEdit() {
                   {isExpanded && (
                     <View style={styles.itemAccordionBody}>
                     <View style={styles.itemCardTopRow}>
-                      <Text style={styles.itemLabel}>Item Details</Text>
+                      <Text style={styles.itemLabel}>{isServiceLine ? 'Service line' : 'Item line'}</Text>
                       <View style={styles.itemActionRow}>
                         {isEditing ? (
                           <View style={styles.editingPill}><Text style={styles.editingPillText}>Editing</Text></View>
@@ -609,8 +759,12 @@ export default function QuotationEdit() {
                       </View>
                     </View>
 
+                    <View style={[styles.lineKindBadge, isServiceLine ? styles.lineKindBadgeService : null]}>
+                      <Text style={styles.lineKindBadgeText}>{isServiceLine ? 'Service' : 'Item / part'}</Text>
+                    </View>
+
                     <TextInput
-                      placeholder="Enter item description"
+                      placeholder={isServiceLine ? 'Service name' : 'Item name'}
                       placeholderTextColor="#8E8E93"
                       value={it.description}
                       editable={isEditable && !isRemovedGhost}
@@ -618,58 +772,146 @@ export default function QuotationEdit() {
                       style={[styles.itemNameInput, !isEditable ? styles.readonlyInput : null]}
                     />
 
-                    <View style={styles.itemFieldsRow}>
-                      <View style={styles.fieldCol}>
-                        <Text style={styles.itemLabel}>Qty</Text>
-                        <TextInput
-                          placeholder="1"
-                          placeholderTextColor="#8E8E93"
-                          value={quantityText[key] ?? String(it.quantity)}
-                          editable={isEditable}
-                          keyboardType="numeric"
-                          onChangeText={(t) => {
-                            if (!/^\d*$/.test(t)) return;
-                            setQuantityText(prev => ({ ...prev, [key]: t }));
-                            if (t === '') return;
-                            const parsed = Number(t);
-                            if (Number.isFinite(parsed)) updateItem(idx, { quantity: Math.max(1, parsed), change_type: String(it.status || '').toLowerCase() === 'accepted' ? 'edited' : it.change_type });
-                          }}
-                          onBlur={() => {
-                            const raw = quantityText[key];
-                            const parsed = Number(raw);
-                            const finalValue = Number.isFinite(parsed) && raw !== '' ? Math.max(1, parsed) : 1;
-                            updateItem(idx, { quantity: finalValue });
-                            setQuantityText(prev => ({ ...prev, [key]: String(finalValue) }));
-                          }}
-                          style={[styles.numericInput, !isEditable || isRemovedGhost ? styles.readonlyInput : null]}
-                        />
+                    {isServiceLine ? (
+                      <View style={styles.itemFieldsRow}>
+                        <View style={[styles.fieldCol, { flex: 1 }]}>
+                          <Text style={styles.itemLabel}>Price</Text>
+                          <TextInput
+                            placeholder="0"
+                            placeholderTextColor="#8E8E93"
+                            value={unitPriceText[key] ?? String(it.unit_price)}
+                            editable={isEditable}
+                            keyboardType="numeric"
+                            onChangeText={(t) => {
+                              if (!/^(\d+)?(\.\d{0,2})?$/.test(t)) return;
+                              setUnitPriceText(prev => ({ ...prev, [key]: t }));
+                              if (t === '') return;
+                              const parsed = Number(t);
+                              if (Number.isFinite(parsed)) {
+                                updateItem(idx, {
+                                  unit_price: Math.max(0, parsed),
+                                  quantity: 1,
+                                  change_type: String(it.status || '').toLowerCase() === 'accepted' ? 'edited' : it.change_type,
+                                });
+                              }
+                            }}
+                            onBlur={() => {
+                              const raw = unitPriceText[key];
+                              const parsed = Number(raw);
+                              const finalValue = Number.isFinite(parsed) && raw !== '' ? Math.max(0, parsed) : 0;
+                              updateItem(idx, { unit_price: finalValue, quantity: 1 });
+                              setUnitPriceText(prev => ({ ...prev, [key]: String(finalValue) }));
+                              setQuantityText(prev => ({ ...prev, [key]: '1' }));
+                            }}
+                            style={[styles.numericInput, !isEditable || isRemovedGhost ? styles.readonlyInput : null]}
+                          />
+                        </View>
                       </View>
-                      <View style={styles.fieldCol}>
-                        <Text style={styles.itemLabel}>Unit Price</Text>
-                        <TextInput
-                          placeholder="0"
-                          placeholderTextColor="#8E8E93"
-                          value={unitPriceText[key] ?? String(it.unit_price)}
-                          editable={isEditable}
-                          keyboardType="numeric"
-                          onChangeText={(t) => {
-                            if (!/^(\d+)?(\.\d{0,2})?$/.test(t)) return;
-                            setUnitPriceText(prev => ({ ...prev, [key]: t }));
-                            if (t === '') return;
-                            const parsed = Number(t);
-                            if (Number.isFinite(parsed)) updateItem(idx, { unit_price: Math.max(0, parsed), change_type: String(it.status || '').toLowerCase() === 'accepted' ? 'edited' : it.change_type });
-                          }}
-                          onBlur={() => {
-                            const raw = unitPriceText[key];
-                            const parsed = Number(raw);
-                            const finalValue = Number.isFinite(parsed) && raw !== '' ? Math.max(0, parsed) : 0;
-                            updateItem(idx, { unit_price: finalValue });
-                            setUnitPriceText(prev => ({ ...prev, [key]: String(finalValue) }));
-                          }}
-                          style={[styles.numericInput, !isEditable || isRemovedGhost ? styles.readonlyInput : null]}
-                        />
-                      </View>
-                    </View>
+                    ) : (
+                      <>
+                        <View style={styles.itemFieldsRow}>
+                          <View style={styles.fieldCol}>
+                            <Text style={styles.itemLabel}>Qty</Text>
+                            <TextInput
+                              placeholder="1"
+                              placeholderTextColor="#8E8E93"
+                              value={quantityText[key] ?? String(it.quantity)}
+                              editable={isEditable}
+                              keyboardType="numeric"
+                              onChangeText={(t) => {
+                                if (!/^\d*$/.test(t)) return;
+                                setQuantityText(prev => ({ ...prev, [key]: t }));
+                                if (t === '') return;
+                                const parsed = Number(t);
+                                if (Number.isFinite(parsed)) updateItem(idx, { quantity: Math.max(1, parsed), change_type: String(it.status || '').toLowerCase() === 'accepted' ? 'edited' : it.change_type });
+                              }}
+                              onBlur={() => {
+                                const raw = quantityText[key];
+                                const parsed = Number(raw);
+                                const finalValue = Number.isFinite(parsed) && raw !== '' ? Math.max(1, parsed) : 1;
+                                updateItem(idx, { quantity: finalValue });
+                                setQuantityText(prev => ({ ...prev, [key]: String(finalValue) }));
+                              }}
+                              style={[styles.numericInput, !isEditable || isRemovedGhost ? styles.readonlyInput : null]}
+                            />
+                          </View>
+                          <View style={styles.fieldCol}>
+                            <Text style={styles.itemLabel}>Unit Price</Text>
+                            <TextInput
+                              placeholder="0"
+                              placeholderTextColor="#8E8E93"
+                              value={unitPriceText[key] ?? String(it.unit_price)}
+                              editable={isEditable}
+                              keyboardType="numeric"
+                              onChangeText={(t) => {
+                                if (!/^(\d+)?(\.\d{0,2})?$/.test(t)) return;
+                                setUnitPriceText(prev => ({ ...prev, [key]: t }));
+                                if (t === '') return;
+                                const parsed = Number(t);
+                                if (Number.isFinite(parsed)) updateItem(idx, { unit_price: Math.max(0, parsed), change_type: String(it.status || '').toLowerCase() === 'accepted' ? 'edited' : it.change_type });
+                              }}
+                              onBlur={() => {
+                                const raw = unitPriceText[key];
+                                const parsed = Number(raw);
+                                const finalValue = Number.isFinite(parsed) && raw !== '' ? Math.max(0, parsed) : 0;
+                                updateItem(idx, { unit_price: finalValue });
+                                setUnitPriceText(prev => ({ ...prev, [key]: String(finalValue) }));
+                              }}
+                              style={[styles.numericInput, !isEditable || isRemovedGhost ? styles.readonlyInput : null]}
+                            />
+                          </View>
+                        </View>
+
+                        <View style={styles.sourceChipsWrap}>
+                          <Text style={styles.sourceChipsLabel}>Source</Text>
+                          <View style={styles.sourceChipsRow}>
+                            {ITEM_SOURCES.map((opt) => (
+                              <TouchableOpacity
+                                key={opt.value}
+                                onPress={() => {
+                                  if (!isEditable || isRemovedGhost) return;
+                                  updateItem(idx, {
+                                    source: opt.value,
+                                    change_type: String(it.status || '').toLowerCase() === 'accepted' ? 'edited' : it.change_type,
+                                  });
+                                }}
+                                style={[styles.sourceChip, it.source === opt.value ? styles.sourceChipActive : null]}
+                                disabled={!isEditable || isRemovedGhost}
+                              >
+                                <Text style={[styles.sourceChipText, it.source === opt.value ? styles.sourceChipTextActive : null]} numberOfLines={2}>
+                                  {opt.label}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        </View>
+
+                        {it.source === 'to_be_purchased' ? (
+                          <View style={styles.receiptRowWrap}>
+                            <TouchableOpacity
+                              style={[styles.receiptButton, (!it.id || receiptUploadingKey === key) ? styles.receiptButtonDisabled : null]}
+                              onPress={() => uploadItemReceipt(it, key)}
+                              disabled={!it.id || receiptUploadingKey === key}
+                            >
+                              {receiptUploadingKey === key ? (
+                                <ActivityIndicator color="#fff" size="small" />
+                              ) : (
+                                <>
+                                  <FontAwesome name="upload" size={12} color="#fff" />
+                                  <Text style={styles.receiptButtonText}>Upload receipt & request price update</Text>
+                                </>
+                              )}
+                            </TouchableOpacity>
+                            {!it.id ? (
+                              <Text style={styles.receiptHintText}>Save quotation first before uploading receipt.</Text>
+                            ) : null}
+                            {it.purchase_receipt_image ? (
+                              <Text style={styles.receiptHintText}>Receipt uploaded.</Text>
+                            ) : null}
+                          </View>
+                        ) : null}
+                      </>
+                    )}
 
                     <View style={styles.itemTotalRow}>
                       <Text style={styles.itemTotalLabel}>Line Total</Text>
@@ -693,10 +935,16 @@ export default function QuotationEdit() {
           })()
         ))}
 
-        <TouchableOpacity onPress={addItem} style={styles.addItemButtonSmall}>
-          <FontAwesome name="plus" size={12} color="#D6D6D6" />
-          <Text style={styles.addItemButtonSmallText}>Add Item</Text>
-        </TouchableOpacity>
+        <View style={styles.addLineButtonsRow}>
+          <TouchableOpacity onPress={addServiceLine} style={styles.addServiceButtonSmall}>
+            <FontAwesome name="plus" size={12} color="#9ECFB0" />
+            <Text style={styles.addServiceButtonSmallText}>Add service line</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={addItem} style={styles.addItemButtonSmall}>
+            <FontAwesome name="plus" size={12} color="#D6D6D6" />
+            <Text style={styles.addItemButtonSmallText}>Add item / part</Text>
+          </TouchableOpacity>
+        </View>
 
         <View style={styles.summaryCard}>
           <Text style={styles.summaryTitle}>Summary</Text>
@@ -763,11 +1011,11 @@ export default function QuotationEdit() {
                   </View>
                   {previous ? (
                     <>
-                      <Text style={styles.modalChangeSubText}>Before: {previous.description || `Item ${idx + 1}`} • Qty {previous.quantity || 1} • PHP {formatMoney(Number(previous.unit_price || 0))}</Text>
-                      <Text style={styles.modalChangeSubText}>After: {it.description || `Item ${idx + 1}`} • Qty {it.quantity || 1} • PHP {formatMoney(Number(it.unit_price || 0))}</Text>
+                      <Text style={styles.modalChangeSubText}>Before: {previous.description || `Item ${idx + 1}`} • Qty {previous.quantity || 1} • PHP {formatMoney(Number(previous.unit_price || 0))}{previous.line_kind === 'item' ? ` • ${getSourceLabel(previous.source)}` : ''}</Text>
+                      <Text style={styles.modalChangeSubText}>After: {it.description || `Item ${idx + 1}`} • Qty {it.quantity || 1} • PHP {formatMoney(Number(it.unit_price || 0))}{it.line_kind === 'item' ? ` • ${getSourceLabel(it.source)}` : ''}</Text>
                     </>
                   ) : (
-                    <Text style={styles.modalChangeSubText}>After: {it.description || `Item ${idx + 1}`} • Qty {it.quantity || 1} • PHP {formatMoney(Number(it.unit_price || 0))}</Text>
+                    <Text style={styles.modalChangeSubText}>After: {it.description || `Item ${idx + 1}`} • Qty {it.quantity || 1} • PHP {formatMoney(Number(it.unit_price || 0))}{it.line_kind === 'item' ? ` • ${getSourceLabel(it.source)}` : ''}</Text>
                   )}
                 </View>
               ))}

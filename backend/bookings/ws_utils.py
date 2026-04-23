@@ -183,66 +183,70 @@ def post_quotation_chat_message(account, booking, quotation, action='created'):
     if not conv:
         raise RuntimeError('Failed to ensure conversation for booking')
 
-        from chat.models import Message
-        from chat.serializers import MessageSerializer
-        import json
+    from chat.models import Message
+    from chat.serializers import MessageSerializer
+    import json
 
+    items = []
+    try:
+        for it in quotation.items.all():
+            items.append({
+                'id': it.id,
+                'line_kind': getattr(it, 'line_kind', 'item'),
+                'source': getattr(it, 'source', None),
+                'service': it.service_id,
+                'service_add_on': it.service_add_on_id,
+                'description': it.description,
+                'quantity': int(it.quantity),
+                'unit_price': float(it.unit_price),
+                'line_total': float(it.line_total),
+                'purchase_receipt_image': it.purchase_receipt_image.url if getattr(it, 'purchase_receipt_image', None) else None,
+                'receipt_submitted_at': it.receipt_submitted_at.isoformat() if getattr(it, 'receipt_submitted_at', None) else None,
+            })
+    except Exception:
         items = []
-        try:
-            for it in quotation.items.all():
-                items.append({
-                    'id': it.id,
-                    'service': it.service_id,
-                    'service_add_on': it.service_add_on_id,
-                    'description': it.description,
-                    'quantity': int(it.quantity),
-                    'unit_price': float(it.unit_price),
-                    'line_total': float(it.line_total),
-                })
-        except Exception:
-            items = []
 
-        payload = {
-            'type': 'quotation_request',
-            'action': action,
-            'quotation_id': quotation.id if quotation else None,
-            'booking_id': booking.id,
-            'status': getattr(quotation, 'status', None),
-            'mechanic_id': getattr(account, 'id', None),
-            'mechanic_name': f"{getattr(account, 'firstname', '')} {getattr(account, 'lastname', '')}".strip(),
-            'notes': getattr(quotation, 'notes', ''),
-            'total_amount': float(quotation.total_amount) if quotation else None,
-            'items': items,
-            'created_at': quotation.created_at.isoformat() if quotation and getattr(quotation, 'created_at', None) else None,
-        }
+    payload = {
+        'type': 'quotation_request',
+        'action': action,
+        'quotation_id': quotation.id if quotation else None,
+        'booking_id': booking.id,
+        'status': getattr(quotation, 'status', None),
+        'mechanic_id': getattr(account, 'id', None),
+        'mechanic_name': f"{getattr(account, 'firstname', '')} {getattr(account, 'lastname', '')}".strip(),
+        'notes': getattr(quotation, 'notes', ''),
+        'total_amount': float(quotation.total_amount) if quotation else None,
+        'items': items,
+        'created_at': quotation.created_at.isoformat() if quotation and getattr(quotation, 'created_at', None) else None,
+    }
 
-        if action == 'retracted':
-            payload['message'] = 'Mechanic retracted this request.'
+    if action == 'retracted':
+        payload['message'] = 'Mechanic retracted this request.'
 
-        # Create a system-style message (sender=None) so this operation does not
-        # depend on any external auth token state. We still include mechanic info
-        # in the structured payload so UIs can display who initiated it.
-        msg = Message.objects.create(conversation=conv, sender=None, content=json.dumps(payload))
-        conv.save()
-        serializer = MessageSerializer(msg, context={'request': None})
+    # Create a system-style message (sender=None) so this operation does not
+    # depend on any external auth token state. We still include mechanic info
+    # in the structured payload so UIs can display who initiated it.
+    msg = Message.objects.create(conversation=conv, sender=None, content=json.dumps(payload))
+    conv.save()
+    serializer = MessageSerializer(msg, context={'request': None})
 
-        # broadcast to participants except sender
-        # broadcast to participants except the original mechanic (we still
-        # include mechanic_id in payload so recipient UIs can render who did it)
-        channel_layer = get_channel_layer()
-        payload_ws = {
-            'type': 'booking_update',
-            'action': 'new_chat_message',
-            'conversation_id': conv.id,
-            'booking_id': getattr(conv, 'booking_id', booking.id if booking is not None else None),
-            'message': serializer.data,
-        }
-        try:
-            for participant in conv.participants.exclude(id=getattr(account, 'id', None)).all():
-                group_name = f'user_{participant.id}'
-                async_to_sync(channel_layer.group_send)(group_name, payload_ws)
-        except Exception as e:
-            # Broadcasting should not break the DB transaction; log and continue.
-            logger.exception('Failed to broadcast quotation websocket message: %s', e)
+    # broadcast to participants except sender
+    # broadcast to participants except the original mechanic (we still
+    # include mechanic_id in payload so recipient UIs can render who did it)
+    channel_layer = get_channel_layer()
+    payload_ws = {
+        'type': 'booking_update',
+        'action': 'new_chat_message',
+        'conversation_id': conv.id,
+        'booking_id': getattr(conv, 'booking_id', booking.id if booking is not None else None),
+        'message': serializer.data,
+    }
+    try:
+        for participant in conv.participants.exclude(id=getattr(account, 'id', None)).all():
+            group_name = f'user_{participant.id}'
+            async_to_sync(channel_layer.group_send)(group_name, payload_ws)
+    except Exception as e:
+        # Broadcasting should not break the DB transaction; log and continue.
+        logger.exception('Failed to broadcast quotation websocket message: %s', e)
 
-        return serializer.data
+    return serializer.data

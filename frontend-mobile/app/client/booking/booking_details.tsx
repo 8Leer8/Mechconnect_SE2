@@ -184,6 +184,14 @@ const solveServiceSubtotalFromAmount = (
   return Number.isFinite(subtotal) ? Math.max(0, subtotal) : 0;
 };
 
+const QUOTE_ITEM_SOURCE_LABELS: Record<string, string> = {
+  on_hand: 'On-hand (stock)',
+  to_be_purchased: 'To be purchased',
+  mechanic_selling: 'Mechanic selling / owned',
+};
+
+const quoteItemSourceLabel = (v: any) => QUOTE_ITEM_SOURCE_LABELS[String(v || '')] || (v ? String(v) : '—');
+
 export default function ClientBookingDetailScreen() {
   const { bookingId, id } = useLocalSearchParams<{ bookingId?: string; id?: string }>();
   const resolvedBookingId = bookingId || id;
@@ -251,6 +259,20 @@ export default function ClientBookingDetailScreen() {
     setPhotoErrorMap({});
   }, []);
 
+  const isBackjobBookingData = (candidate: any) => {
+    if (!candidate) return false;
+    const statusRaw = String(candidate?.status || '').toLowerCase();
+    return Boolean(
+      bookingHasBackjob(candidate) ||
+      candidate?.has_backjob ||
+      candidate?.is_backjob ||
+      candidate?.backjob ||
+      String(candidate?.backjob_status || '').trim() ||
+      statusRaw === 'backjob_pending' ||
+      statusRaw === 'reworked'
+    );
+  };
+
   const toggleAfterPhotosAccordion = useCallback(() => {
     setAfterPhotosExpanded((prev) => !prev);
     setPhotoLoadingMap({});
@@ -298,9 +320,59 @@ export default function ClientBookingDetailScreen() {
   // Derive display quotation: prefer booking.quotation (from API) otherwise build from request.request_details
   const getDisplayQuotation = () => {
     if (!booking) return null;
+    const isBackjobBooking = isBackjobBookingData(booking);
     const saved = (booking as any).quotation;
-    if (saved && (saved.items || []).length > 0) return saved;
     const details = (booking as any).request?.request_details || null;
+    if (!details && !(saved && (saved.items || []).length > 0)) return null;
+
+    // Backjob should not include old/booked base service rows in quotation display.
+    const expectedServiceItems: any[] = [];
+    if (!isBackjobBooking && details) {
+      if (details.service) {
+        const svc: any = details.service;
+        expectedServiceItems.push({
+          description: svc.name || 'Service',
+          quantity: 1,
+          unit_price: toPrice(svc.minimum_price ?? svc.price),
+          service: svc.id,
+          line_kind: 'service',
+          status: 'accepted',
+        });
+      }
+      if (Array.isArray(details.services) && details.services.length > 0) {
+        details.services.forEach((svc: any) => {
+          expectedServiceItems.push({
+            description: svc?.name || 'Service',
+            quantity: 1,
+            unit_price: toPrice(svc?.minimum_price ?? svc?.price),
+            service: svc?.id,
+            line_kind: 'service',
+            status: 'accepted',
+          });
+        });
+      }
+    }
+
+    if (saved && (saved.items || []).length > 0) {
+      const mergedItems = [...(saved.items || [])];
+      expectedServiceItems.forEach((svcRow: any) => {
+        const sid = Number(svcRow?.service);
+        if (!Number.isFinite(sid) || sid <= 0) return;
+        const exists = mergedItems.some((it: any) => Number(it?.service) === sid && String(it?.status || '').toLowerCase() !== 'rejected');
+        if (!exists) mergedItems.push(svcRow);
+      });
+      const mergedTotal = mergedItems.reduce((sum: number, it: any) => {
+        const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
+        const qty = Number(it?.quantity ?? 1) || 1;
+        return sum + (price * qty);
+      }, 0);
+      return {
+        ...saved,
+        items: mergedItems,
+        total_amount: Math.max(Number(saved?.total_amount || 0), mergedTotal),
+      };
+    }
+
     if (!details) return null;
     const items: any[] = [];
 
@@ -415,7 +487,10 @@ export default function ClientBookingDetailScreen() {
 
     withIndex.forEach((it: any) => {
       const sid = Number(it?.service);
-      if (Number.isFinite(sid) && sid > 0 && serviceItemIds.has(sid)) {
+      const isServiceLine =
+        String(it?.line_kind || '').toLowerCase() === 'service' ||
+        (it?.line_kind == null && Number.isFinite(sid) && sid > 0 && serviceItemIds.has(sid));
+      if (isServiceLine) {
         serviceTop.push(it);
       } else {
         regular.push(it);
@@ -513,6 +588,41 @@ export default function ClientBookingDetailScreen() {
       return sum;
     }, 0);
   }, [displayQuotation, booking]);
+
+  const quotationPendingDeltaTotal = useMemo(() => {
+    if (!sortedQuotationItems.length) return 0;
+
+    const acceptedByAssoc: Record<string, any> = {};
+    const acceptedRows: any[] = [];
+    const removedRows: any[] = [];
+    sortedQuotationItems.forEach((row: any) => {
+      const rowStatus = String(row?.status || row?.quotation_status || row?.state || ((booking as any)?.quotation?.status) || '').toLowerCase();
+      const key = getAssocKey(row);
+      if (rowStatus === 'accepted' && key && !acceptedByAssoc[key]) acceptedByAssoc[key] = row;
+      if (rowStatus === 'accepted') acceptedRows.push(row);
+      if (rowStatus === 'rejected') removedRows.push(row);
+    });
+
+    return sortedQuotationItems.reduce((sum: number, it: any) => {
+      const rowStatus = String(it?.status || it?.quotation_status || it?.state || ((booking as any)?.quotation?.status) || '').toLowerCase();
+      if (rowStatus !== 'pending') return sum;
+
+      const changeLabel = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
+      const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
+      const qty = Number(it?.quantity ?? 1) || 1;
+      const currentTotal = price * qty;
+
+      if (changeLabel === 'Added') return sum + currentTotal;
+      if (changeLabel === 'Edited') {
+        const assocKey = getAssocKey(it);
+        const before = assocKey ? acceptedByAssoc[assocKey] : null;
+        const beforePrice = Number(before?.unit_price ?? before?.price ?? 0) || 0;
+        const beforeQty = Number(before?.quantity ?? 1) || 1;
+        return sum + Math.max(0, currentTotal - (beforePrice * beforeQty));
+      }
+      return sum;
+    }, 0);
+  }, [sortedQuotationItems, booking]);
 
   const convenienceBreakdown = useMemo(() => {
     if (!booking) return null;
@@ -965,7 +1075,7 @@ export default function ClientBookingDetailScreen() {
   const totalPaid = Number(paymentSummary.total_paid || 0);
   const summaryTotalAmount = Math.max(0, Number((paymentSummary as any).total_amount ?? booking.amount_fee ?? 0));
   const summaryPaymentStatus = String(paymentSummary.payment_status || 'unpaid').toLowerCase();
-  const hasBackjob = bookingHasBackjob(booking);
+  const hasBackjob = isBackjobBookingData(booking);
   const hasPaidInstallment = installments.some(
     (item) => String(item.status || '').toLowerCase() === 'paid'
   );
@@ -977,7 +1087,12 @@ export default function ClientBookingDetailScreen() {
     !hasBackjob;
   const isPayableTotalLive = booking.status !== 'pending_payment';
 
-  const payableTotal = hasBackjob ? 0 : Math.max(0, Math.max(totalFee, summaryTotalAmount));
+  const backjobAddedCharges = Math.max(0, quotationPendingDeltaTotal);
+  const resolvedBackjobCharges = Math.max(backjobAddedCharges, Math.max(0, quotationEstimatedTotal));
+  const effectiveConvenienceFeeTotal = hasBackjob ? 0 : convenienceFeeTotal;
+  const effectiveQuotationEstimatedTotal = hasBackjob ? resolvedBackjobCharges : quotationEstimatedTotal;
+  const effectiveTotalFee = hasBackjob ? resolvedBackjobCharges : totalFee;
+  const payableTotal = hasBackjob ? resolvedBackjobCharges : Math.max(0, Math.max(totalFee, summaryTotalAmount));
   const fallbackInitialAmount = payableTotal * selectedInitialPaymentPercentage;
   const fallbackInitialRemaining = Math.max(0, payableTotal - fallbackInitialAmount);
   const pendingInitial = installments.find((item) => String(item.installment_type || '').toLowerCase() === 'initial');
@@ -1833,34 +1948,42 @@ export default function ClientBookingDetailScreen() {
             ) : null}
 
             <View style={styles.receiptList}>
-              <ThemedText style={[styles.noteLabel, { marginBottom: 8 }]}>Convenience Fee</ThemedText>
+              <ThemedText
+                style={[
+                  styles.noteLabel,
+                  { marginBottom: 8 },
+                  hasBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null,
+                ]}
+              >
+                Convenience Fee
+              </ThemedText>
 
               {convenienceBreakdown ? (
                 <>
                   <View style={styles.receiptRow}>
-                    <ThemedText style={styles.receiptItem}>Base Fee</ThemedText>
-                    <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.baseFee.toFixed(2)}</ThemedText>
+                    <ThemedText style={[styles.receiptItem, hasBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>Base Fee</ThemedText>
+                    <ThemedText style={[styles.receiptAmount, hasBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>₱{convenienceBreakdown.baseFee.toFixed(2)}</ThemedText>
                   </View>
                   <View style={styles.receiptRow}>
-                    <ThemedText style={styles.receiptItem}>Distance Fee ({convenienceBreakdown.distanceKm.toFixed(2)} km)</ThemedText>
-                    <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.distanceFee.toFixed(2)}</ThemedText>
+                    <ThemedText style={[styles.receiptItem, hasBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>Distance Fee ({convenienceBreakdown.distanceKm.toFixed(2)} km)</ThemedText>
+                    <ThemedText style={[styles.receiptAmount, hasBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>₱{convenienceBreakdown.distanceFee.toFixed(2)}</ThemedText>
                   </View>
                   <View style={styles.receiptRow}>
-                    <ThemedText style={styles.receiptItem}>
+                    <ThemedText style={[styles.receiptItem, hasBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>
                       {convenienceBreakdown.estimated ? 'Estimated Traffic Fee' : 'Traffic Fee'} ({convenienceBreakdown.trafficLabel})
                     </ThemedText>
-                    <ThemedText style={styles.receiptAmount}>₱{convenienceBreakdown.trafficFee.toFixed(2)}</ThemedText>
+                    <ThemedText style={[styles.receiptAmount, hasBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>₱{convenienceBreakdown.trafficFee.toFixed(2)}</ThemedText>
                   </View>
                   {typeof convenienceBreakdown.etaMinutes === 'number' && convenienceBreakdown.etaMinutes > 0 && (
                     <View style={styles.receiptRow}>
-                      <ThemedText style={styles.receiptItem}>Estimated Time Arrive</ThemedText>
-                      <ThemedText style={styles.receiptAmount}>{convenienceBreakdown.etaMinutes} min</ThemedText>
+                      <ThemedText style={[styles.receiptItem, hasBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>Estimated Time Arrive</ThemedText>
+                      <ThemedText style={[styles.receiptAmount, hasBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>{convenienceBreakdown.etaMinutes} min</ThemedText>
                     </View>
                   )}
                 </>
               ) : (
                 <View style={styles.noteBox}>
-                  <ThemedText style={styles.noteText}>
+                  <ThemedText style={[styles.noteText, hasBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>
                     Convenience fee will appear after mechanic starts travel.
                   </ThemedText>
                 </View>
@@ -1906,6 +2029,8 @@ export default function ClientBookingDetailScreen() {
                       const desc = it?.description || it?.name || (it.service && `Service #${it.service}`) || 'Item';
                       const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
                       const qty = Number(it?.quantity ?? 1) || 1;
+                      const lineKind = String(it?.line_kind || '').toLowerCase();
+                      const isServiceQuoteLine = lineKind === 'service';
                       const key = getQuoteItemKey(it, idx);
                       const isExpanded = expandedQuoteItems[key] ?? false;
                       const assocKey = getAssocKey(it);
@@ -1973,6 +2098,16 @@ export default function ClientBookingDetailScreen() {
                                 <ThemedText style={styles.quotationDetailLabel}>Quantity</ThemedText>
                                 <ThemedText style={styles.quotationDetailValue}>{qty}</ThemedText>
                               </View>
+                              <View style={styles.receiptRow}>
+                                <ThemedText style={styles.quotationDetailLabel}>Line type</ThemedText>
+                                <ThemedText style={styles.quotationDetailValue}>{isServiceQuoteLine ? 'Service' : 'Item / part'}</ThemedText>
+                              </View>
+                              {!isServiceQuoteLine ? (
+                                <View style={styles.receiptRow}>
+                                  <ThemedText style={styles.quotationDetailLabel}>Source</ThemedText>
+                                  <ThemedText style={styles.quotationDetailValue}>{quoteItemSourceLabel(it?.source)}</ThemedText>
+                                </View>
+                              ) : null}
                             </View>
                           ) : null}
                         </View>
@@ -1989,15 +2124,17 @@ export default function ClientBookingDetailScreen() {
               <View style={styles.receiptDivider} />
               <View style={styles.receiptRow}>
                 <ThemedText style={styles.receiptTotalLabel}>Convenience Fee Total</ThemedText>
-                <ThemedText style={styles.receiptTotalValue}>₱{convenienceFeeTotal.toFixed(2)}</ThemedText>
+                <ThemedText style={styles.receiptTotalValue}>₱{effectiveConvenienceFeeTotal.toFixed(2)}</ThemedText>
               </View>
               <View style={styles.receiptRow}>
-                <ThemedText style={styles.receiptTotalLabel}>Quotation Estimated Total</ThemedText>
-                <ThemedText style={styles.receiptTotalValue}>₱{quotationEstimatedTotal.toFixed(2)}</ThemedText>
+                <ThemedText style={styles.receiptTotalLabel}>
+                  {hasBackjob ? 'Backjob Added Charges' : 'Quotation Estimated Total'}
+                </ThemedText>
+                <ThemedText style={styles.receiptTotalValue}>₱{effectiveQuotationEstimatedTotal.toFixed(2)}</ThemedText>
               </View>
               <View style={styles.receiptRow}>
                 <ThemedText style={styles.receiptTotalLabel}>Total Fee</ThemedText>
-                <ThemedText style={styles.receiptTotalValue}>₱{totalFee.toFixed(2)}</ThemedText>
+                <ThemedText style={styles.receiptTotalValue}>₱{effectiveTotalFee.toFixed(2)}</ThemedText>
               </View>
             </View>
           </View>
