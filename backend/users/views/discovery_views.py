@@ -254,15 +254,12 @@ def list_nearby_mechanics(request):
     if radius_km <= 0:
         radius_km = 5.0
 
-    # Default discovery stays tight. Emergency searches can expand farther.
-    default_max_radius_km = 5.0
-    emergency_max_radius_km = 20.0
+    # Match client map picker (1–50 km); ignore abusive values.
+    max_discovery_radius_km = 50.0
     expansion_step_km = 5.0
+    radius_km = min(radius_km, max_discovery_radius_km)
     requested_radius_km = radius_km
-    if emergency_mode:
-        base_radius_km = min(radius_km, emergency_max_radius_km)
-    else:
-        base_radius_km = min(radius_km, default_max_radius_km)
+    base_radius_km = radius_km
 
     mechanics = Mechanic.objects.select_related('account').filter(
         verification_status=Mechanic.VerificationStatus.APPROVED,
@@ -334,8 +331,8 @@ def list_nearby_mechanics(request):
     applied_radius_km = base_radius_km
     nearby_mechanics = [m for m in all_mechanics_with_distance if m['distance_km'] <= applied_radius_km]
     if emergency_mode and not nearby_mechanics:
-        while applied_radius_km < emergency_max_radius_km and not nearby_mechanics:
-            applied_radius_km = min(applied_radius_km + expansion_step_km, emergency_max_radius_km)
+        while applied_radius_km < max_discovery_radius_km and not nearby_mechanics:
+            applied_radius_km = min(applied_radius_km + expansion_step_km, max_discovery_radius_km)
             nearby_mechanics = [m for m in all_mechanics_with_distance if m['distance_km'] <= applied_radius_km]
 
     nearby_shops = []

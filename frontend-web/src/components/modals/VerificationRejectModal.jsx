@@ -1,5 +1,5 @@
-import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ModalShell } from "@/components/modals/ModalShell";
 
 function formatDate(value) {
   if (!value) {
@@ -32,34 +32,37 @@ export function VerificationRejectModal({
   isProcessing,
   actionError,
 }) {
-  if (!item) {
-    return null;
-  }
-
-  const requiresRejectionNote = item.target_type === "specialty_mechanic" || item.target_type === "specialty_shop";
+  const requiresRejectionNote =
+    !!item &&
+    (item.target_type === "specialty_mechanic" || item.target_type === "specialty_shop");
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/65 p-4" onClick={onClose}>
-      <div
-        className="relative w-full max-w-xl overflow-hidden rounded-xl border border-border bg-background shadow-2xl"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-          aria-label="Close"
-        >
-          <X className="size-4" />
-        </button>
-
-        <div className="border-b border-border bg-gradient-to-r from-card via-muted/45 to-card px-6 py-5">
-          <p className="text-lg font-semibold text-foreground">Reject Verification</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Add a clear reason before rejecting this submission.
-          </p>
-        </div>
-
+    <ModalShell
+      isOpen={!!item}
+      onClose={onClose}
+      maxWidth="xl"
+      variant="warning"
+      overlayClassName="z-[60]"
+      title="Reject Verification"
+      description="Add a clear reason before rejecting this submission."
+      headerClassName="py-5"
+      footer={
+        <>
+          <Button type="button" variant="outline" className="rounded-lg" onClick={onCancel} disabled={isProcessing}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            className="rounded-lg"
+            onClick={onSubmitReject}
+            disabled={isProcessing || (requiresRejectionNote && !rejectionNote.trim())}
+          >
+            {isProcessing ? "Rejecting..." : "Confirm Reject"}
+          </Button>
+        </>
+      }
+    >
         <div className="space-y-4 px-6 py-5">
           <div className="grid grid-cols-1 gap-2 rounded-md border border-border/70 bg-card/70 p-3 text-sm text-foreground">
             <p><span className="font-semibold text-orange-300/80">Type:</span> {formatSourceType(item.kind)}</p>
@@ -84,22 +87,6 @@ export function VerificationRejectModal({
             <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-400">{actionError}</p>
           ) : null}
         </div>
-
-        <div className="flex items-center justify-end gap-2 border-t border-border px-6 py-4">
-          <Button type="button" variant="outline" className="rounded-lg" onClick={onCancel} disabled={isProcessing}>
-            Cancel
-          </Button>
-          <Button
-            type="button"
-            variant="destructive"
-            className="rounded-lg"
-            onClick={onSubmitReject}
-            disabled={isProcessing || (requiresRejectionNote && !rejectionNote.trim())}
-          >
-            {isProcessing ? "Rejecting..." : "Confirm Reject"}
-          </Button>
-        </div>
-      </div>
-    </div>
+    </ModalShell>
   );
 }

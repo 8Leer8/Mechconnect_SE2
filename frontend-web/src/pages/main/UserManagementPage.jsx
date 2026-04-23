@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Eye, Plus, X } from "lucide-react";
+import { Eye, Plus } from "lucide-react";
 import { AdminLayout } from "../AdminLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import {
 import { PaginationControls } from "@/components/common/PaginationControls";
 import { API_BASE_URL } from "@/config/env";
 import { fetchAdminAccounts } from "@/services/adminDataService";
+import { ModalShell } from "@/components/modals/ModalShell";
 
 const ROLE_TABS = [
   { key: "all", label: "All" },
@@ -193,37 +194,28 @@ function UserDetailsModal({ account, onClose, activeRoleTab }) {
   const showShopSection = roles.includes("shop_owner") && currentRoleTab !== "mechanic" && currentRoleTab !== "client";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
-      <div
-        className="relative w-full max-w-4xl overflow-hidden rounded-xl border border-border bg-background shadow-2xl"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="border-b border-border bg-gradient-to-r from-card via-muted/50 to-card px-6 py-5">
-          <button
-            type="button"
-            onClick={onClose}
-            className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground"
-            aria-label="Close details modal"
-          >
-            <X className="size-4" />
-          </button>
+    <ModalShell
+      isOpen
+      onClose={onClose}
+      maxWidth="4xl"
+      headerClassName="py-5"
+      customHeader={
+        <div className="flex items-center gap-4">
+          <Avatar className="h-14 w-14 border border-border/80">
+            {avatarUrl ? <AvatarImage src={avatarUrl} alt={getDisplayName(account)} /> : null}
+            <AvatarFallback className="bg-primary/15 text-base font-semibold text-primary">
+              {getFirstLetter(account)}
+            </AvatarFallback>
+          </Avatar>
 
-          <div className="flex items-center gap-4">
-            <Avatar className="h-14 w-14 border border-border/80">
-              {avatarUrl ? <AvatarImage src={avatarUrl} alt={getDisplayName(account)} /> : null}
-              <AvatarFallback className="bg-primary/15 text-base font-semibold text-primary">
-                {getFirstLetter(account)}
-              </AvatarFallback>
-            </Avatar>
-
-            <div>
-              <p className="text-xl font-semibold text-foreground">{getDisplayName(account)}</p>
-              <p className="text-sm text-muted-foreground">@{account.username}</p>
-              <p className="text-sm text-muted-foreground">{account.email}</p>
-            </div>
+          <div>
+            <p className="text-xl font-semibold text-foreground">{getDisplayName(account)}</p>
+            <p className="text-sm text-muted-foreground">@{account.username}</p>
+            <p className="text-sm text-muted-foreground">{account.email}</p>
           </div>
         </div>
-
+      }
+    >
         <div className="max-h-[75vh] overflow-y-auto px-6 py-5">
           <div className="space-y-5">
             <section className="space-y-3">
@@ -449,8 +441,7 @@ function UserDetailsModal({ account, onClose, activeRoleTab }) {
             </section>
           </div>
         </div>
-      </div>
-    </div>
+    </ModalShell>
   );
 }
 
@@ -489,23 +480,6 @@ export function UserManagementPage() {
 
     loadAccounts();
   }, []);
-
-  useEffect(() => {
-    if (!selectedAccount) {
-      return undefined;
-    }
-
-    const handleKeyDown = (event) => {
-      if (event.key === "Escape") {
-        setSelectedAccount(null);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [selectedAccount]);
 
   const filteredAccounts = useMemo(
     () => accounts.filter((account) => accountMatchesRoleTab(account, activeRoleTab)),

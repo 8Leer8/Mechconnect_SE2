@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { ExternalLink, X, ChevronDown, ChevronUp } from "lucide-react";
+import { ExternalLink, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ModalShell } from "@/components/modals/ModalShell";
 import { Badge } from "@/components/ui/badge";
 import { API_BASE_URL } from "@/config/env";
 
@@ -523,31 +524,24 @@ export function BookingDetailsModal({ booking, onClose }) {
   const { embedUrl, openUrl } = buildMapUrls(latitude, longitude);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4" onClick={onClose}>
-      <div
-        className={`relative w-full overflow-hidden rounded-xl border border-border bg-background shadow-2xl ${
-          isBroadcast ? "max-w-6xl" : "max-w-3xl"
-        }`}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-          aria-label="Close"
-        >
-          <X className="size-4" />
-        </button>
-
-        <div className="border-b border-border bg-gradient-to-r from-card via-muted/45 to-card px-6 py-5">
-          <p className="text-lg font-semibold text-foreground">Booking Details</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {isBroadcast
-              ? "Review request location and full booking context before taking action."
-              : "Review full booking and request information in a clean, structured view."}
-          </p>
-        </div>
-
+    <ModalShell
+      isOpen
+      onClose={onClose}
+      maxWidth={null}
+      cardClassName={isBroadcast ? "max-w-6xl" : "max-w-3xl"}
+      title="Booking Details"
+      description={
+        isBroadcast
+          ? "Review request location and full booking context before taking action."
+          : "Review full booking and request information in a clean, structured view."
+      }
+      headerClassName="py-5"
+      footer={
+        <Button type="button" variant="outline" className="rounded-lg" onClick={onClose}>
+          Close
+        </Button>
+      }
+    >
         <div
           className={
             isBroadcast
@@ -719,13 +713,6 @@ export function BookingDetailsModal({ booking, onClose }) {
             </div>
           )}
         </div>
-
-        <div className="flex items-center justify-end border-t border-border px-6 py-4">
-          <Button type="button" variant="outline" className="rounded-lg" onClick={onClose}>
-            Close
-          </Button>
-        </div>
-      </div>
-    </div>
+    </ModalShell>
   );
 }

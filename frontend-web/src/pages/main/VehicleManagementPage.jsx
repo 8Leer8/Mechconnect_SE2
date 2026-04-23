@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { ModalShell } from "@/components/modals/ModalShell";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
 import { AdminLayout } from "@/pages/AdminLayout";
@@ -368,134 +368,143 @@ export function VehicleManagementPage() {
       </div>
 
       {/* Type Modal */}
-      <Dialog open={isTypeModalOpen} onOpenChange={setIsTypeModalOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{editingItem ? "Edit Vehicle Type" : "Add Vehicle Type"}</DialogTitle>
-            <DialogDescription>
-              {editingItem ? "Update the vehicle type name." : "Create a new vehicle type (e.g., Car, Motorcycle)."}
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleTypeSubmit}>
-            <div className="py-4">
-              <label className="text-sm font-medium">Name</label>
-              <Input
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="e.g., Car, Motorcycle, Truck"
-                className="mt-1"
-                required
-              />
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setIsTypeModalOpen(false)}>
-                Cancel
-              </Button>
-              <Button type="submit">{editingItem ? "Update" : "Create"}</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <ModalShell
+        isOpen={isTypeModalOpen}
+        onClose={() => setIsTypeModalOpen(false)}
+        maxWidth="lg"
+        title={editingItem ? "Edit Vehicle Type" : "Add Vehicle Type"}
+        description={
+          editingItem ? "Update the vehicle type name." : "Create a new vehicle type (e.g., Car, Motorcycle)."
+        }
+        footer={
+          <>
+            <Button type="button" variant="outline" onClick={() => setIsTypeModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" form="vehicle-type-form">
+              {editingItem ? "Update" : "Create"}
+            </Button>
+          </>
+        }
+      >
+        <form id="vehicle-type-form" onSubmit={handleTypeSubmit} className="space-y-4 px-6 py-4">
+          <div>
+            <label className="text-sm font-medium">Name</label>
+            <Input
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              placeholder="e.g., Car, Motorcycle, Truck"
+              className="mt-1"
+              required
+            />
+          </div>
+        </form>
+      </ModalShell>
 
       {/* Brand Modal */}
-      <Dialog open={isBrandModalOpen} onOpenChange={setIsBrandModalOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{editingItem ? "Edit Brand" : "Add Brand"}</DialogTitle>
-            <DialogDescription>
-              {editingItem
-                ? "Update the brand name."
-                : `Create a new brand under ${activeType?.name}.`}
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleBrandSubmit}>
-            <div className="py-4">
-              <label className="text-sm font-medium">Brand Name</label>
-              <Input
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="e.g., Toyota, Honda"
-                className="mt-1"
-                required
-              />
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setIsBrandModalOpen(false)}>
-                Cancel
-              </Button>
-              <Button type="submit">{editingItem ? "Update" : "Create"}</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <ModalShell
+        isOpen={isBrandModalOpen}
+        onClose={() => setIsBrandModalOpen(false)}
+        maxWidth="lg"
+        title={editingItem ? "Edit Brand" : "Add Brand"}
+        description={
+          editingItem ? "Update the brand name." : `Create a new brand under ${activeType?.name}.`
+        }
+        footer={
+          <>
+            <Button type="button" variant="outline" onClick={() => setIsBrandModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" form="vehicle-brand-form">
+              {editingItem ? "Update" : "Create"}
+            </Button>
+          </>
+        }
+      >
+        <form id="vehicle-brand-form" onSubmit={handleBrandSubmit} className="space-y-4 px-6 py-4">
+          <div>
+            <label className="text-sm font-medium">Brand Name</label>
+            <Input
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              placeholder="e.g., Toyota, Honda"
+              className="mt-1"
+              required
+            />
+          </div>
+        </form>
+      </ModalShell>
 
       {/* Model Modal */}
-      <Dialog open={isModelModalOpen} onOpenChange={setIsModelModalOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{editingItem ? "Edit Model" : "Add Model"}</DialogTitle>
-            <DialogDescription>
-              {editingItem
-                ? "Update the model details."
-                : `Create a new model.`}
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleModelSubmit}>
-            <div className="space-y-4 py-4">
-              <div>
-                <label className="text-sm font-medium">Model Name</label>
-                <Input
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder="e.g., Vios, Click 125"
-                  className="mt-1"
-                  required
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium">Subcategory (Optional)</label>
-                <Input
-                  value={formData.subcategory}
-                  onChange={(e) => setFormData({ ...formData, subcategory: e.target.value })}
-                  placeholder="e.g., Scooter / AT, for motorcycles"
-                  className="mt-1"
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Used for motorcycles (e.g., "Scooter / AT", "Sport")
-                </p>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setIsModelModalOpen(false)}>
-                Cancel
-              </Button>
-              <Button type="submit">{editingItem ? "Update" : "Create"}</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <ModalShell
+        isOpen={isModelModalOpen}
+        onClose={() => setIsModelModalOpen(false)}
+        maxWidth="lg"
+        title={editingItem ? "Edit Model" : "Add Model"}
+        description={editingItem ? "Update the model details." : "Create a new model."}
+        footer={
+          <>
+            <Button type="button" variant="outline" onClick={() => setIsModelModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" form="vehicle-model-form">
+              {editingItem ? "Update" : "Create"}
+            </Button>
+          </>
+        }
+      >
+        <form id="vehicle-model-form" onSubmit={handleModelSubmit} className="space-y-4 px-6 py-4">
+          <div>
+            <label className="text-sm font-medium">Model Name</label>
+            <Input
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              placeholder="e.g., Vios, Click 125"
+              className="mt-1"
+              required
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Subcategory (Optional)</label>
+            <Input
+              value={formData.subcategory}
+              onChange={(e) => setFormData({ ...formData, subcategory: e.target.value })}
+              placeholder="e.g., Scooter / AT, for motorcycles"
+              className="mt-1"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Used for motorcycles (e.g., &quot;Scooter / AT&quot;, &quot;Sport&quot;)
+            </p>
+          </div>
+        </form>
+      </ModalShell>
 
       {/* Delete Confirmation Modal */}
-      <Dialog open={isDeleteModalOpen} onOpenChange={setIsDeleteModalOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Confirm Delete</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete <strong>{deleteItem?.name}</strong>?
-              {deleteType === "type" && " This will also delete all associated brands and models."}
-              {deleteType === "brand" && " This will also delete all associated models."}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
+      <ModalShell
+        isOpen={isDeleteModalOpen}
+        onClose={() => setIsDeleteModalOpen(false)}
+        variant="danger"
+        maxWidth="md"
+        title="Confirm Delete"
+        footer={
+          <>
             <Button type="button" variant="outline" onClick={() => setIsDeleteModalOpen(false)}>
               Cancel
             </Button>
             <Button type="button" variant="destructive" onClick={handleDelete}>
               Delete
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </>
+        }
+      >
+        <div className="px-6 py-5">
+          <p className="text-sm text-muted-foreground">
+            Are you sure you want to delete <strong className="text-foreground">{deleteItem?.name}</strong>?
+            {deleteType === "type" && " This will also delete all associated brands and models."}
+            {deleteType === "brand" && " This will also delete all associated models."}
+          </p>
+        </div>
+      </ModalShell>
     </AdminLayout>
   );
 }
