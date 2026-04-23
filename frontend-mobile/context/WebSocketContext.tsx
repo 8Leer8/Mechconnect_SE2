@@ -16,6 +16,9 @@ export interface BookingUpdateMessage {
   message?: string;
   action?: string;
   _timestamp?: number;
+  /** Live mechanic GPS pushed from backend after POST /mechanic-location/ */
+  latitude?: number;
+  longitude?: number;
 }
 
 type WebSocketContextValue = {

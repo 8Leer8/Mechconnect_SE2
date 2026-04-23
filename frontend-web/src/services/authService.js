@@ -1,4 +1,4 @@
-import { clearStoredAuthToken, request, setStoredAuthToken } from "./httpClient";
+import { ApiError, clearStoredAuthToken, request, setStoredAuthToken } from "./httpClient";
 
 const ADMIN_ROLE = "admin";
 
@@ -38,7 +38,7 @@ export async function loginAsAdmin(username, password) {
     } catch {
       // Ignore logout errors when forcing out non-admin users.
     }
-    throw new Error("This account does not have admin access.");
+    throw new ApiError("This account does not have admin access.", { status: 403 });
   }
 
   return data.account;

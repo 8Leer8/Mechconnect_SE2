@@ -1,7 +1,9 @@
 import { useState } from "react";
+import { AlertCircle, ShieldAlert } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { AuthLayout } from "../../components/common/AuthLayout";
 import { useAuth } from "../../features/auth/useAuth";
+import { ApiError } from "../../services/httpClient";
 import "../../styles/admin-login.css";
 
 export function AdminLoginPage() {
@@ -11,13 +13,16 @@ export function AdminLoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [errorKind, setErrorKind] = useState("none");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function handleSubmit(event) {
     event.preventDefault();
     setErrorMessage("");
+    setErrorKind("none");
 
     if (!username.trim() || !password.trim()) {
+      setErrorKind("validation");
       setErrorMessage("Please enter both username and password.");
       return;
     }
@@ -28,7 +33,16 @@ export function AdminLoginPage() {
       await signIn(username.trim(), password);
       navigate("/admin/dashboard", { replace: true });
     } catch (error) {
-      setErrorMessage(error.message || "Unable to log in.");
+      if (error instanceof ApiError && error.status === 429) {
+        setErrorKind("rateLimit");
+        setErrorMessage(error.message || "Too many attempts. Please wait before trying again.");
+      } else if (error instanceof ApiError && error.status === 403) {
+        setErrorKind("forbidden");
+        setErrorMessage(error.message || "Access denied.");
+      } else {
+        setErrorKind("error");
+        setErrorMessage(error.message || "Unable to log in.");
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -69,9 +83,25 @@ export function AdminLoginPage() {
         />
 
         {errorMessage && (
-          <p className="auth-error" role="alert">
-            {errorMessage}
-          </p>
+          <div
+            className={
+              errorKind === "rateLimit"
+                ? "auth-alert auth-alert--rate-limit"
+                : errorKind === "validation"
+                  ? "auth-alert auth-alert--validation"
+                  : errorKind === "forbidden"
+                    ? "auth-alert auth-alert--forbidden"
+                    : "auth-alert auth-alert--error"
+            }
+            role="alert"
+          >
+            {errorKind === "rateLimit" ? (
+              <ShieldAlert className="auth-alert__icon" aria-hidden />
+            ) : (
+              <AlertCircle className="auth-alert__icon" aria-hidden />
+            )}
+            <p className="auth-alert__text">{errorMessage}</p>
+          </div>
         )}
 
         <button className="auth-submit" type="submit" disabled={isSubmitting}>

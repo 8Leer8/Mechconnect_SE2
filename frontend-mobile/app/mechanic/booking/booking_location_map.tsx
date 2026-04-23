@@ -7,6 +7,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { ensureForegroundLocationAccess } from '@/lib/locationPermission';
+import { useWebSocketContext } from '@/context/WebSocketContext';
 
 export const screenOptions = { headerShown: false } as const;
 
@@ -284,6 +285,8 @@ export default function BookingLocationMapScreen() {
   const staleCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastRouteRefreshAtRef = useRef(0);
   const didInitialFitRef = useRef(false);
+  /** Only auto fit-to-bounds once when both markers exist; refitting every GPS tick zooms Android map. */
+  const didFitBothMarkersRef = useRef(false);
 
   const clientCoordsRef = useRef<Coordinates | null>(null);
   const mechanicCoordsRef = useRef<Coordinates | null>(null);
@@ -307,16 +310,33 @@ export default function BookingLocationMapScreen() {
   const [traffic, setTraffic] = useState<TrafficData | null>(null);
   const [trafficEstimatedNote, setTrafficEstimatedNote] = useState(false);
   const [trafficMultipliers, setTrafficMultipliers] = useState<TrafficMultiplierConfig>(DEFAULT_TRAFFIC_MULTIPLIERS);
+  const trafficMultipliersRef = useRef(trafficMultipliers);
+  const statusRef = useRef(status);
+  const { lastMessage } = useWebSocketContext();
+  const lastClientWsRouteRefreshRef = useRef(0);
+
+  useEffect(() => {
+    trafficMultipliersRef.current = trafficMultipliers;
+  }, [trafficMultipliers]);
+
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
 
   const [lastMechanicUpdateAt, setLastMechanicUpdateAt] = useState<number | null>(null);
   const lastMechanicUpdateAtRef = useRef<number | null>(null);
   const [showSignalLost, setShowSignalLost] = useState(false);
   const [permissionModalVisible, setPermissionModalVisible] = useState(false);
   const [permissionModalMessage, setPermissionModalMessage] = useState('Please enable location access to continue live tracking.');
+  const [arrivedSuccessModalVisible, setArrivedSuccessModalVisible] = useState(false);
   const [travelActionLoading, setTravelActionLoading] = useState<'arrived' | 'cancel' | null>(null);
+  const [routeAccordionOpen, setRouteAccordionOpen] = useState(false);
+  /** Device GPS speed (km/h) while mechanic is tracking; not the same as TomTom road-segment flow speed. */
+  const [gpsSpeedKmh, setGpsSpeedKmh] = useState<number | null>(null);
 
   const headerTitle = bookingStatusIsLiveTracking(status) ? 'Live Tracking' : 'Route to Client';
   const isOnTheWay = bookingStatusIsLiveTracking(status);
+  const isMechanicOnTheWay = role === 'mechanic' && String(status).toLowerCase() === 'on_the_way';
 
   useEffect(() => {
     clientCoordsRef.current = clientCoords;
@@ -378,6 +398,8 @@ export default function BookingLocationMapScreen() {
       watcherRef.current.remove();
       watcherRef.current = null;
     }
+
+    setGpsSpeedKmh(null);
   }, []);
 
   const openTrackingPermissionModal = useCallback((message: string) => {
@@ -664,7 +686,7 @@ export default function BookingLocationMapScreen() {
     if (!currentSpeed || !freeFlowSpeed) throw new Error('Invalid traffic response');
 
     const ratio = freeFlowSpeed / currentSpeed;
-    const classified = classifyTraffic(ratio, trafficMultipliers);
+    const classified = classifyTraffic(ratio, trafficMultipliersRef.current);
 
     return {
       ...classified,
@@ -672,11 +694,11 @@ export default function BookingLocationMapScreen() {
       freeFlowSpeed,
       estimated: false,
     };
-  }, [trafficMultipliers]);
+  }, []);
 
   const refreshRouteAndTraffic = useCallback(async (from: Coordinates, to: Coordinates, currentStatus: string) => {
-    let nextDistance = distanceKm;
-    let nextEta = etaMinutes;
+    let nextDistance: number | null = null;
+    let nextEta: number | null = null;
 
     try {
       const routeResult = await calculateRoute(from, to);
@@ -705,7 +727,7 @@ export default function BookingLocationMapScreen() {
         setTraffic(trafficData);
         setTrafficEstimatedNote(false);
       } catch {
-        const fallback = timeBasedTrafficFallback(trafficMultipliers);
+        const fallback = timeBasedTrafficFallback(trafficMultipliersRef.current);
         setTraffic(fallback);
         setTrafficEstimatedNote(true);
       }
@@ -719,11 +741,12 @@ export default function BookingLocationMapScreen() {
     }
 
     return null;
-  }, [calculateRoute, calculateTraffic, distanceKm, etaMinutes]);
+  }, [calculateRoute, calculateTraffic]);
 
   const initializeScreen = useCallback(async () => {
     cleanupLiveResources();
     didInitialFitRef.current = false;
+    didFitBothMarkersRef.current = false;
 
     setScreenLoading(true);
     setWaitingForMechanic(false);
@@ -731,6 +754,7 @@ export default function BookingLocationMapScreen() {
     setLocationError(null);
     setShowSignalLost(false);
     setLastMechanicUpdateAt(null);
+    setGpsSpeedKmh(null);
 
     try {
       const bookingData = await fetchBooking();
@@ -782,7 +806,7 @@ export default function BookingLocationMapScreen() {
               baselineTraffic === 'light' || baselineTraffic === 'low' ? 1.1 :
               (baselineTraffic === 'moderate' || baselineTraffic === 'medium' ? 1.3 :
                 (baselineTraffic === 'heavy' || baselineTraffic === 'high' ? 1.7 : 2.1)),
-              trafficMultipliers
+              trafficMultipliersRef.current
             );
             setTraffic({
               ...preset,
@@ -794,7 +818,7 @@ export default function BookingLocationMapScreen() {
           } else {
             setTraffic({
               ...DEFAULT_TRAFFIC,
-              surchargePercent: multiplierToPercent(trafficMultipliers.traffic_medium_multiplier),
+              surchargePercent: multiplierToPercent(trafficMultipliersRef.current.traffic_medium_multiplier),
             });
             setTrafficEstimatedNote(true);
           }
@@ -809,7 +833,7 @@ export default function BookingLocationMapScreen() {
     } finally {
       setScreenLoading(false);
     }
-  }, [cleanupLiveResources, fetchBooking, refreshRouteAndTraffic, resolveClientCoordinates, resolveMechanicCoordinates, trafficMultipliers]);
+  }, [cleanupLiveResources, fetchBooking, refreshRouteAndTraffic, resolveClientCoordinates, resolveMechanicCoordinates]);
 
   const postMechanicBookingAction = useCallback(
     async (endpoint: string, body: Record<string, unknown> = {}) => {
@@ -850,20 +874,13 @@ export default function BookingLocationMapScreen() {
       });
   }, []);
 
-  const goMechanicBookingDetails = useCallback(() => {
-    router.push({
-      pathname: '/mechanic/booking/booking_details',
-      params: { bookingId: String(bookingId) },
-    });
-  }, [bookingId]);
-
   const handleMechanicArrivedFromMap = useCallback(async () => {
     if (travelActionLoading) return;
     setTravelActionLoading('arrived');
     try {
       await postMechanicBookingAction('arrived');
-      Alert.alert('Updated', 'Marked at client location.');
       await initializeScreen();
+      setArrivedSuccessModalVisible(true);
     } catch (e) {
       Alert.alert('Error', e instanceof Error ? e.message : 'Could not update status');
     } finally {
@@ -972,6 +989,13 @@ export default function BookingLocationMapScreen() {
               setLastMechanicUpdateAt(Date.now());
               pushLocationToBackend(next);
 
+              const speedMs = location.coords.speed;
+              if (speedMs != null && Number.isFinite(speedMs) && speedMs >= 0) {
+                setGpsSpeedKmh(Math.round(speedMs * 3.6));
+              } else {
+                setGpsSpeedKmh(null);
+              }
+
               // Near-realtime reroute while moving (GTA-like line updates), throttled to protect APIs.
               const to = clientCoordsRef.current;
               const now = Date.now();
@@ -1012,32 +1036,7 @@ export default function BookingLocationMapScreen() {
       };
     }
 
-    pollIntervalRef.current = setInterval(async () => {
-      try {
-        const latest = await fetchMechanicCoordinatesForClient();
-        if (!latest) return;
-
-        setMechanicCoords(latest);
-        setWaitingForMechanic(false);
-        setLastMechanicUpdateAt(Date.now());
-        setShowSignalLost(false);
-
-        if (clientCoordsRef.current) {
-          await refreshRouteAndTraffic(latest, clientCoordsRef.current, status);
-        }
-      } catch {
-        // Polling can temporarily fail in low-signal conditions.
-      }
-    }, 5000);
-
-    updateIntervalRef.current = setInterval(() => {
-      const from = mechanicCoordsRef.current;
-      const to = clientCoordsRef.current;
-      if (!from || !to) return;
-      refreshRouteAndTraffic(from, to, status).catch(() => {
-        // Realtime refresh failures are reflected by existing fallback state.
-      });
-    }, 30000);
+    // Client follows mechanic via websocket (mechanic_location_update), not HTTP polling.
 
     staleCheckIntervalRef.current = setInterval(() => {
       const last = lastMechanicUpdateAtRef.current;
@@ -1051,22 +1050,58 @@ export default function BookingLocationMapScreen() {
     return () => cleanupLiveResources();
   }, [cleanupLiveResources, clientCoords, fetchMechanicCoordinatesForClient, isOnTheWay, openTrackingPermissionModal, refreshRouteAndTraffic, role, status]);
 
+  // Client: mechanic GPS from websocket (backend broadcasts after each POST /mechanic-location/).
+  useEffect(() => {
+    if (role !== 'client') return;
+    if (!lastMessage) return;
+    if (String(lastMessage.action || '').toLowerCase() !== 'mechanic_location_update') return;
+    if (!bookingId || String(lastMessage.booking_id || '') !== String(bookingId)) return;
+
+    const coords = parseMechanicLocationPayload(lastMessage);
+    if (!coords) return;
+
+    setMechanicCoords(coords);
+    setWaitingForMechanic(false);
+    setLastMechanicUpdateAt(Date.now());
+    setShowSignalLost(false);
+
+    const to = clientCoordsRef.current;
+    if (!to || !bookingStatusIsLiveTracking(statusRef.current)) return;
+
+    const now = Date.now();
+    if (now - lastClientWsRouteRefreshRef.current < 5000) return;
+    lastClientWsRouteRefreshRef.current = now;
+
+    refreshRouteAndTraffic(coords, to, statusRef.current).catch(() => {
+      // Keep last polyline if routing fails.
+    });
+  }, [lastMessage, role, bookingId, refreshRouteAndTraffic]);
+
   useEffect(() => {
     if (!mapRef.current) return;
 
     if (clientCoords && mechanicCoords) {
-      setTimeout(() => {
-        try {
-          mapRef.current?.fitToCoordinates([mechanicCoords, clientCoords], {
-            edgePadding: { top: 80, right: 40, bottom: 250, left: 40 },
-            animated: true,
-          });
-          didInitialFitRef.current = true;
-        } catch {
-          // Keep current map viewport if fitting fails.
-        }
-      }, 500);
+      if (!didFitBothMarkersRef.current) {
+        didFitBothMarkersRef.current = true;
+        const mechanic = mechanicCoords;
+        const client = clientCoords;
+        setTimeout(() => {
+          try {
+            mapRef.current?.fitToCoordinates([mechanic, client], {
+              edgePadding: { top: 80, right: 40, bottom: 250, left: 40 },
+              animated: true,
+            });
+            didInitialFitRef.current = true;
+          } catch {
+            // Keep current map viewport if fitting fails.
+          }
+        }, 500);
+      }
       return;
+    }
+
+    if (!mechanicCoords) {
+      didFitBothMarkersRef.current = false;
     }
 
     if (clientCoords && !didInitialFitRef.current) {
@@ -1284,77 +1319,122 @@ export default function BookingLocationMapScreen() {
         </MapView>
       </View>
 
-      <View style={styles.infoCard}>
-        <ThemedText style={styles.infoTitle}>
-          {isOnTheWay ? 'Mechanic Route' : '📍 Route to Client'}
-        </ThemedText>
-
-        <ThemedText style={styles.infoRow}>
-          Distance: {isOnTheWay ? `${distanceLabel} remaining` : `${distanceLabel}${routeEstimated ? ' (estimated)' : ' (via road)'}`}
-        </ThemedText>
-        <ThemedText style={styles.infoRow}>ETA: {etaLabel}</ThemedText>
-
+      <View
+        style={[
+          styles.infoCard,
+          isOnTheWay && styles.infoCardLiveRouteCollapsed,
+          isOnTheWay && routeAccordionOpen && styles.infoCardLiveRouteExpanded,
+        ]}
+      >
         {isOnTheWay ? (
           <>
-            <ThemedText style={styles.infoRow}>
-              Traffic: {traffic ? `${traffic.label} ${traffic.emoji}` : '--'}
-            </ThemedText>
-            <ThemedText style={styles.infoRow}>
-              Current speed: {traffic && traffic.currentSpeed > 0 ? `${traffic.currentSpeed} km/h` : '--'}
-            </ThemedText>
-            <ThemedText style={styles.infoRow}>Last updated: {formattedLastUpdated}</ThemedText>
-            {trafficEstimatedNote && (
-              <ThemedText style={styles.noteText}>Traffic data is estimated.</ThemedText>
-            )}
-            {showSignalLost && role === 'client' && (
-              <ThemedText style={styles.warnText}>⚠️ Location signal lost. Mechanic may be in low signal area.</ThemedText>
-            )}
+            <TouchableOpacity
+              style={styles.accordionHeader}
+              onPress={() => setRouteAccordionOpen((open) => !open)}
+              activeOpacity={0.75}
+            >
+              <View style={styles.accordionHeaderTextWrap}>
+                <ThemedText style={styles.infoTitleAccordion}>Mechanic Route</ThemedText>
+                <ThemedText style={styles.accordionSummary}>
+                  Distance: {distanceLabel} remaining · ETA: {etaLabel}
+                </ThemedText>
+                <ThemedText style={styles.accordionTapHint}>Tap to show details</ThemedText>
+              </View>
+              <FontAwesome
+                name={routeAccordionOpen ? 'chevron-up' : 'chevron-down'}
+                size={18}
+                color="#A1A1AA"
+              />
+            </TouchableOpacity>
+
+            {routeAccordionOpen ? (
+              <View style={styles.accordionBody}>
+                <ThemedText style={styles.infoRow}>
+                  Traffic: {traffic ? `${traffic.label} ${traffic.emoji}` : '--'}
+                </ThemedText>
+                <ThemedText style={styles.infoRow}>
+                  Road traffic speed (TomTom):{' '}
+                  {traffic && traffic.currentSpeed > 0 ? `${traffic.currentSpeed} km/h` : '--'}
+                </ThemedText>
+                <ThemedText style={styles.noteText}>
+                  This is typical speed on the road segment near your route, not your vehicle speed.
+                </ThemedText>
+                {role === 'mechanic' ? (
+                  <ThemedText style={styles.infoRow}>
+                    Your speed (GPS):{' '}
+                    {gpsSpeedKmh !== null ? `${gpsSpeedKmh} km/h` : '--'}
+                  </ThemedText>
+                ) : null}
+                <ThemedText style={styles.infoRow}>Last updated: {formattedLastUpdated}</ThemedText>
+                {trafficEstimatedNote && (
+                  <ThemedText style={styles.noteText}>Traffic data is estimated.</ThemedText>
+                )}
+                {showSignalLost && role === 'client' && (
+                  <ThemedText style={styles.warnText}>
+                    ⚠️ Location signal lost. Mechanic may be in low signal area.
+                  </ThemedText>
+                )}
+                {isMechanicOnTheWay ? (
+                  <>
+                    <ThemedText style={styles.mechanicTravelHint}>
+                      Road route follows the orange line. Use Maps for voice turn-by-turn.
+                    </ThemedText>
+                    <TouchableOpacity style={styles.mtBtnMapsFull} onPress={openNavToClient} activeOpacity={0.85}>
+                      <FontAwesome name="external-link" size={14} color="#E4E4E7" />
+                      <ThemedText style={styles.mtBtnSecondaryText}>Maps app</ThemedText>
+                    </TouchableOpacity>
+                  </>
+                ) : null}
+                {routeEstimated && (
+                  <ThemedText style={styles.warnText}>⚠️ Showing estimated route.</ThemedText>
+                )}
+              </View>
+            ) : null}
+
+            {isMechanicOnTheWay ? (
+              <View style={styles.mechanicTravelBar}>
+                <View style={styles.mechanicTravelRow}>
+                  <TouchableOpacity
+                    style={[styles.mtBtnDanger, travelActionLoading && styles.mtBtnDisabled]}
+                    onPress={handleMechanicCancelTravelFromMap}
+                    disabled={!!travelActionLoading}
+                    activeOpacity={0.85}
+                  >
+                    <ThemedText style={styles.mtBtnDangerText}>Cancel travel</ThemedText>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.mtBtnPrimary, travelActionLoading && styles.mtBtnDisabled]}
+                    onPress={handleMechanicArrivedFromMap}
+                    disabled={!!travelActionLoading}
+                    activeOpacity={0.85}
+                  >
+                    {travelActionLoading === 'arrived' ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <ThemedText style={styles.mtBtnPrimaryText}>Arrived</ThemedText>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : null}
           </>
         ) : (
-          <ThemedText style={styles.infoRow}>Traffic: -- (checked on travel)</ThemedText>
-        )}
+          <>
+            <ThemedText style={styles.infoTitle}>📍 Route to Client</ThemedText>
 
-        {routeEstimated && (
-          <ThemedText style={styles.warnText}>⚠️ Showing estimated route.</ThemedText>
-        )}
+            <ThemedText style={styles.infoRow}>
+              Distance: {distanceLabel}
+              {routeEstimated ? ' (estimated)' : ' (via road)'}
+            </ThemedText>
+            <ThemedText style={styles.infoRow}>ETA: {etaLabel}</ThemedText>
 
-        {role === 'mechanic' && String(status).toLowerCase() === 'on_the_way' ? (
-          <View style={styles.mechanicTravelBar}>
-            <ThemedText style={styles.mechanicTravelHint}>Road route follows the orange line. Use Maps for voice turn-by-turn.</ThemedText>
-            <View style={styles.mechanicTravelRow}>
-              <TouchableOpacity style={styles.mtBtnSecondary} onPress={goMechanicBookingDetails} activeOpacity={0.85}>
-                <FontAwesome name="file-text-o" size={14} color="#E4E4E7" />
-                <ThemedText style={styles.mtBtnSecondaryText}>Details</ThemedText>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.mtBtnSecondary} onPress={openNavToClient} activeOpacity={0.85}>
-                <FontAwesome name="external-link" size={14} color="#E4E4E7" />
-                <ThemedText style={styles.mtBtnSecondaryText}>Maps app</ThemedText>
-              </TouchableOpacity>
-            </View>
-            <View style={styles.mechanicTravelRow}>
-              <TouchableOpacity
-                style={[styles.mtBtnDanger, travelActionLoading && styles.mtBtnDisabled]}
-                onPress={handleMechanicCancelTravelFromMap}
-                disabled={!!travelActionLoading}
-                activeOpacity={0.85}
-              >
-                <ThemedText style={styles.mtBtnDangerText}>Cancel travel</ThemedText>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.mtBtnPrimary, travelActionLoading && styles.mtBtnDisabled]}
-                onPress={handleMechanicArrivedFromMap}
-                disabled={!!travelActionLoading}
-                activeOpacity={0.85}
-              >
-                {travelActionLoading === 'arrived' ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <ThemedText style={styles.mtBtnPrimaryText}>Arrived</ThemedText>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        ) : null}
+            <ThemedText style={styles.infoRow}>Traffic: -- (checked on travel)</ThemedText>
+
+            {routeEstimated && (
+              <ThemedText style={styles.warnText}>⚠️ Showing estimated route.</ThemedText>
+            )}
+          </>
+        )}
       </View>
 
       <Modal
@@ -1373,6 +1453,28 @@ export default function BookingLocationMapScreen() {
             </TouchableOpacity>
             <TouchableOpacity style={styles.modalSecondaryButton} onPress={() => setPermissionModalVisible(false)}>
               <ThemedText style={styles.modalSecondaryText}>Not Now</ThemedText>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        transparent
+        animationType="fade"
+        visible={arrivedSuccessModalVisible}
+        onRequestClose={() => setArrivedSuccessModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <FontAwesome name="check-circle" size={36} color="#22C55E" />
+            <ThemedText style={styles.modalTitle}>Updated</ThemedText>
+            <ThemedText style={styles.modalMessage}>Marked at client location.</ThemedText>
+            <TouchableOpacity
+              style={styles.modalPrimaryButton}
+              onPress={() => setArrivedSuccessModalVisible(false)}
+              activeOpacity={0.85}
+            >
+              <ThemedText style={styles.modalPrimaryText}>OK</ThemedText>
             </TouchableOpacity>
           </View>
         </View>
@@ -1480,6 +1582,55 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
     elevation: 3,
+  },
+  infoCardLiveRouteCollapsed: {
+    maxHeight: '36%',
+  },
+  infoCardLiveRouteExpanded: {
+    maxHeight: '52%',
+  },
+  accordionTapHint: {
+    marginTop: 6,
+    fontSize: 12,
+    color: '#71717A',
+  },
+  accordionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  accordionHeaderTextWrap: {
+    flex: 1,
+    marginRight: 10,
+  },
+  infoTitleAccordion: {
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 6,
+    color: '#FFFFFF',
+  },
+  accordionSummary: {
+    fontSize: 13,
+    color: '#A1A1AA',
+    lineHeight: 18,
+  },
+  accordionBody: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#2A2C2E',
+  },
+  mtBtnMapsFull: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 10,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#2A2C2E',
+    borderWidth: 1,
+    borderColor: '#3F4144',
+    width: '100%',
   },
   mechanicTravelBar: {
     marginTop: 12,
@@ -1621,50 +1772,62 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    backgroundColor: 'rgba(0,0,0,0.72)',
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
   },
   modalCard: {
     width: '100%',
-    backgroundColor: '#fff',
+    maxWidth: 340,
+    backgroundColor: '#1A1C1E',
     borderRadius: 16,
-    padding: 20,
+    padding: 22,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#2F3238',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.4,
+    shadowRadius: 16,
+    elevation: 12,
   },
   modalTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#111827',
+    color: '#F4F4F5',
     marginTop: 12,
   },
   modalMessage: {
     fontSize: 14,
-    color: '#4B5563',
+    color: '#A1A1AA',
     textAlign: 'center',
     marginTop: 10,
-    marginBottom: 16,
+    marginBottom: 18,
+    lineHeight: 20,
   },
   modalPrimaryButton: {
     width: '100%',
     backgroundColor: '#FF8C00',
     borderRadius: 12,
-    paddingVertical: 12,
+    paddingVertical: 14,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E67E00',
   },
   modalPrimaryText: {
-    color: '#fff',
+    color: '#111',
     fontWeight: '700',
-    fontSize: 14,
+    fontSize: 15,
   },
   modalSecondaryButton: {
-    marginTop: 10,
+    marginTop: 12,
     paddingVertical: 10,
     paddingHorizontal: 12,
   },
   modalSecondaryText: {
-    color: '#6B7280',
+    color: '#9CA3AF',
     fontWeight: '600',
+    fontSize: 14,
   },
 });

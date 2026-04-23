@@ -14,22 +14,54 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
-import Toast from '@/components/gen/Toast';
+import Toast, { type ToastVariant } from '@/components/gen/Toast';
 import { ConfirmationModal } from '@/components/ui/ConfirmationModal';
 import { fetchProfileDetailsCached } from '@/lib/profileCache';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
 interface LoginResponse {
-  username?: string[];
-  password?: string[];
+  username?: string[] | string;
+  password?: string[] | string;
   account?: { id?: number | string; [key: string]: any } | string[];
   message?: string;
+  error?: string;
   active_role?: string;
   token?: string;
   requires_reactivation_confirmation?: boolean;
   reactivate_by?: string;
+  retry_after_seconds?: number;
+  non_field_errors?: string[] | string;
   [key: string]: any;
+}
+
+function pickFieldMessage(value: string[] | string | undefined): string | undefined {
+  if (Array.isArray(value) && value.length > 0) return String(value[0]);
+  if (typeof value === 'string' && value) return value;
+  return undefined;
+}
+
+function loginErrorMessage(data: LoginResponse): string {
+  if (typeof data.error === 'string' && data.error) return data.error;
+  if (typeof data.message === 'string' && data.message) return data.message;
+  const nfe = data.non_field_errors;
+  if (Array.isArray(nfe) && nfe.length) return String(nfe[0]);
+  if (typeof nfe === 'string' && nfe) return nfe;
+
+  const accountError = Array.isArray(data.account) ? data.account[0] : undefined;
+  return (
+    pickFieldMessage(data.username) ||
+    pickFieldMessage(data.password) ||
+    (typeof accountError === 'string' ? accountError : undefined) ||
+    'Login failed. Please try again.'
+  );
+}
+
+function formatRetryWait(seconds: number): string {
+  if (seconds <= 0) return 'a short time';
+  if (seconds < 60) return `${seconds} seconds`;
+  const minutes = Math.ceil(seconds / 60);
+  return `${minutes} minute${minutes === 1 ? '' : 's'}`;
 }
 
 interface ActiveRoleResponse {
@@ -48,29 +80,37 @@ export default function LoginScreen() {
   const [passwordFocused, setPasswordFocused] = useState(false);
   const [reactivationModalVisible, setReactivationModalVisible] = useState(false);
 
-  const [toast, setToast] = useState({ visible: false, message: '' });
-  const showToast = (message: string) => setToast({ visible: true, message });
+  const [toast, setToast] = useState<{
+    visible: boolean;
+    message: string;
+    variant: ToastVariant;
+    duration?: number;
+  }>({ visible: false, message: '', variant: 'default' });
+
+  const showToast = (message: string, variant: ToastVariant = 'default', duration?: number) =>
+    setToast({ visible: true, message, variant, duration });
+
   const hideToast = () => setToast(t => ({ ...t, visible: false }));
 
   const submitLogin = async (reactivateAccount = false) => {
     if (!username && !password) {
-      showToast('Please enter your username and password.');
+      showToast('Please enter your username and password.', 'warning');
       return;
     }
     if (!username) {
-      showToast('Please enter your username.');
+      showToast('Please enter your username.', 'warning');
       return;
     }
     if (!password) {
-      showToast('Please enter your password.');
+      showToast('Please enter your password.', 'warning');
       return;
     }
     if (!agreedToPolicies) {
-      showToast('Please agree to the Terms & Conditions and Privacy Policy.');
+      showToast('Please agree to the Terms & Conditions and Privacy Policy.', 'warning');
       return;
     }
     if (!API_URL) {
-      showToast('API URL is not configured. Check your .env file.');
+      showToast('API URL is not configured. Check your .env file.', 'error');
       return;
     }
 
@@ -88,7 +128,22 @@ export default function LoginScreen() {
       });
 
       clearTimeout(timeout);
-      const data = await response.json() as LoginResponse;
+      let data: LoginResponse = {};
+      try {
+        data = (await response.json()) as LoginResponse;
+      } catch {
+        showToast('Something went wrong. Please try again.', 'error');
+        return;
+      }
+
+      if (response.status === 429) {
+        const wait = typeof data.retry_after_seconds === 'number' ? data.retry_after_seconds : 900;
+        const msg =
+          (typeof data.error === 'string' && data.error) ||
+          `Too many login attempts. Try again in ${formatRetryWait(wait)}.`;
+        showToast(msg, 'error', 5500);
+        return;
+      }
 
       if (response.status === 409 && data.requires_reactivation_confirmation) {
         setReactivationModalVisible(true);
@@ -140,15 +195,13 @@ export default function LoginScreen() {
           console.warn('Failed to persist account_id or token', e);
         }
       } else {
-        const accountError = Array.isArray(data.account) ? data.account[0] : undefined;
-        const errorMessage = data.username?.[0] || data.password?.[0] || accountError || 'Login failed. Please try again.';
-        showToast(errorMessage);
+        showToast(loginErrorMessage(data), 'error');
       }
     } catch (error: any) {
       if (error.name === 'AbortError') {
-        showToast('Request timed out. Server is not responding.');
+        showToast('Request timed out. Server is not responding.', 'error');
       } else {
-        showToast('Connection failed. Please check your network.');
+        showToast('Connection failed. Please check your network.', 'error');
       }
     } finally {
       setLoading(false);
@@ -164,7 +217,13 @@ export default function LoginScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={s.container}
     >
-      <Toast message={toast.message} visible={toast.visible} onHide={hideToast} />
+      <Toast
+        message={toast.message}
+        visible={toast.visible}
+        onHide={hideToast}
+        variant={toast.variant}
+        duration={toast.duration}
+      />
       <ConfirmationModal
         visible={reactivationModalVisible}
         type="warning"

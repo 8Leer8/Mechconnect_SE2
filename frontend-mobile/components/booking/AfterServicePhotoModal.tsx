@@ -158,8 +158,13 @@ export default function AfterServicePhotoModal({
             )}
 
             <View style={styles.pickerRow}>
-              <TouchableOpacity style={[styles.secondaryButton, { flex: 0 }]} onPress={pickFromCamera} disabled={loading}>
-                <FontAwesome name="camera" size={14} color="#FF8C00" />
+              <TouchableOpacity
+                style={[styles.secondaryButton, loading && styles.secondaryButtonDisabled]}
+                onPress={pickFromCamera}
+                disabled={loading}
+                activeOpacity={0.85}
+              >
+                <FontAwesome name="camera" size={16} color="#FF8C00" />
                 <ThemedText style={styles.secondaryButtonText}>Take Photo</ThemedText>
               </TouchableOpacity>
             </View>
@@ -271,34 +276,40 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
   },
   pickerRow: {
-    flexDirection: 'row',
-    gap: 10,
+    width: '100%',
     marginBottom: 12,
   },
   secondaryButton: {
-    flex: 1,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#FF8C0040',
-    backgroundColor: '#FF8C0010',
-    paddingVertical: 10,
+    width: '100%',
+    minHeight: 50,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#FF8C0050',
+    backgroundColor: '#FF8C0014',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
-    gap: 8,
+    gap: 10,
+  },
+  secondaryButtonDisabled: {
+    opacity: 0.55,
   },
   secondaryButtonText: {
-    color: '#FF8C00',
+    color: '#FFB347',
     fontWeight: '700',
+    fontSize: 15,
   },
   primaryButton: {
     borderRadius: 12,
     backgroundColor: '#FF8C00',
-    paddingVertical: 13,
+    paddingVertical: 14,
+    minHeight: 50,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
-    gap: 8,
+    gap: 10,
   },
   primaryButtonDisabled: {
     opacity: 0.5,

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
-import { Plus, X, Settings } from "lucide-react";
+import { Plus, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ModalShell } from "@/components/modals/ModalShell";
 
 export function AddServiceModal({
   isOpen,
@@ -49,35 +50,14 @@ export function AddServiceModal({
     return uniqueCategories;
   }, [categories]);
 
-  if (!isOpen) {
-    return null;
-  }
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4"
-      onClick={onClose}
+    <ModalShell
+      isOpen={isOpen}
+      onClose={onClose}
+      maxWidth="2xl"
+      title="Add Service"
+      description="Create a new service offering in the catalog."
     >
-      <div
-        className="w-full max-w-2xl overflow-hidden rounded-xl border border-border bg-background shadow-2xl"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="border-b border-border bg-gradient-to-r from-card via-muted/40 to-card px-6 py-4">
-          <button
-            type="button"
-            onClick={onClose}
-            className="absolute right-6 top-6 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-            aria-label="Close modal"
-          >
-            <X className="size-4" />
-          </button>
-
-          <h3 className="text-lg font-semibold text-foreground">Add Service</h3>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Create a new service offering in the catalog.
-          </p>
-        </div>
-
         <form onSubmit={handleSubmit} className="space-y-4 px-6 py-5">
           <div className="space-y-1.5">
             <label
@@ -242,7 +222,6 @@ export function AddServiceModal({
             </Button>
           </div>
         </form>
-      </div>
-    </div>
+    </ModalShell>
   );
 }

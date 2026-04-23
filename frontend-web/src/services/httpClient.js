@@ -2,22 +2,65 @@ import { API_BASE_URL } from "../config/env";
 
 const AUTH_TOKEN_STORAGE_KEY = "admin_auth_token";
 
+export class ApiError extends Error {
+  /**
+   * @param {string} message
+   * @param {{ status?: number; retryAfterSeconds?: number }} meta
+   */
+  constructor(message, meta = {}) {
+    super(message);
+    this.name = "ApiError";
+    this.status = meta.status;
+    this.retryAfterSeconds = meta.retryAfterSeconds;
+  }
+}
+
 function toRequestUrl(path) {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   return `${API_BASE_URL}${normalizedPath}`;
 }
 
-function getErrorMessage(data, fallbackMessage) {
+function pickField(value) {
+  if (Array.isArray(value) && value.length > 0) {
+    return String(value[0]);
+  }
+  if (typeof value === "string" && value) {
+    return value;
+  }
+  return null;
+}
+
+/**
+ * Turn JSON error bodies (DRF, our API) into a user-facing string.
+ * @param {Record<string, unknown> | null} data
+ * @param {number} status
+ */
+export function getErrorMessage(data, status, fallbackMessage = "Request failed.") {
   if (!data) {
     return fallbackMessage;
   }
 
-  if (typeof data.error === "string") {
-    return data.error;
+  if (typeof data.error === "string" && data.error) {
+    return formatWithRetryHint(data.error, data.retry_after_seconds, status);
   }
 
-  if (Array.isArray(data.non_field_errors) && data.non_field_errors.length > 0) {
-    return data.non_field_errors[0];
+  if (typeof data.message === "string" && data.message) {
+    return formatWithRetryHint(data.message, data.retry_after_seconds, status);
+  }
+
+  const nonField = pickField(data.non_field_errors);
+  if (nonField) {
+    return formatWithRetryHint(nonField, data.retry_after_seconds, status);
+  }
+
+  const usernameMsg = pickField(data.username);
+  if (usernameMsg) {
+    return usernameMsg;
+  }
+
+  const passwordMsg = pickField(data.password);
+  if (passwordMsg) {
+    return passwordMsg;
   }
 
   if (typeof data.detail === "string") {
@@ -25,6 +68,25 @@ function getErrorMessage(data, fallbackMessage) {
   }
 
   return fallbackMessage;
+}
+
+function formatWithRetryHint(baseMessage, retryAfterSeconds, status) {
+  if (status === 429 && typeof retryAfterSeconds === "number" && retryAfterSeconds > 0) {
+    const waitLabel = formatWaitLabel(retryAfterSeconds);
+    if (baseMessage.toLowerCase().includes("wait") || baseMessage.toLowerCase().includes("try again")) {
+      return `${baseMessage} (about ${waitLabel})`;
+    }
+    return `${baseMessage} Try again in about ${waitLabel}.`;
+  }
+  return baseMessage;
+}
+
+function formatWaitLabel(seconds) {
+  if (seconds < 60) {
+    return `${seconds} seconds`;
+  }
+  const minutes = Math.ceil(seconds / 60);
+  return `${minutes} minute${minutes === 1 ? "" : "s"}`;
 }
 
 export function setStoredAuthToken(token) {
@@ -74,7 +136,10 @@ export async function request(path, options = {}) {
   const data = isJson ? await response.json() : null;
 
   if (!response.ok) {
-    throw new Error(getErrorMessage(data, "Request failed."));
+    const retryAfterSeconds =
+      data && typeof data.retry_after_seconds === "number" ? data.retry_after_seconds : undefined;
+    const message = getErrorMessage(data, response.status, "Request failed.");
+    throw new ApiError(message, { status: response.status, retryAfterSeconds });
   }
 
   return data;
