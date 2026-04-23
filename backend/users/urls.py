@@ -28,7 +28,11 @@ urlpatterns = [
     path('logout/', views.logout, name='logout'),
     path('token/', views.token_login, name='token_login'),
     path('check-session/', views.check_session, name='check_session'),
-    
+
+    # SMS OTP endpoints
+    path('send-otp/', views.send_otp, name='send_otp'),
+    path('verify-otp/', views.verify_otp, name='verify_otp'),
+
     # Email verification
     path('send-verification-code/', views.send_verification_code, name='send_verification_code'),
     path('verify-code/', views.verify_code, name='verify_code'),

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, TextInput, TouchableOpacity, Text, Image,
   ActivityIndicator, KeyboardAvoidingView, Platform,
@@ -38,8 +38,8 @@ const YEAR_ITEMS = Array.from({ length: 2026 - 1940 + 1 }, (_, i) => {
 const GENDER_ITEMS = ['Male', 'Female', 'Others'].map(g => ({ label: g, value: g }));
 
 const STAGE_LABELS: Record<number, string> = {
-  1: '1/5 Personal', 2: '2/5 Verify', 3: '3/5 Security',
-  4: '4/5 Demographics', 5: '5/5 Location',
+  1: '1/6 Personal', 2: '2/6 Contact', 3: '3/6 Verify',
+  4: '4/6 Security', 5: '5/6 Demographics', 6: '6/6 Location',
 };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -151,24 +151,28 @@ export default function RegisterScreen() {
 
   const [formData, setFormData] = useState({
     firstname: '', lastname: '', middlename: '',
-    email: '', username: '', password: '', confirm_password: '',
+    username: '', password: '', confirm_password: '',
     date_of_birth: '', gender: '', role: 'client',
     street_name: '', barangay: '', city_municipality: '',
-    province: '', region: '', contact_number: '',
+    province: '', region: '', contact_number: '', email: '',
   });
+
+  // Contact method state for Step 2 & 3
+  const [contactMethod, setContactMethod] = useState<'mobile' | 'email'>('mobile');
+  const [contactVerified, setContactVerified] = useState(false);
+  const [verifiedIdentifier, setVerifiedIdentifier] = useState<string>('');
+
   const [phoneLocal, setPhoneLocal] = useState('');
   const [loading, setLoading]             = useState(false);
   const [currentStage, setCurrentStage]   = useState(1);
 
-  const totalStages = 5;
+  const totalStages = 6;
 
   // ── Password visibility ───────────────────────────────────────────────────
   const [showPassword, setShowPassword]               = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  // Email verification
-  const [emailVerified, setEmailVerified]       = useState(false);
-  const [verifiedEmail, setVerifiedEmail]       = useState('');
+  // Verification code state for Step 3
   const [verificationCode, setVerificationCode] = useState('');
   const [sendingCode, setSendingCode]     = useState(false);
   const [verifyingCode, setVerifyingCode] = useState(false);
@@ -203,6 +207,9 @@ export default function RegisterScreen() {
   const [loadingProvinces, setLoadingProvinces] = useState(false);
   const [loadingCities, setLoadingCities]       = useState(false);
   const [loadingBarangays, setLoadingBarangays] = useState(false);
+
+  // Refs for OTP input auto-focus
+  const otpInputRefs = useRef<(TextInput | null)[]>([]);
 
   // Sync dob string whenever month/day/year change
   useEffect(() => {
@@ -279,7 +286,6 @@ export default function RegisterScreen() {
 
   const updateField = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
-    if (field === 'email' && value !== verifiedEmail) setEmailVerified(false);
   };
 
   const handlePhoneChange = (v: string) => {
@@ -288,38 +294,89 @@ export default function RegisterScreen() {
     updateField('contact_number', digits ? '+63' + digits : '');
   };
 
-  const dobDisplay = () => {
-    if (!dobMonth && !dobDay && !dobYear) return null;
-    const mLabel = dobMonth ? MONTH_ITEMS.find(m => m.value === dobMonth)?.label : '—';
-    return `${mLabel ?? '—'}  ${dobDay || '—'}  ${dobYear || '—'}`;
-  };
-
-  // ── Email verification ────────────────────────────────────────────────────
+  // ── OTP verification handlers ─────────────────────────────────────────────
   const handleSendVerificationCode = async () => {
+    // Validate input before sending
+    if (contactMethod === 'mobile') {
+      if (!phoneLocal || phoneLocal.length !== 10) {
+        showToast('Please enter a valid 10-digit mobile number.');
+        return;
+      }
+    } else {
+      if (!formData.email || !validateEmail(formData.email)) {
+        showToast('Please enter a valid email address.');
+        return;
+      }
+    }
+
     setSendingCode(true);
     try {
-      const res  = await fetch(`${API_URL}/users/send-verification-code/`, {
+      const identifier = contactMethod === 'mobile' ? '+63' + phoneLocal : formData.email;
+
+      // Use different endpoints for mobile vs email
+      const endpoint = contactMethod === 'mobile'
+        ? `${API_URL}/users/send-otp/`
+        : `${API_URL}/users/send-verification-code/`;
+
+      const payload = contactMethod === 'mobile'
+        ? { contact_number: identifier }
+        : { email: identifier };
+
+      const res = await fetch(endpoint, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: formData.email }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
-      if (res.ok) { showToast('Verification code sent to your email.'); setResendCountdown(RESEND_COOLDOWN); setCurrentStage(2); }
-      else showToast(data.error || 'Failed to send verification code.');
+      if (res.ok) {
+        showToast(`Verification code sent to your ${contactMethod === 'mobile' ? 'mobile number' : 'email'}.`);
+        setResendCountdown(RESEND_COOLDOWN);
+        setCurrentStage(3);
+      } else {
+        showToast(data.error || 'Failed to send verification code.');
+      }
     } catch { showToast('Connection failed. Please check your network.'); }
     finally { setSendingCode(false); }
   };
 
   const handleVerifyCode = async () => {
-    if (!verificationCode || verificationCode.length !== 6) { showToast('Please enter a valid 6-digit code.'); return; }
+    if (!verificationCode || verificationCode.length !== 6) {
+      showToast('Please enter a valid 6-digit code.');
+      return;
+    }
     setVerifyingCode(true);
     try {
-      const res  = await fetch(`${API_URL}/users/verify-code/`, {
+      const identifier = contactMethod === 'mobile' ? '+63' + phoneLocal : formData.email;
+
+      // Use different endpoints for mobile vs email verification
+      const endpoint = contactMethod === 'mobile'
+        ? `${API_URL}/users/verify-otp/`
+        : `${API_URL}/users/verify-code/`;
+
+      const payload = contactMethod === 'mobile'
+        ? { contact_number: identifier, otp_code: verificationCode }
+        : { email: identifier, code: verificationCode };
+
+      const res = await fetch(endpoint, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: formData.email, code: verificationCode }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
-      if (res.ok) { setEmailVerified(true); setVerifiedEmail(formData.email); showToast('Email verified!'); setCurrentStage(3); }
-      else showToast(data.error || 'Invalid or expired verification code.');
+      if (res.ok) {
+        setContactVerified(true);
+        setVerifiedIdentifier(identifier); // Track the verified identifier
+        // Save the verified contact info to formData
+        if (contactMethod === 'mobile') {
+          updateField('contact_number', identifier);
+        } else {
+          updateField('email', identifier);
+        }
+        showToast(`${contactMethod === 'mobile' ? 'Mobile number' : 'Email'} verified!`);
+        setVerificationCode('');
+        setCurrentStage(4);
+      } else {
+        showToast(data.error || 'Invalid or expired verification code.');
+        setVerificationCode('');
+      }
     } catch { showToast('Connection failed. Please check your network.'); }
     finally { setVerifyingCode(false); }
   };
@@ -335,36 +392,44 @@ export default function RegisterScreen() {
   // ── Navigation ────────────────────────────────────────────────────────────
   const handleNext = () => {
     if (currentStage === 1) {
-      if (!formData.firstname || !formData.lastname || !formData.email || !formData.username) { showToast('Please fill in all required fields.'); return; }
-      if (!validateEmail(formData.email)) { showToast('Please enter a valid email address.'); return; }
-      if (emailVerified && formData.email === verifiedEmail) { setCurrentStage(3); return; }
-      handleSendVerificationCode(); return;
+      if (!formData.firstname || !formData.lastname || !formData.username) { showToast('Please fill in all required fields.'); return; }
+      setCurrentStage(2); return;
+    }
+    if (currentStage === 2) {
+      // Step 2 has its own Send Verification Code button
+      return;
     }
     if (currentStage === 3) {
+      // Step 3 has its own Verify button
+      return;
+    }
+    if (currentStage === 4) {
       if (!formData.password || !formData.confirm_password) { showToast('Please fill in all password fields.'); return; }
       const pwErr = validatePassword(formData.password);
       if (pwErr) { showToast(pwErr); return; }
       if (formData.password !== formData.confirm_password) { showToast('Passwords do not match.'); return; }
     }
-    if (currentStage === 4) {
+    if (currentStage === 5) {
       if (!formData.date_of_birth) { showToast('Please select your date of birth.'); return; }
       if (!isAtLeast18(formData.date_of_birth)) { showToast('You must be at least 18 years old to register.'); return; }
     }
-    if (currentStage === 5) {
+    if (currentStage === 6) {
       if (!formData.region || !formData.province || !formData.city_municipality || !formData.barangay) { showToast('Please complete your address.'); return; }
     }
     setCurrentStage(p => Math.min(p + 1, totalStages));
   };
 
   const handlePrevious = () => {
-    if (currentStage === 3) { setCurrentStage(1); return; }
+    if (currentStage === 4) { setCurrentStage(2); return; } // Skip Step 3 (OTP) when going back
+    if (currentStage === 3) { setCurrentStage(2); return; }
+    if (currentStage === 2) { setCurrentStage(1); return; }
     setCurrentStage(p => Math.max(p - 1, 1));
   };
 
   const handleRegister = async () => {
-    if (!emailVerified) { showToast('Please verify your email first.'); return; }
+    if (!contactVerified) { showToast('Please verify your contact method first.'); return; }
     if (!agreedToPolicies) { showToast('Please agree to the Terms & Conditions and Privacy Policy.'); return; }
-    if (!formData.firstname || !formData.lastname || !formData.email || !formData.username || !formData.password || !formData.confirm_password) { showToast('Please fill in all required fields.'); return; }
+    if (!formData.firstname || !formData.lastname || !formData.username || !formData.password || !formData.confirm_password) { showToast('Please fill in all required fields.'); return; }
     if (!formData.region || !formData.province || !formData.city_municipality || !formData.barangay) { showToast('Please complete your address.'); return; }
     if (formData.password !== formData.confirm_password) { showToast('Passwords do not match.'); return; }
     setLoading(true);
@@ -390,21 +455,15 @@ export default function RegisterScreen() {
             <TextInput style={s.input} placeholder="Enter first name" placeholderTextColor={MUTED}
               value={formData.firstname} onChangeText={v => updateField('firstname', v)} editable={!loading} />
           </View>
-          <Text style={[s.label, s.mt]}>Last Name <Text style={s.req}>*</Text></Text>
-          <View style={s.inputWrapper}>
-            <TextInput style={s.input} placeholder="Enter last name" placeholderTextColor={MUTED}
-              value={formData.lastname} onChangeText={v => updateField('lastname', v)} editable={!loading} />
-          </View>
           <Text style={[s.label, s.mt]}>Middle Name <Text style={s.opt}>(Optional)</Text></Text>
           <View style={s.inputWrapper}>
             <TextInput style={s.input} placeholder="Enter middle name" placeholderTextColor={MUTED}
               value={formData.middlename} onChangeText={v => updateField('middlename', v)} editable={!loading} />
           </View>
-          <Text style={[s.label, s.mt]}>Email <Text style={s.req}>*</Text></Text>
+          <Text style={[s.label, s.mt]}>Last Name <Text style={s.req}>*</Text></Text>
           <View style={s.inputWrapper}>
-            <TextInput style={s.input} placeholder="Enter email" placeholderTextColor={MUTED}
-              value={formData.email} onChangeText={v => updateField('email', v)}
-              keyboardType="email-address" autoCapitalize="none" editable={!loading} />
+            <TextInput style={s.input} placeholder="Enter last name" placeholderTextColor={MUTED}
+              value={formData.lastname} onChangeText={v => updateField('lastname', v)} editable={!loading} />
           </View>
           <Text style={[s.label, s.mt]}>Username <Text style={s.req}>*</Text></Text>
           <View style={s.inputWrapper}>
@@ -417,17 +476,103 @@ export default function RegisterScreen() {
 
       case 2: return (
         <>
-          <Text style={s.label}>Verification Code <Text style={s.req}>*</Text></Text>
-          <View style={s.inputWrapper}>
-            <TextInput style={s.input} placeholder="Enter 6-digit code" placeholderTextColor={MUTED}
-              value={verificationCode} onChangeText={setVerificationCode}
-              keyboardType="number-pad" maxLength={6} editable={!verifyingCode} />
+          <Text style={s.label}>Select Contact Method <Text style={s.req}>*</Text></Text>
+          <View style={s.methodToggleRow}>
+            <TouchableOpacity
+              style={[s.methodCard, contactMethod === 'mobile' && s.methodCardActive]}
+              onPress={() => setContactMethod('mobile')}
+              activeOpacity={0.8}>
+              <Feather name="smartphone" size={20} color={contactMethod === 'mobile' ? ORANGE : MUTED} />
+              <Text style={[s.methodCardText, contactMethod === 'mobile' && s.methodCardTextActive]}>Mobile Number</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.methodCard, contactMethod === 'email' && s.methodCardActive]}
+              onPress={() => setContactMethod('email')}
+              activeOpacity={0.8}>
+              <Feather name="mail" size={20} color={contactMethod === 'email' ? ORANGE : MUTED} />
+              <Text style={[s.methodCardText, contactMethod === 'email' && s.methodCardTextActive]}>Email Address</Text>
+            </TouchableOpacity>
           </View>
-          <Text style={[s.label, { marginTop: 8 }]}>Code sent to {formData.email}</Text>
-          <TouchableOpacity style={[s.button, s.btnFull, verifyingCode && s.btnDisabled, { marginTop: 16 }]}
-            onPress={handleVerifyCode} disabled={verifyingCode}>
-            {verifyingCode ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>Verify Code</Text>}
+
+          <Text style={[s.label, s.mt]}>{contactMethod === 'mobile' ? 'Mobile Number' : 'Email Address'} <Text style={s.req}>*</Text></Text>
+          {contactMethod === 'mobile' ? (
+            <View style={s.inputWrapper}>
+              <Text style={s.prefix}>+63</Text>
+              <View style={s.prefixDivider} />
+              <TextInput style={s.input} placeholder="9XX XXX XXXX" placeholderTextColor={MUTED}
+                value={phoneLocal} onChangeText={handlePhoneChange}
+                keyboardType="phone-pad" maxLength={10} editable={!sendingCode} />
+            </View>
+          ) : (
+            <View style={s.inputWrapper}>
+              <TextInput style={s.input} placeholder="Enter your email address" placeholderTextColor={MUTED}
+                value={formData.email} onChangeText={v => updateField('email', v)}
+                keyboardType="email-address" autoCapitalize="none" editable={!sendingCode} />
+            </View>
+          )}
+
+          <TouchableOpacity style={[s.button, s.btnFull, sendingCode && s.btnDisabled, { marginTop: 24 }]}
+            onPress={() => {
+              const currentIdentifier = contactMethod === 'mobile' ? '+63' + phoneLocal : formData.email;
+              if (contactVerified && verifiedIdentifier === currentIdentifier) {
+                // Already verified this identifier, skip to Step 4
+                setCurrentStage(4);
+              } else {
+                // Need to send verification code
+                handleSendVerificationCode();
+              }
+            }} disabled={sendingCode}>
+            {sendingCode ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>
+              {(() => {
+                const currentIdentifier = contactMethod === 'mobile' ? '+63' + phoneLocal : formData.email;
+                return (contactVerified && verifiedIdentifier === currentIdentifier) ? 'Next' : 'Send Verification Code';
+              })()}
+            </Text>}
           </TouchableOpacity>
+        </>
+      );
+
+      case 3: return (
+        <>
+          <Text style={s.label}>Enter Verification Code <Text style={s.req}>*</Text></Text>
+          <Text style={s.verifyHint}>We sent a 6-digit code to {contactMethod === 'mobile' ? '+63' + phoneLocal : formData.email}</Text>
+
+          <View style={s.otpContainer}>
+            {[0, 1, 2, 3, 4, 5].map((index) => (
+              <TextInput
+                key={index}
+                ref={el => { otpInputRefs.current[index] = el; }}
+                style={s.otpDigit}
+                maxLength={1}
+                keyboardType="number-pad"
+                value={verificationCode[index] || ''}
+                onChangeText={(digit) => {
+                  const newCode = verificationCode.split('');
+                  newCode[index] = digit;
+                  setVerificationCode(newCode.join(''));
+                  // Auto-focus next input
+                  if (digit && index < 5) {
+                    const nextInput = otpInputRefs.current[index + 1];
+                    nextInput?.focus();
+                  }
+                }}
+                onKeyPress={({ nativeEvent }) => {
+                  if (nativeEvent.key === 'Backspace' && !verificationCode[index] && index > 0) {
+                    const prevInput = otpInputRefs.current[index - 1];
+                    prevInput?.focus();
+                  }
+                }}
+                editable={!verifyingCode}
+                selectTextOnFocus
+              />
+            ))}
+          </View>
+
+          <TouchableOpacity style={[s.button, s.btnFull, verifyingCode && s.btnDisabled, { marginTop: 24 }]}
+            onPress={handleVerifyCode} disabled={verifyingCode || verificationCode.length !== 6}>
+            {verifyingCode ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>Verify</Text>}
+          </TouchableOpacity>
+
           <TouchableOpacity style={[s.buttonOutline, s.btnFull, { marginTop: 12 }]}
             onPress={handleResendCode} disabled={sendingCode || resendCountdown > 0}>
             {sendingCode ? <ActivityIndicator color={ORANGE} />
@@ -436,8 +581,8 @@ export default function RegisterScreen() {
         </>
       );
 
-      // ── Stage 3: Security (passwords with show/hide toggles) ──────────────
-      case 3: return (
+      // ── Stage 4: Security (passwords with show/hide toggles) ──────────────
+      case 4: return (
         <>
           <Text style={s.label}>Password <Text style={s.req}>*</Text></Text>
           <View style={s.inputWrapper}>
@@ -475,7 +620,8 @@ export default function RegisterScreen() {
         </>
       );
 
-      case 4: return (
+      // ── Stage 5: Demographics (Contact Number, DOB, Gender) ───────────────
+      case 5: return (
         <>
           <Text style={s.label}>Contact Number <Text style={s.opt}>(Optional)</Text></Text>
           <View style={s.inputWrapper}>
@@ -514,7 +660,8 @@ export default function RegisterScreen() {
         </>
       );
 
-      case 5: return (
+      // ── Stage 6: Location ─────────────────────────────────────────────────
+      case 6: return (
         <>
           <Text style={s.label}>Region <Text style={s.req}>*</Text></Text>
           <TouchableOpacity style={s.inputWrapper} onPress={() => setShowRegionSheet(true)} disabled={loading || loadingRegions}>
@@ -588,7 +735,7 @@ export default function RegisterScreen() {
               </View>
             </View>
           )}
-          {currentStage !== 2 && (
+          {currentStage !== 2 && currentStage !== 3 && (
             <View style={s.navRow}>
               {currentStage > 1 && (
                 <TouchableOpacity style={[s.buttonOutline, s.navBtn]} onPress={handlePrevious} disabled={loading || sendingCode || verifyingCode}>
@@ -597,7 +744,7 @@ export default function RegisterScreen() {
               )}
               {currentStage < totalStages ? (
                 <TouchableOpacity style={[s.button, s.navBtn, (loading || sendingCode) && s.btnDisabled]} onPress={handleNext} disabled={loading || sendingCode}>
-                  {currentStage === 1 && sendingCode ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>Next</Text>}
+                  <Text style={s.btnText}>Next</Text>
                 </TouchableOpacity>
               ) : (
                 <TouchableOpacity style={[s.button, s.navBtn, (loading || !agreedToPolicies) && s.btnDisabled]} onPress={handleRegister} disabled={loading || !agreedToPolicies}>
@@ -745,4 +892,60 @@ const s = StyleSheet.create({
     color: ORANGE,
   },
   copyright:{ fontSize: 12, fontWeight: '300', color: MUTED, textAlign: 'center', marginTop: 32 },
+  // New styles for Step 2 & 3
+  methodToggleRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 8,
+  },
+  methodCard: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 16,
+    paddingHorizontal: 12,
+    backgroundColor: SURFACE,
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 8,
+  },
+  methodCardActive: {
+    borderColor: ORANGE,
+    backgroundColor: '#2A1E16',
+  },
+  methodCardText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: MUTED,
+  },
+  methodCardTextActive: {
+    color: ORANGE,
+    fontWeight: '600',
+  },
+  verifyHint: {
+    fontSize: 13,
+    color: MUTED,
+    marginBottom: 20,
+  },
+  otpContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
+  },
+  otpDigit: {
+    width: 48,
+    height: 56,
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 8,
+    backgroundColor: SURFACE,
+    color: TEXT,
+    fontSize: 20,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
 });
