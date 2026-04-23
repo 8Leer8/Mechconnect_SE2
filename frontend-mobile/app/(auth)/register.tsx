@@ -30,8 +30,10 @@ const DAY_ITEMS  = Array.from({ length: 31 }, (_, i) => {
   return { label: d, value: d };
 });
 
-const YEAR_ITEMS = Array.from({ length: 2026 - 1940 + 1 }, (_, i) => {
-  const y = String(2026 - i);
+const CURRENT_YEAR = new Date().getFullYear();
+const MAX_BIRTH_YEAR = CURRENT_YEAR - 18; // User must be at least 18 years old
+const YEAR_ITEMS = Array.from({ length: MAX_BIRTH_YEAR - 1940 + 1 }, (_, i) => {
+  const y = String(MAX_BIRTH_YEAR - i);
   return { label: y, value: y };
 });
 
@@ -434,9 +436,20 @@ export default function RegisterScreen() {
     if (formData.password !== formData.confirm_password) { showToast('Passwords do not match.'); return; }
     setLoading(true);
     try {
+      // Construct payload based on verified contact method
+      const payload: any = { ...formData };
+      // Use the verified contact info from Step 2
+      if (contactMethod === 'mobile') {
+        payload.contact_number = verifiedIdentifier;
+        // Clear email if mobile was used for verification (email not collected)
+        payload.email = '';
+      } else {
+        // Email verification - contact_number comes from demographics (if any) or empty
+        payload.contact_number = '';
+      }
       const res  = await fetch(`${API_URL}/users/register/`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(payload),
       });
       const data = await res.json() as RegisterResponse;
       if (res.ok) { showToast('Registration successful! Please login.'); setTimeout(() => router.replace('../(auth)/login' as any), 1500); }
@@ -620,18 +633,9 @@ export default function RegisterScreen() {
         </>
       );
 
-      // ── Stage 5: Demographics (Contact Number, DOB, Gender) ───────────────
+      // ── Stage 5: Demographics (DOB, Gender) ───────────────
       case 5: return (
         <>
-          <Text style={s.label}>Contact Number <Text style={s.opt}>(Optional)</Text></Text>
-          <View style={s.inputWrapper}>
-            <Text style={s.prefix}>+63</Text>
-            <View style={s.prefixDivider} />
-            <TextInput style={s.input} placeholder="9XX XXX XXXX" placeholderTextColor={MUTED}
-              value={phoneLocal} onChangeText={handlePhoneChange}
-              keyboardType="phone-pad" maxLength={10} editable={!loading} />
-          </View>
-
           {/* Date of Birth — 3 column row */}
           <Text style={[s.label, s.mt]}>Date of Birth <Text style={s.req}>*</Text></Text>
           <View style={s.dobRow}>
@@ -686,7 +690,7 @@ export default function RegisterScreen() {
             <Text style={[s.input, !formData.barangay && { color: MUTED }]}>{loadingBarangays ? 'Loading...' : (formData.barangay || (!selectedCityCode ? 'Select city first' : 'Select Barangay'))}</Text>
             {loadingBarangays ? <ActivityIndicator size="small" color={ORANGE} /> : <Feather name="chevron-down" size={16} color={MUTED} />}
           </TouchableOpacity>
-          <Text style={[s.label, s.mt]}>Street Name <Text style={s.opt}>(Optional)</Text></Text>
+          <Text style={[s.label, s.mt]}>Street Name <Text style={s.req}>*</Text></Text>
           <View style={s.inputWrapper}>
             <TextInput style={s.input} placeholder="Enter street name" placeholderTextColor={MUTED}
               value={formData.street_name} onChangeText={v => updateField('street_name', v)} editable={!loading} />

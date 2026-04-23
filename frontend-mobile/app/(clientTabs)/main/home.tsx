@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import {View, ScrollView, TouchableOpacity, RefreshControl, Dimensions, Animated, Image} from 'react-native';
+import {View, ScrollView, TouchableOpacity, RefreshControl, Dimensions, Animated, Image, Modal, Text, StyleSheet} from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -157,6 +157,8 @@ export default function HomeScreen() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [showEmergencyModal, setShowEmergencyModal] = useState(false);
+  const [showSosAlert, setShowSosAlert] = useState(false);
+  const [hasMobileNumber, setHasMobileNumber] = useState(false);
   const { lastMessage } = useWebSocketContext();
   const { selectedLocation, setSelectedLocation } = useLocation();
   const params = useLocalSearchParams<{ openEmergency?: string; emLat?: string; emLng?: string; emAddr?: string }>();
@@ -207,6 +209,9 @@ export default function HomeScreen() {
         if (n) setClientName(n);
         const clientProfile = p?.current_role_profile?.client;
         setProfilePhotoUrl(clientProfile?.profile_photo || clientProfile?.profile_photo_url || null);
+        // Check if user has verified mobile number
+        const contactNumber = p?.contact_number || '';
+        setHasMobileNumber(!!contactNumber && contactNumber.length > 0);
       }
     } catch (err: any) {
       setError(err.message || 'Failed to load dashboard');
@@ -715,7 +720,13 @@ export default function HomeScreen() {
       {/* Floating Emergency SOS Button */}
       <TouchableOpacity 
         style={styles.emergencyFAB}
-        onPress={() => setShowEmergencyModal(true)}
+        onPress={() => {
+          if (hasMobileNumber) {
+            setShowEmergencyModal(true);
+          } else {
+            setShowSosAlert(true);
+          }
+        }}
         activeOpacity={0.8}
       >
         <Animated.View 
@@ -738,6 +749,118 @@ export default function HomeScreen() {
           fetchAllData(); // Refresh data after successful emergency request
         }}
       />
+
+      {/* SOS Mobile Number Required Alert Modal */}
+      <Modal
+        visible={showSosAlert}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowSosAlert(false)}
+      >
+        <View style={sosAlertStyles.overlay}>
+          <View style={sosAlertStyles.alertBox}>
+            <View style={sosAlertStyles.iconCircle}>
+              <FontAwesome name="exclamation-circle" size={40} color="#FF8C00" />
+            </View>
+            <Text style={sosAlertStyles.title}>Mobile Number Required</Text>
+            <Text style={sosAlertStyles.subtext}>
+              You must have a verified mobile number to request emergency services.
+            </Text>
+            <View style={sosAlertStyles.buttonRow}>
+              <TouchableOpacity
+                style={sosAlertStyles.cancelButton}
+                onPress={() => setShowSosAlert(false)}
+                activeOpacity={0.8}
+              >
+                <Text style={sosAlertStyles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={sosAlertStyles.verifyButton}
+                onPress={() => {
+                  setShowSosAlert(false);
+                  router.push('/client/others/settings');
+                }}
+                activeOpacity={0.8}
+              >
+                <Text style={sosAlertStyles.verifyButtonText}>Verify Now</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ThemedView>
   );
 }
+
+const sosAlertStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  alertBox: {
+    backgroundColor: '#1E1E1E',
+    borderRadius: 16,
+    padding: 24,
+    width: '100%',
+    maxWidth: 320,
+    alignItems: 'center',
+  },
+  iconCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: 'rgba(255, 140, 0, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  title: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#F5F5F5',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  subtext: {
+    fontSize: 14,
+    color: '#9A9A9A',
+    textAlign: 'center',
+    marginBottom: 24,
+    lineHeight: 20,
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    gap: 12,
+    width: '100%',
+  },
+  cancelButton: {
+    flex: 1,
+    height: 44,
+    borderWidth: 1,
+    borderColor: '#3A3A3C',
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cancelButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#9A9A9A',
+  },
+  verifyButton: {
+    flex: 1,
+    height: 44,
+    backgroundColor: '#FF8C00',
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  verifyButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#fff',
+  },
+});

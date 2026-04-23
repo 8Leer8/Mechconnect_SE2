@@ -160,6 +160,20 @@ def verify_otp(request):
     otp_record.verified_at = timezone.now()
     otp_record.save()
 
+    # If user is logged in, update their Client profile with the new contact number
+    if request.user and request.user.is_authenticated:
+        try:
+            from ..models import Client
+            client = Client.objects.get(account=request.user)
+            client.contact_number = contact_number
+            client.save()
+            logger.info(f"Updated Client profile contact_number to {contact_number} for user {request.user.id}")
+        except Client.DoesNotExist:
+            # User doesn't have a Client profile, skip update
+            pass
+        except Exception as e:
+            logger.warning(f"Failed to update Client profile: {str(e)}")
+
     logger.info(f"OTP verified successfully for {contact_number}")
 
     return Response({

@@ -41,7 +41,8 @@ type SettingsApiError = {
 
 type FlowStep = 'password' | 'email' | 'otp' | 'done';
 type DeactivationStep = 'password' | 'email' | 'otp';
-type SettingsViewMode = 'menu' | 'change-email' | 'change-password' | 'deactivate-account';
+type NumberStep = 'input' | 'verify' | 'done';
+type SettingsViewMode = 'menu' | 'change-email' | 'change-password' | 'deactivate-account' | 'verify-number';
 
 const stepOrder: FlowStep[] = ['password', 'email', 'otp', 'done'];
 
@@ -96,6 +97,17 @@ export default function SettingsScreen() {
   const [deactivationEmail, setDeactivationEmail] = useState('');
   const [deactivationBlockers, setDeactivationBlockers] = useState<string[]>([]);
 
+  // Number verification state
+  const [numberStep, setNumberStep] = useState<NumberStep>('input');
+  const [phoneLocal, setPhoneLocal] = useState('');
+  const [mobileNumber, setMobileNumber] = useState('');
+  const [numberOtpCode, setNumberOtpCode] = useState('');
+  const [hasMobileNumber, setHasMobileNumber] = useState(false);
+  const [sendingNumberOtp, setSendingNumberOtp] = useState(false);
+  const [verifyingNumberOtp, setVerifyingNumberOtp] = useState(false);
+  const [numberResendCountdown, setNumberResendCountdown] = useState(0);
+  const [numberVerified, setNumberVerified] = useState(false);
+
   const [passwordVerified, setPasswordVerified] = useState(false);
   const [otpVerified, setOtpVerified] = useState(false);
   const [updatedEmail, setUpdatedEmail] = useState<string | null>(null);
@@ -131,6 +143,29 @@ export default function SettingsScreen() {
     return () => clearInterval(timer);
   }, [passwordResendCountdown]);
 
+  // Number verification countdown
+  useEffect(() => {
+    if (numberResendCountdown <= 0) return;
+    const timer = setInterval(() => {
+      setNumberResendCountdown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [numberResendCountdown]);
+
+  // Load profile to check mobile number status
+  useEffect(() => {
+    loadMobileNumberStatus();
+  }, []);
+
+  const loadMobileNumberStatus = async () => {
+    const profile = await fetchProfileDetailsCached(false);
+    const contactNumber = profile?.contact_number || '';
+    setHasMobileNumber(!!contactNumber && contactNumber.length > 0);
+    if (contactNumber && contactNumber.startsWith('+63')) {
+      setPhoneLocal(contactNumber.slice(3));
+    }
+  };
+
   const isBusy =
     verifyingPassword ||
     sendingOtp ||
@@ -142,7 +177,9 @@ export default function SettingsScreen() {
     loadingPasswordEmail ||
     verifyingDeactivationPassword ||
     requestingDeactivationCode ||
-    confirmingDeactivation;
+    confirmingDeactivation ||
+    sendingNumberOtp ||
+    verifyingNumberOtp;
 
   const canVerifyPassword = useMemo(() => {
     return currentPassword.trim().length > 0 && !isBusy;
@@ -181,6 +218,14 @@ export default function SettingsScreen() {
   const canRequestDeactivationCode = useMemo(() => {
     return deactivationPassword.trim().length > 0 && !isBusy;
   }, [deactivationPassword, isBusy]);
+
+  const canSendNumberOtp = useMemo(() => {
+    return phoneLocal.length === 10 && !isBusy;
+  }, [phoneLocal, isBusy]);
+
+  const canVerifyNumberOtp = useMemo(() => {
+    return numberOtpCode.trim().length === 6 && !isBusy;
+  }, [numberOtpCode, isBusy]);
 
   const canConfirmDeactivation = useMemo(() => {
     return deactivationOtpCode.trim().length === 6 && !isBusy;
@@ -226,9 +271,127 @@ export default function SettingsScreen() {
     setDeactivationModalVisible(false);
   };
 
+  const resetNumberVerificationFlow = () => {
+    setNumberStep('input');
+    setPhoneLocal('');
+    setMobileNumber('');
+    setNumberOtpCode('');
+    setNumberVerified(false);
+    setNumberResendCountdown(0);
+    setSendingNumberOtp(false);
+    setVerifyingNumberOtp(false);
+  };
+
+  const handlePhoneLocalChange = (v: string) => {
+    const digits = v.replace(/\D/g, '').slice(0, 10);
+    setPhoneLocal(digits);
+  };
+
   const startDeactivateFlow = () => {
     resetDeactivateFlow();
     setDeactivationModalVisible(true);
+  };
+
+  const startVerifyNumber = async () => {
+    await loadMobileNumberStatus();
+    resetNumberVerificationFlow();
+    setViewMode('verify-number');
+  };
+
+  const handleSendNumberOtp = async () => {
+    if (!ensureApiUrl()) return;
+    if (phoneLocal.length !== 10) {
+      showNotification({ type: 'error', message: 'Please enter a valid 10-digit mobile number.' });
+      return;
+    }
+
+    const fullNumber = '+63' + phoneLocal;
+    setSendingNumberOtp(true);
+    try {
+      const response = await fetch(`${API_URL}/users/send-otp/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: getHeaders(),
+        body: JSON.stringify({ contact_number: fullNumber }),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as SettingsApiError;
+
+      if (!response.ok) {
+        showNotification({
+          type: 'error',
+          message: extractErrorMessage(data, 'Failed to send verification code.'),
+        });
+        return;
+      }
+
+      setMobileNumber(fullNumber);
+      setNumberOtpCode('');
+      setNumberResendCountdown(RESEND_COOLDOWN_SECONDS);
+      setNumberStep('verify');
+      showNotification({ type: 'success', message: 'Verification code sent to your mobile number.' });
+    } catch {
+      showNotification({ type: 'error', message: 'Connection failed. Please check your network.' });
+    } finally {
+      setSendingNumberOtp(false);
+    }
+  };
+
+  const handleVerifyNumberOtp = async () => {
+    if (!ensureApiUrl()) return;
+    const code = numberOtpCode.trim();
+
+    if (code.length !== 6) {
+      showNotification({ type: 'error', message: 'Please enter the 6-digit OTP code.' });
+      return;
+    }
+
+    setVerifyingNumberOtp(true);
+    try {
+      const response = await fetch(`${API_URL}/users/verify-otp/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: getHeaders(),
+        body: JSON.stringify({ contact_number: mobileNumber, otp_code: code }),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as SettingsApiError;
+
+      if (!response.ok) {
+        showNotification({
+          type: 'error',
+          message: extractErrorMessage(data, 'Invalid or expired OTP code.'),
+        });
+        return;
+      }
+
+      // Update profile cache with new mobile number
+      const profile = await fetchProfileDetailsCached(true);
+      if (profile) {
+        profile.contact_number = mobileNumber;
+        // Update cache
+        const cacheKey = 'profile_details_cache_v2';
+        const payload = {
+          cachedAt: Date.now(),
+          profile,
+        };
+        await AsyncStorage.setItem(cacheKey, JSON.stringify(payload));
+      }
+
+      setNumberVerified(true);
+      setHasMobileNumber(true);
+      setNumberStep('done');
+      showNotification({ type: 'success', message: 'Mobile number verified successfully!' });
+    } catch {
+      showNotification({ type: 'error', message: 'Connection failed. Please check your network.' });
+    } finally {
+      setVerifyingNumberOtp(false);
+    }
+  };
+
+  const handleResendNumberOtp = async () => {
+    if (numberResendCountdown > 0 || sendingNumberOtp) return;
+    await handleSendNumberOtp();
   };
 
   const handleVerifyPassword = async () => {
@@ -776,16 +939,36 @@ export default function SettingsScreen() {
           {viewMode === 'menu' ? (
             <>
               <Text style={[styles.title, { color: palette.textPrimary }]}>Account Settings</Text>
-              <Text style={[styles.subtitle, { color: palette.textSecondary }]}> 
+              <Text style={[styles.subtitle, { color: palette.textSecondary }]}>
                 Manage account-level actions below.
               </Text>
+
+              {/* Register/Change Mobile Number */}
+              <TouchableOpacity
+                style={[styles.optionCard, { borderColor: palette.border, backgroundColor: palette.surface }]}
+                onPress={startVerifyNumber}
+                activeOpacity={0.8}
+              >
+                <View style={[styles.optionIconWrap, styles.optionIconPrimary, { backgroundColor: palette.optionIconPrimaryBg }]}>
+                  <FontAwesome name="phone" size={15} color="#FF8C00" />
+                </View>
+                <View style={styles.optionTextWrap}>
+                  <Text style={[styles.optionTitle, { color: palette.textPrimary }]}>
+                    {hasMobileNumber ? 'Change Number' : 'Register Number'}
+                  </Text>
+                  <Text style={[styles.optionDescription, { color: palette.textMuted }]}>
+                    {hasMobileNumber ? 'Update your current mobile number.' : 'Add a mobile number for emergency requests.'}
+                  </Text>
+                </View>
+                <FontAwesome name="chevron-right" size={14} color={palette.chevron} />
+              </TouchableOpacity>
 
               <TouchableOpacity
                 style={[styles.optionCard, { borderColor: palette.border, backgroundColor: palette.surface }]}
                 onPress={startChangeEmail}
                 activeOpacity={0.8}
               >
-                <View style={[styles.optionIconWrap, styles.optionIconPrimary, { backgroundColor: palette.optionIconPrimaryBg }]}> 
+                <View style={[styles.optionIconWrap, styles.optionIconPrimary, { backgroundColor: palette.optionIconPrimaryBg }]}>
                   <FontAwesome name="envelope" size={15} color="#FF8C00" />
                 </View>
                 <View style={styles.optionTextWrap}>
@@ -963,6 +1146,139 @@ export default function SettingsScreen() {
                   </TouchableOpacity>
                 </View>
               )}
+            </>
+          ) : viewMode === 'verify-number' ? (
+            <>
+              <Text style={[styles.title, { color: palette.textPrimary }]}>
+                {hasMobileNumber ? 'Change Mobile Number' : 'Register Mobile Number'}
+              </Text>
+              <Text style={[styles.subtitle, { color: palette.textSecondary }]}>
+                {numberStep === 'input'
+                  ? 'Enter your mobile number to receive a verification code.'
+                  : numberStep === 'verify'
+                  ? 'Enter the 6-digit code sent to your mobile number.'
+                  : 'Your mobile number has been verified successfully.'}
+              </Text>
+
+              {numberStep === 'input' && (
+                <View style={styles.section}>
+                  <ThemedText style={[styles.sectionTitle, { color: palette.textPrimary }]}>Mobile Number</ThemedText>
+                  <View style={[styles.phoneInputWrap, { borderColor: palette.inputBorder, backgroundColor: palette.inputBg }]}>
+                    <Text style={[styles.phonePrefix, { color: palette.textSecondary }]}>+63</Text>
+                    <TextInput
+                      style={[styles.phoneInput, { color: palette.inputText }]}
+                      value={phoneLocal}
+                      onChangeText={handlePhoneLocalChange}
+                      keyboardType="phone-pad"
+                      maxLength={10}
+                      placeholder="9XX XXX XXXX"
+                      placeholderTextColor="#8E8E93"
+                      editable={!isBusy}
+                    />
+                  </View>
+                  <ThemedText style={[styles.metaText, { color: palette.textSecondary }]}>
+                    Enter a valid Philippine mobile number
+                  </ThemedText>
+
+                  <TouchableOpacity
+                    style={[styles.primaryButton, !canSendNumberOtp && styles.disabledButton]}
+                    onPress={handleSendNumberOtp}
+                    disabled={!canSendNumberOtp}
+                  >
+                    {sendingNumberOtp ? (
+                      <ActivityIndicator color="#111214" />
+                    ) : (
+                      <Text style={[styles.primaryButtonText, { color: palette.textPrimary }]}>
+                        Send Verification Code
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {numberStep === 'verify' && (
+                <View style={styles.section}>
+                  <ThemedText style={[styles.sectionTitle, { color: palette.textPrimary }]}>
+                    Enter Verification Code
+                  </ThemedText>
+                  <ThemedText style={[styles.metaText, { color: palette.textSecondary }]}>
+                    Code sent to {mobileNumber}
+                  </ThemedText>
+                  <TextInput
+                    style={[styles.input, { borderColor: palette.inputBorder, backgroundColor: palette.inputBg, color: palette.inputText }]}
+                    value={numberOtpCode}
+                    onChangeText={setNumberOtpCode}
+                    keyboardType="number-pad"
+                    maxLength={6}
+                    placeholder="Enter 6-digit code"
+                    placeholderTextColor="#8E8E93"
+                    editable={!isBusy}
+                  />
+
+                  <TouchableOpacity
+                    style={[styles.primaryButton, !canVerifyNumberOtp && styles.disabledButton]}
+                    onPress={handleVerifyNumberOtp}
+                    disabled={!canVerifyNumberOtp}
+                  >
+                    {verifyingNumberOtp ? (
+                      <ActivityIndicator color="#111214" />
+                    ) : (
+                      <Text style={[styles.primaryButtonText, { color: palette.textPrimary }]}>Verify</Text>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.secondaryButton,
+                      { backgroundColor: palette.secondaryBtnBg, borderColor: palette.secondaryBtnBorder },
+                      numberResendCountdown > 0 && styles.disabledButton,
+                    ]}
+                    onPress={handleResendNumberOtp}
+                    disabled={numberResendCountdown > 0 || isBusy}
+                  >
+                    <Text style={[styles.secondaryButtonText, { color: palette.secondaryBtnText }]}>
+                      {numberResendCountdown > 0 ? `Resend in ${formatCountdown(numberResendCountdown)}` : 'Resend Code'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {numberStep === 'done' && (
+                <View style={styles.section}>
+                  <View style={[styles.doneIconWrap, { backgroundColor: palette.doneIconBg }]}>
+                    <FontAwesome name="check" size={20} color="#34C759" />
+                  </View>
+                  <ThemedText style={[styles.sectionTitle, { color: palette.textPrimary }]}>
+                    Number Verified
+                  </ThemedText>
+                  <ThemedText style={[styles.metaText, { color: palette.textSecondary }]}>
+                    {mobileNumber}
+                  </ThemedText>
+
+                  <TouchableOpacity
+                    style={styles.primaryButton}
+                    onPress={() => {
+                      setViewMode('menu');
+                      resetNumberVerificationFlow();
+                    }}
+                  >
+                    <Text style={[styles.primaryButtonText, { color: palette.textPrimary }]}>Back to Settings</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              <TouchableOpacity
+                style={[styles.secondaryButton, { backgroundColor: palette.secondaryBtnBg, borderColor: palette.secondaryBtnBorder }]}
+                onPress={() => {
+                  if (!isBusy) {
+                    setViewMode('menu');
+                    resetNumberVerificationFlow();
+                  }
+                }}
+                disabled={isBusy}
+              >
+                <Text style={[styles.secondaryButtonText, { color: palette.secondaryBtnText }]}>Cancel</Text>
+              </TouchableOpacity>
             </>
           ) : viewMode === 'deactivate-account' ? (
             <>
@@ -1540,5 +1856,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 10,
+  },
+  phoneInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 12,
+    backgroundColor: '#FAFAFA',
+    marginBottom: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  phonePrefix: {
+    fontSize: 15,
+    fontWeight: '600',
+    marginRight: 8,
+  },
+  phoneInput: {
+    flex: 1,
+    fontSize: 15,
+    padding: 0,
   },
 });
