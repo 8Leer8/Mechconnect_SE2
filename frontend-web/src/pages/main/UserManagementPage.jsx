@@ -540,12 +540,18 @@ export function UserManagementPage() {
     [accounts, roleFilter],
   );
 
+  // Calculate total pages whenever filtered accounts change
+  useEffect(() => {
+    const calculatedTotalPages = Math.max(Math.ceil(filteredAccounts.length / ITEMS_PER_PAGE), 1);
+    setTotalPages(calculatedTotalPages);
+  }, [filteredAccounts]);
+
   useEffect(() => {
     setCurrentPage(1);
   }, [roleFilter]);
 
   useEffect(() => {
-    if (currentPage > totalPages) {
+    if (currentPage > totalPages && totalPages > 0) {
       setCurrentPage(totalPages);
     }
   }, [currentPage, totalPages]);
