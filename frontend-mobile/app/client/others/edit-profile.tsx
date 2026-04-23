@@ -182,7 +182,8 @@ export default function EditProfileScreen() {
   const {
     setSelectedLocation,
     setSelectedLocationPurpose,
-    branchMutationToken,
+    branchSyncPayload,
+    setBranchSyncPayload,
   } = useLocation();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -192,6 +193,8 @@ export default function EditProfileScreen() {
   const [profilePhotoUri, setProfilePhotoUri] = useState<string | null>(null);
   const [serviceBannerUri, setServiceBannerUri] = useState<string | null>(null);
   const [branchAddresses, setBranchAddresses] = useState<Address[]>([]);
+  const [branchLabelDrafts, setBranchLabelDrafts] = useState<Record<number, string>>({});
+  const [mainBranchLabel, setMainBranchLabel] = useState('Main Branch');
   const [mainBranchLat, setMainBranchLat] = useState<number | null>(null);
   const [mainBranchLng, setMainBranchLng] = useState<number | null>(null);
   const [mainBranchFormattedAddress, setMainBranchFormattedAddress] = useState('');
@@ -226,6 +229,18 @@ export default function EditProfileScreen() {
 
   const mapRef = useRef<MapView | null>(null);
   const geocodeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const syncBranchAddresses = useCallback((addresses: Address[]) => {
+    setBranchAddresses(addresses);
+    setBranchLabelDrafts(
+      addresses.reduce<Record<number, string>>((drafts, branch) => {
+        if (!branch.is_main && branch.id) {
+          drafts[branch.id] = branch.label || '';
+        }
+        return drafts;
+      }, {})
+    );
+    setMainBranchLabel(addresses.find((branch) => branch.is_main)?.label || 'Main Branch');
+  }, []);
   const [mapVisible, setMapVisible] = useState(false);
   const [mapRegion, setMapRegion] = useState<Region>(MANILA_REGION);
   const [mapAddressPreview, setMapAddressPreview] = useState<ParsedLocationAddress | null>(null);
@@ -363,7 +378,8 @@ export default function EditProfileScreen() {
         description: shop?.description || '',
       });
 
-      setBranchAddresses(branchList);
+      syncBranchAddresses(branchList);
+      setMainBranchLabel(address.label || 'Main Branch');
       setMainBranchLat(typeof address.lat === 'number' ? address.lat : null);
       setMainBranchLng(typeof address.lng === 'number' ? address.lng : null);
       setMainBranchFormattedAddress(address.formatted_address || '');
@@ -389,11 +405,20 @@ export default function EditProfileScreen() {
     } finally {
       setLoading(false);
     }
-  }, [showNotification]);
+  }, [showNotification, syncBranchAddresses]);
 
   useEffect(() => {
     loadProfile();
   }, [loadProfile]);
+
+  useEffect(() => {
+    if (!branchSyncPayload || branchSyncPayload.role !== activeRole) {
+      return;
+    }
+
+    syncBranchAddresses((branchSyncPayload.addresses || []) as Address[]);
+    setBranchSyncPayload(null);
+  }, [activeRole, branchSyncPayload, setBranchSyncPayload, syncBranchAddresses]);
 
   useEffect(() => {
     fetchRegions();
@@ -470,6 +495,9 @@ export default function EditProfileScreen() {
     if (activeRole === 'admin') return 'Admin';
     return 'Client';
   }, [activeRole]);
+
+  const isClientRole = activeRole === 'client';
+  const canManageBranches = activeRole === 'mechanic' || activeRole === 'shop_owner';
 
   const setField = (field: keyof FormState, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -629,19 +657,14 @@ export default function EditProfileScreen() {
       credentials: 'include',
     });
 
-    const payload = await response.json().catch(() => ({}));
+    const payload = (await response.json().catch(() => ({}))) as { error?: string; addresses?: Address[] };
     if (!response.ok) {
       throw new Error(payload?.error || 'Failed to load branches');
     }
 
-    setBranchAddresses(payload.addresses || []);
-  }, [API_URL]);
-
-  useEffect(() => {
-    if (branchMutationToken > 0) {
-      void refreshBranches();
-    }
-  }, [branchMutationToken, refreshBranches]);
+    const addresses = payload.addresses || [];
+    syncBranchAddresses(addresses);
+  }, [API_URL, activeRole, syncBranchAddresses]);
 
   const buildFile = (uri: string, fallbackName: string) => {
     const fileName = uri.split('/').pop() || fallbackName;
@@ -660,7 +683,7 @@ export default function EditProfileScreen() {
       return;
     }
 
-    if (!form.street_name.trim() || !form.barangay.trim() || !form.city_municipality.trim() || !form.province.trim() || !form.region.trim()) {
+    if (isClientRole && (!form.street_name.trim() || !form.barangay.trim() || !form.city_municipality.trim() || !form.province.trim() || !form.region.trim())) {
       showNotification({
         type: 'error',
         title: 'Validation',
@@ -698,7 +721,7 @@ export default function EditProfileScreen() {
         data.append('lng', String(mainBranchLng));
       }
       data.append('formatted_address', mainBranchFormattedAddress.trim());
-      data.append('label', 'Main Branch');
+      data.append('label', mainBranchLabel.trim() || 'Main Branch');
       data.append('is_main', 'true');
 
       if (form.date_of_birth.trim()) {
@@ -728,10 +751,14 @@ export default function EditProfileScreen() {
       const response = await fetch(`${API_URL}/users/profile/settings/`, {
         method: 'PUT',
         credentials: 'include',
-        body: data,
+        body: data as any,
       });
 
-      const payload = await response.json().catch(() => ({}));
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        shop_name?: string[];
+        profile?: ProfileData;
+      };
       if (!response.ok) {
         const errMsg = payload?.error || payload?.shop_name?.[0] || 'Failed to update profile';
         throw new Error(errMsg);
@@ -751,7 +778,17 @@ export default function EditProfileScreen() {
 
         setProfilePhotoUri(currentRoleProfile?.profile_photo || null);
         setServiceBannerUri(roleProfiles.shop_owner?.shop?.service_banner || null);
-        setBranchAddresses(updatedProfile.addresses || []);
+        const updatedAddresses = updatedProfile.addresses || [];
+        setBranchAddresses(updatedAddresses);
+        setBranchLabelDrafts(
+          updatedAddresses.reduce<Record<number, string>>((drafts, branch) => {
+            if (!branch.is_main && branch.id) {
+              drafts[branch.id] = branch.label || '';
+            }
+            return drafts;
+          }, {})
+        );
+        setMainBranchLabel(updatedProfile.address?.label || mainBranchLabel || 'Main Branch');
         setMainBranchLat(typeof updatedProfile.address?.lat === 'number' ? updatedProfile.address?.lat : null);
         setMainBranchLng(typeof updatedProfile.address?.lng === 'number' ? updatedProfile.address?.lng : null);
         setMainBranchFormattedAddress(updatedProfile.address?.formatted_address || '');
@@ -780,12 +817,12 @@ export default function EditProfileScreen() {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
       });
-      const payload = await response.json().catch(() => ({}));
+      const payload = (await response.json().catch(() => ({}))) as { error?: string; addresses?: Address[] };
       if (!response.ok) {
         throw new Error(payload?.error || 'Failed to set main branch');
       }
 
-      await refreshBranches();
+      syncBranchAddresses(payload.addresses || []);
       showNotification({ type: 'success', message: 'Main branch updated.' });
     } catch (error) {
       showNotification({
@@ -807,18 +844,53 @@ export default function EditProfileScreen() {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
       });
-      const payload = await response.json().catch(() => ({}));
+      const payload = (await response.json().catch(() => ({}))) as { error?: string; addresses?: Address[] };
       if (!response.ok) {
         throw new Error(payload?.error || 'Failed to delete branch');
       }
 
-      await refreshBranches();
+      syncBranchAddresses(payload.addresses || []);
       showNotification({ type: 'success', message: 'Branch deleted.' });
     } catch (error) {
       showNotification({
         type: 'error',
         title: 'Branch Delete Failed',
         message: error instanceof Error ? error.message : 'Failed to delete branch',
+      });
+    } finally {
+      setBranchSaving(false);
+    }
+  };
+
+  const handleSaveBranchLabel = async (branchId?: number) => {
+    if (!branchId || branchSaving) return;
+
+    const nextLabel = (branchLabelDrafts[branchId] || '').trim();
+    if (!nextLabel) {
+      showNotification({ type: 'error', title: 'Validation', message: 'Branch label is required.' });
+      return;
+    }
+
+    setBranchSaving(true);
+    try {
+      const response = await fetch(`${API_URL}/users/profile/branches/${branchId}/`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: nextLabel, branch_type: activeRole }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string; addresses?: Address[] };
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Failed to update branch label');
+      }
+
+      syncBranchAddresses(payload.addresses || []);
+      showNotification({ type: 'success', message: 'Branch label updated.' });
+    } catch (error) {
+      showNotification({
+        type: 'error',
+        title: 'Branch Label Update Failed',
+        message: error instanceof Error ? error.message : 'Failed to update branch label',
       });
     } finally {
       setBranchSaving(false);
@@ -903,45 +975,55 @@ export default function EditProfileScreen() {
         />
         <Field label="Contact Number" value={form.contact_number} onChangeText={(v) => setField('contact_number', v)} keyboardType="phone-pad" />
 
-        <SectionTitle title="Main Branch" />
-        <Field label="House / Building Number" value={form.house_building_number} onChangeText={(v) => setField('house_building_number', v)} />
-        <Field label="Street Name" value={form.street_name} onChangeText={(v) => setField('street_name', v)} autoCapitalize="words" />
-        <Field label="Subdivision / Village" value={form.subdivision_village} onChangeText={(v) => setField('subdivision_village', v)} />
-
-        <TouchableOpacity style={styles.mapBtn} onPress={openMapPicker}>
-          <FontAwesome name="map-marker" size={14} color="#FF8C00" />
-          <ThemedText style={styles.mapBtnText}>Pick Address on Map</ThemedText>
-        </TouchableOpacity>
-        <ThemedText style={styles.inlineHint}>Map fills street, barangay, city, and region automatically.</ThemedText>
-
-        <SelectField
-          label="Region"
-          value={loadingRegions ? 'Loading regions...' : (form.region || 'Select Region')}
-          onPress={() => setShowRegionModal(true)}
-          disabled={loadingRegions}
-        />
-        <SelectField
-          label="Province"
-          value={loadingProvinces ? 'Loading provinces...' : (form.province || (selectedRegionCode ? 'Select Province' : 'Select region first'))}
-          onPress={() => setShowProvinceModal(true)}
-          disabled={!selectedRegionCode || loadingProvinces}
-        />
-        <SelectField
-          label="City / Municipality"
-          value={loadingCities ? 'Loading cities...' : (form.city_municipality || (selectedProvinceCode ? 'Select City / Municipality' : 'Select province first'))}
-          onPress={() => setShowCityModal(true)}
-          disabled={!selectedProvinceCode || loadingCities}
-        />
-        <SelectField
-          label="Barangay"
-          value={loadingBarangays ? 'Loading barangays...' : (form.barangay || (selectedCityCode ? 'Select Barangay' : 'Select city first'))}
-          onPress={() => setShowBarangayModal(true)}
-          disabled={!selectedCityCode || loadingBarangays}
-        />
-        <Field label="Postal Code" value={form.postal_code} onChangeText={(v) => setField('postal_code', v)} keyboardType="number-pad" />
-
-        {(activeRole === 'mechanic' || activeRole === 'shop_owner') && (
+        {isClientRole ? (
           <>
+            <SectionTitle title="Address" />
+            <Field label="House / Building Number" value={form.house_building_number} onChangeText={(v) => setField('house_building_number', v)} />
+            <Field label="Street Name" value={form.street_name} onChangeText={(v) => setField('street_name', v)} autoCapitalize="words" />
+            <Field label="Subdivision / Village" value={form.subdivision_village} onChangeText={(v) => setField('subdivision_village', v)} />
+
+            <TouchableOpacity style={styles.mapBtn} onPress={openMapPicker}>
+              <FontAwesome name="map-marker" size={14} color="#FF8C00" />
+              <ThemedText style={styles.mapBtnText}>Pick Address on Map</ThemedText>
+            </TouchableOpacity>
+            <ThemedText style={styles.inlineHint}>Map fills street, barangay, city, and region automatically.</ThemedText>
+
+            <SelectField
+              label="Region"
+              value={loadingRegions ? 'Loading regions...' : (form.region || 'Select Region')}
+              onPress={() => setShowRegionModal(true)}
+              disabled={loadingRegions}
+            />
+            <SelectField
+              label="Province"
+              value={loadingProvinces ? 'Loading provinces...' : (form.province || (selectedRegionCode ? 'Select Province' : 'Select region first'))}
+              onPress={() => setShowProvinceModal(true)}
+              disabled={!selectedRegionCode || loadingProvinces}
+            />
+            <SelectField
+              label="City / Municipality"
+              value={loadingCities ? 'Loading cities...' : (form.city_municipality || (selectedProvinceCode ? 'Select City / Municipality' : 'Select province first'))}
+              onPress={() => setShowCityModal(true)}
+              disabled={!selectedProvinceCode || loadingCities}
+            />
+            <SelectField
+              label="Barangay"
+              value={loadingBarangays ? 'Loading barangays...' : (form.barangay || (selectedCityCode ? 'Select Barangay' : 'Select city first'))}
+              onPress={() => setShowBarangayModal(true)}
+              disabled={!selectedCityCode || loadingBarangays}
+            />
+            <Field label="Postal Code" value={form.postal_code} onChangeText={(v) => setField('postal_code', v)} keyboardType="number-pad" />
+          </>
+        ) : null}
+
+        {canManageBranches && (
+          <>
+            <Field
+              label="Main Branch Label"
+              value={mainBranchLabel}
+              onChangeText={setMainBranchLabel}
+              autoCapitalize="words"
+            />
             <View style={styles.branchSummaryCard}>
               <View style={{ flex: 1 }}>
                 <ThemedText style={styles.branchSummaryLabel}>Current Main Branch</ThemedText>
@@ -975,12 +1057,27 @@ export default function EditProfileScreen() {
               extraBranches.map((branch, index) => (
                 <View key={branch.id ?? `${branch.label}-${index}`} style={styles.branchItemCard}>
                   <View style={{ flex: 1 }}>
-                    <ThemedText style={styles.branchItemLabel}>{branch.label || `Branch ${index + 2}`}</ThemedText>
+                    <Field
+                      label="Branch Label"
+                      value={branch.id ? (branchLabelDrafts[branch.id] ?? branch.label ?? '') : (branch.label || '')}
+                      onChangeText={(value) => {
+                        if (!branch.id) return;
+                        setBranchLabelDrafts((prev) => ({ ...prev, [branch.id as number]: value }));
+                      }}
+                      autoCapitalize="words"
+                    />
                     <ThemedText style={styles.branchItemAddress} numberOfLines={2}>
                       {branch.formatted_address || branch.barangay || 'No address saved'}
                     </ThemedText>
                   </View>
                   <View style={styles.branchItemActions}>
+                    <TouchableOpacity
+                      style={styles.branchActionBtn}
+                      onPress={() => handleSaveBranchLabel(branch.id)}
+                      disabled={branchSaving}
+                    >
+                      <ThemedText style={styles.branchActionText}>Save Label</ThemedText>
+                    </TouchableOpacity>
                     <TouchableOpacity
                       style={styles.branchActionBtn}
                       onPress={() => handleSetMainBranch(branch.id)}

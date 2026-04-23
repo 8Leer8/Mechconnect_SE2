@@ -5,6 +5,7 @@ import {
   ScrollView,
   RefreshControl,
   StyleSheet,
+  Image,
 } from 'react-native';
 import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
@@ -14,6 +15,8 @@ import { SkeletonProfile } from '@/components/skeletons/SkeletonLoaders';
 import { useNotification } from '@/hooks/useNotification';
 import { ConfirmationModal } from '@/components/ui/ConfirmationModal';
 import { fetchProfileDetailsCached } from '@/lib/profileCache';
+import { useFocusEffect } from '@react-navigation/native';
+import { getImageUrl } from '@/lib/imageUtils';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -29,6 +32,8 @@ interface ProfileData {
       is_working_for_shop: boolean;
       shop_id: number | null;
       shop_name: string | null;
+      profile_photo?: string | null;
+      profile_photo_url?: string | null;
     };
   };
 }
@@ -49,7 +54,7 @@ export default function MechanicShopProfileScreen() {
 
   const fetchProfileData = useCallback(async () => {
     try {
-      const profile = await fetchProfileDetailsCached(false);
+      const profile = await fetchProfileDetailsCached(true);
       if (profile) {
         setProfileData(profile as ProfileData);
 
@@ -73,6 +78,12 @@ export default function MechanicShopProfileScreen() {
   useEffect(() => {
     fetchProfileData();
   }, [fetchProfileData]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchProfileData();
+    }, [fetchProfileData]),
+  );
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -144,9 +155,26 @@ export default function MechanicShopProfileScreen() {
       >
         {/* Profile Header */}
         <View style={styles.header}>
-          <View style={styles.avatarPlaceholder}>
-            <FontAwesome name="user" size={36} color="#8E8E93" />
-          </View>
+          {profileData?.current_role_profile?.mechanic?.profile_photo || profileData?.current_role_profile?.mechanic?.profile_photo_url ? (
+            <Image
+              source={{
+                uri:
+                  getImageUrl(
+                    profileData.current_role_profile.mechanic.profile_photo ||
+                      profileData.current_role_profile.mechanic.profile_photo_url ||
+                      ''
+                  ) ||
+                  profileData.current_role_profile.mechanic.profile_photo ||
+                  profileData.current_role_profile.mechanic.profile_photo_url ||
+                  undefined,
+              }}
+              style={{ width: 72, height: 72, borderRadius: 36, marginBottom: 12 }}
+            />
+          ) : (
+            <View style={styles.avatarPlaceholder}>
+              <FontAwesome name="user" size={36} color="#8E8E93" />
+            </View>
+          )}
           <ThemedText style={styles.name}>{profileData?.full_name || 'Mechanic'}</ThemedText>
           <ThemedText style={styles.subtitle}>@{profileData?.username || 'username'}</ThemedText>
           

@@ -15,13 +15,18 @@ interface MechanicLocation {
   longitude: number;
 }
 
+interface BranchSyncPayload {
+  role: 'mechanic' | 'shop_owner';
+  addresses: Array<Record<string, unknown>>;
+}
+
 interface LocationContextType {
   selectedLocation: LocationData | null;
   setSelectedLocation: (location: LocationData | null) => void;
   selectedLocationPurpose: 'branch' | null;
   setSelectedLocationPurpose: (purpose: 'branch' | null) => void;
-  branchMutationToken: number;
-  notifyBranchMutation: () => void;
+  branchSyncPayload: BranchSyncPayload | null;
+  setBranchSyncPayload: (payload: BranchSyncPayload | null) => void;
   mechanicLocation: MechanicLocation | null;
   setMechanicLocation: (location: MechanicLocation | null) => void;
 }
@@ -31,12 +36,8 @@ const LocationContext = createContext<LocationContextType | undefined>(undefined
 export function LocationProvider({ children }: { children: ReactNode }) {
   const [selectedLocation, setSelectedLocation] = useState<LocationData | null>(null);
   const [selectedLocationPurpose, setSelectedLocationPurpose] = useState<'branch' | null>(null);
-  const [branchMutationToken, setBranchMutationToken] = useState(0);
+  const [branchSyncPayload, setBranchSyncPayload] = useState<BranchSyncPayload | null>(null);
   const [mechanicLocation, setMechanicLocation] = useState<MechanicLocation | null>(null);
-
-  const notifyBranchMutation = () => {
-    setBranchMutationToken((current) => current + 1);
-  };
 
   const value = useMemo(
     () => ({
@@ -44,12 +45,12 @@ export function LocationProvider({ children }: { children: ReactNode }) {
       setSelectedLocation,
       selectedLocationPurpose,
       setSelectedLocationPurpose,
-      branchMutationToken,
-      notifyBranchMutation,
+      branchSyncPayload,
+      setBranchSyncPayload,
       mechanicLocation,
       setMechanicLocation,
     }),
-    [selectedLocation, selectedLocationPurpose, branchMutationToken, mechanicLocation]
+    [selectedLocation, selectedLocationPurpose, branchSyncPayload, mechanicLocation]
   );
 
   return (

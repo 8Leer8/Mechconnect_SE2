@@ -16,7 +16,7 @@ import { ThemedView } from '@/components/themed-view';
 import { useNotification } from '@/hooks/useNotification';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { ConfirmationModal } from '@/components/ui/ConfirmationModal';
-import { fetchProfileDetailsCached } from '@/lib/profileCache';
+import { clearProfileDetailsCache, fetchProfileDetailsCached } from '@/lib/profileCache';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const RESEND_COOLDOWN_SECONDS = 60;
@@ -823,6 +823,7 @@ export default function SettingsScreen() {
 
       try {
         await AsyncStorage.multiRemove(['auth_token', 'account_id']);
+        await clearProfileDetailsCache();
       } catch {
         // Ignore local storage cleanup failures and continue to login.
       }

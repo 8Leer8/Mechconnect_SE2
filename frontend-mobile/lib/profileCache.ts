@@ -2,11 +2,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const ACCOUNT_ID_KEY = 'account_id';
-const PROFILE_CACHE_KEY = 'profile_details_cache_v2';
+const PROFILE_CACHE_KEY_PREFIX = 'profile_details_cache_v2';
 const CACHE_TTL_MS = 60 * 1000; // 1 minute
 
 type ProfileCachePayload = {
   cachedAt: number;
+  accountId: number | null;
   profile: any;
 };
 
@@ -24,17 +25,37 @@ export async function getCachedAccountId(): Promise<number | null> {
   }
 }
 
+function getProfileCacheKey(accountId: number | null): string {
+  return `${PROFILE_CACHE_KEY_PREFIX}:${accountId ?? 'anonymous'}`;
+}
+
+export async function clearProfileDetailsCache(): Promise<void> {
+  try {
+    const accountId = await getCachedAccountId();
+    await AsyncStorage.multiRemove([
+      PROFILE_CACHE_KEY_PREFIX,
+      getProfileCacheKey(accountId),
+    ]);
+  } catch {
+    // Ignore cache cleanup failures.
+  }
+}
+
 export async function fetchProfileDetailsCached(forceRefresh = false): Promise<any | null> {
+  const storedAccountId = await getCachedAccountId();
+
   if (!forceRefresh) {
     try {
-      const raw = await AsyncStorage.getItem(PROFILE_CACHE_KEY);
+      const raw = await AsyncStorage.getItem(getProfileCacheKey(storedAccountId));
       if (raw) {
         const parsed = JSON.parse(raw) as ProfileCachePayload;
-        if (parsed?.cachedAt && Date.now() - parsed.cachedAt <= CACHE_TTL_MS) {
-          const cachedId = safeNumber(parsed?.profile?.id);
-          if (cachedId) {
-            await AsyncStorage.setItem(ACCOUNT_ID_KEY, String(cachedId));
-          }
+        const cachedAccountId = safeNumber(parsed?.accountId);
+        if (
+          parsed?.cachedAt &&
+          Date.now() - parsed.cachedAt <= CACHE_TTL_MS &&
+          cachedAccountId !== null &&
+          cachedAccountId === storedAccountId
+        ) {
           return parsed?.profile || null;
         }
       }
@@ -60,11 +81,14 @@ export async function fetchProfileDetailsCached(forceRefresh = false): Promise<a
       await AsyncStorage.setItem(ACCOUNT_ID_KEY, String(profileId));
     }
 
+    const nextAccountId = profileId ?? storedAccountId;
+
     const payload: ProfileCachePayload = {
       cachedAt: Date.now(),
+      accountId: nextAccountId,
       profile,
     };
-    await AsyncStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(payload));
+    await AsyncStorage.setItem(getProfileCacheKey(nextAccountId), JSON.stringify(payload));
     return profile;
   } catch {
     return null;
