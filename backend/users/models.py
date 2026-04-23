@@ -7,7 +7,7 @@ class Account(models.Model):
     lastname = models.CharField(max_length=100)
     firstname = models.CharField(max_length=100)
     middlename = models.CharField(max_length=100, null=True, blank=True)
-    email = models.EmailField(unique=True)
+    email = models.EmailField(unique=True, null=True, blank=True)
     date_of_birth = models.DateField(null=True, blank=True)
     gender = models.CharField(max_length=20, null=True, blank=True)
     username = models.CharField(max_length=50, unique=True)
@@ -320,17 +320,38 @@ class EmailVerification(models.Model):
         PENDING = "pending"
         VERIFIED = "verified"
         EXPIRED = "expired"
-    
+
     email = models.EmailField()
     verification_code = models.CharField(max_length=6)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
     verified_at = models.DateTimeField(null=True, blank=True)
-    
+
     class Meta:
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['email', 'status']),
         ]
+
+
+class SMSOTPVerification(models.Model):
+    """SMS OTP verification records for audit trail and rate limiting."""
+    contact_number = models.CharField(max_length=20, db_index=True)
+    otp_code = models.CharField(max_length=6)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    is_verified = models.BooleanField(default=False)
+    verified_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['contact_number', 'is_verified', 'expires_at']),
+            models.Index(fields=['created_at']),
+        ]
+
+    def is_expired(self):
+        from django.utils import timezone
+        return timezone.now() > self.expires_at
 

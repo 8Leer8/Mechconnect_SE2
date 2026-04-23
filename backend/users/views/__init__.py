@@ -6,6 +6,7 @@ from .branch_views import *
 from .role_views import *
 from .discovery_views import *
 from .wallet_views import *
+from .otp_views import *
 
 __all__ = [
     # Authentication views
@@ -15,7 +16,9 @@ __all__ = [
     'check_session',
     'send_verification_code',
     'verify_code',
-    
+    'send_otp',
+    'verify_otp',
+
     # Password views
     'send_password_change_verification_code',
     'verify_password_change_gmail_code',

@@ -6,6 +6,7 @@ from .models import (
 from django.contrib.auth.hashers import make_password, check_password
 from django.utils import timezone
 from django.db.models import Avg
+from django.db import transaction
 from MainBackend.storage_utils import get_media_url
 from services.models import ServiceAddOn
 from services.serializers import ServiceAddOnPublicSerializer
@@ -791,3 +792,44 @@ class MechanicProfileSerializer(serializers.ModelSerializer):
             context=self.context,
         ).data
 
+
+class AdminCreationSerializer(serializers.Serializer):
+    """Serializer for creating a new admin user (superadmin only)."""
+    name = serializers.CharField(max_length=255)
+    email = serializers.EmailField()
+    contact_number = serializers.CharField(max_length=20)
+    password = serializers.CharField(write_only=True, min_length=8)
+
+    def validate_email(self, value):
+        """Check if email already exists."""
+        if Account.objects.filter(email=value).exists():
+            raise serializers.ValidationError("An account with this email already exists.")
+        return value
+
+    @transaction.atomic
+    def create(self, validated_data):
+        """Create Account with admin role and Admin profile."""
+        # Split name into first and last name
+        name_parts = validated_data['name'].strip().split(' ', 1)
+        firstname = name_parts[0]
+        lastname = name_parts[1] if len(name_parts) > 1 else ''
+
+        # Create the Account with hashed password
+        account = Account(
+            email=validated_data['email'],
+            firstname=firstname,
+            lastname=lastname,
+            contact_number=validated_data['contact_number'],
+            role='admin',
+            is_active=True,
+        )
+        account.set_password(validated_data['password'])
+        account.save()
+
+        # Create the Admin profile (is_superadmin=False by default)
+        Admin.objects.create(
+            account=account,
+            is_superadmin=False,
+        )
+
+        return account

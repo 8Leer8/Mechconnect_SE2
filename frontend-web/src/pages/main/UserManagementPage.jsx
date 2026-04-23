@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Eye, Plus } from "lucide-react";
+import { useEffect, useMemo, useState, useRef, useCallback } from "react";
+import { Eye, Plus, X, UserPlus } from "lucide-react";
 import { AdminLayout } from "../AdminLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,13 +14,16 @@ import {
 import { PaginationControls } from "@/components/common/PaginationControls";
 import { API_BASE_URL } from "@/config/env";
 import { fetchAdminAccounts } from "@/services/adminDataService";
+import { AddAdminModal } from "@/components/admin/AddAdminModal";
 import { ModalShell } from "@/components/modals/ModalShell";
+import { request } from "@/services/httpClient";
 
 const ROLE_TABS = [
   { key: "all", label: "All" },
   { key: "client", label: "Client" },
   { key: "mechanic", label: "Mechanic" },
   { key: "shop", label: "Shop" },
+  { key: "admin", label: "Admins", superadminOnly: true },
 ];
 
 const ITEMS_PER_PAGE = 10;
@@ -457,43 +460,89 @@ function SkeletonRow() {
 
 export function UserManagementPage() {
   const [accounts, setAccounts] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [loadError, setLoadError] = useState("");
-  const [activeRoleTab, setActiveRoleTab] = useState("all");
+  const [roleFilter, setRoleFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [selectedAccount, setSelectedAccount] = useState(null);
+  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+  const [currentAdmin, setCurrentAdmin] = useState(null);
+  const [addAdminModalOpen, setAddAdminModalOpen] = useState(false);
 
+  // Fetch current admin info to check if superadmin
   useEffect(() => {
-    async function loadAccounts() {
-      setIsLoading(true);
-      setLoadError("");
-
+    async function loadCurrentAdmin() {
       try {
-        const data = await fetchAdminAccounts({ limit: 200 });
-        setAccounts(data?.results || []);
+        const response = await request("/users/admin/check-session/");
+        if (response.ok) {
+          const data = await response.json();
+          console.log("Admin check-session response:", data);
+          setCurrentAdmin(data.admin || null);
+        }
       } catch (error) {
-        setLoadError(error.message || "Failed to load accounts.");
-      } finally {
-        setIsLoading(false);
+        console.error("Failed to load admin info:", error);
       }
     }
-
-    loadAccounts();
+    loadCurrentAdmin();
   }, []);
 
-  const filteredAccounts = useMemo(
-    () => accounts.filter((account) => accountMatchesRoleTab(account, activeRoleTab)),
-    [accounts, activeRoleTab],
-  );
+  // Filter tabs based on superadmin status
+  const visibleTabs = useMemo(() => {
+    const tabs = ROLE_TABS.filter((tab) => {
+      if (tab.superadminOnly) {
+        return currentAdmin?.is_superadmin === true;
+      }
+      return true;
+    });
+    console.log("visibleTabs:", tabs, "currentAdmin:", currentAdmin);
+    return tabs;
+  }, [currentAdmin]);
 
-  const totalPages = useMemo(
-    () => Math.max(Math.ceil(filteredAccounts.length / ITEMS_PER_PAGE), 1),
-    [filteredAccounts.length],
+  const loadAccounts = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError("");
+
+    try {
+      const data = await fetchAdminAccounts({ limit: 200 });
+      setAccounts(data?.results || []);
+    } catch (error) {
+      setLoadError(error.message || "Failed to load accounts.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadAccounts();
+  }, [loadAccounts]);
+
+  useEffect(() => {
+    if (!selectedAccount) {
+      return undefined;
+    }
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setSelectedAccount(null);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [selectedAccount]);
+
+  const filteredAccounts = useMemo(
+    () => accounts.filter((account) => accountMatchesRoleTab(account, roleFilter)),
+    [accounts, roleFilter],
   );
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [activeRoleTab]);
+  }, [roleFilter]);
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -536,23 +585,28 @@ export function UserManagementPage() {
                 Review account roles and statuses before taking administrative actions.
               </CardDescription>
             </div>
-            <Button disabled>
-              <Plus className="size-4" />
-              Add User (Soon)
-            </Button>
+            {roleFilter === "admin" && currentAdmin?.is_superadmin ? (
+              <Button
+                onClick={() => setAddAdminModalOpen(true)}
+                className="bg-orange-600 hover:bg-orange-700 text-white"
+              >
+                <UserPlus className="size-4 mr-2" />
+                Add Admin
+              </Button>
+            ) : null}
           </CardHeader>
           <CardContent>
             <div className="mb-4 flex flex-wrap gap-2">
-              {ROLE_TABS.map((tab) => (
+              {visibleTabs.map((tab) => (
                 <button
                   key={tab.key}
                   type="button"
                   onClick={() => {
-                    setActiveRoleTab(tab.key);
+                    setRoleFilter(tab.key);
                     setCurrentPage(1);
                   }}
                   className={`rounded-md border px-3 py-1.5 text-sm transition ${
-                    activeRoleTab === tab.key
+                    roleFilter === tab.key
                       ? "border-orange-400 bg-orange-500/15 text-orange-300"
                       : "border-border bg-card text-muted-foreground hover:bg-muted"
                   }`}
@@ -639,8 +693,16 @@ export function UserManagementPage() {
 
         <UserDetailsModal
           account={selectedAccount}
-          activeRoleTab={activeRoleTab}
+          activeRoleTab={roleFilter}
           onClose={() => setSelectedAccount(null)}
+        />
+
+        <AddAdminModal
+          open={addAdminModalOpen}
+          onOpenChange={setAddAdminModalOpen}
+          onSuccess={() => {
+            loadAccounts();
+          }}
         />
       </div>
     </AdminLayout>

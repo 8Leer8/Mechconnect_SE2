@@ -348,3 +348,7 @@ LOGGING = {
         },
     },
 }
+
+# Text Bee api and id keys
+TEXTBEE_API_KEY = os.environ.get('TEXTBEE_API_KEY')
+TEXTBEE_DEVICE_ID = os.environ.get('TEXTBEE_DEVICE_ID')

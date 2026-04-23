@@ -8,3 +8,4 @@ from .views.branch_views import *
 from .views.role_views import *
 from .views.discovery_views import *
 from .views.wallet_views import *
+from .views.otp_views import *

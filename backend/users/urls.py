@@ -18,6 +18,7 @@ from .views.admin import (
     admin_list_reports,
     admin_wallet_overview,
     admin_list_wallet_transactions,
+    create_admin,
 )
 
 urlpatterns = [
@@ -27,7 +28,11 @@ urlpatterns = [
     path('logout/', views.logout, name='logout'),
     path('token/', views.token_login, name='token_login'),
     path('check-session/', views.check_session, name='check_session'),
-    
+
+    # SMS OTP endpoints
+    path('send-otp/', views.send_otp, name='send_otp'),
+    path('verify-otp/', views.verify_otp, name='verify_otp'),
+
     # Email verification
     path('send-verification-code/', views.send_verification_code, name='send_verification_code'),
     path('verify-code/', views.verify_code, name='verify_code'),
@@ -101,4 +106,5 @@ admin_urlpatterns = [
     path('reports/', admin_list_reports, name='admin-list-reports'),
     path('wallet/overview/', admin_wallet_overview, name='admin-wallet-overview'),
     path('wallet/transactions/', admin_list_wallet_transactions, name='admin-wallet-transactions'),
+    path('admins/create/', create_admin, name='create-admin'),
 ]

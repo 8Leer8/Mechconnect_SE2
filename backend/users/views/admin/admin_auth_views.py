@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import jwt
 from django.conf import settings
 
-from ...models import Account
+from ...models import Account, Admin
 from ...serializers import LoginSerializer, AccountSerializer
 from ...login_rate_limit import (
     assert_login_not_locked,
@@ -142,11 +142,23 @@ def admin_check_session(request):
 
     request.session['active_role'] = 'admin'
 
+    # Get admin profile data including is_superadmin
+    admin_data = None
+    try:
+        admin = Admin.objects.get(account=account)
+        admin_data = {
+            'id': admin.id,
+            'is_superadmin': admin.is_superadmin,
+        }
+    except Admin.DoesNotExist:
+        pass
+
     return Response(
         {
             'authenticated': True,
             'account': AccountSerializer(account).data,
             'active_role': 'admin',
+            'admin': admin_data,
         },
         status=status.HTTP_200_OK,
     )

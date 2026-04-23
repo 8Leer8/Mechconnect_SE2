@@ -32,6 +32,8 @@ export function VerificationRejectModal({
   isProcessing,
   actionError,
 }) {
+  if (!item) return null;
+
   const requiresRejectionNote =
     !!item &&
     (item.target_type === "specialty_mechanic" || item.target_type === "specialty_shop");
@@ -65,9 +67,9 @@ export function VerificationRejectModal({
     >
         <div className="space-y-4 px-6 py-5">
           <div className="grid grid-cols-1 gap-2 rounded-md border border-border/70 bg-card/70 p-3 text-sm text-foreground">
-            <p><span className="font-semibold text-orange-300/80">Type:</span> {formatSourceType(item.kind)}</p>
-            <p><span className="font-semibold text-orange-300/80">Name:</span> {item.title}</p>
-            <p><span className="font-semibold text-orange-300/80">Submitted:</span> {formatDate(item.date)}</p>
+            <p><span className="font-semibold text-orange-300/80">Type:</span> {formatSourceType(item?.kind)}</p>
+            <p><span className="font-semibold text-orange-300/80">Name:</span> {item?.title}</p>
+            <p><span className="font-semibold text-orange-300/80">Submitted:</span> {formatDate(item?.date)}</p>
           </div>
 
           <div className="space-y-1.5">
