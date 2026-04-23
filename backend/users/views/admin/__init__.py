@@ -7,6 +7,7 @@ from .account_admin_views import (
     admin_list_reports,
     admin_wallet_overview,
     admin_list_wallet_transactions,
+    create_admin,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     'admin_list_reports',
     'admin_wallet_overview',
     'admin_list_wallet_transactions',
+    'create_admin',
 ]

@@ -18,6 +18,7 @@ from .views.admin import (
     admin_list_reports,
     admin_wallet_overview,
     admin_list_wallet_transactions,
+    create_admin,
 )
 
 urlpatterns = [
@@ -98,4 +99,5 @@ admin_urlpatterns = [
     path('reports/', admin_list_reports, name='admin-list-reports'),
     path('wallet/overview/', admin_wallet_overview, name='admin-wallet-overview'),
     path('wallet/transactions/', admin_list_wallet_transactions, name='admin-wallet-transactions'),
+    path('admins/create/', create_admin, name='create-admin'),
 ]

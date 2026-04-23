@@ -20,6 +20,7 @@ from ...models import (
     MechanicDocument,
 )
 from ...permissions import IsAdmin
+from ...serializers import AdminCreationSerializer
 from shops.models import Shop, ShopDocument, ShopOwnerDocument
 from services.models import MechanicSpecialty, ShopSpecialty
 
@@ -665,3 +666,46 @@ def admin_list_wallet_transactions(request):
         )
 
     return Response({'count': len(results), 'results': results}, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([IsAdmin])
+def create_admin(request):
+    """
+    Create a new admin user (superadmin only).
+    Only authenticated superadmins can create new admin accounts.
+    """
+    # Check if the requesting user is a superadmin
+    account_id = request.session.get('account_id')
+    if not account_id:
+        return Response(
+            {'error': 'Authentication required'},
+            status=status.HTTP_401_UNAUTHORIZED
+        )
+    
+    try:
+        requesting_admin = Admin.objects.get(account_id=account_id)
+        if not requesting_admin.is_superadmin:
+            return Response(
+                {'error': 'Only superadmins can create admin accounts'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+    except Admin.DoesNotExist:
+        return Response(
+            {'error': 'Admin profile not found'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    # Validate and create the new admin
+    from ...serializers import AdminCreationSerializer
+    serializer = AdminCreationSerializer(data=request.data)
+    if serializer.is_valid():
+        account = serializer.save()
+        return Response({
+            'message': 'Admin created successfully',
+            'account_id': account.id,
+            'email': account.email,
+            'role': account.role,
+        }, status=status.HTTP_201_CREATED)
+    
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
