@@ -4,6 +4,7 @@
 from .views.auth_views import *
 from .views.password_views import *
 from .views.profile_views import *
+from .views.branch_views import *
 from .views.role_views import *
 from .views.discovery_views import *
 from .views.wallet_views import *

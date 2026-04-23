@@ -7,9 +7,28 @@ from django.utils import timezone
 
 from ..models import Shop, ShopMechanic
 from users.models import Account, FavoriteShop, ShopOwner, Mechanic
+from users.serializers import AccountAddressSerializer, AccountBranchLocationSerializer
 from services.models import ShopService, ServiceAddOn
 from services.serializers import ServiceAddOnPublicSerializer
 from MainBackend.storage_utils import get_media_url
+
+
+def _serialize_addresses(account):
+    addresses = []
+    main_address = getattr(account, 'accountaddress', None)
+    if main_address:
+        main_data = AccountAddressSerializer(main_address).data
+        main_data['address_type'] = 'main'
+        addresses.append(main_data)
+
+    branch_locations = getattr(account, 'branch_locations', None)
+    if branch_locations is not None:
+        for branch in branch_locations.all().order_by('created_at'):
+            branch_data = AccountBranchLocationSerializer(branch).data
+            branch_data['address_type'] = 'branch'
+            addresses.append(branch_data)
+
+    return addresses
 
 
 @api_view(['GET'])
@@ -142,6 +161,11 @@ def get_shop_profile(request, shop_id):
             'created_at': shop.created_at.isoformat() if shop.created_at else None,
             'years_active': years_active,
             'address': {
+                'lat': owner_address.lat if owner_address else None,
+                'lng': owner_address.lng if owner_address else None,
+                'formatted_address': owner_address.formatted_address if owner_address else None,
+                'label': owner_address.label if owner_address else 'Main Branch',
+                'is_main': owner_address.is_main if owner_address else True,
                 'street_name': owner_address.street_name if owner_address else None,
                 'subdivision_village': owner_address.subdivision_village if owner_address else None,
                 'barangay': owner_address.barangay if owner_address else None,
@@ -149,6 +173,7 @@ def get_shop_profile(request, shop_id):
                 'province': owner_address.province if owner_address else None,
                 'region': owner_address.region if owner_address else None,
             },
+            'addresses': _serialize_addresses(owner_account),
             
             # Owner info
             'owner': {

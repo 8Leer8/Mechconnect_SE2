@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const ACCOUNT_ID_KEY = 'account_id';
-const PROFILE_CACHE_KEY = 'profile_details_cache_v1';
+const PROFILE_CACHE_KEY = 'profile_details_cache_v2';
 const CACHE_TTL_MS = 60 * 1000; // 1 minute
 
 type ProfileCachePayload = {

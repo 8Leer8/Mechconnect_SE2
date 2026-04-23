@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from .models import (
     Account, AccountAddress, AccountRole, Client, 
-    Mechanic, ShopOwner, Admin, PasswordReset, MechanicReview
+    Mechanic, ShopOwner, Admin, PasswordReset, MechanicReview, AccountBranchLocation
 )
 from django.contrib.auth.hashers import make_password, check_password
 from django.utils import timezone
@@ -17,8 +17,18 @@ class AccountAddressSerializer(serializers.ModelSerializer):
     class Meta:
         model = AccountAddress
         fields = [
+            'id', 'label', 'is_main', 'lat', 'lng', 'formatted_address',
             'house_building_number', 'street_name', 'subdivision_village',
             'barangay', 'city_municipality', 'province', 'region', 'postal_code'
+        ]
+
+
+class AccountBranchLocationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AccountBranchLocation
+        fields = [
+            'id', 'label', 'is_main', 'lat', 'lng', 'formatted_address', 'barangay',
+            'created_at', 'updated_at'
         ]
 
 
@@ -126,13 +136,14 @@ class ProfileDetailSerializer(serializers.ModelSerializer):
     available_roles = serializers.SerializerMethodField()
     current_role_profile = serializers.SerializerMethodField()
     address = AccountAddressSerializer(source='accountaddress', read_only=True)
+    addresses = serializers.SerializerMethodField()
     
     class Meta:
         model = Account
         fields = [
             'id', 'username', 'email', 'full_name', 'firstname', 'lastname',
             'middlename', 'date_of_birth', 'gender', 'is_verified',
-            'user_type', 'available_roles', 'current_role_profile', 'address'
+            'user_type', 'available_roles', 'current_role_profile', 'address', 'addresses'
         ]
     
     def get_full_name(self, obj):
@@ -168,6 +179,22 @@ class ProfileDetailSerializer(serializers.ModelSerializer):
         if hasattr(obj, 'admin'):
             profiles['admin'] = AdminSerializer(obj.admin, context=self.context).data
         return profiles
+
+    def get_addresses(self, obj):
+        addresses = []
+
+        main_address = getattr(obj, 'accountaddress', None)
+        if main_address:
+            addresses.append(AccountAddressSerializer(main_address).data)
+
+        branch_locations = getattr(obj, 'branch_locations', None)
+        if branch_locations is not None:
+            for branch in branch_locations.all().order_by('created_at'):
+                branch_data = AccountBranchLocationSerializer(branch).data
+                branch_data['address_type'] = 'branch'
+                addresses.append(branch_data)
+
+        return addresses
 
 
 class RoleSwitchSerializer(serializers.Serializer):
@@ -223,6 +250,11 @@ class ProfileSettingsSerializer(serializers.Serializer):
     province = serializers.CharField(max_length=100, required=False)
     region = serializers.CharField(max_length=100, required=False)
     postal_code = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    lat = serializers.FloatField(required=False, allow_null=True)
+    lng = serializers.FloatField(required=False, allow_null=True)
+    formatted_address = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    label = serializers.CharField(max_length=50, required=False, allow_blank=True)
+    is_main = serializers.BooleanField(required=False)
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -295,6 +327,18 @@ class RegisterSerializer(serializers.Serializer):
         
         # Extract address data
         address_data = {
+            'lat': None,
+            'lng': None,
+            'formatted_address': ', '.join(filter(None, [
+                validated_data.get('street_name'),
+                validated_data.get('subdivision_village'),
+                validated_data.get('barangay'),
+                validated_data.get('city_municipality'),
+                validated_data.get('province'),
+                validated_data.get('region'),
+            ])) or None,
+            'label': 'Main Branch',
+            'is_main': True,
             'house_building_number': validated_data.pop('house_building_number', None),
             'street_name': validated_data.pop('street_name'),
             'subdivision_village': validated_data.pop('subdivision_village', None),
@@ -593,6 +637,7 @@ class MechanicProfileSerializer(serializers.ModelSerializer):
     # Expose account id so clients can reference provider Account id
     account_id = serializers.IntegerField(source='account.id', read_only=True)
     address = AccountAddressSerializer(source='account.accountaddress', read_only=True)
+    addresses = serializers.SerializerMethodField()
     
     # Specialties
     specialties = serializers.SerializerMethodField()
@@ -616,7 +661,7 @@ class MechanicProfileSerializer(serializers.ModelSerializer):
             'average_rating', 'total_reviews', 'reviews',
             'years_active', 'account_created',
             'is_part_of_shop', 'shop_name', 'shop_id',
-            'address',
+            'address', 'addresses',
             'specialties', 'services', 'addons',
             'contact_number', 'status'
         ]
@@ -655,6 +700,25 @@ class MechanicProfileSerializer(serializers.ModelSerializer):
         if obj.is_working_for_shop and obj.shop:
             return obj.shop.shop_name
         return None
+
+    def get_addresses(self, obj):
+        account = getattr(obj, 'account', None)
+        if not account:
+            return []
+
+        addresses = []
+        main_address = getattr(account, 'accountaddress', None)
+        if main_address:
+            addresses.append(AccountAddressSerializer(main_address).data)
+
+        branch_locations = getattr(account, 'branch_locations', None)
+        if branch_locations is not None:
+            for branch in branch_locations.all().order_by('created_at'):
+                branch_data = AccountBranchLocationSerializer(branch).data
+                branch_data['address_type'] = 'branch'
+                addresses.append(branch_data)
+
+        return addresses
     
     def get_specialties(self, obj):
         """Get mechanic's specialties"""

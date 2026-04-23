@@ -38,6 +38,9 @@ def _format_address(address):
     if not address:
         return None
 
+    if getattr(address, 'formatted_address', None):
+        return address.formatted_address
+
     parts = [
         address.house_building_number,
         address.street_name,
@@ -127,6 +130,11 @@ def list_mechanics(request):
                 'is_working_for_shop': mechanic.is_working_for_shop,
                 'is_favorited': mechanic.id in favorite_mechanic_ids,
                 'address': {
+                    'lat': mechanic.account.accountaddress.lat,
+                    'lng': mechanic.account.accountaddress.lng,
+                    'formatted_address': mechanic.account.accountaddress.formatted_address,
+                    'label': mechanic.account.accountaddress.label,
+                    'is_main': mechanic.account.accountaddress.is_main,
                     'house_building_number': mechanic.account.accountaddress.house_building_number,
                     'street_name': mechanic.account.accountaddress.street_name,
                     'subdivision_village': mechanic.account.accountaddress.subdivision_village,

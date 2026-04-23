@@ -80,15 +80,42 @@ def update_profile(request):
         account.save()
         
         # Update address if provided
-        if hasattr(account, 'accountaddress'):
-            address = account.accountaddress
-            address_fields = [
-                'house_building_number', 'street_name', 'subdivision_village',
-                'barangay', 'city_municipality', 'province', 'region', 'postal_code'
-            ]
+        address = getattr(account, 'accountaddress', None)
+        if not address and any(field in request.data for field in [
+            'house_building_number', 'street_name', 'subdivision_village',
+            'barangay', 'city_municipality', 'province', 'region', 'postal_code',
+            'lat', 'lng', 'formatted_address', 'label', 'is_main'
+        ]):
+            from ..models import AccountAddress
+
+            address = AccountAddress.objects.create(
+                account=account,
+                house_building_number=request.data.get('house_building_number') or None,
+                street_name=request.data.get('street_name') or '',
+                subdivision_village=request.data.get('subdivision_village') or None,
+                barangay=request.data.get('barangay') or '',
+                city_municipality=request.data.get('city_municipality') or '',
+                province=request.data.get('province') or '',
+                region=request.data.get('region') or '',
+                postal_code=request.data.get('postal_code') or None,
+                lat=request.data.get('lat') or None,
+                lng=request.data.get('lng') or None,
+                formatted_address=request.data.get('formatted_address') or None,
+                label='Main Branch',
+                is_main=True,
+            )
+        address_fields = [
+            'lat', 'lng', 'formatted_address', 'label', 'is_main',
+            'house_building_number', 'street_name', 'subdivision_village',
+            'barangay', 'city_municipality', 'province', 'region', 'postal_code'
+        ]
+        if address:
             for field in address_fields:
                 if field in request.data:
                     setattr(address, field, request.data[field])
+            if not getattr(address, 'label', None):
+                address.label = 'Main Branch'
+            address.is_main = True
             address.save()
         
         # Update role-specific profile
@@ -183,15 +210,42 @@ def update_profile_settings(request):
             account.save()
             
             # Update address
-            if hasattr(account, 'accountaddress'):
-                address = account.accountaddress
-                address_fields = [
-                    'house_building_number', 'street_name', 'subdivision_village',
-                    'barangay', 'city_municipality', 'province', 'region', 'postal_code'
-                ]
+            address = getattr(account, 'accountaddress', None)
+            if not address and any(field in serializer.validated_data for field in [
+                'house_building_number', 'street_name', 'subdivision_village',
+                'barangay', 'city_municipality', 'province', 'region', 'postal_code',
+                'lat', 'lng', 'formatted_address', 'label', 'is_main'
+            ]):
+                from ..models import AccountAddress
+
+                address = AccountAddress.objects.create(
+                    account=account,
+                    house_building_number=serializer.validated_data.get('house_building_number') or None,
+                    street_name=serializer.validated_data.get('street_name') or '',
+                    subdivision_village=serializer.validated_data.get('subdivision_village') or None,
+                    barangay=serializer.validated_data.get('barangay') or '',
+                    city_municipality=serializer.validated_data.get('city_municipality') or '',
+                    province=serializer.validated_data.get('province') or '',
+                    region=serializer.validated_data.get('region') or '',
+                    postal_code=serializer.validated_data.get('postal_code') or None,
+                    lat=serializer.validated_data.get('lat'),
+                    lng=serializer.validated_data.get('lng'),
+                    formatted_address=serializer.validated_data.get('formatted_address') or None,
+                    label='Main Branch',
+                    is_main=True,
+                )
+            address_fields = [
+                'lat', 'lng', 'formatted_address', 'label', 'is_main',
+                'house_building_number', 'street_name', 'subdivision_village',
+                'barangay', 'city_municipality', 'province', 'region', 'postal_code'
+            ]
+            if address:
                 for field in address_fields:
                     if field in serializer.validated_data:
                         setattr(address, field, serializer.validated_data[field])
+                if not getattr(address, 'label', None):
+                    address.label = 'Main Branch'
+                address.is_main = True
                 address.save()
             
             # Update contact number and profile photo in role-specific profile

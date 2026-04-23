@@ -49,6 +49,12 @@ interface AddOn {
 }
 
 interface Address {
+  id?: number;
+  label?: string | null;
+  is_main?: boolean;
+  lat?: number | null;
+  lng?: number | null;
+  formatted_address?: string | null;
   house_building_number?: string | null;
   street_name?: string | null;
   subdivision_village?: string | null;
@@ -83,6 +89,7 @@ interface MechanicProfile {
   contact_number: string | null;
   status: string;
   address?: Address | null;
+  addresses?: Address[];
 }
 
 function formatDistanceLabel(distanceKm?: string | null) {
@@ -592,6 +599,29 @@ export default function MechanicProfileScreen() {
             )}
           </View>
         </View>
+
+        {profile.addresses && profile.addresses.length > 0 && (
+          <View style={styles.section}>
+            <ThemedText style={styles.sectionTitle}>Branches</ThemedText>
+            <View style={styles.card}>
+              {profile.addresses.map((branch, index) => (
+                <View key={branch.id ?? `${branch.label}-${index}`} style={styles.branchRow}>
+                  <View style={styles.branchIconCircle}>
+                    <FontAwesome name="map-marker" size={12} color="#FF8C00" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <ThemedText style={styles.branchTitle}>
+                      {branch.label || (branch.is_main ? 'Main Branch' : `Branch ${index + 1}`)}
+                    </ThemedText>
+                    <ThemedText style={styles.branchText} numberOfLines={2}>
+                      {branch.formatted_address || formatStructuredAddress(branch) || 'No address saved'}
+                    </ThemedText>
+                  </View>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
 
         {/* Bio */}
         {profile.bio && (
