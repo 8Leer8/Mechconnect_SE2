@@ -20,7 +20,7 @@ export default function DirectRequestMapScreen() {
     selectedLocationPurpose,
     setSelectedLocation,
     setSelectedLocationPurpose,
-    notifyBranchMutation,
+    setBranchSyncPayload,
   } = useLocation();
   const mapRef = useRef<MapView>(null);
   const geocodeDebounceRef = useRef<number | null>(null);
@@ -209,12 +209,15 @@ export default function DirectRequestMapScreen() {
           }),
         });
 
-        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        const payload = (await response.json().catch(() => ({}))) as { error?: string; addresses?: unknown[] };
         if (!response.ok) {
           throw new Error(payload?.error || 'Failed to add branch');
         }
 
-        notifyBranchMutation();
+        setBranchSyncPayload({
+          role: branchType,
+          addresses: Array.isArray(payload?.addresses) ? (payload.addresses as Record<string, unknown>[]) : [],
+        });
         setSelectedLocationPurpose(null);
         setSelectedLocation(null);
         showNotification({ type: 'success', message: 'Branch added successfully.' });

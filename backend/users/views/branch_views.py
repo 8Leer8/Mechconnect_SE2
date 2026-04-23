@@ -67,12 +67,7 @@ def _next_branch_label(account):
 
 
 def _renumber_branches(account):
-    branches = list(account.branch_locations.order_by('created_at'))
-    for index, branch in enumerate(branches, start=2):
-        next_label = f'Branch {index}'
-        if branch.label != next_label:
-            branch.label = next_label
-            branch.save(update_fields=['label', 'updated_at'])
+    return None
 
 
 def _serialize_addresses(account, branch_type=None):
@@ -86,7 +81,7 @@ def _serialize_addresses(account, branch_type=None):
 
     branches = account.branch_locations.order_by('created_at')
     for branch in branches:
-        if branch_type and branch.branch_type != branch_type:
+        if branch_type and branch.branch_type not in {None, branch_type}:
             continue
         branch_data = AccountBranchLocationSerializer(branch).data
         branch_data['address_type'] = 'branch'
@@ -149,8 +144,6 @@ def profile_branches(request):
         is_main=False,
     )
 
-    _renumber_branches(account)
-
     return Response({
         'message': 'Branch added successfully',
         'branch': AccountBranchLocationSerializer(branch).data,
@@ -174,7 +167,6 @@ def profile_branch_detail(request, branch_id):
 
     if request.method == 'DELETE':
         branch.delete()
-        _renumber_branches(account)
         return Response({'message': 'Branch deleted successfully', 'addresses': _serialize_addresses(account, branch_type=branch.branch_type)}, status=status.HTTP_200_OK)
 
     serializer = BranchUpsertSerializer(data=request.data, partial=True)
@@ -199,12 +191,13 @@ def profile_branch_detail(request, branch_id):
     if 'label' in data and (data['label'] or '').strip():
         branch.label = (data['label'] or '').strip()
         update_fields.append('label')
+    if 'branch_type' in data and data['branch_type'] and branch.branch_type != data['branch_type']:
+        branch.branch_type = data['branch_type']
+        update_fields.append('branch_type')
 
     if update_fields:
         update_fields.append('updated_at')
         branch.save(update_fields=update_fields)
-
-    _renumber_branches(account)
 
     return Response({
         'message': 'Branch updated successfully',
@@ -271,8 +264,6 @@ def set_main_branch(request, branch_id):
                 branch_type=branch.branch_type,
                 is_main=False,
             )
-
-        _renumber_branches(account)
 
     return Response({
         'message': 'Main branch updated successfully',
