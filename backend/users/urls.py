@@ -40,6 +40,9 @@ urlpatterns = [
     # Profile page endpoints
     path('profile/details/', views.get_profile_details, name='get_profile_details'),
     path('profile/settings/', views.update_profile_settings, name='update_profile_settings'),
+    path('profile/branches/', views.profile_branches, name='profile_branches'),
+    path('profile/branches/<int:branch_id>/', views.profile_branch_detail, name='profile_branch_detail'),
+    path('profile/branches/<int:branch_id>/set-main/', views.set_main_branch, name='set_main_branch'),
     path('profile/verify-password/', views.verify_profile_password, name='verify_profile_password'),
     path('profile/change-email/', views.change_profile_email, name='change_profile_email'),
     path('profile/deactivate/request/', views.request_account_deactivation, name='request_account_deactivation'),

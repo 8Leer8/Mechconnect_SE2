@@ -17,6 +17,9 @@ def _format_address(address):
     if not address:
         return None
 
+    if getattr(address, 'formatted_address', None):
+        return address.formatted_address
+
     parts = [
         address.house_building_number,
         address.street_name,
@@ -142,6 +145,11 @@ def list_shops(request):
                 'status': shop.status,
                 'is_favorited': shop.id in favorite_shop_ids,
                 'address': {
+                    'lat': shop.shop_owner.account.accountaddress.lat,
+                    'lng': shop.shop_owner.account.accountaddress.lng,
+                    'formatted_address': shop.shop_owner.account.accountaddress.formatted_address,
+                    'label': shop.shop_owner.account.accountaddress.label,
+                    'is_main': shop.shop_owner.account.accountaddress.is_main,
                     'house_building_number': shop.shop_owner.account.accountaddress.house_building_number,
                     'street_name': shop.shop_owner.account.accountaddress.street_name,
                     'subdivision_village': shop.shop_owner.account.accountaddress.subdivision_village,

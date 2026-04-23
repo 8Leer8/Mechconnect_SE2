@@ -140,6 +140,23 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
   },
   infoText: { fontSize: 14, color: '#ccc', flex: 1 },
+  branchRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    paddingVertical: 10,
+  },
+  branchIconCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 9,
+    backgroundColor: '#FF8C0015',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 1,
+  },
+  branchTitle: { fontSize: 14, fontWeight: '700', color: '#fff' },
+  branchText: { fontSize: 12, color: '#8E8E93', lineHeight: 17, marginTop: 2 },
 
   // Description
   card: { backgroundColor: '#1A1C1E', padding: 16, borderRadius: 14, borderWidth: 1, borderColor: '#2A2C2E' },

@@ -12,12 +12,21 @@ import { ensureForegroundLocationAccess } from '@/lib/locationPermission';
 import { styles } from '@/style/client/directRequestMapStyles';
 import { useLocation } from '@/context/LocationContext';
 
+const API_URL = process.env.EXPO_PUBLIC_API_URL;
+
 export default function DirectRequestMapScreen() {
   const { showNotification } = useNotification();
-  const { setSelectedLocation } = useLocation();
+  const {
+    selectedLocationPurpose,
+    setSelectedLocation,
+    setSelectedLocationPurpose,
+    notifyBranchMutation,
+  } = useLocation();
   const mapRef = useRef<MapView>(null);
   const geocodeDebounceRef = useRef<number | null>(null);
   const params = useLocalSearchParams();
+  const isBranchMode = params.purpose === 'branch' || selectedLocationPurpose === 'branch';
+  const branchType = params.role === 'mechanic' || params.role === 'shop_owner' ? (params.role as 'mechanic' | 'shop_owner') : null;
 
   const initialLat = params.latitude ? parseFloat(params.latitude as string) : null;
   const initialLng = params.longitude ? parseFloat(params.longitude as string) : null;
@@ -181,6 +190,38 @@ export default function DirectRequestMapScreen() {
     setConfirming(true);
     try {
       const parsed = await reverseGeocodePoint(pinCenter.latitude, pinCenter.longitude);
+
+      if (isBranchMode) {
+        if (!branchType) {
+          throw new Error('Missing branch role');
+        }
+
+        const response = await fetch(`${API_URL}/users/profile/branches/`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lat: pinCenter.latitude,
+            lng: pinCenter.longitude,
+            formatted_address: parsed.address,
+            barangay: parsed.barangay || '',
+            branch_type: branchType,
+          }),
+        });
+
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        if (!response.ok) {
+          throw new Error(payload?.error || 'Failed to add branch');
+        }
+
+        notifyBranchMutation();
+        setSelectedLocationPurpose(null);
+        setSelectedLocation(null);
+        showNotification({ type: 'success', message: 'Branch added successfully.' });
+        handleBack();
+        return;
+      }
+
       setSelectedLocation({
         latitude: pinCenter.latitude,
         longitude: pinCenter.longitude,

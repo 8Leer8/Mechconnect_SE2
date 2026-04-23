@@ -25,6 +25,7 @@ import { ensureForegroundLocationAccess } from '@/lib/locationPermission';
 import { reverseGeocodeAddress, type ParsedLocationAddress } from '@/lib/locationAddress';
 import { fetchProfileDetailsCached } from '@/lib/profileCache';
 import { geocodeAddressFields } from '@/utils/geocodeAddress';
+import { useLocation } from '@/context/LocationContext';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const PSGC_API_BASE = 'https://psgc.gitlab.io/api';
@@ -78,6 +79,12 @@ interface PSGCLocation {
 }
 
 interface Address {
+  id?: number;
+  label?: string;
+  is_main?: boolean;
+  lat?: number | null;
+  lng?: number | null;
+  formatted_address?: string | null;
   house_building_number?: string;
   street_name?: string;
   subdivision_village?: string;
@@ -117,6 +124,7 @@ interface ProfileData {
     admin?: RoleProfile;
   };
   address?: Address;
+  addresses?: Address[];
 }
 
 interface ActiveRoleResponse {
@@ -171,12 +179,23 @@ const EMPTY_FORM: FormState = {
 
 export default function EditProfileScreen() {
   const { showNotification } = useNotification();
+  const {
+    setSelectedLocation,
+    setSelectedLocationPurpose,
+    branchMutationToken,
+  } = useLocation();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [branchSaving, setBranchSaving] = useState(false);
   const [activeRole, setActiveRole] = useState<ActiveRole>('client');
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [profilePhotoUri, setProfilePhotoUri] = useState<string | null>(null);
   const [serviceBannerUri, setServiceBannerUri] = useState<string | null>(null);
+  const [branchAddresses, setBranchAddresses] = useState<Address[]>([]);
+  const [mainBranchLat, setMainBranchLat] = useState<number | null>(null);
+  const [mainBranchLng, setMainBranchLng] = useState<number | null>(null);
+  const [mainBranchFormattedAddress, setMainBranchFormattedAddress] = useState('');
+  const [mainBranchBarangay, setMainBranchBarangay] = useState('');
 
   const [dobMonth, setDobMonth] = useState('');
   const [dobDay, setDobDay] = useState('');
@@ -286,7 +305,7 @@ export default function EditProfileScreen() {
     setLoading(true);
     try {
       const [profile, roleRes] = await Promise.all([
-        fetchProfileDetailsCached(false),
+        fetchProfileDetailsCached(true),
         fetch(`${API_URL}/users/profile/active-role/`, {
           method: 'GET',
           credentials: 'include',
@@ -305,6 +324,7 @@ export default function EditProfileScreen() {
 
       const profileData = profile as ProfileData;
       const address = profileData.address || {};
+      const branchList = profileData.addresses || [];
       const roleProfiles = profileData.current_role_profile || {};
       const currentRoleProfile =
         role === 'mechanic'
@@ -342,6 +362,12 @@ export default function EditProfileScreen() {
         website: shop?.website || '',
         description: shop?.description || '',
       });
+
+      setBranchAddresses(branchList);
+      setMainBranchLat(typeof address.lat === 'number' ? address.lat : null);
+      setMainBranchLng(typeof address.lng === 'number' ? address.lng : null);
+      setMainBranchFormattedAddress(address.formatted_address || '');
+      setMainBranchBarangay(address.barangay || '');
 
       const dob = (profileData.date_of_birth || '').split('-');
       if (dob.length === 3) {
@@ -579,12 +605,43 @@ export default function EditProfileScreen() {
     setField('barangay', mapAddressPreview.barangay || form.barangay);
     setField('city_municipality', mapAddressPreview.city || form.city_municipality);
     setField('region', mapAddressPreview.region || form.region);
+    setMainBranchLat(mapRegion.latitude);
+    setMainBranchLng(mapRegion.longitude);
+    setMainBranchFormattedAddress(mapAddressPreview.address || '');
+    setMainBranchBarangay(mapAddressPreview.barangay || '');
 
     setSelectedRegionCode('');
     setSelectedProvinceCode('');
     setSelectedCityCode('');
     setMapVisible(false);
   };
+
+  const openBranchPicker = () => {
+    if (branchSaving) return;
+    setSelectedLocation(null);
+    setSelectedLocationPurpose('branch');
+    router.push(`/client/request/direct/map?purpose=branch&role=${activeRole}`);
+  };
+
+  const refreshBranches = useCallback(async () => {
+    const response = await fetch(`${API_URL}/users/profile/branches/?branch_type=${activeRole}`, {
+      method: 'GET',
+      credentials: 'include',
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.error || 'Failed to load branches');
+    }
+
+    setBranchAddresses(payload.addresses || []);
+  }, [API_URL]);
+
+  useEffect(() => {
+    if (branchMutationToken > 0) {
+      void refreshBranches();
+    }
+  }, [branchMutationToken, refreshBranches]);
 
   const buildFile = (uri: string, fallbackName: string) => {
     const fileName = uri.split('/').pop() || fallbackName;
@@ -634,6 +691,15 @@ export default function EditProfileScreen() {
       data.append('province', form.province.trim());
       data.append('region', form.region.trim());
       data.append('postal_code', form.postal_code.trim());
+      if (mainBranchLat !== null) {
+        data.append('lat', String(mainBranchLat));
+      }
+      if (mainBranchLng !== null) {
+        data.append('lng', String(mainBranchLng));
+      }
+      data.append('formatted_address', mainBranchFormattedAddress.trim());
+      data.append('label', 'Main Branch');
+      data.append('is_main', 'true');
 
       if (form.date_of_birth.trim()) {
         data.append('date_of_birth', form.date_of_birth.trim());
@@ -685,6 +751,11 @@ export default function EditProfileScreen() {
 
         setProfilePhotoUri(currentRoleProfile?.profile_photo || null);
         setServiceBannerUri(roleProfiles.shop_owner?.shop?.service_banner || null);
+        setBranchAddresses(updatedProfile.addresses || []);
+        setMainBranchLat(typeof updatedProfile.address?.lat === 'number' ? updatedProfile.address?.lat : null);
+        setMainBranchLng(typeof updatedProfile.address?.lng === 'number' ? updatedProfile.address?.lng : null);
+        setMainBranchFormattedAddress(updatedProfile.address?.formatted_address || '');
+        setMainBranchBarangay(updatedProfile.address?.barangay || '');
       }
 
       showNotification({ type: 'success', message: 'Profile updated successfully.' });
@@ -699,6 +770,70 @@ export default function EditProfileScreen() {
       setSaving(false);
     }
   };
+
+  const handleSetMainBranch = async (branchId?: number) => {
+    if (!branchId || branchSaving) return;
+    setBranchSaving(true);
+    try {
+      const response = await fetch(`${API_URL}/users/profile/branches/${branchId}/set-main/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Failed to set main branch');
+      }
+
+      await refreshBranches();
+      showNotification({ type: 'success', message: 'Main branch updated.' });
+    } catch (error) {
+      showNotification({
+        type: 'error',
+        title: 'Branch Update Failed',
+        message: error instanceof Error ? error.message : 'Failed to set main branch',
+      });
+    } finally {
+      setBranchSaving(false);
+    }
+  };
+
+  const handleDeleteBranch = async (branchId?: number) => {
+    if (!branchId || branchSaving) return;
+    setBranchSaving(true);
+    try {
+      const response = await fetch(`${API_URL}/users/profile/branches/${branchId}/`, {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Failed to delete branch');
+      }
+
+      await refreshBranches();
+      showNotification({ type: 'success', message: 'Branch deleted.' });
+    } catch (error) {
+      showNotification({
+        type: 'error',
+        title: 'Branch Delete Failed',
+        message: error instanceof Error ? error.message : 'Failed to delete branch',
+      });
+    } finally {
+      setBranchSaving(false);
+    }
+  };
+
+  const extraBranches = branchAddresses.filter((branch) => !branch.is_main);
+  const mainBranchSummary = mainBranchFormattedAddress || [
+    form.street_name,
+    form.subdivision_village,
+    form.barangay,
+    form.city_municipality,
+    form.province,
+    form.region,
+  ].filter(Boolean).join(', ');
 
   if (loading) {
     return (
@@ -768,7 +903,7 @@ export default function EditProfileScreen() {
         />
         <Field label="Contact Number" value={form.contact_number} onChangeText={(v) => setField('contact_number', v)} keyboardType="phone-pad" />
 
-        <SectionTitle title="Address" />
+        <SectionTitle title="Main Branch" />
         <Field label="House / Building Number" value={form.house_building_number} onChangeText={(v) => setField('house_building_number', v)} />
         <Field label="Street Name" value={form.street_name} onChangeText={(v) => setField('street_name', v)} autoCapitalize="words" />
         <Field label="Subdivision / Village" value={form.subdivision_village} onChangeText={(v) => setField('subdivision_village', v)} />
@@ -804,6 +939,72 @@ export default function EditProfileScreen() {
           disabled={!selectedCityCode || loadingBarangays}
         />
         <Field label="Postal Code" value={form.postal_code} onChangeText={(v) => setField('postal_code', v)} keyboardType="number-pad" />
+
+        {(activeRole === 'mechanic' || activeRole === 'shop_owner') && (
+          <>
+            <View style={styles.branchSummaryCard}>
+              <View style={{ flex: 1 }}>
+                <ThemedText style={styles.branchSummaryLabel}>Current Main Branch</ThemedText>
+                <ThemedText style={styles.branchSummaryValue} numberOfLines={2}>
+                  {mainBranchSummary || 'Pick the main branch on the map'}
+                </ThemedText>
+              </View>
+              <TouchableOpacity style={styles.branchMapBtn} onPress={openMapPicker}>
+                <FontAwesome name="map-marker" size={14} color="#FF8C00" />
+                <ThemedText style={styles.branchMapBtnText}>Select from Map</ThemedText>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.branchHeaderRow}>
+              <SectionTitle title="Other Branches" />
+              <TouchableOpacity
+                style={styles.addBranchBtn}
+                onPress={openBranchPicker}
+                disabled={branchSaving}
+              >
+                {branchSaving ? (
+                  <ActivityIndicator size="small" color="#121212" />
+                ) : (
+                  <FontAwesome name="plus" size={12} color="#121212" />
+                )}
+                <ThemedText style={styles.addBranchBtnText}>Add Branch</ThemedText>
+              </TouchableOpacity>
+            </View>
+
+            {extraBranches.length > 0 ? (
+              extraBranches.map((branch, index) => (
+                <View key={branch.id ?? `${branch.label}-${index}`} style={styles.branchItemCard}>
+                  <View style={{ flex: 1 }}>
+                    <ThemedText style={styles.branchItemLabel}>{branch.label || `Branch ${index + 2}`}</ThemedText>
+                    <ThemedText style={styles.branchItemAddress} numberOfLines={2}>
+                      {branch.formatted_address || branch.barangay || 'No address saved'}
+                    </ThemedText>
+                  </View>
+                  <View style={styles.branchItemActions}>
+                    <TouchableOpacity
+                      style={styles.branchActionBtn}
+                      onPress={() => handleSetMainBranch(branch.id)}
+                      disabled={branchSaving}
+                    >
+                      <ThemedText style={styles.branchActionText}>Set Main</ThemedText>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.branchActionBtn, styles.branchDeleteBtn]}
+                      onPress={() => handleDeleteBranch(branch.id)}
+                      disabled={branchSaving}
+                    >
+                      <ThemedText style={styles.branchDeleteText}>Delete</ThemedText>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))
+            ) : (
+              <View style={styles.branchEmptyCard}>
+                <ThemedText style={styles.branchEmptyText}>No additional branches yet.</ThemedText>
+              </View>
+            )}
+          </>
+        )}
 
         {activeRole === 'mechanic' && (
           <>
@@ -1252,6 +1453,124 @@ const styles = StyleSheet.create({
   mapBtnText: {
     color: '#FF8C00',
     fontWeight: '700',
+  },
+  branchSummaryCard: {
+    borderWidth: 1,
+    borderColor: '#2C2C2E',
+    backgroundColor: '#1C1C1E',
+    borderRadius: 12,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 4,
+    marginBottom: 10,
+  },
+  branchSummaryLabel: {
+    color: '#8E8E93',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  branchSummaryValue: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  branchMapBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#242426',
+    borderWidth: 1,
+    borderColor: '#303033',
+  },
+  branchMapBtnText: {
+    color: '#FF8C00',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  branchHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  addBranchBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#FF8C00',
+  },
+  addBranchBtnText: {
+    color: '#121212',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  branchItemCard: {
+    borderWidth: 1,
+    borderColor: '#2C2C2E',
+    backgroundColor: '#1C1C1E',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
+    gap: 10,
+  },
+  branchItemLabel: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  branchItemAddress: {
+    color: '#C7C7CC',
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  branchItemActions: {
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'flex-end',
+  },
+  branchActionBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 10,
+    backgroundColor: '#242426',
+    borderWidth: 1,
+    borderColor: '#303033',
+  },
+  branchActionText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  branchDeleteBtn: {
+    backgroundColor: '#3A1C1E',
+    borderColor: '#5A2A2D',
+  },
+  branchDeleteText: {
+    color: '#FF6B6B',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  branchEmptyCard: {
+    borderWidth: 1,
+    borderColor: '#2C2C2E',
+    backgroundColor: '#1C1C1E',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
+  },
+  branchEmptyText: {
+    color: '#8E8E93',
+    fontSize: 12,
   },
   bannerLabel: {
     marginTop: 4,

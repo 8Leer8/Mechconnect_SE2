@@ -1,4 +1,5 @@
 from django.db import models
+from django.db.models import Q
 from django.utils import timezone
 from django.core.validators import MinValueValidator, MaxValueValidator
 
@@ -36,6 +37,9 @@ class Account(models.Model):
 
 class AccountAddress(models.Model):
     account = models.OneToOneField(Account, on_delete=models.CASCADE)
+    lat = models.FloatField(null=True, blank=True)
+    lng = models.FloatField(null=True, blank=True)
+    formatted_address = models.TextField(null=True, blank=True)
     house_building_number = models.CharField(max_length=50, null=True, blank=True)
     street_name = models.CharField(max_length=100)
     subdivision_village = models.CharField(max_length=100, null=True, blank=True)
@@ -44,8 +48,34 @@ class AccountAddress(models.Model):
     province = models.CharField(max_length=100)
     region = models.CharField(max_length=100)
     postal_code = models.CharField(max_length=20, null=True, blank=True)
+    label = models.CharField(max_length=50, default='Main Branch')
+    is_main = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+
+class AccountBranchLocation(models.Model):
+    class BranchType(models.TextChoices):
+        MECHANIC = 'mechanic', 'Mechanic'
+        SHOP_OWNER = 'shop_owner', 'Shop Owner'
+
+    account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name='branch_locations')
+    lat = models.FloatField(null=True, blank=True)
+    lng = models.FloatField(null=True, blank=True)
+    formatted_address = models.TextField(null=True, blank=True)
+    barangay = models.CharField(max_length=100, null=True, blank=True)
+    label = models.CharField(max_length=50)
+    branch_type = models.CharField(max_length=20, choices=BranchType.choices, null=True, blank=True)
+    is_main = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['created_at']
+        constraints = [
+            models.UniqueConstraint(fields=['account', 'label'], name='unique_branch_label_per_account'),
+            models.UniqueConstraint(fields=['account'], condition=Q(is_main=True), name='unique_main_branch_location_per_account'),
+        ]
 
 class AccountRole(models.Model):
     class Role(models.TextChoices):

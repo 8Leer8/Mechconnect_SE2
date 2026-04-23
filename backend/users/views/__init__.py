@@ -2,6 +2,7 @@
 from .auth_views import *
 from .password_views import *
 from .profile_views import *
+from .branch_views import *
 from .role_views import *
 from .discovery_views import *
 from .wallet_views import *
@@ -28,6 +29,9 @@ __all__ = [
     'update_profile',
     'get_profile_details',
     'update_profile_settings',
+    'profile_branches',
+    'profile_branch_detail',
+    'set_main_branch',
     'verify_profile_password',
     'change_profile_email',
     
