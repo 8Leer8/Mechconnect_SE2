@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import { Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { AdminLayout } from "../AdminLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,7 @@ import { AddServiceModal } from "@/components/modals/AddServiceModal";
 import { AddSpecialtyModal } from "@/components/modals/AddSpecialtyModal";
 import { DeleteConfirmationModal } from "@/components/modals/DeleteConfirmationModal";
 import { ManageCategoriesModal } from "@/components/modals/ManageCategoriesModal";
+import { ModalShell } from "@/components/modals/ModalShell";
 
 const ITEMS_PER_PAGE = 10;
 const TAB_ITEMS = [
@@ -74,29 +75,13 @@ function EditCatalogModal({
   const isService = modalState.type === "service";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4" onClick={onClose}>
-      <div
-        className="w-full max-w-2xl overflow-hidden rounded-xl border border-border bg-background shadow-2xl"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="border-b border-border bg-gradient-to-r from-card via-muted/40 to-card px-6 py-4">
-          <button
-            type="button"
-            onClick={onClose}
-            className="absolute right-6 top-6 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-            aria-label="Close modal"
-          >
-            <X className="size-4" />
-          </button>
-
-          <h3 className="text-lg font-semibold text-foreground">
-            Edit {isService ? "Service" : "Specialty"}
-          </h3>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Update details and save changes without leaving the catalog.
-          </p>
-        </div>
-
+    <ModalShell
+      isOpen
+      onClose={onClose}
+      maxWidth="2xl"
+      title={`Edit ${isService ? "Service" : "Specialty"}`}
+      description="Update details and save changes without leaving the catalog."
+    >
         <form onSubmit={onSubmit} className="space-y-4 px-6 py-5">
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-foreground" htmlFor="catalog-name">Name</label>
@@ -153,8 +138,7 @@ function EditCatalogModal({
             </Button>
           </div>
         </form>
-      </div>
-    </div>
+    </ModalShell>
   );
 }
 

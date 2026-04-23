@@ -8,6 +8,14 @@ from django.conf import settings
 
 from ...models import Account
 from ...serializers import LoginSerializer, AccountSerializer
+from ...login_rate_limit import (
+    assert_login_not_locked,
+    record_login_failure,
+    clear_login_attempts,
+)
+
+# Separate from mobile ``/users/login/`` so limits do not cross-block.
+ADMIN_LOGIN_SCOPE = 'admin_portal'
 
 
 def _is_admin_account(account):
@@ -27,18 +35,48 @@ def _create_access_token(account_id):
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def admin_login(request):
+    allowed, client_ip, lock_seconds = assert_login_not_locked(request, scope=ADMIN_LOGIN_SCOPE)
+    if not allowed:
+        return Response(
+            {
+                'error': 'Too many failed login attempts. Please wait before trying again.',
+                'retry_after_seconds': lock_seconds,
+            },
+            status=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
     serializer = LoginSerializer(data=request.data)
     if not serializer.is_valid():
+        just_locked, wait_seconds = record_login_failure(client_ip, scope=ADMIN_LOGIN_SCOPE)
+        if just_locked:
+            return Response(
+                {
+                    'error': 'Too many failed login attempts. Your login is temporarily blocked.',
+                    'retry_after_seconds': wait_seconds,
+                },
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     account = serializer.validated_data['account']
 
     if not _is_admin_account(account):
         request.session.flush()
+        just_locked, wait_seconds = record_login_failure(client_ip, scope=ADMIN_LOGIN_SCOPE)
+        if just_locked:
+            return Response(
+                {
+                    'error': 'Too many failed login attempts. Your login is temporarily blocked.',
+                    'retry_after_seconds': wait_seconds,
+                },
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
         return Response(
             {'error': 'Admin access is required for this portal.'},
             status=status.HTTP_403_FORBIDDEN,
         )
+
+    clear_login_attempts(client_ip, scope=ADMIN_LOGIN_SCOPE)
 
     request.session['account_id'] = account.id
     request.session['username'] = account.username

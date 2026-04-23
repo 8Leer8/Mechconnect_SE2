@@ -160,7 +160,7 @@ export default function MainRequestFormScreen() {
         const query = new URLSearchParams({
           lat: String(latitude),
           lng: String(longitude),
-          radius_km: '5',
+          radius_km: String(searchRadiusKm),
         });
 
         const response = await fetch(`${API_URL}/users/mechanics/nearby/?${query.toString()}`, {
@@ -199,7 +199,7 @@ export default function MainRequestFormScreen() {
     return () => {
       cancelled = true;
     };
-  }, [isCustomMode, latitude, longitude, selectedAddress]);
+  }, [isCustomMode, latitude, longitude, selectedAddress, searchRadiusKm]);
 
   // ─── Toggle Custom Mode ────────────────────────────────────
   const handleToggleCustomMode = () => {
@@ -306,7 +306,9 @@ export default function MainRequestFormScreen() {
             <FontAwesome name="wrench" size={14} color="#FF8C00" />
             <ThemedText style={styles.sectionTitle}>Nearby Providers</ThemedText>
           </View>
-          <ThemedText style={styles.nearbySubtitle}>Top 3 closest within 5 km</ThemedText>
+          <ThemedText style={styles.nearbySubtitle}>
+            {`Top 3 closest within ${searchRadiusKm} km`}
+          </ThemedText>
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.nearbyScrollContent}>
             {loadingNearby ? (

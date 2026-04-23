@@ -1,5 +1,6 @@
-import { FileText, X } from "lucide-react";
+import { FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ModalShell } from "@/components/modals/ModalShell";
 import { API_BASE_URL } from "@/config/env";
 
 function formatDate(value) {
@@ -95,32 +96,34 @@ export function VerificationDetailsModal({
   isProcessing,
   actionError,
 }) {
-  if (!item) {
-    return null;
-  }
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4" onClick={onClose}>
-      <div
-        className="relative w-full max-w-3xl overflow-hidden rounded-xl border border-border bg-background shadow-2xl"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-          aria-label="Close"
-        >
-          <X className="size-4" />
-        </button>
-
-        <div className="border-b border-border bg-gradient-to-r from-card via-muted/45 to-card px-6 py-5">
-          <p className="text-lg font-semibold text-foreground">Verification Details</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Review submitted evidence and finalize approval decision.
-          </p>
-        </div>
-
+    <ModalShell
+      isOpen={!!item}
+      onClose={onClose}
+      maxWidth="3xl"
+      title="Verification Details"
+      description="Review submitted evidence and finalize approval decision."
+      headerClassName="py-5"
+      footer={
+        <>
+          <Button type="button" variant="outline" className="rounded-lg" onClick={onClose} disabled={isProcessing}>
+            Close
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="rounded-lg border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
+            onClick={onApprove}
+            disabled={isProcessing}
+          >
+            Approve
+          </Button>
+          <Button type="button" variant="destructive" className="rounded-lg" onClick={onReject} disabled={isProcessing}>
+            Reject
+          </Button>
+        </>
+      }
+    >
         <div className="max-h-[70vh] space-y-4 overflow-y-auto px-6 py-5">
           <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3">
             <DetailRow label="Type" value={formatSourceType(item.kind)} />
@@ -169,25 +172,6 @@ export function VerificationDetailsModal({
             <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-400">{actionError}</p>
           ) : null}
         </div>
-
-        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border px-6 py-4">
-          <Button type="button" variant="outline" className="rounded-lg" onClick={onClose} disabled={isProcessing}>
-            Close
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="rounded-lg border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
-            onClick={onApprove}
-            disabled={isProcessing}
-          >
-            Approve
-          </Button>
-          <Button type="button" variant="destructive" className="rounded-lg" onClick={onReject} disabled={isProcessing}>
-            Reject
-          </Button>
-        </div>
-      </div>
-    </div>
+    </ModalShell>
   );
 }

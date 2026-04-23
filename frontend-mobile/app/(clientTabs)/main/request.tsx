@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, TouchableOpacity, ScrollView, Modal, RefreshControl } from 'react-native';
+import { View, TouchableOpacity, ScrollView, Modal, RefreshControl, AppState } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -226,14 +226,26 @@ export default function RequestScreen() {
     }, [fetchData])
   );
 
+  // Re-fetch when the server pushes a booking update (mechanic accepted, status changes, etc.)
   useEffect(() => {
+    if (!lastMessage) return;
     if (
-      lastMessage?.action === 'broadcast_created' ||
-      (lastMessage?.type === 'booking_update' && lastMessage?.status === 'accepted')
+      lastMessage.action === 'broadcast_created' ||
+      lastMessage.type === 'booking_update'
     ) {
       fetchData();
     }
   }, [lastMessage, fetchData]);
+
+  // If the user leaves the app on this screen and a mechanic accepts meanwhile, refresh when they come back
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        fetchData();
+      }
+    });
+    return () => sub.remove();
+  }, [fetchData]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -599,7 +611,8 @@ export default function RequestScreen() {
         <View>
           <ThemedText style={styles.headerTitle}>Requests</ThemedText>
           <ThemedText style={styles.headerSubtitle}>
-            {displayedTotalRequests} total request{displayedTotalRequests !== 1 ? 's' : ''}
+            {totalCount} total request{totalCount !== 1 ? 's' : ''}
+            {totalPages > 1 ? ` · page ${currentPage} of ${totalPages}` : ''}
           </ThemedText>
         </View>
         <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
@@ -758,8 +771,8 @@ export default function RequestScreen() {
             </>
           )}
 
-          {/* Pagination Controls */}
-          {displayedTotalRequests > 0 && totalPages > 1 && (
+          {/* Pagination: show whenever the server reports any requests (even a single page) */}
+          {totalCount > 0 && (
             <View style={styles.paginationContainer}>
               <TouchableOpacity
                 style={[styles.paginationBtn, currentPage === 1 && styles.paginationBtnDisabled]}
