@@ -16,7 +16,7 @@ import { useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import Toast, { type ToastVariant } from '@/components/gen/Toast';
 import { ConfirmationModal } from '@/components/ui/ConfirmationModal';
-import { fetchProfileDetailsCached } from '@/lib/profileCache';
+import { clearProfileDetailsCache, fetchProfileDetailsCached } from '@/lib/profileCache';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -152,6 +152,16 @@ export default function LoginScreen() {
 
       if (response.ok) {
         setReactivationModalVisible(false);
+        try {
+          const accountPayload = data.account && !Array.isArray(data.account) ? data.account : null;
+          const acctId = accountPayload?.id || null;
+          if (acctId) await AsyncStorage.setItem('account_id', String(acctId));
+          if (data?.token) await AsyncStorage.setItem('auth_token', data.token);
+          await clearProfileDetailsCache();
+        } catch (e) {
+          console.warn('Failed to persist account_id or token', e);
+        }
+
         let activeRole = data.active_role;
 
         if (!activeRole) {
@@ -186,14 +196,6 @@ export default function LoginScreen() {
           router.replace('/(clientTabs)/main/home');
         }
 
-        try {
-          const accountPayload = data.account && !Array.isArray(data.account) ? data.account : null;
-          const acctId = accountPayload?.id || null;
-          if (acctId) await AsyncStorage.setItem('account_id', String(acctId));
-          if (data?.token) await AsyncStorage.setItem('auth_token', data.token);
-        } catch (e) {
-          console.warn('Failed to persist account_id or token', e);
-        }
       } else {
         showToast(loginErrorMessage(data), 'error');
       }

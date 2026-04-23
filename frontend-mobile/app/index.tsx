@@ -9,6 +9,7 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
 type SessionResponse = {
   authenticated?: boolean;
+  account?: { id?: number | string };
   role?: string;
 };
 
@@ -153,6 +154,15 @@ export default function Index() {
           const data = (await response.json()) as SessionResponse;
 
           if (data?.authenticated) {
+            const sessionAccountId = data.account?.id;
+            if (sessionAccountId) {
+              try {
+                await AsyncStorage.setItem(ACCOUNT_ID_KEY, String(sessionAccountId));
+              } catch {
+                // Non-fatal cache write issue.
+              }
+            }
+
             const roleFromSession = data.role || null;
             let roleFromApi: string | null = null;
             let isWorkingForShopMechanic = false;
