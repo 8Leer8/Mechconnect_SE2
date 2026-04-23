@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 // Ensure the router header is hidden for this route so only the in-page header shows
 export const screenOptions = { headerShown: false } as const;
 import { View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Modal, useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import { router, useLocalSearchParams, useFocusEffect, useNavigation, useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
@@ -204,6 +205,7 @@ export default function BookingDetailScreen() {
   const { showNotification } = useNotification();
   const { confirm } = useConfirmation();
   const { width: windowWidth } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const photoGridCols = windowWidth >= PHOTO_GRID_BREAKPOINT ? 3 : 2;
   const [booking, setBooking] = useState<BookingDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1751,49 +1753,60 @@ export default function BookingDetailScreen() {
       </View>
 
       {/* Action Buttons */}
-      <View style={styles.actionButtonsContainer}>
-        {/* Pending: Decline (left) + Accept (right) */}
-        {booking.status === 'pending' && (
-          <View style={{ width: '100%', flexDirection: 'row', gap: 8 }}>
-            <View style={styles.actionButtonWrapper}>
-              <TouchableOpacity
-                style={[styles.actionButton, styles.cancelButton, { width: '100%' }, declineRequestLoading && styles.actionButtonDisabled]}
-                onPress={handleDeclineRequest}
-                disabled={declineRequestLoading}
-              >
-                {declineRequestLoading ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <>
-                    <FontAwesome name="times" size={16} color="#fff" />
-                    <ThemedText style={styles.actionButtonText}>Decline</ThemedText>
-                  </>
-                )}
-              </TouchableOpacity>
+      <View style={[styles.actionButtonsContainer, { paddingBottom: 16 + Math.max(insets.bottom, 6) }]}>
+        <View style={styles.actionBarInner}>
+          {/* Pending: Decline + Accept */}
+          {booking.status === 'pending' && (
+            <View style={styles.actionRow}>
+              <View style={styles.actionHalf}>
+                <TouchableOpacity
+                  style={[
+                    styles.actionButton,
+                    styles.cancelButton,
+                    { width: '100%' },
+                    declineRequestLoading && styles.actionButtonDisabled,
+                  ]}
+                  onPress={handleDeclineRequest}
+                  disabled={declineRequestLoading}
+                  activeOpacity={0.85}
+                >
+                  {declineRequestLoading ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <>
+                      <FontAwesome name="times" size={16} color="#fff" />
+                      <ThemedText style={styles.actionButtonText}>Decline</ThemedText>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
+              <View style={styles.actionHalf}>
+                <TouchableOpacity
+                  style={[
+                    styles.actionButton,
+                    styles.completeButton,
+                    { width: '100%' },
+                    acceptRequestLoading && styles.actionButtonDisabled,
+                  ]}
+                  onPress={handleAcceptRequest}
+                  disabled={acceptRequestLoading}
+                  activeOpacity={0.85}
+                >
+                  {acceptRequestLoading ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <>
+                      <FontAwesome name="check" size={16} color="#fff" />
+                      <ThemedText style={styles.actionButtonText}>Accept</ThemedText>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
+          )}
 
-            <View style={styles.actionButtonWrapper}>
-              <TouchableOpacity
-                style={[styles.actionButton, styles.completeButton, { width: '100%' }, acceptRequestLoading && styles.actionButtonDisabled]}
-                onPress={handleAcceptRequest}
-                disabled={acceptRequestLoading}
-              >
-                {acceptRequestLoading ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <>
-                    <FontAwesome name="check" size={16} color="#fff" />
-                    <ThemedText style={styles.actionButtonText}>Accept</ThemedText>
-                  </>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-        {/* Accepted: Start Travel (primary) then Cancel Booking (secondary) — full width stacked */}
-        {booking.status === 'accepted' && (
-          <>
-            <View style={{ width: '100%' }}>
+          {booking.status === 'accepted' && (
+            <>
               <TouchableOpacity
                 style={[
                   styles.largePrimaryButton,
@@ -1808,36 +1821,30 @@ export default function BookingDetailScreen() {
                 ) : (
                   <FontAwesome name="car" size={18} color="#fff" />
                 )}
-                <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>
-                  {startTravelSubmitting ? 'Updating Traffic & Fee...' : 'Start Travel'}
+                <ThemedText style={styles.actionBarBtnText}>
+                  {startTravelSubmitting ? 'Updating traffic & fee…' : 'Start travel'}
                 </ThemedText>
               </TouchableOpacity>
-            </View>
-            
-            
-            <View style={{ width: '100%', marginTop: 10 }}>
               <TouchableOpacity
                 style={[styles.largeSecondaryButton, cancelBookingLoading && styles.actionButtonDisabled]}
                 onPress={handleCancelBooking}
                 disabled={transitioning || cancelBookingLoading}
+                activeOpacity={0.85}
               >
                 {cancelBookingLoading ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
                   <>
-                    <FontAwesome name="times" size={18} color="#fff" />
-                    <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Cancel Booking</ThemedText>
+                    <FontAwesome name="times-circle" size={18} color="#FF6B6B" />
+                    <ThemedText style={styles.actionBarBtnText}>Cancel booking</ThemedText>
                   </>
                 )}
               </TouchableOpacity>
-            </View>
-          </>
-        )}
+            </>
+          )}
 
-        {/* On the way: Arrived (at location) then Cancel Travel */}
-        {booking.status === 'on_the_way' && (
-          <>
-            <View style={{ width: '100%' }}>
+          {booking.status === 'on_the_way' && (
+            <>
               <TouchableOpacity
                 style={[
                   styles.largePrimaryButton,
@@ -1850,36 +1857,30 @@ export default function BookingDetailScreen() {
                 {arrivedLoading ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <>
-                    <FontAwesome name="map-marker" size={18} color="#fff" />
-                    <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Arrived</ThemedText>
-                  </>
+                  <FontAwesome name="map-marker" size={18} color="#fff" />
                 )}
+                <ThemedText style={styles.actionBarBtnText}>Arrived at location</ThemedText>
               </TouchableOpacity>
-            </View>
-            <View style={{ width: '100%', marginTop: 10 }}>
               <TouchableOpacity
                 style={[styles.largeSecondaryButton, cancelTravelLoading && styles.actionButtonDisabled]}
                 onPress={handleCancelTravel}
                 disabled={transitioning || cancelTravelLoading}
+                activeOpacity={0.85}
               >
                 {cancelTravelLoading ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
                   <>
-                    <FontAwesome name="times" size={18} color="#fff" />
-                    <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Cancel Travel</ThemedText>
+                    <FontAwesome name="times-circle" size={18} color="#FF6B6B" />
+                    <ThemedText style={styles.actionBarBtnText}>Cancel travel</ThemedText>
                   </>
                 )}
               </TouchableOpacity>
-            </View>
-          </>
-        )}
+            </>
+          )}
 
-        {/* At location: start diagnosing + go back to traveling */}
-        {booking.status === 'at_location' && (
-          <>
-            <View style={{ width: '100%' }}>
+          {booking.status === 'at_location' && (
+            <>
               <TouchableOpacity
                 style={[
                   styles.largePrimaryButton,
@@ -1887,20 +1888,17 @@ export default function BookingDetailScreen() {
                 ]}
                 onPress={handleStartDiagnosing}
                 disabled={transitioning || startDiagnosingLoading}
+                activeOpacity={0.85}
               >
                 {startDiagnosingLoading ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <>
-                    <FontAwesome name="users" size={18} color="#fff" />
-                    <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Start Diagnosing</ThemedText>
-                  </>
+                  <FontAwesome name="users" size={18} color="#fff" />
                 )}
+                <ThemedText style={styles.actionBarBtnText}>Start diagnosing</ThemedText>
               </TouchableOpacity>
-            </View>
-            <View style={{ width: '100%', marginTop: 10 }}>
               <TouchableOpacity
-                style={[styles.largeSecondaryButton, revertStageLoading && styles.actionButtonDisabled]}
+                style={[styles.neutralSecondaryButton, revertStageLoading && styles.actionButtonDisabled]}
                 onPress={async () => {
                   const ok = await confirm({
                     type: 'warning',
@@ -1913,42 +1911,37 @@ export default function BookingDetailScreen() {
                   await handleRevertStage('Back to on the way.');
                 }}
                 disabled={transitioning || revertStageLoading}
+                activeOpacity={0.85}
               >
                 {revertStageLoading ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
                   <>
-                    <FontAwesome name="arrow-left" size={18} color="#fff" />
-                    <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Back to Traveling</ThemedText>
+                    <FontAwesome name="arrow-left" size={18} color="#AEAEB2" />
+                    <ThemedText style={[styles.actionBarBtnText, { color: '#E5E5EA' }]}>Back to traveling</ThemedText>
                   </>
                 )}
               </TouchableOpacity>
-            </View>
-          </>
-        )}
+            </>
+          )}
 
-        {/* Diagnosing: start job + go back to at location */}
-        {booking.status === 'diagnosing' && (
-          <>
-            <View style={{ width: '100%' }}>
+          {booking.status === 'diagnosing' && (
+            <>
               <TouchableOpacity
                 style={[styles.largePrimaryButton, startJobLoading && styles.actionButtonDisabled]}
                 onPress={handleStartJob}
                 disabled={transitioning || startJobLoading}
+                activeOpacity={0.85}
               >
                 {startJobLoading ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <>
-                    <FontAwesome name="play" size={18} color="#fff" />
-                    <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Start Job</ThemedText>
-                  </>
+                  <FontAwesome name="play" size={18} color="#fff" />
                 )}
+                <ThemedText style={styles.actionBarBtnText}>Start job</ThemedText>
               </TouchableOpacity>
-            </View>
-            <View style={{ width: '100%', marginTop: 10 }}>
               <TouchableOpacity
-                style={[styles.largeSecondaryButton, revertStageLoading && styles.actionButtonDisabled]}
+                style={[styles.neutralSecondaryButton, revertStageLoading && styles.actionButtonDisabled]}
                 onPress={async () => {
                   const ok = await confirm({
                     type: 'warning',
@@ -1961,269 +1954,269 @@ export default function BookingDetailScreen() {
                   await handleRevertStage('Back to at location.');
                 }}
                 disabled={transitioning || revertStageLoading}
+                activeOpacity={0.85}
               >
                 {revertStageLoading ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
                   <>
-                    <FontAwesome name="arrow-left" size={18} color="#fff" />
-                    <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Back to At Location</ThemedText>
+                    <FontAwesome name="arrow-left" size={18} color="#AEAEB2" />
+                    <ThemedText style={[styles.actionBarBtnText, { color: '#E5E5EA' }]}>Back to at location</ThemedText>
                   </>
                 )}
               </TouchableOpacity>
-            </View>
-          </>
-        )}
+            </>
+          )}
 
-        {/* Active: Pause + Go Back (top row) and large Finish (bottom) */}
-        {booking.status === 'active' && (
-          <>
-            <View style={{ width: '100%', flexDirection: 'row', gap: 8 }}>
-              <View style={styles.actionButtonSmallWrapper}>
-                <TouchableOpacity
-                  style={[styles.actionButton, styles.pauseButton, pauseJobLoading && styles.actionButtonDisabled]}
-                  onPress={handlePauseJob}
-                  disabled={transitioning || pauseJobLoading}
-                >
-                  {pauseJobLoading ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <>
-                      <FontAwesome name="pause" size={16} color="#fff" />
-                      <ThemedText style={styles.actionButtonText}>Pause</ThemedText>
-                    </>
-                  )}
-                </TouchableOpacity>
+          {booking.status === 'active' && (
+            <>
+              <View style={styles.actionRow}>
+                <View style={styles.actionHalf}>
+                  <TouchableOpacity
+                    style={[styles.actionButton, styles.pauseButton, pauseJobLoading && styles.actionButtonDisabled]}
+                    onPress={handlePauseJob}
+                    disabled={transitioning || pauseJobLoading}
+                    activeOpacity={0.85}
+                  >
+                    {pauseJobLoading ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <>
+                        <FontAwesome name="pause" size={16} color="#fff" />
+                        <ThemedText style={styles.actionButtonText}>Pause</ThemedText>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </View>
+                <View style={styles.actionHalf}>
+                  <TouchableOpacity
+                    style={[
+                      styles.neutralSecondaryButton,
+                      { width: '100%' },
+                      cancelJobLoading && styles.actionButtonDisabled,
+                    ]}
+                    onPress={handleCancelJob}
+                    disabled={transitioning || cancelJobLoading}
+                    activeOpacity={0.85}
+                  >
+                    {cancelJobLoading ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <>
+                        <FontAwesome name="arrow-left" size={16} color="#AEAEB2" />
+                        <ThemedText style={styles.actionBarBtnText}>Go back</ThemedText>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </View>
               </View>
-              <View style={styles.actionButtonSmallWrapper}>
-                <TouchableOpacity
-                  style={[styles.actionButton, styles.cancelButton, cancelJobLoading && styles.actionButtonDisabled]}
-                  onPress={handleCancelJob}
-                  disabled={transitioning || cancelJobLoading}
-                >
-                  {cancelJobLoading ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <>
-                      <FontAwesome name="arrow-left" size={16} color="#fff" />
-                      <ThemedText style={styles.actionButtonText}>Go Back</ThemedText>
-                    </>
-                  )}
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            <View style={styles.fullWidthButtonWrapper}>
               <TouchableOpacity
                 style={[styles.finishLargeButton, finishJobLoading && styles.actionButtonDisabled]}
                 onPress={handleFinishJob}
                 disabled={transitioning || finishJobLoading}
+                activeOpacity={0.85}
               >
                 {finishJobLoading ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
                   <>
                     <FontAwesome name="flag-checkered" size={18} color="#fff" />
-                    <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Finish Job</ThemedText>
+                    <ThemedText style={styles.actionBarBtnText}>Finish job</ThemedText>
                   </>
                 )}
               </TouchableOpacity>
-            </View>
-          </>
-        )}
+            </>
+          )}
 
-        {/* Paused: Resume + Go Back */}
-        {booking.status === 'paused' && (
-          <>
-            <View style={styles.actionButtonWrapper}>
-              <TouchableOpacity
-                style={[styles.actionButton, styles.resumeButton, resumeJobLoading && styles.actionButtonDisabled]}
-                onPress={handleResumeJob}
-                disabled={transitioning || resumeJobLoading}
-              >
-                {resumeJobLoading ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <>
-                    <FontAwesome name="play" size={16} color="#fff" />
-                    <ThemedText style={styles.actionButtonText}>Resume Job</ThemedText>
-                  </>
-                )}
-              </TouchableOpacity>
-            </View>
-            <View style={styles.actionButtonWrapper}>
-              <TouchableOpacity
-                style={[styles.actionButton, styles.cancelButton, pausedRevertLoading && styles.actionButtonDisabled]}
-                onPress={async () => {
-                  const ok = await confirm({
-                    type: 'warning',
-                    title: 'Go Back',
-                    message: 'Are you sure you want to go back? This will revert the job to On the Way.',
-                    confirmText: 'Go Back',
-                    cancelText: 'Stay',
-                  });
-                  if (!ok) return;
-                  setPausedRevertLoading(true);
-                  setTransitioning(true);
-                  try {
-                    const payload = await buildMechanicLocationPayload();
-                    // For paused bookings, revert twice to move back to ON_THE_WAY:
-                    // PAUSED -> ACTIVE, then ACTIVE -> ON_THE_WAY
-                    const first = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/revert-stage/`, {
-                      method: 'POST',
-                      credentials: 'include',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify(payload),
+          {booking.status === 'paused' && (
+            <View style={styles.actionRow}>
+              <View style={styles.actionHalf}>
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.resumeButton, resumeJobLoading && styles.actionButtonDisabled]}
+                  onPress={handleResumeJob}
+                  disabled={transitioning || resumeJobLoading}
+                  activeOpacity={0.85}
+                >
+                  {resumeJobLoading ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <>
+                      <FontAwesome name="play" size={16} color="#fff" />
+                      <ThemedText style={styles.actionButtonText}>Resume</ThemedText>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
+              <View style={styles.actionHalf}>
+                <TouchableOpacity
+                  style={[
+                    styles.neutralSecondaryButton,
+                    { width: '100%' },
+                    pausedRevertLoading && styles.actionButtonDisabled,
+                  ]}
+                  onPress={async () => {
+                    const ok = await confirm({
+                      type: 'warning',
+                      title: 'Go Back',
+                      message: 'Are you sure you want to go back? This will revert the job to On the Way.',
+                      confirmText: 'Go Back',
+                      cancelText: 'Stay',
                     });
-                    if (!first.ok) {
-                      const err = await first.json().catch(() => null);
-                      throw new Error(parseApiErrorMessage(err, 'Failed to revert stage'));
+                    if (!ok) return;
+                    setPausedRevertLoading(true);
+                    setTransitioning(true);
+                    try {
+                      const payload = await buildMechanicLocationPayload();
+                      const first = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/revert-stage/`, {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                      });
+                      if (!first.ok) {
+                        const err = await first.json().catch(() => null);
+                        throw new Error(parseApiErrorMessage(err, 'Failed to revert stage'));
+                      }
+                      const second = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/revert-stage/`, {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                      });
+                      if (!second.ok) {
+                        const err = await second.json().catch(() => null);
+                        throw new Error(parseApiErrorMessage(err, 'Failed to revert to on_the_way'));
+                      }
+                      showNotification({ type: 'success', message: 'Reverted to On the Way' });
+                      await fetchBookingDetail();
+                    } catch (err: any) {
+                      showNotification({ type: 'error', message: err.message || 'Failed to revert stage' });
+                    } finally {
+                      setPausedRevertLoading(false);
+                      setTransitioning(false);
                     }
-
-                    // second revert
-                    const second = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/revert-stage/`, {
-                      method: 'POST',
-                      credentials: 'include',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify(payload),
-                    });
-                    if (!second.ok) {
-                      const err = await second.json().catch(() => null);
-                      throw new Error(parseApiErrorMessage(err, 'Failed to revert to on_the_way'));
-                    }
-
-                    showNotification({ type: 'success', message: 'Reverted to On the Way' });
-                    await fetchBookingDetail();
-                  } catch (err: any) {
-                    showNotification({ type: 'error', message: err.message || 'Failed to revert stage' });
-                  } finally {
-                    setPausedRevertLoading(false);
-                    setTransitioning(false);
-                  }
-                }}
-                disabled={transitioning || pausedRevertLoading}
-              >
-                {pausedRevertLoading ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <>
-                    <FontAwesome name="arrow-left" size={16} color="#fff" />
-                    <ThemedText style={styles.actionButtonText}>Go Back</ThemedText>
-                  </>
-                )}
-              </TouchableOpacity>
+                  }}
+                  disabled={transitioning || pausedRevertLoading}
+                  activeOpacity={0.85}
+                >
+                  {pausedRevertLoading ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <>
+                      <FontAwesome name="arrow-left" size={16} color="#AEAEB2" />
+                      <ThemedText style={styles.actionBarBtnText}>Go back</ThemedText>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
-          </>
-        )}
+          )}
 
-        {/* Finished: Accept payment (server) */}
-        {booking.status === 'finished' && !hasBackjob && (
-          <View style={styles.actionButtonWrapper}>
+          {booking.status === 'finished' && !hasBackjob && (
             <TouchableOpacity
-              style={[styles.actionButton, styles.paymentReceivedButton, paymentReceivedLoading && styles.actionButtonDisabled]}
+              style={[
+                styles.largePrimaryButton,
+                styles.paymentReceivedFull,
+                paymentReceivedLoading && styles.actionButtonDisabled,
+              ]}
               onPress={handlePaymentReceived}
               disabled={transitioning || paymentReceivedLoading}
+              activeOpacity={0.85}
             >
               {paymentReceivedLoading ? (
                 <ActivityIndicator color="#fff" />
               ) : (
-                <>
-                  <FontAwesome name="money" size={16} color="#fff" />
-                  <ThemedText style={styles.actionButtonText}>Payment Received</ThemedText>
-                </>
+                <FontAwesome name="money" size={18} color="#111" />
               )}
+              <ThemedText style={[styles.actionBarBtnText, { color: '#111' }]}>
+                {paymentReceivedLoading ? 'Updating…' : 'Payment received'}
+              </ThemedText>
             </TouchableOpacity>
-          </View>
-        )}
+          )}
 
-        {/* Pending payment: proceed to payment modal + go back */}
-        {showPendingPaymentFlow && (
-          <View style={{ width: '100%' }}>
-            <View style={{ marginTop: 12 }}>
+          {showPendingPaymentFlow && (
+            <>
               <TouchableOpacity
-                style={styles.finishLargeButton}
-                onPress={() => {
-                  setShowPaymentReceiptConfirm(true);
-                }}
+                style={[styles.finishLargeButton, transitioning && styles.actionButtonDisabled]}
+                onPress={() => setShowPaymentReceiptConfirm(true)}
                 disabled={transitioning}
+                activeOpacity={0.85}
               >
                 <FontAwesome name="credit-card" size={18} color="#fff" />
-                <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Proceed to Payment</ThemedText>
+                <ThemedText style={styles.actionBarBtnText}>Proceed to payment</ThemedText>
               </TouchableOpacity>
-            </View>
-
-            <View style={{ marginTop: 12 }}>
-              <TouchableOpacity style={[styles.finishLargeButton, styles.cancelButton, pendingRevertLoading && styles.actionButtonDisabled]} onPress={async () => {
-                const ok = await confirm({
-                  type: 'warning',
-                  title: 'Go Back',
-                  message: 'Are you sure you want to revert to the previous stage?',
-                  confirmText: 'Go Back',
-                  cancelText: 'Stay',
-                });
-                if (!ok) return;
-                setPendingRevertLoading(true);
-                setTransitioning(true);
-                try {
-                  const payload = await buildMechanicLocationPayload();
-                  const res = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/revert-stage/`, {
-                    method: 'POST',
-                    credentials: 'include',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
+              <TouchableOpacity
+                style={[styles.neutralSecondaryButton, pendingRevertLoading && styles.actionButtonDisabled]}
+                onPress={async () => {
+                  const ok = await confirm({
+                    type: 'warning',
+                    title: 'Go Back',
+                    message: 'Are you sure you want to revert to the previous stage?',
+                    confirmText: 'Go Back',
+                    cancelText: 'Stay',
                   });
-                  if (!res.ok) {
-                    const err = await res.json().catch(() => null);
-                    throw new Error(parseApiErrorMessage(err, 'Failed to revert stage'));
+                  if (!ok) return;
+                  setPendingRevertLoading(true);
+                  setTransitioning(true);
+                  try {
+                    const payload = await buildMechanicLocationPayload();
+                    const res = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/revert-stage/`, {
+                      method: 'POST',
+                      credentials: 'include',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(payload),
+                    });
+                    if (!res.ok) {
+                      const err = await res.json().catch(() => null);
+                      throw new Error(parseApiErrorMessage(err, 'Failed to revert stage'));
+                    }
+                    showNotification({ type: 'success', message: 'Reverted to previous stage' });
+                    fetchBookingDetail();
+                  } catch (err: any) {
+                    showNotification({ type: 'error', message: err.message || 'Failed to revert stage' });
+                  } finally {
+                    setPendingRevertLoading(false);
+                    setTransitioning(false);
                   }
-                  showNotification({ type: 'success', message: 'Reverted to previous stage' });
-                  fetchBookingDetail();
-                } catch (err: any) {
-                  showNotification({ type: 'error', message: err.message || 'Failed to revert stage' });
-                } finally {
-                  setPendingRevertLoading(false);
-                  setTransitioning(false);
-                }
-              }} disabled={transitioning || pendingRevertLoading}>
+                }}
+                disabled={transitioning || pendingRevertLoading}
+                activeOpacity={0.85}
+              >
                 {pendingRevertLoading ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
                   <>
-                    <FontAwesome name="arrow-left" size={18} color="#fff" />
-                    <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Go Back</ThemedText>
+                    <FontAwesome name="arrow-left" size={18} color="#AEAEB2" />
+                    <ThemedText style={[styles.actionBarBtnText, { color: '#E5E5EA' }]}>Go back</ThemedText>
                   </>
                 )}
               </TouchableOpacity>
-            </View>
-          </View>
-        )}
+            </>
+          )}
 
-        {showBackjobCompletionFlow && (
-          <View style={{ width: '100%' }}>
-            <View style={{ marginTop: 12 }}>
+          {showBackjobCompletionFlow && (
+            <>
               <View style={styles.noteBox}>
-                <ThemedText style={styles.noteText}>Backjob is free of charge. Mark it completed instead of collecting payment.</ThemedText>
+                <ThemedText style={styles.noteText}>
+                  Backjob is free of charge. Mark it completed instead of collecting payment.
+                </ThemedText>
               </View>
-            </View>
-
-            <View style={{ marginTop: 12 }}>
               <TouchableOpacity
-                style={[styles.finishLargeButton, { backgroundColor: '#34C759' }]}
+                style={[styles.finishLargeButton, completing && styles.actionButtonDisabled]}
                 onPress={handleCompleteBooking}
                 disabled={transitioning || completing}
+                activeOpacity={0.85}
               >
                 {completing ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <>
-                    <FontAwesome name="check" size={18} color="#fff" />
-                    <ThemedText style={[styles.actionButtonText, { marginLeft: 12, fontSize: 16 }]}>Mark Backjob Completed</ThemedText>
-                  </>
+                  <FontAwesome name="check" size={18} color="#fff" />
                 )}
+                <ThemedText style={styles.actionBarBtnText}>Mark backjob completed</ThemedText>
               </TouchableOpacity>
-            </View>
-          </View>
-        )}
+            </>
+          )}
+        </View>
       </View>
 
       <ScrollView

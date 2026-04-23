@@ -313,6 +313,7 @@ export default function BookingLocationMapScreen() {
   const [showSignalLost, setShowSignalLost] = useState(false);
   const [permissionModalVisible, setPermissionModalVisible] = useState(false);
   const [permissionModalMessage, setPermissionModalMessage] = useState('Please enable location access to continue live tracking.');
+  const [arrivedSuccessModalVisible, setArrivedSuccessModalVisible] = useState(false);
   const [travelActionLoading, setTravelActionLoading] = useState<'arrived' | 'cancel' | null>(null);
   const [routeAccordionOpen, setRouteAccordionOpen] = useState(false);
   /** Device GPS speed (km/h) while mechanic is tracking; not the same as TomTom road-segment flow speed. */
@@ -862,8 +863,8 @@ export default function BookingLocationMapScreen() {
     setTravelActionLoading('arrived');
     try {
       await postMechanicBookingAction('arrived');
-      Alert.alert('Updated', 'Marked at client location.');
       await initializeScreen();
+      setArrivedSuccessModalVisible(true);
     } catch (e) {
       Alert.alert('Error', e instanceof Error ? e.message : 'Could not update status');
     } finally {
@@ -1429,6 +1430,28 @@ export default function BookingLocationMapScreen() {
           </View>
         </View>
       </Modal>
+
+      <Modal
+        transparent
+        animationType="fade"
+        visible={arrivedSuccessModalVisible}
+        onRequestClose={() => setArrivedSuccessModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <FontAwesome name="check-circle" size={36} color="#22C55E" />
+            <ThemedText style={styles.modalTitle}>Updated</ThemedText>
+            <ThemedText style={styles.modalMessage}>Marked at client location.</ThemedText>
+            <TouchableOpacity
+              style={styles.modalPrimaryButton}
+              onPress={() => setArrivedSuccessModalVisible(false)}
+              activeOpacity={0.85}
+            >
+              <ThemedText style={styles.modalPrimaryText}>OK</ThemedText>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </ThemedView>
   );
 }
@@ -1722,50 +1745,62 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    backgroundColor: 'rgba(0,0,0,0.72)',
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
   },
   modalCard: {
     width: '100%',
-    backgroundColor: '#fff',
+    maxWidth: 340,
+    backgroundColor: '#1A1C1E',
     borderRadius: 16,
-    padding: 20,
+    padding: 22,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#2F3238',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.4,
+    shadowRadius: 16,
+    elevation: 12,
   },
   modalTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#111827',
+    color: '#F4F4F5',
     marginTop: 12,
   },
   modalMessage: {
     fontSize: 14,
-    color: '#4B5563',
+    color: '#A1A1AA',
     textAlign: 'center',
     marginTop: 10,
-    marginBottom: 16,
+    marginBottom: 18,
+    lineHeight: 20,
   },
   modalPrimaryButton: {
     width: '100%',
     backgroundColor: '#FF8C00',
     borderRadius: 12,
-    paddingVertical: 12,
+    paddingVertical: 14,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E67E00',
   },
   modalPrimaryText: {
-    color: '#fff',
+    color: '#111',
     fontWeight: '700',
-    fontSize: 14,
+    fontSize: 15,
   },
   modalSecondaryButton: {
-    marginTop: 10,
+    marginTop: 12,
     paddingVertical: 10,
     paddingHorizontal: 12,
   },
   modalSecondaryText: {
-    color: '#6B7280',
+    color: '#9CA3AF',
     fontWeight: '600',
+    fontSize: 14,
   },
 });
