@@ -18,6 +18,8 @@ interface MechanicLocation {
 interface LocationContextType {
   selectedLocation: LocationData | null;
   setSelectedLocation: (location: LocationData | null) => void;
+  selectedLocationPurpose: 'branch' | null;
+  setSelectedLocationPurpose: (purpose: 'branch' | null) => void;
   mechanicLocation: MechanicLocation | null;
   setMechanicLocation: (location: MechanicLocation | null) => void;
 }
@@ -26,11 +28,19 @@ const LocationContext = createContext<LocationContextType | undefined>(undefined
 
 export function LocationProvider({ children }: { children: ReactNode }) {
   const [selectedLocation, setSelectedLocation] = useState<LocationData | null>(null);
+  const [selectedLocationPurpose, setSelectedLocationPurpose] = useState<'branch' | null>(null);
   const [mechanicLocation, setMechanicLocation] = useState<MechanicLocation | null>(null);
 
   const value = useMemo(
-    () => ({ selectedLocation, setSelectedLocation, mechanicLocation, setMechanicLocation }),
-    [selectedLocation, mechanicLocation]
+    () => ({
+      selectedLocation,
+      setSelectedLocation,
+      selectedLocationPurpose,
+      setSelectedLocationPurpose,
+      mechanicLocation,
+      setMechanicLocation,
+    }),
+    [selectedLocation, selectedLocationPurpose, mechanicLocation]
   );
 
   return (

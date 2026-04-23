@@ -180,7 +180,12 @@ const EMPTY_FORM: FormState = {
 
 export default function EditProfileScreen() {
   const { showNotification } = useNotification();
-  const { selectedLocation, setSelectedLocation } = useLocation();
+  const {
+    selectedLocation,
+    setSelectedLocation,
+    selectedLocationPurpose,
+    setSelectedLocationPurpose,
+  } = useLocation();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [branchSaving, setBranchSaving] = useState(false);
@@ -189,7 +194,6 @@ export default function EditProfileScreen() {
   const [profilePhotoUri, setProfilePhotoUri] = useState<string | null>(null);
   const [serviceBannerUri, setServiceBannerUri] = useState<string | null>(null);
   const [branchAddresses, setBranchAddresses] = useState<Address[]>([]);
-  const [branchPickerMode, setBranchPickerMode] = useState<'idle' | 'add'>( 'idle');
   const [mainBranchLat, setMainBranchLat] = useState<number | null>(null);
   const [mainBranchLng, setMainBranchLng] = useState<number | null>(null);
   const [mainBranchFormattedAddress, setMainBranchFormattedAddress] = useState('');
@@ -462,14 +466,6 @@ export default function EditProfileScreen() {
     };
   }, []);
 
-  useFocusEffect(
-    useCallback(() => {
-      if (branchPickerMode === 'add' && !selectedLocation) {
-        setBranchPickerMode('idle');
-      }
-    }, [branchPickerMode, selectedLocation])
-  );
-
   const roleLabel = useMemo(() => {
     if (activeRole === 'shop_owner') return 'Shop Owner';
     if (activeRole === 'mechanic') return 'Mechanic';
@@ -625,7 +621,7 @@ export default function EditProfileScreen() {
   const openBranchPicker = () => {
     if (branchSaving) return;
     setSelectedLocation(null);
-    setBranchPickerMode('add');
+    setSelectedLocationPurpose('branch');
     router.push('/client/request/direct/map');
   };
 
@@ -644,7 +640,7 @@ export default function EditProfileScreen() {
   }, [API_URL]);
 
   const syncBranchFromSelectedLocation = useCallback(async () => {
-    if (branchPickerMode !== 'add' || !selectedLocation) {
+    if (selectedLocationPurpose !== 'branch' || !selectedLocation) {
       return;
     }
 
@@ -677,14 +673,30 @@ export default function EditProfileScreen() {
       });
     } finally {
       setBranchSaving(false);
-      setBranchPickerMode('idle');
+      setSelectedLocationPurpose(null);
       setSelectedLocation(null);
     }
-  }, [API_URL, branchPickerMode, refreshBranches, selectedLocation, setSelectedLocation, showNotification]);
+  }, [
+    API_URL,
+    refreshBranches,
+    selectedLocation,
+    selectedLocationPurpose,
+    setSelectedLocation,
+    setSelectedLocationPurpose,
+    showNotification,
+  ]);
 
   useEffect(() => {
     void syncBranchFromSelectedLocation();
   }, [syncBranchFromSelectedLocation]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (selectedLocationPurpose === 'branch' && !selectedLocation) {
+        setSelectedLocationPurpose(null);
+      }
+    }, [selectedLocation, selectedLocationPurpose, setSelectedLocationPurpose])
+  );
 
   const buildFile = (uri: string, fallbackName: string) => {
     const fileName = uri.split('/').pop() || fallbackName;
