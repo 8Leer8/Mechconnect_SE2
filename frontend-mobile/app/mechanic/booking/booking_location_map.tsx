@@ -7,6 +7,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { ensureForegroundLocationAccess } from '@/lib/locationPermission';
+import { useWebSocketContext } from '@/context/WebSocketContext';
 
 export const screenOptions = { headerShown: false } as const;
 
@@ -284,6 +285,8 @@ export default function BookingLocationMapScreen() {
   const staleCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastRouteRefreshAtRef = useRef(0);
   const didInitialFitRef = useRef(false);
+  /** Only auto fit-to-bounds once when both markers exist; refitting every GPS tick zooms Android map. */
+  const didFitBothMarkersRef = useRef(false);
 
   const clientCoordsRef = useRef<Coordinates | null>(null);
   const mechanicCoordsRef = useRef<Coordinates | null>(null);
@@ -307,6 +310,18 @@ export default function BookingLocationMapScreen() {
   const [traffic, setTraffic] = useState<TrafficData | null>(null);
   const [trafficEstimatedNote, setTrafficEstimatedNote] = useState(false);
   const [trafficMultipliers, setTrafficMultipliers] = useState<TrafficMultiplierConfig>(DEFAULT_TRAFFIC_MULTIPLIERS);
+  const trafficMultipliersRef = useRef(trafficMultipliers);
+  const statusRef = useRef(status);
+  const { lastMessage } = useWebSocketContext();
+  const lastClientWsRouteRefreshRef = useRef(0);
+
+  useEffect(() => {
+    trafficMultipliersRef.current = trafficMultipliers;
+  }, [trafficMultipliers]);
+
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
 
   const [lastMechanicUpdateAt, setLastMechanicUpdateAt] = useState<number | null>(null);
   const lastMechanicUpdateAtRef = useRef<number | null>(null);
@@ -671,7 +686,7 @@ export default function BookingLocationMapScreen() {
     if (!currentSpeed || !freeFlowSpeed) throw new Error('Invalid traffic response');
 
     const ratio = freeFlowSpeed / currentSpeed;
-    const classified = classifyTraffic(ratio, trafficMultipliers);
+    const classified = classifyTraffic(ratio, trafficMultipliersRef.current);
 
     return {
       ...classified,
@@ -679,11 +694,11 @@ export default function BookingLocationMapScreen() {
       freeFlowSpeed,
       estimated: false,
     };
-  }, [trafficMultipliers]);
+  }, []);
 
   const refreshRouteAndTraffic = useCallback(async (from: Coordinates, to: Coordinates, currentStatus: string) => {
-    let nextDistance = distanceKm;
-    let nextEta = etaMinutes;
+    let nextDistance: number | null = null;
+    let nextEta: number | null = null;
 
     try {
       const routeResult = await calculateRoute(from, to);
@@ -712,7 +727,7 @@ export default function BookingLocationMapScreen() {
         setTraffic(trafficData);
         setTrafficEstimatedNote(false);
       } catch {
-        const fallback = timeBasedTrafficFallback(trafficMultipliers);
+        const fallback = timeBasedTrafficFallback(trafficMultipliersRef.current);
         setTraffic(fallback);
         setTrafficEstimatedNote(true);
       }
@@ -726,11 +741,12 @@ export default function BookingLocationMapScreen() {
     }
 
     return null;
-  }, [calculateRoute, calculateTraffic, distanceKm, etaMinutes]);
+  }, [calculateRoute, calculateTraffic]);
 
   const initializeScreen = useCallback(async () => {
     cleanupLiveResources();
     didInitialFitRef.current = false;
+    didFitBothMarkersRef.current = false;
 
     setScreenLoading(true);
     setWaitingForMechanic(false);
@@ -790,7 +806,7 @@ export default function BookingLocationMapScreen() {
               baselineTraffic === 'light' || baselineTraffic === 'low' ? 1.1 :
               (baselineTraffic === 'moderate' || baselineTraffic === 'medium' ? 1.3 :
                 (baselineTraffic === 'heavy' || baselineTraffic === 'high' ? 1.7 : 2.1)),
-              trafficMultipliers
+              trafficMultipliersRef.current
             );
             setTraffic({
               ...preset,
@@ -802,7 +818,7 @@ export default function BookingLocationMapScreen() {
           } else {
             setTraffic({
               ...DEFAULT_TRAFFIC,
-              surchargePercent: multiplierToPercent(trafficMultipliers.traffic_medium_multiplier),
+              surchargePercent: multiplierToPercent(trafficMultipliersRef.current.traffic_medium_multiplier),
             });
             setTrafficEstimatedNote(true);
           }
@@ -817,7 +833,7 @@ export default function BookingLocationMapScreen() {
     } finally {
       setScreenLoading(false);
     }
-  }, [cleanupLiveResources, fetchBooking, refreshRouteAndTraffic, resolveClientCoordinates, resolveMechanicCoordinates, trafficMultipliers]);
+  }, [cleanupLiveResources, fetchBooking, refreshRouteAndTraffic, resolveClientCoordinates, resolveMechanicCoordinates]);
 
   const postMechanicBookingAction = useCallback(
     async (endpoint: string, body: Record<string, unknown> = {}) => {
@@ -1020,32 +1036,7 @@ export default function BookingLocationMapScreen() {
       };
     }
 
-    pollIntervalRef.current = setInterval(async () => {
-      try {
-        const latest = await fetchMechanicCoordinatesForClient();
-        if (!latest) return;
-
-        setMechanicCoords(latest);
-        setWaitingForMechanic(false);
-        setLastMechanicUpdateAt(Date.now());
-        setShowSignalLost(false);
-
-        if (clientCoordsRef.current) {
-          await refreshRouteAndTraffic(latest, clientCoordsRef.current, status);
-        }
-      } catch {
-        // Polling can temporarily fail in low-signal conditions.
-      }
-    }, 5000);
-
-    updateIntervalRef.current = setInterval(() => {
-      const from = mechanicCoordsRef.current;
-      const to = clientCoordsRef.current;
-      if (!from || !to) return;
-      refreshRouteAndTraffic(from, to, status).catch(() => {
-        // Realtime refresh failures are reflected by existing fallback state.
-      });
-    }, 30000);
+    // Client follows mechanic via websocket (mechanic_location_update), not HTTP polling.
 
     staleCheckIntervalRef.current = setInterval(() => {
       const last = lastMechanicUpdateAtRef.current;
@@ -1059,22 +1050,58 @@ export default function BookingLocationMapScreen() {
     return () => cleanupLiveResources();
   }, [cleanupLiveResources, clientCoords, fetchMechanicCoordinatesForClient, isOnTheWay, openTrackingPermissionModal, refreshRouteAndTraffic, role, status]);
 
+  // Client: mechanic GPS from websocket (backend broadcasts after each POST /mechanic-location/).
+  useEffect(() => {
+    if (role !== 'client') return;
+    if (!lastMessage) return;
+    if (String(lastMessage.action || '').toLowerCase() !== 'mechanic_location_update') return;
+    if (!bookingId || String(lastMessage.booking_id || '') !== String(bookingId)) return;
+
+    const coords = parseMechanicLocationPayload(lastMessage);
+    if (!coords) return;
+
+    setMechanicCoords(coords);
+    setWaitingForMechanic(false);
+    setLastMechanicUpdateAt(Date.now());
+    setShowSignalLost(false);
+
+    const to = clientCoordsRef.current;
+    if (!to || !bookingStatusIsLiveTracking(statusRef.current)) return;
+
+    const now = Date.now();
+    if (now - lastClientWsRouteRefreshRef.current < 5000) return;
+    lastClientWsRouteRefreshRef.current = now;
+
+    refreshRouteAndTraffic(coords, to, statusRef.current).catch(() => {
+      // Keep last polyline if routing fails.
+    });
+  }, [lastMessage, role, bookingId, refreshRouteAndTraffic]);
+
   useEffect(() => {
     if (!mapRef.current) return;
 
     if (clientCoords && mechanicCoords) {
-      setTimeout(() => {
-        try {
-          mapRef.current?.fitToCoordinates([mechanicCoords, clientCoords], {
-            edgePadding: { top: 80, right: 40, bottom: 250, left: 40 },
-            animated: true,
-          });
-          didInitialFitRef.current = true;
-        } catch {
-          // Keep current map viewport if fitting fails.
-        }
-      }, 500);
+      if (!didFitBothMarkersRef.current) {
+        didFitBothMarkersRef.current = true;
+        const mechanic = mechanicCoords;
+        const client = clientCoords;
+        setTimeout(() => {
+          try {
+            mapRef.current?.fitToCoordinates([mechanic, client], {
+              edgePadding: { top: 80, right: 40, bottom: 250, left: 40 },
+              animated: true,
+            });
+            didInitialFitRef.current = true;
+          } catch {
+            // Keep current map viewport if fitting fails.
+          }
+        }, 500);
+      }
       return;
+    }
+
+    if (!mechanicCoords) {
+      didFitBothMarkersRef.current = false;
     }
 
     if (clientCoords && !didInitialFitRef.current) {

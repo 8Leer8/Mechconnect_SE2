@@ -1823,6 +1823,42 @@ def mechanic_location_view(request, booking_id):
                    "longitude": Decimal(str(longitude)).quantize(Decimal('0.000001'))},
     )
 
+    # Push live coordinates to the client (and shop owner) over websocket so the app
+    # does not need to poll GET /mechanic-location/ on a timer.
+    try:
+        channel_layer = get_channel_layer()
+        if channel_layer is not None:
+            recipient_ids = set()
+            try:
+                if booking.request and booking.request.client and booking.request.client.account_id:
+                    recipient_ids.add(booking.request.client.account_id)
+            except Exception:
+                pass
+            try:
+                if (
+                    booking.request
+                    and booking.request.shop
+                    and booking.request.shop.shop_owner
+                    and booking.request.shop.shop_owner.account_id
+                ):
+                    recipient_ids.add(booking.request.shop.shop_owner.account_id)
+            except Exception:
+                pass
+            ws_event = {
+                "type": "booking_update",
+                "action": "mechanic_location_update",
+                "booking_id": booking.id,
+                "status": booking.status,
+                "latitude": float(loc.latitude),
+                "longitude": float(loc.longitude),
+            }
+            for rid in recipient_ids:
+                if not rid:
+                    continue
+                async_to_sync(channel_layer.group_send)(f"user_{rid}", ws_event)
+    except Exception:
+        pass
+
     return Response({
         "latitude": float(loc.latitude),
         "longitude": float(loc.longitude),
