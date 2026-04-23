@@ -124,54 +124,56 @@ export function VerificationDetailsModal({
         </>
       }
     >
-        <div className="max-h-[70vh] space-y-4 overflow-y-auto px-6 py-5">
-          <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3">
-            <DetailRow label="Type" value={formatSourceType(item.kind)} />
-            <DetailRow label="Name" value={item.title} />
-            <DetailRow label="Submitted" value={formatDate(item.date)} />
-            <DetailRow label="Contact" value={item.subtitle} />
-            <DetailRow label="Detail" value={item.detail} />
-            {item.specialty_name ? <DetailRow label="Specialty" value={item.specialty_name} /> : null}
-            {item.source_type ? <DetailRow label="Proof Source" value={formatSourceType(item.source_type)} /> : null}
-            {item.source_description ? <DetailRow label="Source Description" value={item.source_description} /> : null}
-          </div>
-
-          {item.kind === "mechanic" ? (
-            <DocumentList title="Mechanic Documents" documents={item.documents || []} />
-          ) : null}
-
-          {item.kind === "shop" ? (
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <DocumentList title="Shop Documents" documents={item.shop_documents || []} />
-              <DocumentList title="Owner Documents" documents={item.owner_documents || []} />
+        {item && (
+          <div className="max-h-[70vh] space-y-4 overflow-y-auto px-6 py-5">
+            <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3">
+              <DetailRow label="Type" value={formatSourceType(item?.kind)} />
+              <DetailRow label="Name" value={item?.title} />
+              <DetailRow label="Submitted" value={formatDate(item?.date)} />
+              <DetailRow label="Contact" value={item?.subtitle} />
+              <DetailRow label="Detail" value={item?.detail} />
+              {item?.specialty_name ? <DetailRow label="Specialty" value={item.specialty_name} /> : null}
+              {item?.source_type ? <DetailRow label="Proof Source" value={formatSourceType(item.source_type)} /> : null}
+              {item?.source_description ? <DetailRow label="Source Description" value={item.source_description} /> : null}
             </div>
-          ) : null}
 
-          {item.kind === "specialty" ? (
-            <section className="space-y-2.5">
-              <h4 className="text-sm font-semibold text-orange-400">Specialty Proof</h4>
-              {item.proof_document_url ? (
-                <a
-                  href={toMediaUrl(item.proof_document_url)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 rounded-md border border-primary/35 bg-primary/10 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/20"
-                >
-                  <FileText className="size-4" />
-                  View Proof Document
-                </a>
-              ) : (
-                <p className="rounded-md border border-border/70 bg-card/60 px-3 py-2 text-sm text-muted-foreground">
-                  No proof document uploaded.
-                </p>
-              )}
-            </section>
-          ) : null}
+            {item?.kind === "mechanic" ? (
+              <DocumentList title="Mechanic Documents" documents={item?.documents || []} />
+            ) : null}
 
-          {actionError ? (
-            <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-400">{actionError}</p>
-          ) : null}
-        </div>
+            {item?.kind === "shop" ? (
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <DocumentList title="Shop Documents" documents={item?.shop_documents || []} />
+                <DocumentList title="Owner Documents" documents={item?.owner_documents || []} />
+              </div>
+            ) : null}
+
+            {item?.kind === "specialty" ? (
+              <section className="space-y-2.5">
+                <h4 className="text-sm font-semibold text-orange-400">Specialty Proof</h4>
+                {item?.proof_document_url ? (
+                  <a
+                    href={toMediaUrl(item.proof_document_url)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 rounded-md border border-primary/35 bg-primary/10 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/20"
+                  >
+                    <FileText className="size-4" />
+                    View Proof Document
+                  </a>
+                ) : (
+                  <p className="rounded-md border border-border/70 bg-card/60 px-3 py-2 text-sm text-muted-foreground">
+                    No proof document uploaded.
+                  </p>
+                )}
+              </section>
+            ) : null}
+
+            {actionError ? (
+              <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-400">{actionError}</p>
+            ) : null}
+          </div>
+        )}
     </ModalShell>
   );
 }

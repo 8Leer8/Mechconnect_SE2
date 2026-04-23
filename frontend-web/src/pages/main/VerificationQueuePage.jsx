@@ -348,42 +348,46 @@ export function VerificationQueuePage() {
           )}
         </div>
 
-        <VerificationDetailsModal
-          item={selectedItem}
-          onClose={() => {
-            if (!isDetailsModalProcessing) {
-              setSelectedItem(null);
-              setActionError("");
-            }
-          }}
-          onApprove={() => selectedItem && handleDecision(selectedItem, "approve")}
-          onReject={() => selectedItem && openRejectModal(selectedItem)}
-          isProcessing={isDetailsModalProcessing}
-          actionError={actionError}
-        />
+        {selectedItem && (
+          <VerificationDetailsModal
+            item={selectedItem}
+            onClose={() => {
+              if (!isDetailsModalProcessing) {
+                setSelectedItem(null);
+                setActionError("");
+              }
+            }}
+            onApprove={() => selectedItem && handleDecision(selectedItem, "approve")}
+            onReject={() => selectedItem && openRejectModal(selectedItem)}
+            isProcessing={isDetailsModalProcessing}
+            actionError={actionError}
+          />
+        )}
 
-        <VerificationRejectModal
-          item={rejectItem}
-          rejectionNote={rejectionNote}
-          onRejectionNoteChange={setRejectionNote}
-          onCancel={() => {
-            if (!isRejectModalProcessing && rejectItem) {
-              setSelectedItem(rejectItem);
-              setRejectItem(null);
-              setActionError("");
-            }
-          }}
-          onClose={() => {
-            if (!isRejectModalProcessing) {
-              setRejectItem(null);
-              setRejectionNote("");
-              setActionError("");
-            }
-          }}
-          onSubmitReject={() => rejectItem && handleDecision(rejectItem, "reject", rejectionNote)}
-          isProcessing={isRejectModalProcessing}
-          actionError={actionError}
-        />
+        {rejectItem && (
+          <VerificationRejectModal
+            item={rejectItem}
+            rejectionNote={rejectionNote}
+            onRejectionNoteChange={setRejectionNote}
+            onCancel={() => {
+              if (!isRejectModalProcessing && rejectItem) {
+                setSelectedItem(rejectItem);
+                setRejectItem(null);
+                setActionError("");
+              }
+            }}
+            onClose={() => {
+              if (!isRejectModalProcessing) {
+                setRejectItem(null);
+                setRejectionNote("");
+                setActionError("");
+              }
+            }}
+            onSubmitReject={() => rejectItem && handleDecision(rejectItem, "reject", rejectionNote)}
+            isProcessing={isRejectModalProcessing}
+            actionError={actionError}
+          />
+        )}
       </div>
     </AdminLayout>
   );

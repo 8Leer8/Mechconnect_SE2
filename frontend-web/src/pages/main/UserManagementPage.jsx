@@ -15,6 +15,7 @@ import { PaginationControls } from "@/components/common/PaginationControls";
 import { API_BASE_URL } from "@/config/env";
 import { fetchAdminAccounts } from "@/services/adminDataService";
 import { AddAdminModal } from "@/components/admin/AddAdminModal";
+import { ModalShell } from "@/components/modals/ModalShell";
 import { request } from "@/services/httpClient";
 
 const ROLE_TABS = [
