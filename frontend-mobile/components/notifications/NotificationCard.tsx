@@ -27,9 +27,11 @@ export function NotificationCard({ notification, onPress }: NotificationCardProp
           <ThemedText style={styles.title} numberOfLines={1}>
             {notification.title}
           </ThemedText>
-          <ThemedText style={styles.timestamp}>{formatNotificationTimestamp(notification.created_at)}</ThemedText>
+          <ThemedText style={styles.timestamp}>
+            {formatNotificationTimestamp(notification.updated_at || notification.created_at)}
+          </ThemedText>
         </View>
-        <ThemedText style={styles.message} numberOfLines={2}>
+        <ThemedText style={styles.message} numberOfLines={4}>
           {notification.message}
         </ThemedText>
       </View>

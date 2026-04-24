@@ -2,6 +2,7 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
 export interface NotificationTargetPayload {
   booking_id?: number;
+  request_id?: number;
   broadcast_id?: number;
   offer_id?: number;
   action?: string;
@@ -16,6 +17,8 @@ export interface NotificationItem {
   payload?: NotificationTargetPayload | null;
   is_read: boolean;
   created_at: string;
+  /** Last content/status update (same row updated for booking lifecycle). */
+  updated_at?: string;
 }
 
 export interface NotificationListResponse {

@@ -24,6 +24,7 @@ from services.pricing_utils import (
     get_platform_commission,
     get_required_tokens,
 )
+from ...ws_utils import upsert_booking_party_notification
 
 
 def _send_user_event(account_id, payload):
@@ -493,6 +494,32 @@ def select_mechanic(request, broadcast_id):
                 'booking_id': booking.id,
                 'message': 'Broadcast accepted',
             })
+
+        try:
+            upsert_booking_party_notification(
+                mechanic.account_id,
+                booking,
+                'Offer selected',
+                'Your offer was selected by the client.',
+                action='booking_finalized',
+            )
+            upsert_booking_party_notification(
+                base_request.client.account_id,
+                booking,
+                'Booking confirmed',
+                'You selected a mechanic for your broadcast request.',
+                action='broadcast_finalized',
+            )
+            for offer in other_offers:
+                upsert_booking_party_notification(
+                    offer.mechanic.account_id,
+                    booking,
+                    'Offer not selected',
+                    'The client chose a different mechanic.',
+                    action='offer_rejected',
+                )
+        except Exception:
+            logger.exception('Failed to upsert notifications for broadcast finalize')
 
         return Response({
             'message': 'Mechanic selected successfully',

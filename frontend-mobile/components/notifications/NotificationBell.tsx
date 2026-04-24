@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   ActivityIndicator,
   Modal,
@@ -63,9 +64,11 @@ export default function NotificationBell({ iconColor = '#FF8C00' }: Notification
     }
   }, []);
 
-  useEffect(() => {
-    loadNotifications();
-  }, [loadNotifications]);
+  useFocusEffect(
+    useCallback(() => {
+      loadNotifications();
+    }, [loadNotifications])
+  );
 
   useEffect(() => {
     if (lastMessage?.type === 'booking_update' || lastMessage?.type === 'notification_update') {
