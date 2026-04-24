@@ -839,9 +839,8 @@ export default function BookingChatScreen() {
         for (let i = currentIdx - 1; i >= 0; i--) {
           try {
             const pm = messages[i];
-            const pp = typeof pm.content === 'string' ? JSON.parse(pm.content) : pm.content;
-            const ppStatus = String(pp?.status || '').toLowerCase();
-            if (pp && pp.type === 'quotation_request' && String(pp.quotation_id) === String(parsed.quotation_id) && ppStatus !== 'rejected') {
+            const pp = parseStructuredContent(pm.content) || (typeof pm.content === 'object' ? pm.content : null);
+            if (pp && pp.type === 'quotation_request' && String(pp.quotation_id) === String(parsed.quotation_id)) {
               previousItems = Array.isArray(pp.items) ? pp.items : [];
               break;
             }
@@ -850,17 +849,8 @@ export default function BookingChatScreen() {
       }
 
       const orderedPreviousItems = sortQuotationItems(previousItems);
-      const isActionablePendingLine = (it: any) => {
-        const st = String(it?.status || '').toLowerCase();
-        const ch = String(it?.change_type || '').toLowerCase();
-        return st === 'pending' || st === 'rejected' || ch === 'added' || ch === 'edited' || ch === 'removed';
-      };
-      const visibleOrderedItemList = isPending
-        ? orderedItemList.filter((it: any) => isActionablePendingLine(it))
-        : orderedItemList;
-      const visibleOrderedPreviousItems = isPending
-        ? orderedPreviousItems.filter((it: any) => isActionablePendingLine(it))
-        : orderedPreviousItems;
+      const visibleOrderedItemList = orderedItemList;
+      const visibleOrderedPreviousItems = orderedPreviousItems;
 
       const normalizeText = (v: any) => String(v ?? '').trim().toLowerCase();
       const normalizeNum = (v: any) => Number(v ?? 0);
@@ -951,7 +941,13 @@ export default function BookingChatScreen() {
         const previousIt = matchIdx >= 0 ? visibleOrderedPreviousItems[matchIdx] : null;
         if (matchIdx >= 0) usedPrevIndexes.add(matchIdx);
 
-        const isAdded = !previousIt;
+        const currentStatus = String(currentIt?.status || '').toLowerCase();
+        const currentChangeType = String(currentIt?.change_type || '').toLowerCase();
+        const isAdded = !previousIt && (
+          currentStatus === 'pending' ||
+          currentStatus === 'rejected' ||
+          currentChangeType === 'added'
+        );
         const isEdited = !!previousIt && (
           normalizeText(previousIt?.description) !== normalizeText(currentIt?.description) ||
           normalizeNum(previousIt?.quantity) !== normalizeNum(currentIt?.quantity) ||
@@ -995,9 +991,9 @@ export default function BookingChatScreen() {
                 {isExpanded ? (
                   <>
                     <View style={{ height: 1, backgroundColor: '#2f3338', marginVertical: 8 }} />
-                    {isPending ? (
+                    {isPending && isBackjobQuote ? (
                       <ThemedText style={{ color: '#8E8E93', fontSize: 11, marginBottom: 8 }}>
-                        {isBackjobQuote ? 'Backjob: only new changes will be charged' : 'Requested changes only'}
+                        Backjob: only new changes will be charged
                       </ThemedText>
                     ) : null}
                     {matchedRows.map(({ currentIt: it, previousIt: prevIt, isAdded, isEdited }: any, idx: number) => {

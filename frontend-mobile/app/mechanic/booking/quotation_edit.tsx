@@ -32,6 +32,12 @@ type QuotationItem = {
   purchase_receipt_image?: string | null;
 };
 
+type BookedServiceInfo = {
+  id: number;
+  name: string;
+  default_price: number;
+};
+
 const getSourceLabel = (v: string | null | undefined) => {
   const row = ITEM_SOURCES.find((s) => s.value === v);
   return row ? row.label : String(v || '');
@@ -40,6 +46,12 @@ const getSourceLabel = (v: string | null | undefined) => {
 const formatMoney = (amount: number) => {
   if (!Number.isFinite(amount)) return '0.00';
   return amount.toFixed(2);
+};
+
+const clampLabel = (value: string, max = 24) => {
+  const text = String(value || '').trim();
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}...`;
 };
 
 export default function QuotationEdit() {
@@ -64,6 +76,58 @@ export default function QuotationEdit() {
   const [receiptUploadingKey, setReceiptUploadingKey] = useState<string | null>(null);
   const [hasQuotationOnServer, setHasQuotationOnServer] = useState<boolean | null>(null);
   const [bookedServiceIds, setBookedServiceIds] = useState<number[]>([]);
+  const [bookedServices, setBookedServices] = useState<BookedServiceInfo[]>([]);
+  const [initialSaveSignature, setInitialSaveSignature] = useState<string | null>(null);
+
+  const extractBookedServices = (booking: any): BookedServiceInfo[] => {
+    const details = booking?.request?.request_details;
+    if (!details) return [];
+    const rows: BookedServiceInfo[] = [];
+
+    const pushService = (svc: any) => {
+      const sid = Number(svc?.id);
+      if (!Number.isFinite(sid) || sid <= 0) return;
+      rows.push({
+        id: sid,
+        name: String(svc?.name || 'Service'),
+        default_price: Number(svc?.minimum_price || booking?.amount_fee || 0),
+      });
+    };
+
+    if (Array.isArray(details.services)) {
+      details.services.forEach(pushService);
+    } else if (details.service) {
+      pushService(details.service);
+    }
+
+    const uniqueMap = new Map<number, BookedServiceInfo>();
+    rows.forEach((row) => {
+      if (!uniqueMap.has(row.id)) uniqueMap.set(row.id, row);
+    });
+    return Array.from(uniqueMap.values());
+  };
+
+  useEffect(() => {
+    const fetchBookedServices = async () => {
+      if (!bookingId) return;
+      try {
+        const res = await fetch(`${API_URL}/bookings/mechanic/bookings/${bookingId}/`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (!res.ok) return;
+        const payload = await res.json();
+        const booking = payload.booking || payload;
+        const extracted = extractBookedServices(booking);
+        setBookedServices(extracted);
+        setBookedServiceIds(extracted.map((s) => s.id));
+      } catch (e) {
+        // ignore
+      }
+    };
+    fetchBookedServices();
+  }, [bookingId]);
 
   useEffect(() => {
     let mounted = true;
@@ -113,6 +177,26 @@ export default function QuotationEdit() {
   const getItemKey = (item: QuotationItem, idx: number) => String(item.id ?? item.client_key ?? `new-${idx}`);
 
   const makeClientKey = () => `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  const buildSavableItems = (rows: QuotationItem[], removedMap: Record<string, boolean>) => {
+    return rows
+      .filter((it, idx) => {
+        const key = getItemKey(it, idx);
+        return !removedMap[key];
+      })
+      .map(({ client_key, created_at, ...it }) => {
+        const line_kind = it.line_kind === 'service' ? 'service' : 'item';
+        const quantity = line_kind === 'service' ? 1 : Math.max(1, Number(it.quantity || 1));
+        const unit_price = Math.max(0, Number(it.unit_price || 0));
+        return {
+          ...it,
+          line_kind,
+          quantity,
+          unit_price,
+          source: line_kind === 'service' ? null : (it.source || 'on_hand'),
+        };
+      });
+  };
 
   const orderItems = (rawItems: QuotationItem[]) => {
     if (!rawItems.length) return [];
@@ -183,14 +267,29 @@ export default function QuotationEdit() {
             purchase_receipt_image: it.purchase_receipt_image || null,
           };
         });
-        const bookedSet = new Set(bookedServiceIds);
-        const mappedItems = orderItems(
-          mappedItemsRaw.filter((row: QuotationItem) => {
-            const sid = Number(row.service || 0);
-            const isBookedBaseService = row.line_kind === 'service' && Number.isFinite(sid) && bookedSet.has(sid);
-            return !isBookedBaseService;
-          })
+        const existingServiceIds = new Set(
+          mappedItemsRaw
+            .filter((row: QuotationItem) => row.line_kind === 'service')
+            .map((row: QuotationItem) => Number(row.service || 0))
+            .filter((sid: number) => Number.isFinite(sid) && sid > 0)
         );
+
+        const missingBookedRows: QuotationItem[] = bookedServices
+          .filter((svc) => !existingServiceIds.has(svc.id))
+          .map((svc) => ({
+            client_key: `booked-fallback-${svc.id}`,
+            description: svc.name,
+            quantity: 1,
+            unit_price: Number.isFinite(Number(svc.default_price)) ? Number(svc.default_price) : 0,
+            service: svc.id,
+            line_kind: 'service',
+            status: 'accepted',
+            change_type: null,
+            source: null,
+            purchase_receipt_image: null,
+          }));
+
+        const mappedItems = orderItems([...mappedItemsRaw, ...missingBookedRows]);
         setItems(mappedItems);
         const initialMap: Record<string, QuotationItem> = {};
         mappedItems.forEach((it: QuotationItem) => {
@@ -198,6 +297,7 @@ export default function QuotationEdit() {
         });
         setInitialItemMap(initialMap);
         initializeInputText(mappedItems);
+        setInitialSaveSignature(JSON.stringify(buildSavableItems(mappedItems, {})));
         const nextExpanded: Record<string, boolean> = {};
         mappedItems.forEach((it: QuotationItem, idx: number) => {
           const key = getItemKey(it, idx);
@@ -212,7 +312,7 @@ export default function QuotationEdit() {
       }
     };
     fetchQuotation();
-  }, [bookingId, bookedServiceIds]);
+  }, [bookingId, bookedServices]);
 
   // If there is no existing quotation, prefill an item with the availed service from booking
   useEffect(() => {
@@ -234,52 +334,29 @@ export default function QuotationEdit() {
         // booking.request.request_details may contain service info for direct requests
         const details = booking.request?.request_details;
         if (!details) return;
-        const ids: number[] = [];
-        const single = Number(details?.service?.id);
-        if (Number.isFinite(single) && single > 0) ids.push(single);
-        if (Array.isArray(details.services)) {
-          details.services.forEach((svc: any) => {
-            const sid = Number(svc?.id);
-            if (Number.isFinite(sid) && sid > 0) ids.push(sid);
-          });
-        }
-        setBookedServiceIds(Array.from(new Set(ids)));
+        const extracted = extractBookedServices(booking);
+        setBookedServices(extracted);
+        setBookedServiceIds(extracted.map((s) => s.id));
         if (items.length !== 0) return;
 
         let prefilled: QuotationItem[] = [];
-        if (Array.isArray(details.services) && details.services.length > 0) {
-          prefilled = details.services.map((svc: any) => {
-            const sid = Number(svc?.id);
-            return {
-              client_key: makeClientKey(),
-              description: svc.name || 'Service',
-              quantity: 1,
-              unit_price: Number(svc.minimum_price || booking.amount_fee || 0),
-              service: Number.isFinite(sid) ? sid : null,
-              line_kind: 'service' as const,
-              status: 'pending',
-            };
-          });
-        } else if (details.service) {
-          const svc = details.service;
-          const unit = Number(svc.minimum_price || booking.amount_fee || 0);
-          prefilled = [
-            {
-              client_key: makeClientKey(),
-              description: svc.name || 'Service',
-              quantity: 1,
-              unit_price: unit,
-              service: svc.id,
-              line_kind: 'service',
-              status: 'pending',
-            },
-          ];
+        if (extracted.length > 0) {
+          prefilled = extracted.map((svc) => ({
+            client_key: makeClientKey(),
+            description: svc.name || 'Service',
+            quantity: 1,
+            unit_price: Number(svc.default_price || 0),
+            service: svc.id,
+            line_kind: 'service',
+            status: 'accepted',
+          }));
         }
 
         if (prefilled.length) {
           const ordered = orderItems(prefilled);
           setItems(ordered);
           initializeInputText(ordered);
+          setInitialSaveSignature(JSON.stringify(buildSavableItems(ordered, {})));
         }
       } catch (e) {
         // ignore
@@ -492,7 +569,10 @@ export default function QuotationEdit() {
     items.forEach((it, idx) => {
       const key = getItemKey(it, idx);
       const change = String(it.change_type || '').toLowerCase();
+      const status = String(it.status || '').toLowerCase();
       const previous = it.id != null ? (initialItemMap[String(it.id)] || null) : null;
+      const sid = Number(it.service || 0);
+      const isBookedBaseService = it.line_kind === 'service' && Number.isFinite(sid) && bookedServiceIds.includes(sid);
       const changedFromInitial = !!previous && (
         String(previous.description || '') !== String(it.description || '') ||
         Number(previous.quantity || 0) !== Number(it.quantity || 0) ||
@@ -505,13 +585,13 @@ export default function QuotationEdit() {
         removed.push({ current: it, previous });
       } else if (change === 'edited' || changedFromInitial) {
         edited.push({ current: it, previous });
-      } else if (change === 'added' || !it.id) {
+      } else if (change === 'added' || (!it.id && status === 'pending' && !isBookedBaseService)) {
         added.push({ current: it });
       }
     });
 
     return { added, edited, removed };
-  }, [items, removedAcceptedItems, initialItemMap]);
+  }, [items, removedAcceptedItems, initialItemMap, bookedServiceIds]);
 
   const subtotal = useMemo(
     () => items.reduce((sum, it, idx) => {
@@ -523,7 +603,18 @@ export default function QuotationEdit() {
   );
   const totalAmount = useMemo(() => subtotal, [subtotal]);
 
+  const currentSaveSignature = useMemo(
+    () => JSON.stringify(buildSavableItems(items, removedAcceptedItems)),
+    [items, removedAcceptedItems]
+  );
+
+  const hasUnsavedChanges = useMemo(() => {
+    if (initialSaveSignature == null) return false;
+    return currentSaveSignature !== initialSaveSignature;
+  }, [currentSaveSignature, initialSaveSignature]);
+
   const handleSave = async () => {
+    if (!hasUnsavedChanges) return;
     setShowSaveReviewModal(true);
   };
 
@@ -532,23 +623,7 @@ export default function QuotationEdit() {
     setSaving(true);
     try {
       const payload = {
-        items: items
-          .filter((it, idx) => {
-            const key = getItemKey(it, idx);
-            return !removedAcceptedItems[key];
-          })
-          .map(({ client_key, created_at, ...it }) => {
-            const line_kind = it.line_kind === 'service' ? 'service' : 'item';
-            const quantity = line_kind === 'service' ? 1 : Math.max(1, Number(it.quantity || 1));
-            const unit_price = Math.max(0, Number(it.unit_price || 0));
-            return {
-              ...it,
-              line_kind,
-              quantity,
-              unit_price,
-              source: line_kind === 'service' ? null : (it.source || 'on_hand'),
-            };
-          }),
+        items: buildSavableItems(items, removedAcceptedItems),
       };
       const res = await fetch(`${API_URL}/bookings/mechanic/bookings/${bookingId}/quotation/`, {
         method: 'POST',
@@ -561,6 +636,7 @@ export default function QuotationEdit() {
         throw new Error(err?.error || 'Failed to save quotation');
       }
       showNotification({ type: 'success', title: 'Saved', message: 'Quotation saved successfully' });
+      setInitialSaveSignature(JSON.stringify(payload.items));
       setShowSaveReviewModal(false);
       try {
         // Ensure chat conversation is created and messages are fetched so chat UI sees the new quotation
@@ -667,10 +743,10 @@ export default function QuotationEdit() {
         <View style={styles.sectionHeaderRow}>
           <Text style={styles.sectionTitle}>Service & item quotations</Text>
           <Text style={{ color: '#6FE29D', fontSize: 11, marginTop: 4, fontWeight: '600' }}>
-            Booked service is auto-included in final total.
+            Booked service quote is shown below.
           </Text>
           <Text style={{ color: '#8E8E93', fontSize: 12, marginTop: 4 }}>
-            Booked service stays in client pricing/quotation. This page only shows editable/new lines.
+            You can review and edit booked service, plus add new service or item lines.
           </Text>
         </View>
 
@@ -685,13 +761,41 @@ export default function QuotationEdit() {
             const isEditable = !usesEditFlow || isEditing;
             const isExpanded = expandedItems[key] ?? !isAccepted;
             const isServiceLine = it.line_kind === 'service';
+            const sid = Number(it.service || 0);
+            const isBookedServiceLine = isServiceLine && Number.isFinite(sid) && bookedServiceIds.includes(sid);
+            const isPending = String(it.status || '').toLowerCase() === 'pending';
+            const canQuickRemove = !it.id && isPending && !isRemovedGhost;
+            const titleText = clampLabel(it.description || `Quotation #${idx + 1}`, 24);
             return (
               <View key={key} style={styles.itemSelectableRow}>
                 <View style={[styles.itemCard, styles.itemCardFlex, isAccepted ? styles.acceptedItemCard : null, isEditing ? styles.editingItemCard : null, isRemovedGhost ? styles.removedGhostItemCard : null]}>
-                  <TouchableOpacity style={styles.itemAccordionHeader} onPress={() => toggleExpand(key)} activeOpacity={0.8}>
-                    <View style={{ flex: 1 }}>
+                  {canQuickRemove ? (
+                    <TouchableOpacity
+                      onPress={() => removeItem(idx)}
+                      style={styles.quickRemoveOverlayButton}
+                      activeOpacity={0.85}
+                    >
+                      <FontAwesome name="times" size={10} color="#FFB4B0" />
+                    </TouchableOpacity>
+                  ) : null}
+                  <TouchableOpacity
+                    style={[styles.itemAccordionHeader, canQuickRemove ? styles.itemAccordionHeaderWithQuickRemove : null]}
+                    onPress={() => toggleExpand(key)}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.accordionIconWrap}>
+                      <FontAwesome name={isExpanded ? 'chevron-up' : 'chevron-down'} size={12} color="#C9CDD2" />
+                    </View>
+                    <View style={styles.itemAccordionLeftBlock}>
                       <View style={styles.itemAccordionTitleRow}>
-                        <Text style={styles.itemAccordionTitle} numberOfLines={1}>{it.description || `Item ${idx + 1}`}</Text>
+                        <Text style={styles.itemAccordionTitle} numberOfLines={1}>{titleText}</Text>
+                      </View>
+                      <View style={styles.itemAccordionBadgeRow}>
+                        {isBookedServiceLine ? (
+                          <View style={[styles.acceptedBadge, { backgroundColor: 'rgba(111,226,157,0.18)', borderColor: 'rgba(111,226,157,0.4)' }]}>
+                            <Text style={styles.acceptedBadgeText}>Booked Service</Text>
+                          </View>
+                        ) : null}
                         {isRemovedGhost ? (
                           <View style={styles.pendingBadge}><Text style={styles.pendingBadgeText}>Pending</Text></View>
                         ) : isAccepted ? (
@@ -702,8 +806,8 @@ export default function QuotationEdit() {
                       </View>
                       <Text style={styles.itemAccordionMeta}>
                         {isServiceLine
-                          ? `Service • PHP ${formatMoney(Number(it.unit_price || 0))}`
-                          : `Qty ${it.quantity || 1} × PHP ${formatMoney(Number(it.unit_price || 0))} • ${getSourceLabel(it.source)}`}
+                          ? `Service${isExpanded ? '' : ` • PHP ${formatMoney(Number(it.unit_price || 0))}`}`
+                          : `${isExpanded ? `Qty ${it.quantity || 1}` : `Qty ${it.quantity || 1} × PHP ${formatMoney(Number(it.unit_price || 0))}`} • ${getSourceLabel(it.source)}`}
                       </Text>
                     </View>
                     <View style={styles.itemAccordionRight}>
@@ -713,8 +817,9 @@ export default function QuotationEdit() {
                       {it.change_type === 'removed' || isRemovedGhost ? (
                         <View style={styles.changeTypeBadgeDanger}><Text style={styles.changeTypeBadgeDangerText}>Removed</Text></View>
                       ) : null}
-                      <Text style={styles.itemAccordionTotal}>PHP {formatMoney(Number(it.quantity || 0) * Number(it.unit_price || 0))}</Text>
-                      <FontAwesome name={isExpanded ? 'chevron-up' : 'chevron-down'} size={14} color="#AFAFAF" />
+                      {!isExpanded ? (
+                        <Text style={styles.itemAccordionTotal}>PHP {formatMoney(Number(it.quantity || 0) * Number(it.unit_price || 0))}</Text>
+                      ) : null}
                     </View>
                   </TouchableOpacity>
 
@@ -959,7 +1064,11 @@ export default function QuotationEdit() {
           </View>
         </View>
 
-        <TouchableOpacity onPress={handleSave} style={styles.saveButton} disabled={saving}>
+        <TouchableOpacity
+          onPress={handleSave}
+          style={[styles.saveButton, (!hasUnsavedChanges || saving) ? styles.saveButtonDisabled : null]}
+          disabled={saving || !hasUnsavedChanges}
+        >
           {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.saveButtonText}>Save Quotation</Text>}
         </TouchableOpacity>
       </ScrollView>
@@ -1000,29 +1109,29 @@ export default function QuotationEdit() {
               {changeBreakdown.added.map(({ current: it }, idx) => (
                 <View key={`added-${idx}`} style={styles.modalChangeItemRow}>
                   <Text style={styles.modalChangeTypeAdd}>ADDED</Text>
-                  <Text style={styles.modalChangeItemText} numberOfLines={1}>{it.description || `Item ${idx + 1}`}</Text>
+                  <Text style={styles.modalChangeItemText} numberOfLines={1}>{it.description || `Quotation #${idx + 1}`}</Text>
                 </View>
               ))}
               {changeBreakdown.edited.map(({ current: it, previous }, idx) => (
                 <View key={`edited-${idx}`} style={styles.modalChangeItemBlock}>
                   <View style={styles.modalChangeItemRow}>
                     <Text style={styles.modalChangeTypeEdit}>EDITED</Text>
-                    <Text style={styles.modalChangeItemText} numberOfLines={1}>{it.description || `Item ${idx + 1}`}</Text>
+                    <Text style={styles.modalChangeItemText} numberOfLines={1}>{it.description || `Quotation #${idx + 1}`}</Text>
                   </View>
                   {previous ? (
                     <>
-                      <Text style={styles.modalChangeSubText}>Before: {previous.description || `Item ${idx + 1}`} • Qty {previous.quantity || 1} • PHP {formatMoney(Number(previous.unit_price || 0))}{previous.line_kind === 'item' ? ` • ${getSourceLabel(previous.source)}` : ''}</Text>
-                      <Text style={styles.modalChangeSubText}>After: {it.description || `Item ${idx + 1}`} • Qty {it.quantity || 1} • PHP {formatMoney(Number(it.unit_price || 0))}{it.line_kind === 'item' ? ` • ${getSourceLabel(it.source)}` : ''}</Text>
+                      <Text style={styles.modalChangeSubText}>Before: {previous.description || `Quotation #${idx + 1}`} • Qty {previous.quantity || 1} • PHP {formatMoney(Number(previous.unit_price || 0))}{previous.line_kind === 'item' ? ` • ${getSourceLabel(previous.source)}` : ''}</Text>
+                      <Text style={styles.modalChangeSubText}>After: {it.description || `Quotation #${idx + 1}`} • Qty {it.quantity || 1} • PHP {formatMoney(Number(it.unit_price || 0))}{it.line_kind === 'item' ? ` • ${getSourceLabel(it.source)}` : ''}</Text>
                     </>
                   ) : (
-                    <Text style={styles.modalChangeSubText}>After: {it.description || `Item ${idx + 1}`} • Qty {it.quantity || 1} • PHP {formatMoney(Number(it.unit_price || 0))}{it.line_kind === 'item' ? ` • ${getSourceLabel(it.source)}` : ''}</Text>
+                    <Text style={styles.modalChangeSubText}>After: {it.description || `Quotation #${idx + 1}`} • Qty {it.quantity || 1} • PHP {formatMoney(Number(it.unit_price || 0))}{it.line_kind === 'item' ? ` • ${getSourceLabel(it.source)}` : ''}</Text>
                   )}
                 </View>
               ))}
               {changeBreakdown.removed.map(({ current: it }, idx) => (
                 <View key={`removed-${idx}`} style={styles.modalChangeItemRow}>
                   <Text style={styles.modalChangeTypeDelete}>REMOVED</Text>
-                  <Text style={styles.modalChangeItemText} numberOfLines={1}>{it.description || `Item ${idx + 1}`}</Text>
+                  <Text style={styles.modalChangeItemText} numberOfLines={1}>{it.description || `Quotation #${idx + 1}`}</Text>
                 </View>
               ))}
             </ScrollView>
