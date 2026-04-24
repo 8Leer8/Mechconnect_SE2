@@ -23,6 +23,7 @@ export default function ClientTabLayout() {
     message: 'A mechanic requested to accept your broadcast.',
   });
   const lastHandledMessageTimestampRef = React.useRef<number | null>(null);
+  const mountedAtRef = React.useRef<number>(Date.now());
 
   useTabsBackToHome('/(clientTabs)/main/home');
 
@@ -31,6 +32,9 @@ export default function ClientTabLayout() {
 
     const messageTimestamp = Number(lastMessage._timestamp || 0) || null;
     if (!messageTimestamp) return;
+    // Ignore stale messages that existed before this layout was mounted
+    // (e.g. switching account views with an old cached lastMessage).
+    if (messageTimestamp < mountedAtRef.current) return;
     if (lastHandledMessageTimestampRef.current === messageTimestamp) return;
     lastHandledMessageTimestampRef.current = messageTimestamp;
 
