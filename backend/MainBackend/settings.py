@@ -321,6 +321,11 @@ LOGGING = {
         'level': 'INFO',
     },
     'loggers': {
+        'django.server': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
         'bookings': {
             'handlers': ['console'],
             'level': 'DEBUG',

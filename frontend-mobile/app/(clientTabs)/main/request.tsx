@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, TouchableOpacity, ScrollView, Modal, RefreshControl, AppState } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { ThemedText } from '@/components/themed-text';
@@ -110,6 +110,8 @@ interface ErrorResponse {
   error: string;
 }
 
+type RequestFilter = 'all' | 'custom' | 'direct' | 'emergency' | 'broadcast';
+
 // Isolated countdown component — has its own 1s interval so only this re-renders, not the whole screen
 function CountdownBanner({ expiresAt, onExpired }: { expiresAt: string; onExpired?: () => void }) {
   const [now, setNow] = useState(Date.now());
@@ -162,16 +164,39 @@ export default function RequestScreen() {
   const [error, setError] = useState<string | null>(null);
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
   const [requestToDelete, setRequestToDelete] = useState<BroadcastRequest | null>(null);
+  const requestsFetchInFlightRef = useRef(false);
+  const pendingRequestsFetchRef = useRef<{ page: number; filterType: RequestFilter } | null>(null);
+  const lastRequestsFetchAtRef = useRef(0);
   
   // Pagination and filter states
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
-  const [filter, setFilter] = useState<'all' | 'custom' | 'direct' | 'emergency' | 'broadcast'>('all');
+  const [filter, setFilter] = useState<RequestFilter>('all');
   const pageSize = 5;
   const { lastMessage } = useWebSocketContext();
 
-  const fetchRequests = async (silent = false, page = currentPage, filterType = filter) => {
+  const fetchRequests = async (
+    silent = false,
+    page = currentPage,
+    filterType = filter,
+    options?: { force?: boolean }
+  ) => {
+    const force = options?.force === true;
+    const now = Date.now();
+
+    if (!force && now - lastRequestsFetchAtRef.current < 1200) {
+      return;
+    }
+
+    if (requestsFetchInFlightRef.current) {
+      pendingRequestsFetchRef.current = { page, filterType };
+      return;
+    }
+
+    requestsFetchInFlightRef.current = true;
+    lastRequestsFetchAtRef.current = now;
+
     try {
       if (!silent) setLoading(true);
       setError(null);
@@ -200,23 +225,17 @@ export default function RequestScreen() {
     } finally {
       setLoading(false);
       setRefreshing(false);
-    }
-  };
+      requestsFetchInFlightRef.current = false;
 
-  const fetchActiveBroadcasts = async () => {
-    try {
-      await fetch(`${API_URL}/bookings/broadcasts/active/`, {
-        method: 'GET',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
-    } catch (_) {
-      // Non-blocking refresh helper for websocket/focus events
+      if (pendingRequestsFetchRef.current) {
+        const pending = pendingRequestsFetchRef.current;
+        pendingRequestsFetchRef.current = null;
+        void fetchRequests(true, pending.page, pending.filterType, { force: true });
+      }
     }
   };
 
   const fetchData = useCallback(() => {
-    fetchActiveBroadcasts();
     fetchRequests(true, currentPage, filter);
   }, [currentPage, filter]);
 
@@ -249,19 +268,19 @@ export default function RequestScreen() {
 
   const onRefresh = () => {
     setRefreshing(true);
-    fetchRequests();
+    fetchRequests(false, currentPage, filter, { force: true });
   };
 
-  const handleFilterChange = (newFilter: 'all' | 'custom' | 'direct' | 'emergency' | 'broadcast') => {
+  const handleFilterChange = (newFilter: RequestFilter) => {
     setFilter(newFilter);
     setCurrentPage(1); // Reset to first page when filter changes
-    fetchRequests(true, 1, newFilter);
+    fetchRequests(true, 1, newFilter, { force: true });
   };
 
   const handlePageChange = (newPage: number) => {
     if (newPage >= 1 && newPage <= totalPages) {
       setCurrentPage(newPage);
-      fetchRequests(true, newPage, filter);
+      fetchRequests(true, newPage, filter, { force: true });
     }
   };
 
@@ -712,7 +731,7 @@ export default function RequestScreen() {
               <FontAwesome name="inbox" size={36} color="#555" />
               <ThemedText style={styles.emptyText}>No requests yet</ThemedText>
               <ThemedText style={{ fontSize: 13, color: '#8E8E93', marginTop: 8, textAlign: 'center' }}>
-                Tap "Add Request" to create your first request
+                Tap &quot;Add Request&quot; to create your first request
               </ThemedText>
             </View>
           ) : (

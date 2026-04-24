@@ -587,16 +587,16 @@ export default function BroadcastDetailScreen() {
         }
       >
         {/* Status Card */}
-        <View style={[styles.statusCard, { borderColor: getStatusColor(status) + '40' }]}>
-          <View style={[styles.statusIconLarge, { backgroundColor: getStatusColor(status) + '20' }]}>
-            <FontAwesome name={getStatusIcon(status) as any} size={28} color={getStatusColor(status)} />
+        <View style={[styles.statusCard, { borderColor: getStatusColor(currentStatus) + '40' }]}>
+          <View style={[styles.statusIconLarge, { backgroundColor: getStatusColor(currentStatus) + '20' }]}>
+            <FontAwesome name={getStatusIcon(currentStatus) as any} size={28} color={getStatusColor(currentStatus)} />
           </View>
           <View style={styles.statusInfo}>
-            <View style={[styles.statusBadge, { backgroundColor: getStatusColor(status) }]}>
-              <ThemedText style={styles.statusBadgeText}>{getStatusLabel(status)}</ThemedText>
+            <View style={[styles.statusBadge, { backgroundColor: getStatusColor(currentStatus) }]}>
+              <ThemedText style={styles.statusBadgeText}>{getStatusLabel(currentStatus)}</ThemedText>
             </View>
             <ThemedText style={styles.broadcastType}>Broadcast Request</ThemedText>
-            {status === 'searching' && timeRemaining > 0 && (
+            {currentStatus === 'searching' && timeRemaining > 0 && (
               <View style={styles.timerContainer}>
                 <FontAwesome name="clock-o" size={14} color="#FF8C00" />
                 <ThemedText style={styles.timerText}>

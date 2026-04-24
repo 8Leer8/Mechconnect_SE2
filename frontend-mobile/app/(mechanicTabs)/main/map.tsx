@@ -161,6 +161,9 @@ export default function MapScreen() {
   const cachedRouteData = useRef<CachedRouteData | null>(null);
   const markerTapRef = useRef<Record<number, number>>({});
   const lastBroadcastFetchLocationRef = useRef<{ latitude: number; longitude: number } | null>(null);
+  const broadcastFetchInFlightRef = useRef(false);
+  const pendingBroadcastRefreshRef = useRef(false);
+  const lastBroadcastFetchAtRef = useRef(0);
   const { showNotification } = useNotification();
   const pathname = usePathname();
   const segments = useSegments();
@@ -675,17 +678,32 @@ export default function MapScreen() {
       return;
     }
     setRefreshing(true);
-    if (userLocationRef.current) fetchBroadcasts(true);
+    if (userLocationRef.current) fetchBroadcasts(true, { force: true });
     else { setRefreshing(false); void initializeMap(); }
   };
 
-  const fetchBroadcasts = async (silent = false) => {
+  const fetchBroadcasts = async (silent = false, options?: { force?: boolean }) => {
     if (!broadcastFetchEnabled) {
       setBroadcasts([]);
       setLoading(false);
       setRefreshing(false);
       return;
     }
+
+    const force = options?.force === true;
+    const now = Date.now();
+    if (!force && now - lastBroadcastFetchAtRef.current < 1500) {
+      return;
+    }
+
+    if (broadcastFetchInFlightRef.current) {
+      pendingBroadcastRefreshRef.current = true;
+      return;
+    }
+
+    broadcastFetchInFlightRef.current = true;
+    lastBroadcastFetchAtRef.current = now;
+
     try {
       if (!silent) setLoading(true);
       setError(null);
@@ -708,7 +726,20 @@ export default function MapScreen() {
         }, {})
       );
     } catch (err: any) { if (!silent) setError(err.message); }
-    finally { setLoading(false); setRefreshing(false); }
+    finally {
+      setLoading(false);
+      setRefreshing(false);
+      broadcastFetchInFlightRef.current = false;
+
+      if (pendingBroadcastRefreshRef.current) {
+        pendingBroadcastRefreshRef.current = false;
+        setTimeout(() => {
+          if (broadcastFetchEnabled) {
+            void fetchBroadcasts(true, { force: true });
+          }
+        }, 250);
+      }
+    }
   };
 
   const handleBroadcastPress = async (broadcast: BroadcastRequest) => {
