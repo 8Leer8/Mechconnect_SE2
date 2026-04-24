@@ -5,15 +5,85 @@ from rest_framework.permissions import AllowAny
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.utils import timezone
+from django.db import transaction
 from datetime import timedelta
 import json
 import logging
 
 from ...models import (
-    Request, BroadcastRequest, ServiceLocation, BroadcastRequestAddOn
+    Request, BroadcastRequest, BroadcastOffer, Booking, ServiceLocation, BroadcastRequestAddOn
 )
+from ...serializers import BroadcastRequestSerializer, BroadcastOfferSerializer
 from users.models import Account
 from services.models import Service, ServiceAddOn
+from services.pricing_utils import (
+    get_distance_fee,
+    get_traffic_surcharge,
+    get_convenience_fee,
+    apply_min_job_price,
+    get_platform_commission,
+    get_required_tokens,
+)
+
+
+def _send_user_event(account_id, payload):
+    channel_layer = get_channel_layer()
+    if channel_layer is None or not account_id:
+        return
+    async_to_sync(channel_layer.group_send)(f'user_{account_id}', payload)
+
+
+def _calculate_total_amount(broadcast_request, distance_km, traffic_level):
+    service_total = 0.0
+    for service in broadcast_request.services.all():
+        service_total += float(service.minimum_price)
+
+    add_ons_total = 0.0
+    for addon_relation in broadcast_request.add_ons.all():
+        add_ons_total += float(addon_relation.service_add_on.price)
+
+    service_subtotal = service_total + add_ons_total
+    distance_fee = 0.0
+    traffic_surcharge = 0.0
+    if distance_km is not None:
+        distance_fee = get_distance_fee(distance_km)
+        traffic_surcharge = get_traffic_surcharge(distance_fee, traffic_level)
+
+    convenience_fee = get_convenience_fee(service_subtotal)
+    subtotal_amount = service_subtotal + distance_fee + traffic_surcharge + float(convenience_fee)
+    total_amount = apply_min_job_price(subtotal_amount)
+    platform_commission = get_platform_commission(total_amount)
+
+    return {
+        'service_subtotal': service_subtotal,
+        'distance_fee': distance_fee,
+        'traffic_surcharge': traffic_surcharge,
+        'convenience_fee': convenience_fee,
+        'total_amount': total_amount,
+        'platform_commission': platform_commission,
+        'required_tokens': get_required_tokens(total_amount),
+    }
+
+
+def _resolve_broadcast_request(broadcast_id, account):
+    """Resolve a broadcast request by broadcast id or by parent request id."""
+    try:
+        return BroadcastRequest.objects.select_related('request', 'request__service_location').prefetch_related('services', 'add_ons__service_add_on').get(
+            id=broadcast_id,
+            request__client=account.client,
+        )
+    except BroadcastRequest.DoesNotExist:
+        pass
+
+    req = Request.objects.select_related('service_location', 'client').filter(
+        id=broadcast_id,
+        client=account.client,
+        request_type='broadcast',
+    ).first()
+    if req and hasattr(req, 'broadcast_request'):
+        return req.broadcast_request
+
+    raise BroadcastRequest.DoesNotExist()
 
 logger = logging.getLogger(__name__)
 MIN_SEARCH_RADIUS_KM = 1
@@ -240,3 +310,207 @@ def create_broadcast_request(request):
         return Response({
             'error': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def get_broadcast_offers(request, broadcast_id):
+    """Return broadcast details and every mechanic offer for client selection."""
+    account_id = request.session.get('account_id')
+
+    if not account_id:
+        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        account = Account.objects.get(id=account_id)
+        if not hasattr(account, 'client'):
+            return Response({'error': 'Only clients can view broadcast offers'}, status=status.HTTP_403_FORBIDDEN)
+
+        broadcast_request = _resolve_broadcast_request(broadcast_id, account)
+
+        offers = BroadcastOffer.objects.filter(
+            broadcast_request=broadcast_request,
+        ).select_related('mechanic__account').order_by('created_at', 'id')
+
+        return Response({
+            'broadcast': BroadcastRequestSerializer(broadcast_request, context={'request': request}).data,
+            'offers': BroadcastOfferSerializer(offers, many=True, context={'request': request}).data,
+            'count': offers.count(),
+        }, status=status.HTTP_200_OK)
+
+    except BroadcastRequest.DoesNotExist:
+        return Response({'error': 'Broadcast request not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Account.DoesNotExist:
+        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@transaction.atomic
+def select_mechanic(request, broadcast_id):
+    """Atomically finalize a broadcast by selecting one mechanic offer."""
+    account_id = request.session.get('account_id')
+
+    if not account_id:
+        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    offer_id_raw = request.data.get('offer_id')
+    try:
+        offer_id = int(offer_id_raw)
+    except (TypeError, ValueError):
+        return Response({'error': 'Valid offer_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        account = Account.objects.get(id=account_id)
+        if not hasattr(account, 'client'):
+            return Response({'error': 'Only clients can select mechanics'}, status=status.HTTP_403_FORBIDDEN)
+
+        broadcast_request = _resolve_broadcast_request(broadcast_id, account)
+        broadcast_request = BroadcastRequest.objects.select_for_update().select_related('request', 'request__client').prefetch_related('services', 'add_ons__service_add_on').get(id=broadcast_request.id)
+
+        if not broadcast_request.can_accept_offers():
+            return Response({
+                'error': 'This broadcast is no longer available',
+                'reason': 'expired' if broadcast_request.is_expired() else 'already_accepted',
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        winning_offer = BroadcastOffer.objects.select_for_update().select_related('mechanic__account').get(
+            id=offer_id,
+            broadcast_request=broadcast_request,
+        )
+
+        if winning_offer.status != BroadcastOffer.Status.PENDING:
+            return Response({'error': 'This offer can no longer be selected'}, status=status.HTTP_400_BAD_REQUEST)
+
+        distance_km = float(winning_offer.distance_km) if winning_offer.distance_km is not None else None
+        traffic_level = winning_offer.traffic_level or 'low'
+        total_amount = float(winning_offer.estimated_price) if winning_offer.estimated_price is not None else None
+        convenience_fee = float(winning_offer.convenience_fee) if winning_offer.convenience_fee is not None else None
+        eta_minutes = int(winning_offer.estimated_eta_minutes) if winning_offer.estimated_eta_minutes is not None else None
+
+        if total_amount is None or convenience_fee is None:
+            pricing = _calculate_total_amount(broadcast_request, distance_km, traffic_level)
+            total_amount = pricing['total_amount']
+            convenience_fee = float(pricing['convenience_fee'])
+
+        required_tokens = get_required_tokens(total_amount)
+        mechanic = winning_offer.mechanic
+
+        if mechanic.tokens_balance < required_tokens:
+            return Response({
+                'error': 'Selected mechanic no longer has enough tokens to complete this booking',
+                'required_tokens': required_tokens,
+                'current_tokens': mechanic.tokens_balance,
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        other_offers = list(
+            BroadcastOffer.objects.select_for_update().select_related('mechanic__account').filter(
+                broadcast_request=broadcast_request,
+                status=BroadcastOffer.Status.PENDING,
+            ).exclude(id=winning_offer.id)
+        )
+
+        now = timezone.now()
+        winning_offer.status = BroadcastOffer.Status.ACCEPTED
+        winning_offer.responded_at = now
+        winning_offer.save(update_fields=['status', 'responded_at'])
+
+        if other_offers:
+            BroadcastOffer.objects.filter(id__in=[offer.id for offer in other_offers]).update(
+                status=BroadcastOffer.Status.REJECTED,
+                responded_at=now,
+            )
+
+        broadcast_request.status = BroadcastRequest.Status.ACCEPTED
+        broadcast_request.accepted_at = now
+        broadcast_request.save(update_fields=['status', 'accepted_at'])
+
+        base_request = broadcast_request.request
+        base_request.provider = mechanic.account
+        base_request.save(update_fields=['provider'])
+
+        booking = Booking.objects.create(
+            request=base_request,
+            status=Booking.Status.ACCEPTED,
+            amount_fee=total_amount,
+            distance_km=distance_km,
+            convenience_fee=convenience_fee,
+            eta_minutes=eta_minutes,
+            traffic_surcharge=_calculate_total_amount(broadcast_request, distance_km, traffic_level)['traffic_surcharge'],
+        )
+
+        mechanic.tokens_balance = mechanic.tokens_balance - required_tokens
+        mechanic.save(update_fields=['tokens_balance'])
+
+        from users.models import TokenTransaction
+        TokenTransaction.objects.create(
+            account=mechanic.account,
+            tokens=-required_tokens,
+            reason='booking_tax',
+            related_booking_id=booking.id,
+        )
+
+        # Notify the winner and client that the broadcast has been finalized.
+        _send_user_event(mechanic.account_id, {
+            'type': 'booking_update',
+            'action': 'booking_finalized',
+            'broadcast_id': broadcast_request.id,
+            'offer_id': winning_offer.id,
+            'booking_id': booking.id,
+            'status': booking.status,
+            'message': 'Your offer was selected by the client',
+        })
+
+        _send_user_event(base_request.client.account_id, {
+            'type': 'booking_update',
+            'action': 'broadcast_finalized',
+            'broadcast_id': broadcast_request.id,
+            'offer_id': winning_offer.id,
+            'booking_id': booking.id,
+            'status': booking.status,
+            'message': 'You selected a mechanic for your broadcast request',
+        })
+
+        for offer in other_offers:
+            _send_user_event(offer.mechanic.account_id, {
+                'type': 'booking_update',
+                'action': 'offer_rejected',
+                'broadcast_id': broadcast_request.id,
+                'offer_id': offer.id,
+                'booking_id': booking.id,
+                'status': BroadcastOffer.Status.REJECTED,
+                'message': 'Client accepted a different mechanic',
+            })
+
+        channel_layer = get_channel_layer()
+        if channel_layer is not None:
+            async_to_sync(channel_layer.group_send)('broadcasts', {
+                'type': 'booking_update',
+                'action': 'broadcast_removed',
+                'broadcast_id': broadcast_request.id,
+                'booking_id': booking.id,
+                'message': 'Broadcast accepted',
+            })
+
+        return Response({
+            'message': 'Mechanic selected successfully',
+            'broadcast_id': broadcast_request.id,
+            'offer_id': winning_offer.id,
+            'booking_id': booking.id,
+            'status': broadcast_request.status,
+            'tokens_deducted': required_tokens,
+            'tokens_remaining': mechanic.tokens_balance,
+            'winner': BroadcastOfferSerializer(winning_offer, context={'request': request}).data,
+            'rejected_offer_ids': [offer.id for offer in other_offers],
+        }, status=status.HTTP_200_OK)
+
+    except Account.DoesNotExist:
+        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+    except BroadcastOffer.DoesNotExist:
+        return Response({'error': 'Offer not found for this broadcast'}, status=status.HTTP_404_NOT_FOUND)
+    except BroadcastRequest.DoesNotExist:
+        return Response({'error': 'Broadcast request not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

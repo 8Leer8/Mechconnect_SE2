@@ -6,6 +6,7 @@ import { ThemedText } from '@/components/themed-text';
 import { FontAwesome } from '@expo/vector-icons';
 import { getImageUrl } from '@/lib/imageUtils';
 import { fetchProfileDetailsCached, getCachedAccountId } from '@/lib/profileCache';
+import { shouldMarkAsAdded, runQuotationDiffSelfCheck } from '@/lib/quotationDiff';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -467,6 +468,14 @@ export default function BookingChatScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!__DEV__) return;
+    const failures = runQuotationDiffSelfCheck();
+    if (failures.length > 0) {
+      console.warn('[quotation-diff-self-check] failed cases:', failures);
+    }
+  }, []);
+
   const scrollToLatestOnce = () => {
     if (!messages.length || didInitialScrollToLatest) return;
     if (initialScrollTimerRef.current) {
@@ -839,9 +848,8 @@ export default function BookingChatScreen() {
         for (let i = currentIdx - 1; i >= 0; i--) {
           try {
             const pm = messages[i];
-            const pp = typeof pm.content === 'string' ? JSON.parse(pm.content) : pm.content;
-            const ppStatus = String(pp?.status || '').toLowerCase();
-            if (pp && pp.type === 'quotation_request' && String(pp.quotation_id) === String(parsed.quotation_id) && ppStatus !== 'rejected') {
+            const pp = parseStructuredContent(pm.content) || (typeof pm.content === 'object' ? pm.content : null);
+            if (pp && pp.type === 'quotation_request' && String(pp.quotation_id) === String(parsed.quotation_id)) {
               previousItems = Array.isArray(pp.items) ? pp.items : [];
               break;
             }
@@ -850,17 +858,8 @@ export default function BookingChatScreen() {
       }
 
       const orderedPreviousItems = sortQuotationItems(previousItems);
-      const isActionablePendingLine = (it: any) => {
-        const st = String(it?.status || '').toLowerCase();
-        const ch = String(it?.change_type || '').toLowerCase();
-        return st === 'pending' || st === 'rejected' || ch === 'added' || ch === 'edited' || ch === 'removed';
-      };
-      const visibleOrderedItemList = isPending
-        ? orderedItemList.filter((it: any) => isActionablePendingLine(it))
-        : orderedItemList;
-      const visibleOrderedPreviousItems = isPending
-        ? orderedPreviousItems.filter((it: any) => isActionablePendingLine(it))
-        : orderedPreviousItems;
+      const visibleOrderedItemList = orderedItemList;
+      const visibleOrderedPreviousItems = orderedPreviousItems;
 
       const normalizeText = (v: any) => String(v ?? '').trim().toLowerCase();
       const normalizeNum = (v: any) => Number(v ?? 0);
@@ -894,6 +893,17 @@ export default function BookingChatScreen() {
       // This avoids false Added/Removed when backend regenerates IDs for edited rows.
       const usedPrevIndexes = new Set<number>();
       const matchedRows = visibleOrderedItemList.map((currentIt: any) => {
+        const declaredChangeType = String(currentIt?.change_type || '').toLowerCase();
+        // Important: rows explicitly marked as ADDED in payload must remain ADDED.
+        // If we still try to match them to previous rows, Added+Removed combos can be
+        // incorrectly collapsed into a single Edited row in mixed-change requests.
+        if (declaredChangeType === 'added') {
+          const currentStatus = String(currentIt?.status || '').toLowerCase();
+          const currentChangeType = declaredChangeType;
+          const isAdded = currentStatus === 'pending' || currentStatus === 'rejected' || currentChangeType === 'added';
+          return { currentIt, previousIt: null, isAdded, isEdited: false };
+        }
+
         let matchIdx = -1;
 
         if (currentIt?.id != null) {
@@ -941,22 +951,36 @@ export default function BookingChatScreen() {
           }
         }
 
-        if (matchIdx < 0) {
-          matchIdx = visibleOrderedPreviousItems.findIndex((prevIt: any, prevIdx: number) => (
-            !usedPrevIndexes.has(prevIdx) &&
-            normalizeText(prevIt?.description) === normalizeText(currentIt?.description)
-          ));
-        }
-
-        const previousIt = matchIdx >= 0 ? visibleOrderedPreviousItems[matchIdx] : null;
+        let previousIt = matchIdx >= 0 ? visibleOrderedPreviousItems[matchIdx] : null;
         if (matchIdx >= 0) usedPrevIndexes.add(matchIdx);
 
-        const isAdded = !previousIt;
-        const isEdited = !!previousIt && (
+        // If backend sent explicit previous_* fields, prefer them as the edit baseline.
+        if (!previousIt && (
+          currentIt?.previous_description != null ||
+          currentIt?.previous_quantity != null ||
+          currentIt?.previous_unit_price != null
+        )) {
+          const prevQty = Number(currentIt?.previous_quantity ?? currentIt?.quantity ?? 1) || 1;
+          const prevUnit = Number(currentIt?.previous_unit_price ?? 0) || 0;
+          previousIt = {
+            description: currentIt?.previous_description,
+            quantity: prevQty,
+            unit_price: prevUnit,
+            line_total: prevQty * prevUnit,
+          };
+        }
+
+        const currentStatus = String(currentIt?.status || '').toLowerCase();
+        const currentChangeType = declaredChangeType;
+        const isAdded = shouldMarkAsAdded(
+          { ...currentIt, status: currentStatus, change_type: currentChangeType },
+          previousIt
+        );
+        const isEdited = (currentChangeType === 'edited' || currentChangeType === 'update' || currentChangeType === 'modify') || (!!previousIt && (
           normalizeText(previousIt?.description) !== normalizeText(currentIt?.description) ||
           normalizeNum(previousIt?.quantity) !== normalizeNum(currentIt?.quantity) ||
           normalizeNum(previousIt?.unit_price) !== normalizeNum(currentIt?.unit_price)
-        );
+        ));
 
         return { currentIt, previousIt, isAdded, isEdited };
       });
@@ -995,9 +1019,9 @@ export default function BookingChatScreen() {
                 {isExpanded ? (
                   <>
                     <View style={{ height: 1, backgroundColor: '#2f3338', marginVertical: 8 }} />
-                    {isPending ? (
+                    {isPending && isBackjobQuote ? (
                       <ThemedText style={{ color: '#8E8E93', fontSize: 11, marginBottom: 8 }}>
-                        {isBackjobQuote ? 'Backjob: only new changes will be charged' : 'Requested changes only'}
+                        Backjob: only new changes will be charged
                       </ThemedText>
                     ) : null}
                     {matchedRows.map(({ currentIt: it, previousIt: prevIt, isAdded, isEdited }: any, idx: number) => {

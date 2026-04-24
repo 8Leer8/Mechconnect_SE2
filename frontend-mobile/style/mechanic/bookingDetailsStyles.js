@@ -468,6 +468,11 @@ export const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FF8C00',
   },
+  navigateButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FF8C00',
+  },
   navigateSubtitle: {
     fontSize: 11,
     color: '#8E8E93',
@@ -572,10 +577,15 @@ export const styles = StyleSheet.create({
   },
   quoteHeaderLeft: {
     flex: 1,
+    minWidth: 0,
     marginRight: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: 6,
+  },
+  quoteItemTitle: {
+    width: '100%',
+    flexShrink: 1,
   },
   quotationAccordionRight: {
     flexDirection: 'row',

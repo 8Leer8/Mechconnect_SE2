@@ -25,6 +25,11 @@ urlpatterns = [
     # Broadcast request endpoints (mechanic side)
     path('broadcasts/active/', views.get_active_broadcasts, name='get-active-broadcasts'),
     path('broadcasts/<int:broadcast_id>/accept/', views.accept_broadcast_request, name='accept-broadcast-request'),
+    path('broadcasts/<int:broadcast_id>/withdraw/', views.withdraw_broadcast_offer, name='withdraw-broadcast-offer'),
+
+    # Broadcast request endpoints (client selection side)
+    path('broadcasts/<int:broadcast_id>/offers/', views.get_broadcast_offers, name='get-broadcast-offers'),
+    path('broadcasts/<int:broadcast_id>/select-mechanic/', views.select_mechanic, name='select-mechanic'),
     
     # Broadcast request endpoints (client side)
     path('requests/<int:request_id>/broadcast/resend/', views.resend_broadcast_request, name='resend-broadcast-request'),

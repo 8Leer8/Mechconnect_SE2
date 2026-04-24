@@ -77,6 +77,8 @@ interface BroadcastRequest {
   status: string;
   concern_picture?: string;
   required_tokens?: number;
+  my_offer_id?: number | null;
+  my_offer_status?: string | null;
 }
 
 type TrafficLevel = 'light' | 'moderate' | 'heavy' | 'severe' | 'unknown';
@@ -159,6 +161,9 @@ export default function MapScreen() {
   const cachedRouteData = useRef<CachedRouteData | null>(null);
   const markerTapRef = useRef<Record<number, number>>({});
   const lastBroadcastFetchLocationRef = useRef<{ latitude: number; longitude: number } | null>(null);
+  const broadcastFetchInFlightRef = useRef(false);
+  const pendingBroadcastRefreshRef = useRef(false);
+  const lastBroadcastFetchAtRef = useRef(0);
   const { showNotification } = useNotification();
   const pathname = usePathname();
   const segments = useSegments();
@@ -176,6 +181,9 @@ export default function MapScreen() {
   const [modalVisible, setModalVisible] = useState(false);
   const [accepting, setAccepting] = useState(false);
   const [tokensBalance, setTokensBalance] = useState<number | null>(null);
+  const [pendingOffersByBroadcastId, setPendingOffersByBroadcastId] = useState<Record<number, { offerId: number; status: string }>>({});
+  const [awaitingClientSelectionBroadcastId, setAwaitingClientSelectionBroadcastId] = useState<number | null>(null);
+  const [offerNotice, setOfferNotice] = useState<{ broadcastId: number; message: string; tone: 'success' | 'warning' } | null>(null);
   const [currentTime, setCurrentTime] = useState(Date.now());
   const [routeCoords, setRouteCoords] = useState<{ latitude: number; longitude: number }[]>([]);
   const [routeLoading, setRouteLoading] = useState(false);
@@ -201,12 +209,61 @@ export default function MapScreen() {
 
   useEffect(() => {
     if (!lastMessage) return;
+
+    const messageBroadcastId = Number(lastMessage.broadcast_id ?? lastMessage.broadcastId ?? 0) || null;
+    const messageOfferId = Number(lastMessage.offer_id ?? lastMessage.offerId ?? 0) || null;
+    const pendingOffer = messageBroadcastId ? pendingOffersByBroadcastId[messageBroadcastId] : null;
+
+    if (lastMessage.action === 'offer_rejected' && messageBroadcastId && messageOfferId && pendingOffer?.offerId === messageOfferId) {
+      setOfferNotice({
+        broadcastId: messageBroadcastId,
+        message: 'Client accepted a different mechanic.',
+        tone: 'warning',
+      });
+      setPendingOffersByBroadcastId((current) => {
+        const next = { ...current };
+        delete next[messageBroadcastId];
+        return next;
+      });
+      setTimeout(() => {
+        closeBroadcastModal();
+        fetchBroadcasts(true);
+      }, 2200);
+      return;
+    }
+
+    if (lastMessage.action === 'booking_finalized' && messageBroadcastId && messageOfferId && pendingOffer?.offerId === messageOfferId) {
+      const acceptedBookingId = extractBookingIdFromPayload(lastMessage);
+      setOfferNotice({
+        broadcastId: messageBroadcastId,
+        message: 'Your request was selected by the client.',
+        tone: 'success',
+      });
+      setPendingOffersByBroadcastId((current) => {
+        const next = { ...current };
+        delete next[messageBroadcastId];
+        return next;
+      });
+      closeBroadcastModal();
+      fetchBroadcasts(true);
+      fetchTokensBalance();
+      if (acceptedBookingId) {
+        router.push({
+          pathname: '/mechanic/booking/booking_details',
+          params: { bookingId: String(acceptedBookingId) },
+        });
+      } else {
+        router.push('/main/bookings');
+      }
+      return;
+    }
+
     if (lastMessage.action === 'broadcast_removed' || (lastMessage.type === 'booking_update' && lastMessage.status === 'accepted')) {
       if (broadcastFetchEnabled && userLocationRef.current) {
         fetchBroadcasts(true);
       }
     }
-  }, [lastMessage]);
+  }, [lastMessage, pendingOffersByBroadcastId]);
   
   useEffect(() => {
     initializeMap();
@@ -282,6 +339,55 @@ export default function MapScreen() {
     if (movedKm >= 0.1) {
       lastBroadcastFetchLocationRef.current = location;
       fetchBroadcasts(true);
+    }
+  };
+
+  const handleCancelBroadcastAction = async (targetBroadcast?: BroadcastRequest | null) => {
+    const broadcastToCancel = targetBroadcast ?? selectedBroadcast;
+    if (!broadcastToCancel) {
+      closeBroadcastModal();
+      return;
+    }
+
+    const hasPendingRequest = broadcastToCancel.my_offer_status === 'pending'
+      || (awaitingClientSelectionBroadcastId !== null && awaitingClientSelectionBroadcastId === broadcastToCancel.id);
+    if (!hasPendingRequest) {
+      minimizeBroadcastModal();
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/bookings/broadcasts/${broadcastToCancel.id}/withdraw/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await response.json() as any;
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to withdraw broadcast request');
+      }
+
+      setAwaitingClientSelectionBroadcastId(null);
+      setPendingOffersByBroadcastId((current) => {
+        const next = { ...current };
+        delete next[broadcastToCancel.id];
+        return next;
+      });
+      setOfferNotice({
+        broadcastId: broadcastToCancel.id,
+        message: 'Your request was withdrawn.',
+        tone: 'warning',
+      });
+      showNotification({ type: 'success', title: 'Request withdrawn', message: 'The client waiting list has been updated.' });
+      fetchBroadcasts(true);
+      closeBroadcastModal();
+      try { eventBus.emit('walletChanged'); } catch { }
+    } catch (error) {
+      showNotification({
+        type: 'error',
+        title: 'Withdraw failed',
+        message: error instanceof Error ? error.message : 'Failed to withdraw broadcast request',
+      });
     }
   };
 
@@ -572,17 +678,32 @@ export default function MapScreen() {
       return;
     }
     setRefreshing(true);
-    if (userLocationRef.current) fetchBroadcasts(true);
+    if (userLocationRef.current) fetchBroadcasts(true, { force: true });
     else { setRefreshing(false); void initializeMap(); }
   };
 
-  const fetchBroadcasts = async (silent = false) => {
+  const fetchBroadcasts = async (silent = false, options?: { force?: boolean }) => {
     if (!broadcastFetchEnabled) {
       setBroadcasts([]);
       setLoading(false);
       setRefreshing(false);
       return;
     }
+
+    const force = options?.force === true;
+    const now = Date.now();
+    if (!force && now - lastBroadcastFetchAtRef.current < 1500) {
+      return;
+    }
+
+    if (broadcastFetchInFlightRef.current) {
+      pendingBroadcastRefreshRef.current = true;
+      return;
+    }
+
+    broadcastFetchInFlightRef.current = true;
+    lastBroadcastFetchAtRef.current = now;
+
     try {
       if (!silent) setLoading(true);
       setError(null);
@@ -596,14 +717,46 @@ export default function MapScreen() {
         .map((item: any) => normalizeBroadcast(item))
         .filter((item: BroadcastRequest | null): item is BroadcastRequest => item !== null);
       setBroadcasts(normalized);
+      setPendingOffersByBroadcastId(
+        normalized.reduce<Record<number, { offerId: number; status: string }>>((acc, item) => {
+          if (item.my_offer_id && item.my_offer_status === 'pending') {
+            acc[item.id] = { offerId: item.my_offer_id, status: item.my_offer_status };
+          }
+          return acc;
+        }, {})
+      );
     } catch (err: any) { if (!silent) setError(err.message); }
-    finally { setLoading(false); setRefreshing(false); }
+    finally {
+      setLoading(false);
+      setRefreshing(false);
+      broadcastFetchInFlightRef.current = false;
+
+      if (pendingBroadcastRefreshRef.current) {
+        pendingBroadcastRefreshRef.current = false;
+        setTimeout(() => {
+          if (broadcastFetchEnabled) {
+            void fetchBroadcasts(true, { force: true });
+          }
+        }, 250);
+      }
+    }
   };
 
-  const handleBroadcastPress = async (broadcast: BroadcastRequest) => { setSelectedBroadcast(broadcast); await fetchRouteAndTraffic(broadcast); setModalVisible(true); void fetchTokensBalance(); };
+  const handleBroadcastPress = async (broadcast: BroadcastRequest) => {
+    setSelectedBroadcast(broadcast);
+    setAwaitingClientSelectionBroadcastId(null);
+    setOfferNotice(null);
+    setAccepting(false);
+    await fetchRouteAndTraffic(broadcast);
+    setModalVisible(true);
+    void fetchTokensBalance();
+  };
   const handleCardPressShowRoute = async (broadcast: BroadcastRequest) => { setSelectedBroadcast(broadcast); await fetchRouteAndTraffic(broadcast); };
   const handleViewAndAccept = (broadcast: BroadcastRequest) => {
     setSelectedBroadcast(broadcast);
+    setAwaitingClientSelectionBroadcastId(null);
+    setOfferNotice(null);
+    setAccepting(false);
     if (lastFetchedBroadcastId.current === broadcast.id && cachedRouteData.current) {
       setRouteCoords(cachedRouteData.current.routeCoords); setTrafficData(cachedRouteData.current.trafficData); setFeeData(cachedRouteData.current.feeData); setRouteError(null); setRouteLoading(false);
     }
@@ -630,12 +783,19 @@ export default function MapScreen() {
   const closeBroadcastModal = () => {
     setModalVisible(false); setRouteCoords([]); setRouteLoading(false); setRouteError(null);
     setTrafficData(null); setFeeData(null); setSelectedBroadcast(null);
+    setAwaitingClientSelectionBroadcastId(null);
+    setOfferNotice(null);
     cachedRouteData.current = null; lastFetchedBroadcastId.current = null;
     if (userLocation && mapRef.current) mapRef.current.animateToRegion({ latitude: userLocation.latitude, longitude: userLocation.longitude, latitudeDelta: 0.0922, longitudeDelta: 0.0421 }, 1000);
   };
 
+  const minimizeBroadcastModal = () => {
+    setModalVisible(false);
+  };
+
   const handleAcceptBroadcast = async () => {
     if (!selectedBroadcast || !userLocation) return;
+
     setAccepting(true);
     try {
       const response = await fetch(`${API_URL}/bookings/broadcasts/${selectedBroadcast.id}/accept/`, {
@@ -644,17 +804,30 @@ export default function MapScreen() {
       });
       const data = await response.json() as any;
       if (response.ok) {
-        const acceptedBookingId = extractBookingIdFromPayload(data);
-        showNotification({ type: 'success', title: 'Accepted!', message: 'You have accepted the broadcast request. Check your bookings.' });
-        closeBroadcastModal(); fetchBroadcasts(true); fetchTokensBalance();
-        if (acceptedBookingId) {
-          router.push({
-            pathname: '/mechanic/booking/booking_details',
-            params: { bookingId: String(acceptedBookingId) },
-          });
-        } else {
-          router.push('/main/bookings');
-        }
+        const offerId = Number(data.offer_id ?? 0) || null;
+        const nextStatus = String(data.offer_status || 'pending');
+        setPendingOffersByBroadcastId((current) => ({
+          ...current,
+          [selectedBroadcast.id]: {
+            offerId: offerId ?? current[selectedBroadcast.id]?.offerId ?? 0,
+            status: nextStatus,
+          },
+        }));
+        setAwaitingClientSelectionBroadcastId(selectedBroadcast.id);
+        setSelectedBroadcast((current) => (current ? ({
+          ...current,
+          my_offer_id: offerId,
+          my_offer_status: nextStatus,
+        }) : current));
+        setOfferNotice({
+          broadcastId: selectedBroadcast.id,
+          message: 'Waiting for the client to accept.',
+          tone: 'success',
+        });
+        showNotification({ type: 'success', title: 'Request sent', message: 'Waiting for the client to accept.' });
+        minimizeBroadcastModal();
+        fetchBroadcasts(true);
+        fetchTokensBalance();
         try { eventBus.emit('walletChanged'); } catch { }
       } else {
         showNotification({ type: 'warning', title: 'Already Taken', message: data.error || 'This broadcast is no longer available. Another mechanic was faster.' });
@@ -686,6 +859,15 @@ export default function MapScreen() {
     : (typeof selectedBroadcast?.required_tokens === 'number' ? selectedBroadcast.required_tokens : null);
   const hasInsufficientTokens = requiredTokensPreview !== null && tokensBalance !== null && tokensBalance < requiredTokensPreview;
   const selectedBroadcastCoordinate = selectedBroadcast ? toValidCoordinate(selectedBroadcast.latitude, selectedBroadcast.longitude) : null;
+  const isAwaitingClientSelection = selectedBroadcast !== null && awaitingClientSelectionBroadcastId === selectedBroadcast.id;
+  const activePendingBroadcastId = useMemo(() => {
+    if (awaitingClientSelectionBroadcastId !== null) return awaitingClientSelectionBroadcastId;
+    const pendingEntry = Object.entries(pendingOffersByBroadcastId).find(([, offer]) => offer.status === 'pending');
+    return pendingEntry ? Number(pendingEntry[0]) : null;
+  }, [awaitingClientSelectionBroadcastId, pendingOffersByBroadcastId]);
+  const activePendingBroadcast = activePendingBroadcastId !== null
+    ? broadcasts.find((broadcast) => broadcast.id === activePendingBroadcastId) ?? null
+    : null;
   const sx = styles as any;
 
   return (
@@ -792,6 +974,35 @@ export default function MapScreen() {
         </TouchableOpacity>
       </View>
 
+      {activePendingBroadcast && !modalVisible && (
+        <View style={styles.waitingBanner}>
+          <View style={styles.waitingBannerHeader}>
+            <View style={styles.waitingBannerIcon}>
+              <FontAwesome name="clock-o" size={16} color="#FF8C00" />
+            </View>
+            <View style={styles.waitingBannerTextWrap}>
+              <ThemedText style={styles.waitingBannerTitle}>Waiting for client approval</ThemedText>
+              <ThemedText style={styles.waitingBannerText} numberOfLines={2}>
+                Your request stays active while you switch tabs or log out.
+              </ThemedText>
+            </View>
+          </View>
+          <View style={styles.waitingBannerActions}>
+            <TouchableOpacity style={styles.waitingBannerActionPrimary} onPress={() => {
+              setSelectedBroadcast(activePendingBroadcast);
+              setModalVisible(true);
+            }}>
+              <ThemedText style={styles.waitingBannerActionPrimaryText}>View</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.waitingBannerActionSecondary} onPress={() => {
+              void handleCancelBroadcastAction(activePendingBroadcast);
+            }}>
+              <ThemedText style={styles.waitingBannerActionSecondaryText}>Withdraw</ThemedText>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       <View style={styles.jobListContainer}>
         <View style={styles.jobListHeaderRow}>
           <ThemedText style={styles.jobListTitle}>Available Jobs</ThemedText>
@@ -876,13 +1087,13 @@ export default function MapScreen() {
       </View>
 
       {/* ── Broadcast Request Detail Modal ── */}
-      <Modal animationType="slide" transparent={true} visible={modalVisible} onRequestClose={closeBroadcastModal}>
+      <Modal animationType="slide" transparent={true} visible={modalVisible} onRequestClose={minimizeBroadcastModal}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <ThemedText style={[styles.modalTitle, ms.modalTitle]}>Broadcast Request Details</ThemedText>
-              <TouchableOpacity onPress={closeBroadcastModal}>
-                <FontAwesome name="times" size={24} color="#8E8E93" />
+              <TouchableOpacity onPress={minimizeBroadcastModal} accessibilityLabel="Minimize waiting panel">
+                <FontAwesome name="minus" size={24} color="#8E8E93" />
               </TouchableOpacity>
             </View>
 
@@ -1101,13 +1312,18 @@ export default function MapScreen() {
                 style={[
                   styles.modalAcceptButton,
                   accepting && styles.modalAcceptButtonDisabled,
-                  (hasInsufficientTokens || isShopOwnerMap) ? styles.modalAcceptButtonDisabled : null,
+                  (hasInsufficientTokens || isShopOwnerMap || isAwaitingClientSelection) ? styles.modalAcceptButtonDisabled : null,
                 ]}
                 onPress={handleAcceptBroadcast}
-                disabled={accepting || hasInsufficientTokens || isShopOwnerMap}
+                disabled={accepting || hasInsufficientTokens || isShopOwnerMap || isAwaitingClientSelection}
               >
                 {accepting ? (
                   <ActivityIndicator color="#fff" />
+                ) : isAwaitingClientSelection ? (
+                  <>
+                    <ActivityIndicator color="#fff" />
+                    <ThemedText style={styles.modalAcceptText}>Waiting for client to accept</ThemedText>
+                  </>
                 ) : isShopOwnerMap ? (
                   <>
                     <FontAwesome name="info-circle" size={18} color="#fff" />
@@ -1120,10 +1336,18 @@ export default function MapScreen() {
                   </>
                 )}
               </TouchableOpacity>
-              <TouchableOpacity style={styles.modalCancelButton} onPress={closeBroadcastModal}>
-                <ThemedText style={styles.modalCancelText}>Cancel</ThemedText>
+              <TouchableOpacity style={styles.modalCancelButton} onPress={handleCancelBroadcastAction}>
+                <ThemedText style={styles.modalCancelText}>{isAwaitingClientSelection ? 'Withdraw Request' : 'Cancel'}</ThemedText>
               </TouchableOpacity>
             </View>
+
+            {offerNotice && selectedBroadcast && offerNotice.broadcastId === selectedBroadcast.id && (
+              <View style={{ marginHorizontal: 20, marginBottom: 12, padding: 12, borderRadius: 12, backgroundColor: offerNotice.tone === 'warning' ? '#FF3B3018' : '#34C75918', borderWidth: 1, borderColor: offerNotice.tone === 'warning' ? '#FF3B3038' : '#34C75938' }}>
+                <ThemedText style={{ color: offerNotice.tone === 'warning' ? '#FFB4AA' : '#B8F2C3', fontSize: 13, fontWeight: '600' }}>
+                  {offerNotice.message}
+                </ThemedText>
+              </View>
+            )}
           </View>
         </View>
       </Modal>
