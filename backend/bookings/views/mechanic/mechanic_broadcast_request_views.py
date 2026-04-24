@@ -7,20 +7,17 @@ from django.db import transaction
 import math
 
 from ...models import (
-    Request, BroadcastRequest, BroadcastOffer, Booking
+    BroadcastRequest, BroadcastOffer
 )
 from ...serializers import BroadcastRequestSerializer
-from ...ws_utils import notify_booking_parties
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
-from users.models import Account, TokenTransaction
+from users.models import Account
 from services.pricing_utils import (
     get_distance_fee,
     get_traffic_surcharge,
     get_convenience_fee,
     apply_min_job_price,
-    get_platform_commission,
-    get_required_tokens,
 )
 
 
@@ -95,9 +92,9 @@ def get_active_broadcasts(request):
 @permission_classes([AllowAny])
 def accept_broadcast_request(request, broadcast_id):
     """
-    Accept a broadcast request.
+    Request to accept a broadcast request.
     Uses transaction.atomic() and select_for_update() to prevent race conditions.
-    Only the first mechanic to accept wins.
+    This now records a pending BroadcastOffer instead of finalizing the booking.
     Expects: mechanic_latitude, mechanic_longitude, distance_km,
     traffic_level, estimated_eta_minutes
     """
@@ -179,10 +176,6 @@ def accept_broadcast_request(request, broadcast_id):
                     'error': 'Cannot accept your own broadcast request'
                 }, status=status.HTTP_403_FORBIDDEN)
             
-            # Create or update the offer for this mechanic
-            # Re-lock mechanic row to avoid token race conditions
-            mechanic = mechanic.__class__.objects.select_for_update().get(pk=mechanic.pk)
-
             # Always compute amount server-side to avoid client-side hardcoded pricing drift.
             service_total = 0.0
             for service in broadcast_request.services.all():
@@ -204,24 +197,15 @@ def accept_broadcast_request(request, broadcast_id):
 
             subtotal_amount = service_subtotal + distance_fee + traffic_surcharge + float(convenience_fee)
             total_amount = apply_min_job_price(subtotal_amount)
-            platform_commission = get_platform_commission(total_amount)
 
-            # Calculate required tokens from configurable pricing percentage.
-            required_tokens = get_required_tokens(total_amount)
-
-            # Check mechanic has enough tokens
-            if mechanic.tokens_balance < required_tokens:
-                return Response({
-                    'error': 'Insufficient tokens to accept this booking',
-                    'required_tokens': required_tokens,
-                    'current_tokens': mechanic.tokens_balance
-                }, status=status.HTTP_403_FORBIDDEN)
+            # Record or update the mechanic's pending offer.
+            # The winner is only chosen later by the client.
 
             offer, created = BroadcastOffer.objects.get_or_create(
                 broadcast_request=broadcast_request,
                 mechanic=mechanic,
                 defaults={
-                    'status': BroadcastOffer.Status.ACCEPTED,
+                    'status': BroadcastOffer.Status.PENDING,
                     'responded_at': timezone.now(),
                     'mechanic_latitude': mechanic_latitude,
                     'mechanic_longitude': mechanic_longitude,
@@ -235,7 +219,7 @@ def accept_broadcast_request(request, broadcast_id):
             
             if not created:
                 # Update existing offer
-                offer.status = BroadcastOffer.Status.ACCEPTED
+                offer.status = BroadcastOffer.Status.PENDING
                 offer.responded_at = timezone.now()
                 offer.mechanic_latitude = mechanic_latitude
                 offer.mechanic_longitude = mechanic_longitude
@@ -245,87 +229,48 @@ def accept_broadcast_request(request, broadcast_id):
                 offer.traffic_level = traffic_level
                 offer.estimated_eta_minutes = estimated_eta_minutes
                 offer.save()
-            
-            # Update broadcast request status
-            broadcast_request.status = BroadcastRequest.Status.ACCEPTED
-            broadcast_request.accepted_at = timezone.now()
-            broadcast_request.save()
-            
-            # Update the base request to assign this mechanic as provider
+
             base_request = broadcast_request.request
-            base_request.provider = account
-            base_request.save()
-            
-            # Reject all other offers for this broadcast
-            BroadcastOffer.objects.filter(
-                broadcast_request=broadcast_request
-            ).exclude(
-                id=offer.id
-            ).update(
-                status=BroadcastOffer.Status.REJECTED,
-                responded_at=timezone.now()
-            )
-            
-            # Create a booking for this accepted broadcast (amount_fee uses total_amount computed above)
-            booking = Booking.objects.create(
-                request=base_request,
-                status=Booking.Status.ACCEPTED,
-                amount_fee=total_amount,
-                distance_km=distance_km,
-                convenience_fee=convenience_fee,
-                eta_minutes=estimated_eta_minutes,
-                traffic_surcharge=traffic_surcharge,
-            )
 
-            # Deduct required tokens from mechanic wallet and record transaction
-            mechanic.tokens_balance = mechanic.tokens_balance - required_tokens
-            mechanic.save()
-
-            TokenTransaction.objects.create(
-                account=mechanic.account,
-                tokens=-required_tokens,
-                reason='booking_tax',
-                related_booking_id=booking.id
-            )
-
-            notify_booking_parties(
-                account.id,
-                base_request.client.account_id,
-                booking.id,
-                booking.status,
-                "A mechanic has accepted your broadcast request",
-            )
-
-            # Notify other mechanics viewing broadcasts so they can remove this
-            # broadcast from their maps/lists without manual refresh. We send a
-            # lightweight 'broadcast_removed' booking_update event to the
-            # 'broadcasts' group which mechanic clients subscribe to.
+            # Notify the broadcast owner that a mechanic has requested to accept.
             try:
                 channel_layer = get_channel_layer()
                 if channel_layer is not None:
-                    async_to_sync(channel_layer.group_send)('broadcasts', {
+                    async_to_sync(channel_layer.group_send)(f'user_{base_request.client.account_id}', {
                         'type': 'booking_update',
-                        'action': 'broadcast_removed',
+                        'action': 'broadcast_offer_created',
                         'broadcast_id': broadcast_request.id,
-                        'booking_id': booking.id,
-                        'message': 'Broadcast accepted',
+                        'offer_id': offer.id,
+                        'mechanic': {
+                            'id': mechanic.id,
+                            'name': f'{account.firstname} {account.lastname}'.strip(),
+                            'rating': float(mechanic.average_rating) if getattr(mechanic, 'average_rating', None) is not None else None,
+                        },
+                        'status': offer.status,
+                        'message': 'A mechanic requested to accept your broadcast',
+                    })
+                    async_to_sync(channel_layer.group_send)(f'user_{account.id}', {
+                        'type': 'booking_update',
+                        'action': 'broadcast_offer_pending',
+                        'broadcast_id': broadcast_request.id,
+                        'offer_id': offer.id,
+                        'status': offer.status,
+                        'message': 'Waiting for client to accept',
                     })
             except Exception:
                 pass
             
             return Response({
-                'message': 'Broadcast request accepted successfully',
+                'message': 'Broadcast request sent to client successfully',
                 'broadcast_id': broadcast_request.id,
-                'booking_id': booking.id,
                 'offer_id': offer.id,
+                'offer_status': offer.status,
                 'amount_fee': total_amount,
                 'distance_km': distance_km,
                 'convenience_fee': convenience_fee,
                 'traffic_level': traffic_level,
                 'estimated_eta_minutes': estimated_eta_minutes,
-                'platform_commission': platform_commission,
-                'tokens_deducted': required_tokens,
-                'tokens_remaining': mechanic.tokens_balance
+                'tokens_remaining': mechanic.tokens_balance,
             }, status=status.HTTP_200_OK)
     
     except Account.DoesNotExist:
@@ -336,3 +281,75 @@ def accept_broadcast_request(request, broadcast_id):
         return Response({
             'error': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def withdraw_broadcast_offer(request, broadcast_id):
+    """Withdraw a mechanic's pending broadcast offer so it disappears from client waiting lists."""
+    account_id = request.session.get('account_id')
+
+    if not account_id:
+        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        account = Account.objects.get(id=account_id)
+        if not hasattr(account, 'mechanic'):
+            return Response({'error': 'Only mechanics can withdraw offers'}, status=status.HTTP_403_FORBIDDEN)
+
+        mechanic = account.mechanic
+
+        with transaction.atomic():
+            try:
+                broadcast_request = BroadcastRequest.objects.select_for_update().select_related('request', 'request__client').get(id=broadcast_id)
+            except BroadcastRequest.DoesNotExist:
+                return Response({'error': 'Broadcast request not found'}, status=status.HTTP_404_NOT_FOUND)
+
+            offer = BroadcastOffer.objects.select_for_update().filter(
+                broadcast_request=broadcast_request,
+                mechanic=mechanic,
+                status=BroadcastOffer.Status.PENDING,
+            ).first()
+
+            if not offer:
+                return Response({
+                    'error': 'No pending offer found to withdraw',
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            offer.status = BroadcastOffer.Status.REJECTED
+            offer.responded_at = timezone.now()
+            offer.save(update_fields=['status', 'responded_at'])
+
+            try:
+                channel_layer = get_channel_layer()
+                if channel_layer is not None:
+                    async_to_sync(channel_layer.group_send)(f'user_{broadcast_request.request.client.account_id}', {
+                        'type': 'booking_update',
+                        'action': 'offer_rejected',
+                        'broadcast_id': broadcast_request.id,
+                        'offer_id': offer.id,
+                        'status': BroadcastOffer.Status.REJECTED,
+                        'message': 'Mechanic withdrew their request',
+                    })
+                    async_to_sync(channel_layer.group_send)(f'user_{account.id}', {
+                        'type': 'booking_update',
+                        'action': 'broadcast_offer_withdrawn',
+                        'broadcast_id': broadcast_request.id,
+                        'offer_id': offer.id,
+                        'status': BroadcastOffer.Status.REJECTED,
+                        'message': 'Your request was withdrawn',
+                    })
+            except Exception:
+                pass
+
+            return Response({
+                'message': 'Broadcast offer withdrawn successfully',
+                'broadcast_id': broadcast_request.id,
+                'offer_id': offer.id,
+                'status': offer.status,
+            }, status=status.HTTP_200_OK)
+
+    except Account.DoesNotExist:
+        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
