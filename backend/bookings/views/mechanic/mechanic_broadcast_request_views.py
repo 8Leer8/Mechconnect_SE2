@@ -232,6 +232,43 @@ def accept_broadcast_request(request, broadcast_id):
 
             base_request = broadcast_request.request
 
+            mechanic_display = f'{account.firstname} {account.lastname}'.strip()
+            client_offer_message = (
+                f'{mechanic_display} requested to accept your broadcast.'
+                if mechanic_display
+                else 'A mechanic requested to accept your broadcast.'
+            )
+
+            # Persist in-app notifications so the bell / notifications list stays in sync
+            # with realtime websocket events.
+            try:
+                from notification.models import Notification
+
+                Notification.objects.create(
+                    receiver_id=base_request.client.account_id,
+                    title='Mechanic Offer Received',
+                    message=client_offer_message,
+                    payload={
+                        'action': 'broadcast_offer_created',
+                        'broadcast_id': broadcast_request.id,
+                        'offer_id': offer.id,
+                        'target_role': 'client',
+                    },
+                )
+                Notification.objects.create(
+                    receiver_id=account.id,
+                    title='Offer Submitted',
+                    message='Waiting for the client to accept your offer.',
+                    payload={
+                        'action': 'broadcast_offer_pending',
+                        'broadcast_id': broadcast_request.id,
+                        'offer_id': offer.id,
+                        'target_role': 'mechanic',
+                    },
+                )
+            except Exception:
+                pass
+
             # Notify the broadcast owner that a mechanic has requested to accept.
             try:
                 channel_layer = get_channel_layer()

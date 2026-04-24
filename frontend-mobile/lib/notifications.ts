@@ -2,6 +2,8 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
 export interface NotificationTargetPayload {
   booking_id?: number;
+  broadcast_id?: number;
+  offer_id?: number;
   action?: string;
   target_role?: 'client' | 'mechanic' | 'shopowner' | string | null;
   [key: string]: unknown;
