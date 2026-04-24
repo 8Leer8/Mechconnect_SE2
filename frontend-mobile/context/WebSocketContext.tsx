@@ -7,6 +7,8 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { AppState } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { WS_URL } from '@/config';
 
 export interface BookingUpdateMessage {
@@ -27,6 +29,7 @@ type WebSocketContextValue = {
 };
 
 const WebSocketContext = createContext<WebSocketContextValue | undefined>(undefined);
+const ACCOUNT_ID_STORAGE_KEY = 'account_id';
 
 export function WebSocketProvider({ children }: { children: React.ReactNode }) {
   const [lastMessage, setLastMessage] = useState<BookingUpdateMessage | null>(null);
@@ -36,6 +39,7 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shouldReconnectRef = useRef(true);
   const reconnectAttemptsRef = useRef(0);
+  const accountIdRef = useRef<string | null>(null);
 
   const clearReconnectTimer = useCallback(() => {
     if (reconnectTimeoutRef.current) {
@@ -127,6 +131,15 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
     socketRef.current = ws;
   }, [clearReconnectTimer, scheduleReconnect]);
 
+  const reconnectForAccountChange = useCallback(() => {
+    // Force a clean reconnect so server binds this socket to the latest session account.
+    clearReconnectTimer();
+    disconnectSocket();
+    setLastMessage(null);
+    reconnectAttemptsRef.current = 0;
+    connect();
+  }, [clearReconnectTimer, connect, disconnectSocket]);
+
   useEffect(() => {
     shouldReconnectRef.current = true;
     connect();
@@ -137,6 +150,42 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
       disconnectSocket();
     };
   }, [connect, clearReconnectTimer, disconnectSocket]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const syncSocketAccountBinding = async () => {
+      try {
+        const nextAccountId = await AsyncStorage.getItem(ACCOUNT_ID_STORAGE_KEY);
+        if (!mounted) return;
+
+        if (accountIdRef.current === null) {
+          accountIdRef.current = nextAccountId;
+          return;
+        }
+
+        if (accountIdRef.current !== nextAccountId) {
+          accountIdRef.current = nextAccountId;
+          reconnectForAccountChange();
+        }
+      } catch {
+        // If storage read fails, keep existing socket.
+      }
+    };
+
+    // Initial capture + foreground checks (account switches commonly happen in-app).
+    void syncSocketAccountBinding();
+    const appStateSub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        void syncSocketAccountBinding();
+      }
+    });
+
+    return () => {
+      mounted = false;
+      appStateSub.remove();
+    };
+  }, [reconnectForAccountChange]);
 
   const value = useMemo(
     () => ({
