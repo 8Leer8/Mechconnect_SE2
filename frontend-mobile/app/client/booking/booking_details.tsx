@@ -24,6 +24,7 @@ import ReportNoShowModal from '@/components/booking/ReportNoShowModal';
 import MechanicRatingModal from '@/components/booking/MechanicRatingModal';
 import { bookingHasBackjob, canOpenBookingChat } from '@/lib/bookingAccess';
 import { coerceBarangayForDisplay } from '@/lib/locationAddress';
+import { sortQuotationItemsForDisplay } from '@/lib/quotationOrdering';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -236,6 +237,7 @@ export default function ClientBookingDetailScreen() {
   const [verifyRefundSubmitting, setVerifyRefundSubmitting] = useState(false);
   const [expandedQuoteItems, setExpandedQuoteItems] = useState<Record<string, boolean>>({});
   const [quotationListExpanded, setQuotationListExpanded] = useState(false);
+  const [chatChangeLabelByKey, setChatChangeLabelByKey] = useState<Record<string, 'Added' | 'Edited' | 'Removed'>>({});
   const [pricingConfig, setPricingConfig] = useState<PricingConfig>({});
   const [visibleBeforePhotoCount, setVisibleBeforePhotoCount] = useState(6);
   const [visibleAfterPhotoCount, setVisibleAfterPhotoCount] = useState(6);
@@ -459,6 +461,20 @@ export default function ClientBookingDetailScreen() {
   };
 
   const getQuoteItemKey = (it: any, idx: number) => String(it?.id ?? `quote-${idx}`);
+  const getQuoteSnapshotKeys = (it: any): string[] => {
+    const keys: string[] = [];
+    const id = it?.id;
+    if (id != null) keys.push(`id:${String(id)}`);
+    const serviceId = Number(it?.service);
+    const addOnId = Number(it?.service_add_on);
+    if (Number.isFinite(serviceId) && serviceId > 0) keys.push(`service:${serviceId}`);
+    if (Number.isFinite(addOnId) && addOnId > 0) keys.push(`addon:${addOnId}`);
+    const desc = String(it?.description || '').trim().toLowerCase();
+    const qty = Number(it?.quantity ?? 1) || 1;
+    const unit = Number(it?.unit_price ?? it?.price ?? 0) || 0;
+    keys.push(`row:${desc}|${qty}|${unit.toFixed(2)}`);
+    return keys;
+  };
 
   const toggleQuoteItem = (key: string) => {
     setExpandedQuoteItems(prev => ({ ...prev, [key]: !prev[key] }));
@@ -479,43 +495,8 @@ export default function ClientBookingDetailScreen() {
 
   const sortedQuotationItems = useMemo(() => {
     const items = (displayQuotation && Array.isArray(displayQuotation.items)) ? displayQuotation.items : [];
-    if (!items.length) return [];
-
-    const withIndex = items.map((it: any, index: number) => ({ ...it, __index: index }));
-    const serviceTop: any[] = [];
-    const regular: any[] = [];
-
-    withIndex.forEach((it: any) => {
-      const sid = Number(it?.service);
-      const isServiceLine =
-        String(it?.line_kind || '').toLowerCase() === 'service' ||
-        (it?.line_kind == null && Number.isFinite(sid) && sid > 0 && serviceItemIds.has(sid));
-      if (isServiceLine) {
-        serviceTop.push(it);
-      } else {
-        regular.push(it);
-      }
-    });
-
-    const getTime = (it: any) => {
-      const raw = it?.updated_at || it?.modified_at || it?.created_at || null;
-      if (!raw) return 0;
-      const t = new Date(raw).getTime();
-      return Number.isFinite(t) ? t : 0;
-    };
-
-    regular.sort((a: any, b: any) => {
-      const ta = getTime(a);
-      const tb = getTime(b);
-      if (ta !== tb) return ta - tb;
-      const ia = Number(a?.id);
-      const ib = Number(b?.id);
-      if (Number.isFinite(ia) && Number.isFinite(ib) && ia !== ib) return ia - ib;
-      return (a.__index || 0) - (b.__index || 0);
-    });
-
-    return [...serviceTop, ...regular].map(({ __index, ...rest }: any) => rest);
-  }, [displayQuotation, serviceItemIds]);
+    return sortQuotationItemsForDisplay(items, serviceItemIds, chatChangeLabelByKey);
+  }, [displayQuotation, serviceItemIds, chatChangeLabelByKey]);
 
   const getAssocKey = (it: any) => {
     const serviceId = Number(it?.service);
@@ -541,39 +522,179 @@ export default function ClientBookingDetailScreen() {
       return (overlap / aTokens.size) >= 0.6 || (overlap / bTokens.size) >= 0.6;
     };
 
-    const statusRaw = String(it?.status || it?.quotation_status || it?.state || '').toLowerCase();
-    if (statusRaw === 'rejected') return 'Removed';
-    if (statusRaw !== 'pending') return null;
+    const assocKey = getAssocKey(it);
+    const editedFromRemoved = (removedRows || []).find((row: any) => {
+      const rowAssoc = getAssocKey(row);
+      if (assocKey && rowAssoc && assocKey === rowAssoc) return true;
+      // Only allow name-based "edited" fallback for rows without stable assoc ids,
+      // and only when quantity + unit price are the same.
+      if (assocKey || rowAssoc) return false;
+      const rowDesc = normalizeText(row?.description);
+      const curDesc = normalizeText(it?.description);
+      if (!rowDesc || !curDesc) return false;
+      // Same exact name without stable assoc is likely remove+add, not edit.
+      if (rowDesc === curDesc) return false;
+      const rowQty = normalizeNum(row?.quantity ?? 1);
+      const curQty = normalizeNum(it?.quantity ?? 1);
+      const rowUnit = normalizeNum(row?.unit_price ?? row?.price ?? 0);
+      const curUnit = normalizeNum(it?.unit_price ?? it?.price ?? 0);
+      if (rowQty !== curQty || rowUnit !== curUnit) return false;
+      return isLikelyRename(rowDesc, curDesc);
+    });
 
     const raw = String(it?.change_type || it?.change || it?.modification_type || '').toLowerCase();
-    if (raw.includes('remove') || raw.includes('delete')) return 'Removed';
-    if (raw.includes('add')) {
-      const editedFromRemoved = (removedRows || []).find((row: any) => {
-        const sameQty = normalizeNum(row?.quantity) === normalizeNum(it?.quantity);
-        const samePrice = normalizeNum(row?.unit_price ?? row?.price) === normalizeNum(it?.unit_price ?? it?.price);
-        return sameQty && samePrice && isLikelyRename(row?.description, it?.description);
-      });
-      return editedFromRemoved ? 'Edited' : 'Added';
-    }
     if (raw.includes('edit') || raw.includes('update') || raw.includes('modify')) return 'Edited';
-
     if (it?.previous_description || it?.previous_quantity != null || it?.previous_unit_price != null) {
       return 'Edited';
     }
+    if (it?.is_edited === true || it?.is_modified === true) return 'Edited';
+
+    const statusRaw = String(it?.status || it?.quotation_status || it?.state || '').toLowerCase();
+    if (raw.includes('remove') || raw.includes('delete')) return 'Removed';
+    if (statusRaw === 'rejected') return 'Removed';
+
+    if (raw.includes('add')) {
+      return editedFromRemoved ? 'Edited' : 'Added';
+    }
 
     if (it?.is_removed === true || it?.is_deleted === true) return 'Removed';
-    if (it?.is_edited === true || it?.is_modified === true) return 'Edited';
     if (it?.is_added === true) return 'Added';
 
-    const editedFromRemoved = (removedRows || []).find((row: any) => {
-      const sameQty = normalizeNum(row?.quantity) === normalizeNum(it?.quantity);
-      const samePrice = normalizeNum(row?.unit_price ?? row?.price) === normalizeNum(it?.unit_price ?? it?.price);
-      return sameQty && samePrice && isLikelyRename(row?.description, it?.description);
-    });
     if (editedFromRemoved) return 'Edited';
 
-    return 'Added';
+    return null;
   };
+
+  const refreshChatQuotationLabels = useCallback(async () => {
+    if (!bookingId) return;
+    try {
+      const convRes = await fetch(`${API_URL}/chat/booking/${bookingId}/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (!convRes.ok) return;
+      const conv = await convRes.json();
+      const convId = Number(conv?.id || 0);
+      if (!Number.isFinite(convId) || convId <= 0) return;
+
+      const msgRes = await fetch(`${API_URL}/chat/${convId}/messages/?mark_read=1`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!msgRes.ok) return;
+      const rows = await msgRes.json();
+      if (!Array.isArray(rows) || !rows.length) return;
+
+      const parsePayload = (raw: any): any | null => {
+        if (typeof raw !== 'string') return raw && typeof raw === 'object' ? raw : null;
+        try {
+          const first = JSON.parse(raw);
+          if (first && typeof first === 'object') return first;
+          if (typeof first === 'string') {
+            const nested = first.trim();
+            if (nested.startsWith('{')) {
+              const second = JSON.parse(nested);
+              return second && typeof second === 'object' ? second : null;
+            }
+          }
+        } catch {
+          return null;
+        }
+        return null;
+      };
+
+      const ordered = [...rows].reverse();
+      const latestQuoteMsg = ordered.find((m: any) => {
+        const p = parsePayload(m?.content);
+        return p && p.type === 'quotation_request' && String(p?.status || '').toLowerCase() === 'pending';
+      }) || ordered.find((m: any) => {
+        const p = parsePayload(m?.content);
+        return p && p.type === 'quotation_request';
+      });
+      if (!latestQuoteMsg) return;
+      const payload = parsePayload(latestQuoteMsg.content);
+      const items = Array.isArray(payload?.items) ? payload.items : [];
+
+      const previousQuoteMsg = ordered.find((m: any) => {
+        if (m?.id === latestQuoteMsg?.id) return false;
+        const p = parsePayload(m?.content);
+        return p && p.type === 'quotation_request' && String(p?.quotation_id || '') === String(payload?.quotation_id || '');
+      });
+      const previousPayload = previousQuoteMsg ? parsePayload(previousQuoteMsg.content) : null;
+      const previousItems = Array.isArray(previousPayload?.items) ? previousPayload.items : [];
+
+      const normalizeText = (v: any) => String(v ?? '').trim().toLowerCase();
+      const normalizeNum = (v: any) => Number(v ?? 0);
+      const usedPrevIndexes = new Set<number>();
+      const nextMap: Record<string, 'Added' | 'Edited' | 'Removed'> = {};
+
+      items.forEach((it: any) => {
+        const raw = String(it?.change_type || it?.change || it?.modification_type || '').toLowerCase();
+        const status = String(it?.status || '').toLowerCase();
+        let label: 'Added' | 'Edited' | 'Removed' | null = null;
+        if (raw.includes('remove') || raw.includes('delete') || status === 'rejected' || it?.is_removed === true || it?.is_deleted === true) {
+          label = 'Removed';
+        } else if (
+          raw.includes('edit') ||
+          raw.includes('update') ||
+          raw.includes('modify') ||
+          it?.previous_description != null ||
+          it?.previous_quantity != null ||
+          it?.previous_unit_price != null ||
+          it?.is_edited === true ||
+          it?.is_modified === true
+        ) {
+          label = 'Edited';
+        } else if (raw.includes('add') || it?.is_added === true) {
+          label = 'Added';
+        } else {
+          const assocKey = getAssocKey(it);
+          const matchIndex = previousItems.findIndex((prevIt: any, prevIdx: number) => {
+            if (usedPrevIndexes.has(prevIdx)) return false;
+
+            if (it?.id != null && prevIt?.id != null && String(prevIt.id) === String(it.id)) {
+              return true;
+            }
+
+            const prevAssocKey = getAssocKey(prevIt);
+            if (assocKey && prevAssocKey && assocKey === prevAssocKey) {
+              return true;
+            }
+
+            return (
+              normalizeText(prevIt?.description) === normalizeText(it?.description) &&
+              normalizeNum(prevIt?.quantity) === normalizeNum(it?.quantity) &&
+              normalizeNum(prevIt?.unit_price) === normalizeNum(it?.unit_price)
+            );
+          });
+
+          if (matchIndex >= 0) {
+            usedPrevIndexes.add(matchIndex);
+            const prevIt = previousItems[matchIndex];
+            const hasDiff =
+              normalizeText(prevIt?.description) !== normalizeText(it?.description) ||
+              normalizeNum(prevIt?.quantity) !== normalizeNum(it?.quantity) ||
+              normalizeNum(prevIt?.unit_price) !== normalizeNum(it?.unit_price);
+
+            if (hasDiff) {
+              label = 'Edited';
+            }
+          }
+        }
+        if (!label) return;
+        getQuoteSnapshotKeys(it).forEach((k) => {
+          nextMap[k] = label as 'Added' | 'Edited' | 'Removed';
+        });
+      });
+
+      setChatChangeLabelByKey(nextMap);
+    } catch {
+      // ignore
+    }
+  }, [bookingId]);
 
   // Quotation estimated total: sum only accepted items
   const quotationEstimatedTotal = useMemo(() => {
@@ -607,7 +728,8 @@ export default function ClientBookingDetailScreen() {
       const rowStatus = String(it?.status || it?.quotation_status || it?.state || ((booking as any)?.quotation?.status) || '').toLowerCase();
       if (rowStatus !== 'pending') return sum;
 
-      const changeLabel = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
+      const inferred = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
+      const changeLabel = inferred || (rowStatus === 'pending' ? 'Edited' : null);
       const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
       const qty = Number(it?.quantity ?? 1) || 1;
       const currentTotal = price * qty;
@@ -802,10 +924,14 @@ export default function ClientBookingDetailScreen() {
     try { navigation.getParent && navigation.getParent()?.setOptions && navigation.getParent()?.setOptions({ headerShown: false }); } catch (e) {}
     try { navigation.getParent && navigation.getParent()?.getParent && navigation.getParent()?.getParent()?.setOptions && navigation.getParent()?.getParent()?.setOptions({ headerShown: false }); } catch (e) {}
     fetchBookingDetail();
+    refreshChatQuotationLabels();
     // Poll every 10 seconds so client sees mechanic status changes in real time
-    const interval = setInterval(() => fetchBookingDetail(true), 10000);
+    const interval = setInterval(() => {
+      fetchBookingDetail(true);
+      refreshChatQuotationLabels();
+    }, 10000);
     return () => clearInterval(interval);
-  }, [fetchBookingDetail]);
+  }, [fetchBookingDetail, refreshChatQuotationLabels]);
 
   // Refresh when websocket reports an update for this booking (quotation accepted/rejected or booking update)
   const { lastMessage } = useWebSocketContext();
@@ -821,11 +947,12 @@ export default function ClientBookingDetailScreen() {
         }
         // lightweight refresh
         fetchBookingDetail(true);
+        refreshChatQuotationLabels();
       }
     } catch (e) {
       // ignore
     }
-  }, [lastMessage, resolvedBookingId, fetchBookingDetail, booking?.has_backjob, booking?.backjob?.status]);
+  }, [lastMessage, resolvedBookingId, fetchBookingDetail, booking?.has_backjob, booking?.backjob?.status, refreshChatQuotationLabels]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -2024,7 +2151,12 @@ export default function ClientBookingDetailScreen() {
                       const itemStatus = it && (it.status || it.quotation_status || it.state) ? (it.status || it.quotation_status || it.state) : ((booking as any)?.quotation && (booking as any).quotation.status) || 'pending';
                       const statusRaw = String(itemStatus || '').toLowerCase();
                       const isPending = statusRaw === 'pending';
-                      const changeLabel = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
+                      const quotationStatusRaw = String(((booking as any)?.quotation && (booking as any).quotation.status) || '').toLowerCase();
+                      const isPendingQuotationRequest = quotationStatusRaw === 'pending';
+                      const inferredChangeLabel = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
+                      const chatDerivedChangeLabel = getQuoteSnapshotKeys(it).map((k) => chatChangeLabelByKey[k]).find(Boolean) || null;
+                      const rawChangeLabel = chatDerivedChangeLabel || inferredChangeLabel || null;
+                      const changeLabel = (isPending || isPendingQuotationRequest) ? rawChangeLabel : null;
                       const isRemoved = changeLabel === 'Removed';
                       const desc = it?.description || it?.name || (it.service && `Service #${it.service}`) || 'Item';
                       const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
@@ -2045,14 +2177,40 @@ export default function ClientBookingDetailScreen() {
                       const beforePrice = Number(beforeItem?.unit_price ?? 0) || 0;
                       const beforeQty = Number(beforeItem?.quantity ?? 1) || 1;
 
+                      const getChangePillStyle = (label: string | null) => {
+                        if (label === 'Added') {
+                          return {
+                            pill: { backgroundColor: '#8CE99A', borderColor: '#5FBF72' },
+                            text: { color: '#1D3A24' },
+                          };
+                        }
+                        if (label === 'Edited') {
+                          return {
+                            pill: { backgroundColor: '#FFD49A', borderColor: '#DCA85F' },
+                            text: { color: '#5A3D0A' },
+                          };
+                        }
+                        if (label === 'Removed') {
+                          return {
+                            pill: { backgroundColor: '#FFB4B0', borderColor: '#C97673' },
+                            text: { color: '#631B21' },
+                          };
+                        }
+                        return {
+                          pill: {},
+                          text: {},
+                        };
+                      };
+                      const pillStyle = getChangePillStyle(changeLabel);
+
                       return (
                         <View key={key} style={[styles.quotationAccordionRow, isRemoved ? styles.removedItem : (changeLabel ? styles.pendingItem : styles.acceptedItem), isExpanded ? styles.quotationAccordionRowExpanded : null]}>
                           <TouchableOpacity style={styles.quotationAccordionHeader} onPress={() => toggleQuoteItem(key)} activeOpacity={0.8}>
                             <View style={styles.quoteHeaderLeft}>
-                              <ThemedText style={[styles.receiptItem, isRemoved ? styles.removedItemText : null]} numberOfLines={1}>{desc}</ThemedText>
+                              <ThemedText style={[styles.quoteItemTitle, styles.receiptItem, isRemoved ? styles.removedItemText : null]} numberOfLines={2}>{desc}</ThemedText>
                               {changeLabel ? (
-                                <View style={styles.pendingPill}>
-                                  <ThemedText style={styles.pendingPillText}>{changeLabel}</ThemedText>
+                                <View style={[styles.pendingPill, pillStyle.pill]}>
+                                  <ThemedText style={[styles.pendingPillText, pillStyle.text]}>{changeLabel}</ThemedText>
                                 </View>
                               ) : null}
                             </View>

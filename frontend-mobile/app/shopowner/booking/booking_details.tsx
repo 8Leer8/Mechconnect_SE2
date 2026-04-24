@@ -530,38 +530,39 @@ export default function ShopOwnerBookingDetailScreen() {
       return (overlap / aTokens.size) >= 0.6 || (overlap / bTokens.size) >= 0.6;
     };
 
-    const status = String(it?.status || displayQuotation?.status || quotation?.status || '').toLowerCase();
-    if (status === 'rejected') return 'Removed';
-    if (status !== 'pending') return null;
+    const assocKey = getAssocKey(it);
+    const editedFromRemoved = (removedRows || []).find((row: any) => {
+      const rowAssoc = getAssocKey(row);
+      if (assocKey && rowAssoc && assocKey === rowAssoc) return true;
+      const rowDesc = normalizeText(row?.description);
+      const curDesc = normalizeText(it?.description);
+      if (!rowDesc || !curDesc) return false;
+      if (rowDesc === curDesc) return false;
+      return isLikelyRename(rowDesc, curDesc);
+    });
 
     const raw = String(it?.change_type || it?.change || it?.modification_type || '').toLowerCase();
-    if (raw.includes('remove') || raw.includes('delete')) return 'Removed';
-    if (raw.includes('add')) {
-      const editedFromRemoved = (removedRows || []).find((row: any) => {
-        const sameQty = normalizeNum(row?.quantity) === normalizeNum(it?.quantity);
-        const samePrice = normalizeNum(row?.unit_price ?? row?.price) === normalizeNum(it?.unit_price ?? it?.price);
-        return sameQty && samePrice && isLikelyRename(row?.description, it?.description);
-      });
-      return editedFromRemoved ? 'Edited' : 'Added';
-    }
     if (raw.includes('edit') || raw.includes('update') || raw.includes('modify')) return 'Edited';
-
     if (it?.previous_description || it?.previous_quantity != null || it?.previous_unit_price != null) {
       return 'Edited';
     }
+    if (it?.is_edited === true || it?.is_modified === true) return 'Edited';
 
-    const editedFromRemoved = (removedRows || []).find((row: any) => {
-      const sameQty = normalizeNum(row?.quantity) === normalizeNum(it?.quantity);
-      const samePrice = normalizeNum(row?.unit_price ?? row?.price) === normalizeNum(it?.unit_price ?? it?.price);
-      return sameQty && samePrice && isLikelyRename(row?.description, it?.description);
-    });
+    const status = String(it?.status || displayQuotation?.status || quotation?.status || '').toLowerCase();
+    if (raw.includes('remove') || raw.includes('delete')) return 'Removed';
+    if (status === 'rejected') return 'Removed';
+    if (status !== 'pending') return null;
+
+    if (raw.includes('add')) {
+      return editedFromRemoved ? 'Edited' : 'Added';
+    }
+
     if (editedFromRemoved) return 'Edited';
 
     if (it?.is_removed === true || it?.is_deleted === true) return 'Removed';
-    if (it?.is_edited === true || it?.is_modified === true) return 'Edited';
     if (it?.is_added === true) return 'Added';
 
-    return 'Added';
+    return 'Edited';
   };
 
   const fetchQuotation = async () => {
@@ -1047,7 +1048,8 @@ export default function ShopOwnerBookingDetailScreen() {
                     const itemStatus = it?.status || displayQuotation?.status || quotation?.status;
                     const isPending = String(itemStatus).toLowerCase() === 'pending';
                     const isRejected = String(itemStatus).toLowerCase() === 'rejected';
-                    const changeLabel = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
+                    const inferred = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
+                    const changeLabel = inferred || (String(itemStatus).toLowerCase() === 'pending' ? 'Edited' : null);
                     const assocKey = getAssocKey(it);
                     const beforeItem = it?.previous_description || it?.previous_quantity != null || it?.previous_unit_price != null
                       ? {

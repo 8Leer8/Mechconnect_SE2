@@ -62,8 +62,8 @@ interface Booking {
   };
 }
 
-// Tabs: All, Pending, Booked, On Going, Completed, Cancelled, Reworked, Disputed
-type TabType = 'all' | 'pending' | 'booked' | 'on_going' | 'completed' | 'cancelled' | 'reworked' | 'disputed';
+// Tabs: All, Booked, On Going, Pending, Completed, Cancelled, Reworked, Disputed
+type TabType = 'all' | 'booked' | 'on_going' | 'pending' | 'completed' | 'cancelled' | 'reworked' | 'disputed';
 const TAB_LABELS: Record<TabType, string> = {
   all: 'All',
   pending: 'Pending',
@@ -416,7 +416,7 @@ export default function BookingsScreen() {
       contentContainerStyle={styles.tabScrollContent}
       style={styles.tabContainer}
     >
-      {(['all', 'pending', 'booked', 'on_going', 'completed', 'cancelled', 'reworked', 'disputed'] as TabType[]).map(
+      {(['all', 'booked', 'on_going', 'pending', 'completed', 'cancelled', 'reworked', 'disputed'] as TabType[]).map(
         (tab) => {
           const isActive = activeTab === tab;
           const count = counts[tab] || 0;
