@@ -411,6 +411,8 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
     add_ons = serializers.SerializerMethodField()
     concern_picture = serializers.SerializerMethodField()
     required_tokens = serializers.SerializerMethodField()
+    my_offer_id = serializers.SerializerMethodField()
+    my_offer_status = serializers.SerializerMethodField()
     search_radius_km = serializers.FloatField(read_only=True)
     radius_km = serializers.SerializerMethodField()
     latitude = serializers.FloatField()
@@ -426,7 +428,8 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
             'vehicle_type', 'vehicle_brand', 'vehicle_model',
             'services', 'add_ons', 'search_radius_km', 'radius_km',
             'created_at', 'expires_at', 'accepted_at',
-            'status', 'concern_picture', 'required_tokens'
+            'status', 'concern_picture', 'required_tokens',
+            'my_offer_id', 'my_offer_status',
         ]
     
     def get_concern_picture(self, obj):
@@ -463,14 +466,95 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
         except Exception:
             return 0
 
+    def _get_current_mechanic_offer(self, obj):
+        request = self.context.get('request')
+        if not request:
+            return None
+
+        account_id = getattr(request, 'session', {}).get('account_id') if hasattr(request, 'session') else None
+        if not account_id:
+            return None
+
+        try:
+            account = Account.objects.get(id=account_id)
+        except Account.DoesNotExist:
+            return None
+
+        if not hasattr(account, 'mechanic'):
+            return None
+
+        return BroadcastOffer.objects.filter(
+            broadcast_request=obj,
+            mechanic=account.mechanic,
+        ).order_by('-created_at', '-id').first()
+
+    def get_my_offer_id(self, obj):
+        offer = self._get_current_mechanic_offer(obj)
+        return offer.id if offer else None
+
+    def get_my_offer_status(self, obj):
+        offer = self._get_current_mechanic_offer(obj)
+        return offer.status if offer else None
+
 
 class BroadcastOfferSerializer(serializers.ModelSerializer):
     """Serializer for broadcast offers"""
     mechanic = AccountBasicSerializer(source='mechanic.account', read_only=True)
+    mechanic_rating = serializers.SerializerMethodField()
+    distance_km = serializers.SerializerMethodField()
+    estimated_price = serializers.SerializerMethodField()
+    convenience_fee = serializers.SerializerMethodField()
+    estimated_eta_minutes = serializers.SerializerMethodField()
     
     class Meta:
         model = BroadcastOffer
-        fields = ['id', 'broadcast_request', 'mechanic', 'status', 'created_at', 'responded_at']
+        fields = [
+            'id',
+            'broadcast_request',
+            'mechanic',
+            'mechanic_rating',
+            'status',
+            'distance_km',
+            'estimated_price',
+            'convenience_fee',
+            'estimated_eta_minutes',
+            'created_at',
+            'responded_at',
+        ]
+
+    def get_mechanic_rating(self, obj):
+        try:
+            rating = getattr(obj.mechanic, 'average_rating', None)
+            if rating is None:
+                return None
+            rating_value = float(rating)
+            return round(rating_value, 2) if rating_value > 0 else None
+        except Exception:
+            return None
+
+    def get_distance_km(self, obj):
+        try:
+            return float(obj.distance_km) if obj.distance_km is not None else None
+        except Exception:
+            return None
+
+    def get_estimated_price(self, obj):
+        try:
+            return float(obj.estimated_price) if obj.estimated_price is not None else None
+        except Exception:
+            return None
+
+    def get_convenience_fee(self, obj):
+        try:
+            return float(obj.convenience_fee) if obj.convenience_fee is not None else None
+        except Exception:
+            return None
+
+    def get_estimated_eta_minutes(self, obj):
+        try:
+            return int(obj.estimated_eta_minutes) if obj.estimated_eta_minutes is not None else None
+        except Exception:
+            return None
 
 
 from . import models as booking_models
