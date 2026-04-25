@@ -151,6 +151,7 @@ export default function DiscoverScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const lastSocketRefreshAtRef = useRef(0);
+  const latestFetchRequestIdRef = useRef(0);
   const { lastMessage } = useWebSocketContext();
 
   useEffect(() => {
@@ -196,6 +197,7 @@ export default function DiscoverScreen() {
   }, [selectedLocation]);
 
   const fetchData = useCallback(async (tab: TabType, force = false) => {
+    const requestId = ++latestFetchRequestIdRef.current;
     try {
       setLoading(true);
       setError(null);
@@ -208,6 +210,7 @@ export default function DiscoverScreen() {
         });
         if (!response.ok) throw new Error('Failed to fetch mechanics');
         const data = await response.json() as MechanicsResponse;
+        if (requestId !== latestFetchRequestIdRef.current) return;
         setMechanics(await enrichProvidersWithDistance(data.mechanics || [], clientLocation));
       } else if (tab === 'shops') {
         const response = await fetch(`${API_URL}/shops/`, {
@@ -217,6 +220,7 @@ export default function DiscoverScreen() {
         });
         if (!response.ok) throw new Error('Failed to fetch shops');
         const data = await response.json() as ShopsResponse;
+        if (requestId !== latestFetchRequestIdRef.current) return;
         setShops(await enrichProvidersWithDistance(data.shops || [], clientLocation));
       } else if (tab === 'services') {
         const response = await fetch(`${API_URL}/services/`, {
@@ -226,11 +230,14 @@ export default function DiscoverScreen() {
         });
         if (!response.ok) throw new Error('Failed to fetch services');
         const data = await response.json() as ServicesResponse;
+        if (requestId !== latestFetchRequestIdRef.current) return;
         setServices(data.services || []);
       }
     } catch (err) {
+      if (requestId !== latestFetchRequestIdRef.current) return;
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
+      if (requestId !== latestFetchRequestIdRef.current) return;
       setLoading(false);
       setRefreshing(false);
     }
@@ -622,11 +629,6 @@ export default function DiscoverScreen() {
   ), [getEmptyMessage]);
 
   const renderListHeader = useCallback(() => {
-    if (loading && !refreshing) {
-      return (
-        <SkeletonDiscoverList variant={activeTab as 'mechanics' | 'shops' | 'services'} />
-      );
-    }
     if (error) {
       return (
         <View style={styles.errorCard}>
@@ -748,23 +750,29 @@ export default function DiscoverScreen() {
       </Modal>
 
       {/* Content - Using FlatList for performance */}
-      <FlatList
-        data={currentData as any[]}
-        renderItem={currentRenderer as any}
-        keyExtractor={keyExtractor}
-        ListHeaderComponent={renderListHeader}
-        ListEmptyComponent={!loading && !error ? renderEmptyComponent : null}
-        removeClippedSubviews={true}
-        maxToRenderPerBatch={10}
-        windowSize={5}
-        initialNumToRender={10}
-        style={styles.list}
-        contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF8C00" />
-        }
-      />
+      {loading && !refreshing ? (
+        <View style={styles.list}>
+          <SkeletonDiscoverList variant={activeTab as 'mechanics' | 'shops' | 'services'} />
+        </View>
+      ) : (
+        <FlatList
+          data={currentData as any[]}
+          renderItem={currentRenderer as any}
+          keyExtractor={keyExtractor}
+          ListHeaderComponent={renderListHeader}
+          ListEmptyComponent={!error ? renderEmptyComponent : null}
+          removeClippedSubviews={true}
+          maxToRenderPerBatch={10}
+          windowSize={5}
+          initialNumToRender={10}
+          style={styles.list}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF8C00" />
+          }
+        />
+      )}
     </ThemedView>
   );
 }
