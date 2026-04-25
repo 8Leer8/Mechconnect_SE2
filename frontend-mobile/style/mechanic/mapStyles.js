@@ -346,6 +346,10 @@ export const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 8,
   },
+  acceptButtonWaiting: {
+    backgroundColor: '#FF8C00',
+    paddingHorizontal: 12,
+  },
   acceptText: {
     fontSize: 13,
     fontWeight: '600',

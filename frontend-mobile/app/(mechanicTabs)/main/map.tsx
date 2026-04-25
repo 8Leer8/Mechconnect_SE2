@@ -752,7 +752,10 @@ export default function MapScreen() {
       return;
     }
     setSelectedBroadcast(broadcast);
-    setAwaitingClientSelectionBroadcastId(null);
+    const hasPendingOffer = broadcast.my_offer_status === 'pending'
+      || pendingOffersByBroadcastId[broadcast.id]?.status === 'pending'
+      || awaitingClientSelectionBroadcastId === broadcast.id;
+    setAwaitingClientSelectionBroadcastId(hasPendingOffer ? broadcast.id : null);
     setOfferNotice(null);
     setAccepting(false);
     await fetchRouteAndTraffic(broadcast);
@@ -781,7 +784,10 @@ export default function MapScreen() {
       return;
     }
     setSelectedBroadcast(broadcast);
-    setAwaitingClientSelectionBroadcastId(null);
+    const hasPendingOffer = broadcast.my_offer_status === 'pending'
+      || pendingOffersByBroadcastId[broadcast.id]?.status === 'pending'
+      || awaitingClientSelectionBroadcastId === broadcast.id;
+    setAwaitingClientSelectionBroadcastId(hasPendingOffer ? broadcast.id : null);
     setOfferNotice(null);
     setAccepting(false);
     if (lastFetchedBroadcastId.current === broadcast.id && cachedRouteData.current) {
@@ -860,7 +866,6 @@ export default function MapScreen() {
           tone: 'success',
         });
         showNotification({ type: 'success', title: 'Request sent', message: 'Waiting for the client to accept.' });
-        minimizeBroadcastModal();
         fetchBroadcasts(true);
         fetchTokensBalance();
         try { eventBus.emit('walletChanged'); } catch { }
@@ -1101,6 +1106,9 @@ export default function MapScreen() {
               )}
               {filteredBroadcasts.map((broadcast) => {
                 const lockedOut = isOtherBroadcastLocked && broadcast.id !== activePendingBroadcastId;
+                const isCardAwaitingClient = broadcast.my_offer_status === 'pending'
+                  || pendingOffersByBroadcastId[broadcast.id]?.status === 'pending'
+                  || activePendingBroadcastId === broadcast.id;
                 return (
                 <TouchableOpacity
                   key={`broadcast-${broadcast.id}`}
@@ -1135,14 +1143,24 @@ export default function MapScreen() {
                       <ThemedText style={styles.timerText}>{getTimeRemaining(broadcast.expires_at)}</ThemedText>
                     </View>
                     <TouchableOpacity
-                      style={[styles.acceptButton, lockedOut ? { opacity: 0.5 } : null]}
-                      disabled={lockedOut}
+                      style={[
+                        styles.acceptButton,
+                        isCardAwaitingClient ? styles.acceptButtonWaiting : null,
+                        lockedOut ? { opacity: 0.5 } : null,
+                      ]}
+                      disabled={lockedOut || isCardAwaitingClient}
                       onPress={() => handleViewAndAccept(broadcast)}
                     >
                       <ThemedText style={styles.acceptText}>
-                        {isShopOwnerMap ? 'View details' : 'View & Accept'}
+                        {isCardAwaitingClient
+                          ? 'Waiting for client approval'
+                          : (isShopOwnerMap ? 'View details' : 'View & Accept')}
                       </ThemedText>
-                      <FontAwesome name="arrow-right" size={12} color="#fff" />
+                      {isCardAwaitingClient ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <FontAwesome name="arrow-right" size={12} color="#fff" />
+                      )}
                     </TouchableOpacity>
                   </View>
                 </TouchableOpacity>
@@ -1385,11 +1403,14 @@ export default function MapScreen() {
                 disabled={accepting || hasInsufficientTokens || isShopOwnerMap || isAwaitingClientSelection}
               >
                 {accepting ? (
-                  <ActivityIndicator color="#fff" />
+                  <>
+                    <ActivityIndicator color="#fff" />
+                    <ThemedText style={styles.modalAcceptText}>Sending request...</ThemedText>
+                  </>
                 ) : isAwaitingClientSelection ? (
                   <>
                     <ActivityIndicator color="#fff" />
-                    <ThemedText style={styles.modalAcceptText}>Waiting for client to accept</ThemedText>
+                    <ThemedText style={styles.modalAcceptText}>Waiting for client approval</ThemedText>
                   </>
                 ) : isShopOwnerMap ? (
                   <>
