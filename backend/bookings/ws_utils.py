@@ -174,7 +174,7 @@ def _ensure_conversation_for_booking(booking, account):
     return conv
 
 
-def post_quotation_chat_message(account, booking, quotation, action='created'):
+def post_quotation_chat_message(account, booking, quotation, action='created', request=None):
     """Post a structured quotation system message into the booking conversation and broadcast it.
     action can be: 'created', 'updated', 'retracted', 'accepted', 'rejected'
     """
@@ -228,7 +228,7 @@ def post_quotation_chat_message(account, booking, quotation, action='created'):
     # in the structured payload so UIs can display who initiated it.
     msg = Message.objects.create(conversation=conv, sender=None, content=json.dumps(payload))
     conv.save()
-    serializer = MessageSerializer(msg, context={'request': None})
+    serializer = MessageSerializer(msg, context={'request': request})
 
     # broadcast to participants except sender
     # broadcast to participants except the original mechanic (we still

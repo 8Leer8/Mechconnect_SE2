@@ -141,6 +141,21 @@ class Booking(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 
+    @property
+    def backjob(self):
+        """
+        Replaces the old one-to-one reverse name: prefer an in-progress (non-COMPLETED)
+        backjob round, otherwise the most recent row (stacked backjob history per booking).
+        """
+        if not self.pk:
+            return None
+        if not self.backjobs.exists():
+            return None
+        b = self.backjobs.exclude(status=Booking.Status.COMPLETED).order_by("-id").first()
+        if b is not None:
+            return b
+        return self.backjobs.order_by("-id").first()
+
 class ActiveBooking(models.Model):
     booking = models.OneToOneField(Booking, on_delete=models.CASCADE)
     before_picture_service = models.ImageField(upload_to='bookings/before/', null=True, blank=True)
@@ -368,7 +383,11 @@ class Backjob(models.Model):
     Keeps backjob lifecycle separate from the primary Booking while allowing reuse of
     similar status values and independent metadata (reason, images, requester).
     """
-    booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name='backjob')
+    booking = models.ForeignKey(
+        Booking,
+        on_delete=models.CASCADE,
+        related_name="backjobs",
+    )
     # Reuse Booking.Status choices so backjob states mirror booking states (accepted, on_the_way, active, etc.)
     status = models.CharField(max_length=30, choices=Booking.Status.choices, default=Booking.Status.ACCEPTED)
     requested_by = models.ForeignKey(Account, on_delete=models.SET_NULL, null=True, blank=True, related_name='requested_backjobs')
@@ -411,10 +430,14 @@ class Quotation(models.Model):
         For backjobs:
         - labor is always discounted to 0
         - parts remain payable
+        Only rows added for this backjob (is_backjob_line) count; original receipt lines stay reference-only.
         """
         labor_total = 0
         parts_total = 0
-        for item in self.items.exclude(status=self.Status.REJECTED):
+        qs = self.items.exclude(status=self.Status.REJECTED)
+        if self.is_backjob:
+            qs = qs.filter(is_backjob_line=True)
+        for item in qs:
             line_total = item.line_total
             if item.line_kind == QuotationItem.LineKind.SERVICE:
                 labor_total += line_total
@@ -464,6 +487,19 @@ class QuotationItem(models.Model):
     previous_unit_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     purchase_receipt_image = models.ImageField(upload_to='bookings/quotation/receipts/', null=True, blank=True)
     receipt_submitted_at = models.DateTimeField(null=True, blank=True)
+    # True for quotation rows added during an active backjob (new work / new charges).
+    # Original completed-job lines stay False so UIs can show "old receipt" vs "new quotation".
+    is_backjob_line = models.BooleanField(default=False)
+    # Which backjob round (stack) this line belongs to; set when is_backjob_line.
+    backjob = models.ForeignKey(
+        "Backjob",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="quotation_items",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     @property
     def line_total(self):

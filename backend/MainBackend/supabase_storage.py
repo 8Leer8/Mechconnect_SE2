@@ -15,8 +15,8 @@ class SupabaseStorage(S3Boto3Storage):
     
     def __init__(self, **settings_override):
         super().__init__(**settings_override)
-        logger.info(f"Initialized SupabaseStorage with bucket: {self.bucket_name}")
-        logger.info(f"Endpoint URL: {settings.AWS_S3_ENDPOINT_URL}")
+        logger.debug(f"Initialized SupabaseStorage with bucket: {self.bucket_name}")
+        logger.debug(f"Endpoint URL: {settings.AWS_S3_ENDPOINT_URL}")
     
     def _save(self, name, content):
         """
@@ -45,7 +45,6 @@ class SupabaseStorage(S3Boto3Storage):
             # Public URL format: https://PROJECT_ID.supabase.co/storage/v1/object/public/BUCKET/PATH
             project_id = settings.AWS_S3_ENDPOINT_URL.split('.')[0].replace('https://', '')
             public_url = f"https://{project_id}.supabase.co/storage/v1/object/public/{self.bucket_name}/{name}"
-            logger.debug(f"Generated public URL: {public_url}")
             return public_url
         
         # For private buckets, use signed URL

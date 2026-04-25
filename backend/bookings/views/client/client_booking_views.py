@@ -16,7 +16,12 @@ from ...models import (
     BroadcastRequest, BroadcastRequestAddOn, DirectRequestAddOn, MechanicLocation
 )
 from ...serializers import BookingSerializer, BookingPaymentSerializer
-from ...backjob_utils import booking_has_backjob
+from ...backjob_utils import (
+    backjob_accepted_payable_total,
+    booking_has_backjob,
+    backjob_phase_total_paid,
+    backjob_scoped_payments_active,
+)
 from users.models import Account, Mechanic, MechanicReview, TokenTransaction
 from notification.models import Notification
 
@@ -216,10 +221,15 @@ def _build_rescue_description(original_request, booking):
 
 
 def _build_booking_payment_summary(booking):
+    scoped = backjob_scoped_payments_active(booking)
     total_amount = _to_money(booking.amount_fee)
 
     quotation = getattr(booking, 'quotation', None)
-    if booking.status != Booking.Status.PENDING_PAYMENT and quotation is not None:
+    if (
+        not scoped
+        and booking.status != Booking.Status.PENDING_PAYMENT
+        and quotation is not None
+    ):
         accepted_total = _to_money(0)
         try:
             for item in quotation.items.filter(status=Quotation.Status.ACCEPTED):
@@ -238,6 +248,16 @@ def _build_booking_payment_summary(booking):
                     total_amount = computed_total
         except Exception:
             pass
+
+    if scoped and quotation is not None:
+        try:
+            quotation.is_backjob = True
+            quotation.recalculate_totals()
+        except Exception:
+            pass
+        # Payable total is stored on the booking (client-accepted lines only), not quotation.total_amount
+        # which can still include pending rows for display.
+        total_amount = _to_money(booking.amount_fee)
 
     installments = list(
         PaymentInstallment.objects.filter(booking=booking).order_by('created_at', 'id')
@@ -258,6 +278,9 @@ def _build_booking_payment_summary(booking):
                 'paid_at': installment.paid_at.isoformat() if installment.paid_at else None,
             }
         )
+
+    if scoped:
+        total_paid = _to_money(backjob_phase_total_paid(booking))
 
     remaining_balance = max(_to_money(0), _to_money(total_amount - total_paid))
 
@@ -1365,6 +1388,9 @@ def _serialize_single_booking(booking, viewer_account=None):
                     'line_total': float(it.line_total) if hasattr(it, 'line_total') else float(it.quantity * it.unit_price),
                     'status': it.status if hasattr(it, 'status') and it.status is not None else q.status,
                     'change_type': getattr(it, 'change_type', None),
+                    'is_backjob_new_line': bool(getattr(it, 'is_backjob_line', False)),
+                    'created_at': it.created_at.isoformat() if getattr(it, 'created_at', None) else None,
+                    'updated_at': it.updated_at.isoformat() if getattr(it, 'updated_at', None) else None,
                     'previous_description': getattr(it, 'previous_description', None),
                     'previous_quantity': getattr(it, 'previous_quantity', None),
                     'previous_unit_price': float(it.previous_unit_price) if getattr(it, 'previous_unit_price', None) is not None else None,
@@ -1603,15 +1629,20 @@ def client_accept_quotation(request, booking_id):
             'updated_at',
         ])
 
-        # Update booking amount and complete/receipt if present
-        booking.amount_fee = quotation.total_amount
+        # Update booking amount. For backjobs, quotation.total_amount from recalculate_totals()
+        # drops service-typed new lines; payable is the sum of accepted is_backjob_line (service + item).
+        if booking_has_backjob(booking):
+            effective_fee = backjob_accepted_payable_total(quotation)
+        else:
+            effective_fee = quotation.total_amount
+        booking.amount_fee = effective_fee
         booking.save(update_fields=['amount_fee', 'updated_at'])
 
         # Update CompleteBooking if exists
         try:
             complete = CompleteBooking.objects.filter(booking=booking).first()
             if complete:
-                complete.total_amount = quotation.total_amount
+                complete.total_amount = effective_fee
                 complete.save(update_fields=['total_amount'])
         except Exception:
             pass
@@ -1890,7 +1921,7 @@ def client_reject_quotation(request, booking_id):
         # post system chat message about rejection
         try:
             from ...ws_utils import post_quotation_chat_message
-            post_quotation_chat_message(account, booking, quotation, action='rejected')
+            post_quotation_chat_message(account, booking, quotation, action='rejected', request=request)
         except Exception:
             pass
 

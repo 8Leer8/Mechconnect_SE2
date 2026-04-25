@@ -21,7 +21,12 @@ from pricing.models import PricingConfiguration
 from users.models import Account
 
 from ...models import Booking, PaymentInstallment, PaymentQRToken, PaymentTransaction, Quotation, Receipt, RequestAssignment
-from ...backjob_utils import booking_has_backjob
+from ...backjob_utils import (
+    backjob_accepted_payable_total,
+    backjob_phase_total_paid,
+    backjob_scoped_payments_active,
+    booking_has_backjob,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -173,7 +178,7 @@ def _compute_overall_payable_total(booking):
         try:
             quotation.is_backjob = True
             quotation.recalculate_totals()
-            return _to_money(quotation.total_amount)
+            return backjob_accepted_payable_total(quotation)
         except Exception:
             return Decimal("0.00")
 
@@ -221,12 +226,15 @@ def _sync_pending_installments_to_total(booking):
         return
 
     total_amount = _to_money(booking.amount_fee)
-    paid_total = Decimal("0.00")
+    scoped = backjob_scoped_payments_active(booking)
     paid_exists = False
+    legacy_paid_total = Decimal("0.00")
     for item in installments:
         if item.status == PaymentInstallment.Status.PAID:
             paid_exists = True
-            paid_total += _to_money(item.amount)
+            legacy_paid_total += _to_money(item.amount)
+
+    paid_total = backjob_phase_total_paid(booking) if scoped else legacy_paid_total
 
     remaining_amount = max(Decimal("0.00"), (total_amount - paid_total)).quantize(Decimal("0.01"))
 
@@ -383,6 +391,15 @@ def _ensure_installments_for_booking(booking, use_initial_payment=False, initial
 
 def _get_payment_summary(booking):
     if booking_has_backjob(booking) and _to_money(booking.amount_fee) <= Decimal("0.00"):
+        # Zero-amount backjob: stay "unpaid" until mechanic explicitly completes (free job).
+        if booking.status == Booking.Status.PENDING_PAYMENT:
+            return {
+                "total_amount": 0.0,
+                "total_paid": 0.0,
+                "remaining_balance": 0.0,
+                "fully_paid": False,
+                "payment_status": Booking.PaymentStatus.UNPAID,
+            }
         return {
             "total_amount": 0.0,
             "total_paid": 0.0,
@@ -406,10 +423,14 @@ def _get_payment_summary(booking):
             )
         ]
 
+    scoped = backjob_scoped_payments_active(booking)
     total_paid = Decimal("0.00")
     for installment in installments:
         if installment.status == PaymentInstallment.Status.PAID:
             total_paid += _to_money(installment.amount)
+
+    if scoped:
+        total_paid = backjob_phase_total_paid(booking)
 
     total_paid = total_paid.quantize(Decimal("0.01"))
     remaining_balance = max(Decimal("0.00"), (total_amount - total_paid)).quantize(Decimal("0.01"))
@@ -1024,13 +1045,14 @@ def initiate_payment(request):
     if booking.request.client.account_id != account.id:
         return Response({"error": "Unauthorized"}, status=403)
 
+    # Recompute from quotation items before we trust stored amount_fee (backjob: service + item new lines).
+    _sync_booking_payable_total(booking)
+
     if booking_has_backjob(booking) and _to_money(booking.amount_fee) <= Decimal("0.00"):
         return Response({"error": "This backjob has no payable amount"}, status=400)
 
     use_initial_payment = bool(request.data.get("use_initial_payment", False))
     initial_payment_amount = request.data.get("initial_payment_amount")
-
-    _sync_booking_payable_total(booking)
 
     if not _is_payment_open(booking):
         return Response({"error": "Booking is not ready for payment"}, status=400)

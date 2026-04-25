@@ -17,7 +17,12 @@ import { SkeletonDetailPage } from '@/components/skeletons/SkeletonLoaders';
 import * as Location from 'expo-location';
 import { Image } from 'expo-image';
 import { CashQRDisplayModal, PendingPaymentModal } from '@/components/payment';
-import { bookingHasBackjob, canOpenBookingChat } from '@/lib/bookingAccess';
+import {
+  bookingHasAcceptedBackjob,
+  bookingHasBackjob,
+  bookingInBackjobPaymentPhase,
+  canOpenBookingChat,
+} from '@/lib/bookingAccess';
 import { fetchBookingChatPreview } from '@/lib/bookingChatPreview';
 import { ensureForegroundLocationAccess } from '@/lib/locationPermission';
 import { fetchProfileDetailsCached } from '@/lib/profileCache';
@@ -131,6 +136,7 @@ interface BookingDetail {
     reason?: string | null;
     images?: string[];
     requested_by?: { id: number; name: string } | null;
+    created_at?: string | null;
   } | null;
   payment_summary?: {
     payment_status?: string;
@@ -930,11 +936,14 @@ export default function BookingDetailScreen() {
   const fetchQuotation = async () => {
     if (!bookingId) return;
     try {
-      const res = await fetch(`${API_URL}/bookings/mechanic/bookings/${bookingId}/quotation/`, {
-        method: 'GET',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
+      const res = await fetch(
+        `${API_URL}/bookings/mechanic/bookings/${bookingId}/quotation/?_=${Date.now()}`,
+        {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
       if (!res.ok) {
         setQuotation(null);
         return;
@@ -1568,7 +1577,13 @@ export default function BookingDetailScreen() {
       }
 
       setShowAfterServicePhotoModal(false);
-      showNotification({ type: 'success', message: bookingHasBackjob(booking) ? 'Backjob completed.' : 'Job finished. Pending payment.' });
+      const okMsg =
+        typeof payload.message === 'string' && payload.message.trim()
+          ? String(payload.message).trim()
+          : bookingHasBackjob(booking)
+            ? 'Backjob moved to payment / completion step.'
+            : 'Job finished. Pending payment.';
+      showNotification({ type: 'success', message: okMsg });
       await fetchBookingDetail();
     } catch (err: any) {
       showNotification({ type: 'error', message: err.message || 'Failed to finish job' });
@@ -1792,22 +1807,40 @@ export default function BookingDetailScreen() {
     if (rowStatus === 'rejected') removedRows.push(row);
   });
 
-  const quotationAcceptedTotal = sortedQuotationItems.reduce((sum: number, it: any) => {
-    const statusRaw = String(it?.status || it?.quotation_status || it?.state || quotation?.status || '').toLowerCase();
-    if (statusRaw !== 'accepted') return sum;
-    const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
-    const qty = Number(it?.quantity ?? 1) || 1;
-    return sum + price * qty;
-  }, 0);
+  const backjobCreatedAtMs = Number(new Date(String((booking as any)?.backjob?.created_at || '')).getTime());
+  const hasBackjobCreatedAt = Number.isFinite(backjobCreatedAtMs) && backjobCreatedAtMs > 0;
+  const isLineCreatedAfterBackjob = (it: any) => {
+    const lineMs = Number(new Date(String(it?.created_at || '')).getTime());
+    if (!Number.isFinite(lineMs) || lineMs <= 0 || !hasBackjobCreatedAt) return false;
+    return lineMs >= backjobCreatedAtMs;
+  };
+  const shouldIncludeItemInBackjobQuoteAmountTotals = (it: any) => {
+    if (Boolean(it?.is_backjob_new_line)) return true;
+    if (isLineCreatedAfterBackjob(it)) return true;
+    const inferred = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
+    const chat = getQuoteSnapshotKeys(it).map((k) => chatChangeLabelByKey[k]).find(Boolean) || null;
+    const raw = chat || inferred || null;
+    return raw === 'Added';
+  };
 
   const quotationPendingDeltaTotal = sortedQuotationItems.reduce((sum: number, it: any) => {
+    if (bookingInBackjobPaymentPhase(booking) && !shouldIncludeItemInBackjobQuoteAmountTotals(it)) {
+      return sum;
+    }
     const statusRaw = String(it?.status || it?.quotation_status || it?.state || quotation?.status || '').toLowerCase();
     if (statusRaw !== 'pending') return sum;
 
     const inferredChangeLabel = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
     const chatDerivedChangeLabel = getQuoteSnapshotKeys(it).map((k) => chatChangeLabelByKey[k]).find(Boolean) || null;
     const rawChangeLabel = chatDerivedChangeLabel || inferredChangeLabel || null;
-    const changeLabel = rawChangeLabel;
+    let changeLabel = rawChangeLabel;
+    if (
+      bookingInBackjobPaymentPhase(booking) &&
+      !changeLabel &&
+      (Boolean(it?.is_backjob_new_line) || isLineCreatedAfterBackjob(it))
+    ) {
+      changeLabel = 'Added';
+    }
     const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
     const qty = Number(it?.quantity ?? 1) || 1;
     const currentTotal = price * qty;
@@ -1820,6 +1853,31 @@ export default function BookingDetailScreen() {
       const beforeQty = Number(before?.quantity ?? 1) || 1;
       return sum + Math.max(0, currentTotal - (beforePrice * beforeQty));
     }
+    return sum;
+  }, 0);
+
+  const quotationAcceptedDeltaTotal = sortedQuotationItems.reduce((sum: number, it: any) => {
+    if (bookingInBackjobPaymentPhase(booking) && !shouldIncludeItemInBackjobQuoteAmountTotals(it)) {
+      return sum;
+    }
+    const statusRaw = String(it?.status || it?.quotation_status || it?.state || quotation?.status || '').toLowerCase();
+    if (statusRaw !== 'accepted') return sum;
+
+    const inferredChangeLabel = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
+    const chatDerivedChangeLabel = getQuoteSnapshotKeys(it).map((k) => chatChangeLabelByKey[k]).find(Boolean) || null;
+    let changeLabel = chatDerivedChangeLabel || inferredChangeLabel || null;
+    if (
+      bookingInBackjobPaymentPhase(booking) &&
+      !changeLabel &&
+      (Boolean(it?.is_backjob_new_line) || isLineCreatedAfterBackjob(it))
+    ) {
+      changeLabel = 'Added';
+    }
+    const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
+    const qty = Number(it?.quantity ?? 1) || 1;
+    const currentTotal = price * qty;
+
+    if (changeLabel === 'Added') return sum + currentTotal;
     return sum;
   }, 0);
 
@@ -1840,6 +1898,9 @@ export default function BookingDetailScreen() {
     const key = getQuoteItemKey(it, idx);
     const isExpanded = expandedQuoteItems[key] ?? false;
     const assocKey = getAssocKey(it);
+    const isChargeableBackjobLine = Boolean(it?.is_backjob_new_line) || isLineCreatedAfterBackjob(it) || rawChangeLabel === 'Added';
+    const shouldGhostQuotationLine = isAcceptedBackjob && !isChargeableBackjobLine;
+    if (shouldGhostQuotationLine) return null;
     const beforeItem = it?.previous_description || it?.previous_quantity != null || it?.previous_unit_price != null
       ? {
           description: it?.previous_description,
@@ -1877,7 +1938,7 @@ export default function BookingDetailScreen() {
       <View key={key} style={[styles.quotationAccordionRow, changeLabel ? styles.pendingItem : styles.acceptedItem, isExpanded ? styles.quotationAccordionRowExpanded : null]}>
         <TouchableOpacity style={styles.quotationAccordionHeader} onPress={() => toggleQuoteItem(key)} activeOpacity={0.8}>
           <View style={styles.quoteHeaderLeft}>
-            <ThemedText style={styles.receiptItem} numberOfLines={2}>{desc}</ThemedText>
+            <ThemedText style={[styles.receiptItem, shouldGhostQuotationLine ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]} numberOfLines={2}>{desc}</ThemedText>
             {changeLabel ? (
               <View style={[styles.pendingPill, pillStyle.pill]}>
                 <ThemedText style={[styles.pendingPillText, pillStyle.text]}>{changeLabel}</ThemedText>
@@ -1885,7 +1946,7 @@ export default function BookingDetailScreen() {
             ) : null}
           </View>
           <View style={styles.quotationAccordionRight}>
-            <ThemedText style={styles.receiptAmount}>₱{(price * qty).toFixed(2)}</ThemedText>
+            <ThemedText style={[styles.receiptAmount, shouldGhostQuotationLine ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>₱{(price * qty).toFixed(2)}</ThemedText>
             <FontAwesome name={isExpanded ? 'chevron-up' : 'chevron-down'} size={12} color="#9CA3AF" />
           </View>
         </TouchableOpacity>
@@ -1934,6 +1995,7 @@ export default function BookingDetailScreen() {
   };
   const showPricingQuotationCard = hasStatus(booking.status, FLOW_STATUSES.quotationVisible)
     && !!(convenienceBreakdown || displayQuotation);
+  const isCompletedBooking = String(booking.status || '').toLowerCase() === 'completed';
   const canEditQuotation = hasStatus(booking.status, FLOW_STATUSES.quotationEditable);
   const myAssignmentRole = (() => {
     const assigned = booking.request?.assigned_mechanics || [];
@@ -1946,27 +2008,57 @@ export default function BookingDetailScreen() {
   const paymentSummary = booking.payment_summary || {};
   const summaryTotalAmount = Math.max(0, Number((paymentSummary as any).total_amount ?? booking.amount_fee ?? 0));
   const hasBackjob = bookingHasBackjob(booking);
-  const backjobExtraCharge = Math.max(0, quotationPendingDeltaTotal);
-  const resolvedBackjobCharge = Math.max(backjobExtraCharge, Math.max(0, quotationEstimatedTotal));
-  const effectiveConvenienceFee = hasBackjob ? 0 : convenienceFeeTotal;
-  const effectiveQuotationEstimate = hasBackjob ? resolvedBackjobCharge : quotationEstimatedTotal;
-  const effectiveTotalFee = hasBackjob ? resolvedBackjobCharge : totalFee;
-  const totalAmount = hasBackjob ? resolvedBackjobCharge : Math.max(0, Math.max(totalFee, summaryTotalAmount));
+  const isAcceptedBackjob = bookingHasAcceptedBackjob(booking);
+  const backjobPaymentPhase = bookingInBackjobPaymentPhase(booking);
+  const isBackjobChargeableQuotationLine = (it: any) => {
+    if (Boolean(it?.is_backjob_new_line)) return true;
+    const inferredChangeLabel = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
+    const chatDerivedChangeLabel = getQuoteSnapshotKeys(it).map((k) => chatChangeLabelByKey[k]).find(Boolean) || null;
+    const rawChangeLabel = chatDerivedChangeLabel || inferredChangeLabel || null;
+    if (isLineCreatedAfterBackjob(it)) return true;
+    return rawChangeLabel === 'Added';
+  };
+  const visibleQuotationItems = isAcceptedBackjob
+    ? sortedQuotationItems.filter((it: any) => isBackjobChargeableQuotationLine(it))
+    : sortedQuotationItems;
+  const oldQuotationItems = isAcceptedBackjob
+    ? sortedQuotationItems.filter((it: any) => !isBackjobChargeableQuotationLine(it))
+    : [];
+  const oldReceiptSubtotal = oldQuotationItems.reduce((sum: number, it: any) => {
+    const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
+    const qty = Number(it?.quantity ?? 1) || 1;
+    return sum + price * qty;
+  }, 0);
+  // Backjob extra work: sum accepted plus pending new lines (pending drops to 0 after the client accepts).
+  const resolvedBackjobCharge = Math.max(0, quotationAcceptedDeltaTotal + quotationPendingDeltaTotal);
+  const effectiveConvenienceFee = backjobPaymentPhase ? 0 : convenienceFeeTotal;
+  const effectiveQuotationEstimate = backjobPaymentPhase ? resolvedBackjobCharge : quotationEstimatedTotal;
+  const effectiveTotalFee = backjobPaymentPhase ? resolvedBackjobCharge : totalFee;
+  const totalAmount = backjobPaymentPhase
+    ? resolvedBackjobCharge
+    : Math.max(0, Math.max(totalFee, summaryTotalAmount));
   const totalPaid = Number(paymentSummary.total_paid || 0);
-  const remainingBalance = hasBackjob ? 0 : Math.max(0, totalAmount - totalPaid);
-  const paymentStatus = hasBackjob || totalAmount <= 0
-    ? 'fully_paid'
-    : totalPaid >= totalAmount && totalAmount > 0
-    ? 'fully_paid'
-    : (totalPaid > 0 ? 'partially_paid' : 'unpaid');
-  const paymentProgressPct = hasBackjob
-    ? 100
-    : totalAmount > 0
-    ? Math.min(100, Math.max(0, (totalPaid / totalAmount) * 100))
-    : 0;
-  const showPendingPaymentFlow = booking.status === 'pending_payment' && !hasBackjob;
-  const showBackjobCompletionFlow = hasBackjob && booking.status === 'pending_payment';
-  const canShowPaymentModals = !hasBackjob && (booking.status === 'pending_payment' || booking.status === 'accepted');
+  const remainingBalance = Math.max(0, totalAmount - totalPaid);
+  const isBackjobFreeAwaitingMechanicClose =
+    backjobPaymentPhase && booking.status === 'pending_payment' && totalAmount <= 0;
+  const paymentStatus = isBackjobFreeAwaitingMechanicClose
+    ? 'unpaid'
+    : totalAmount <= 0
+      ? 'fully_paid'
+      : totalPaid >= totalAmount && totalAmount > 0
+        ? 'fully_paid'
+        : totalPaid > 0
+          ? 'partially_paid'
+          : 'unpaid';
+  const paymentProgressPct =
+    totalAmount > 0 ? Math.min(100, Math.max(0, (totalPaid / totalAmount) * 100)) : 0;
+  const showBackjobCompletionFlow =
+    backjobPaymentPhase && booking.status === 'pending_payment' && totalAmount <= 0;
+  const showPendingPaymentFlow =
+    booking.status === 'pending_payment' && !showBackjobCompletionFlow && (!backjobPaymentPhase || totalAmount > 0);
+  const canShowPaymentModals =
+    (!backjobPaymentPhase || totalAmount > 0) &&
+    (booking.status === 'pending_payment' || booking.status === 'accepted');
 
   const getPaymentStatusColor = (status: string) => {
     switch (status) {
@@ -1979,6 +2071,27 @@ export default function BookingDetailScreen() {
       default:
         return '#8E8E93';
     }
+  };
+
+  const renderQuotationRawRow = (it: any, idx: number) => {
+    const desc = it?.description || it?.name || (it.service && `Service #${it.service}`) || 'Item';
+    const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
+    const qty = Number(it?.quantity ?? 1) || 1;
+    const lineTotal = price * qty;
+    const key = getQuoteItemKey(it, idx);
+
+    return (
+      <View key={`raw-${key}`} style={[styles.noteBox, { marginBottom: 8 }]}>
+        <View style={styles.receiptRow}>
+          <ThemedText style={styles.receiptItem}>{desc}</ThemedText>
+          <ThemedText style={styles.receiptAmount}>₱{lineTotal.toFixed(2)}</ThemedText>
+        </View>
+        <View style={styles.receiptRow}>
+          <ThemedText style={styles.noteText}>Qty: {qty}</ThemedText>
+          <ThemedText style={styles.noteText}>Unit: ₱{price.toFixed(2)}</ThemedText>
+        </View>
+      </View>
+    );
   };
 
   return (
@@ -2215,6 +2328,19 @@ export default function BookingDetailScreen() {
 
           {booking.status === 'active' && (
             <>
+              {bookingHasBackjob(booking) &&
+                bookingInBackjobPaymentPhase(booking) &&
+                sortedQuotationItems.some((it: any) => {
+                  const st = String(it?.status || '').toLowerCase();
+                  return Boolean(it?.is_backjob_new_line) && st === 'pending';
+                }) && (
+                  <View style={[styles.noteBox, { marginBottom: 10 }]}>
+                    <ThemedText style={styles.noteText}>
+                      Some new quotation lines are still pending client approval. You cannot finish the job until the
+                      client accepts or rejects them.
+                    </ThemedText>
+                  </View>
+                )}
               <View style={styles.actionRow}>
                 <View style={styles.actionHalf}>
                   <TouchableOpacity
@@ -2443,7 +2569,7 @@ export default function BookingDetailScreen() {
             <>
               <View style={styles.noteBox}>
                 <ThemedText style={styles.noteText}>
-                  Backjob is free of charge. Mark it completed instead of collecting payment.
+                  No payment is due for this backjob. Tap below to close the booking as a free job.
                 </ThemedText>
               </View>
               <TouchableOpacity
@@ -2457,7 +2583,7 @@ export default function BookingDetailScreen() {
                 ) : (
                   <FontAwesome name="check" size={18} color="#fff" />
                 )}
-                <ThemedText style={styles.actionBarBtnText}>Mark backjob completed</ThemedText>
+                <ThemedText style={styles.actionBarBtnText}>Complete job as free</ThemedText>
               </TouchableOpacity>
             </>
           )}
@@ -2750,26 +2876,12 @@ export default function BookingDetailScreen() {
               </View>
               <ThemedText style={styles.progressText}>{Math.round(paymentProgressPct)}% Paid</ThemedText>
               <ThemedText style={[styles.noteText, { marginTop: 6, marginBottom: 8 }]}>
-                {hasBackjob
-                  ? 'Backjob labor is free. Only newly added quotation items are chargeable.'
-                  : 'Payment will be released to mechanic after job completion.'}
+                {backjobPaymentPhase && totalAmount <= 0
+                  ? 'Backjob labor is free. No extra charges on this backjob yet.'
+                  : backjobPaymentPhase && totalAmount > 0
+                    ? 'Backjob labor is free. Payment shown is only for newly added quotation lines.'
+                    : 'Payment will be released to mechanic after job completion.'}
               </ThemedText>
-              {hasBackjob ? (
-                <View style={{ marginBottom: 8 }}>
-                  <View style={styles.receiptRow}>
-                    <ThemedText style={[styles.receiptItem, { textDecorationLine: 'line-through', color: '#8E8E93' }]}>
-                      Previous quotation total
-                    </ThemedText>
-                    <ThemedText style={[styles.receiptAmount, { textDecorationLine: 'line-through', color: '#8E8E93' }]}>
-                      ₱{quotationAcceptedTotal.toFixed(2)}
-                    </ThemedText>
-                  </View>
-                  <View style={styles.receiptRow}>
-                    <ThemedText style={styles.receiptItem}>Newly added charges</ThemedText>
-                    <ThemedText style={styles.receiptAmount}>₱{resolvedBackjobCharge.toFixed(2)}</ThemedText>
-                  </View>
-                </View>
-              ) : null}
               <View style={styles.receiptDivider} />
             </View>
 
@@ -2785,7 +2897,7 @@ export default function BookingDetailScreen() {
                 style={[
                   styles.noteLabel,
                   { marginBottom: 8 },
-                  hasBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null,
+                  isAcceptedBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null,
                 ]}
               >
                 Travel, Traffic & Convenience
@@ -2793,31 +2905,31 @@ export default function BookingDetailScreen() {
               {convenienceBreakdown ? (
                 <>
                   <View style={styles.receiptRow}>
-                    <ThemedText style={[styles.receiptItem, hasBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>Base Fee</ThemedText>
-                    <ThemedText style={[styles.receiptAmount, hasBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>₱{convenienceBreakdown.baseFee.toFixed(2)}</ThemedText>
+                    <ThemedText style={[styles.receiptItem, isAcceptedBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>Base Fee</ThemedText>
+                    <ThemedText style={[styles.receiptAmount, isAcceptedBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>₱{convenienceBreakdown.baseFee.toFixed(2)}</ThemedText>
                   </View>
                   <View style={styles.receiptRow}>
-                    <ThemedText style={[styles.receiptItem, hasBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>Distance Fee ({convenienceBreakdown.distanceKm.toFixed(2)} km)</ThemedText>
-                    <ThemedText style={[styles.receiptAmount, hasBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>₱{convenienceBreakdown.distanceFee.toFixed(2)}</ThemedText>
+                    <ThemedText style={[styles.receiptItem, isAcceptedBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>Distance Fee ({convenienceBreakdown.distanceKm.toFixed(2)} km)</ThemedText>
+                    <ThemedText style={[styles.receiptAmount, isAcceptedBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>₱{convenienceBreakdown.distanceFee.toFixed(2)}</ThemedText>
                   </View>
                   <View style={styles.receiptRow}>
-                    <ThemedText style={[styles.receiptItem, hasBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>
+                    <ThemedText style={[styles.receiptItem, isAcceptedBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>
                       {convenienceBreakdown.estimated ? 'Estimated Traffic Surcharge' : 'Traffic Surcharge'} ({convenienceBreakdown.trafficLabel})
                     </ThemedText>
-                    <ThemedText style={[styles.receiptAmount, hasBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>₱{convenienceBreakdown.trafficFee.toFixed(2)}</ThemedText>
+                    <ThemedText style={[styles.receiptAmount, isAcceptedBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>₱{convenienceBreakdown.trafficFee.toFixed(2)}</ThemedText>
                   </View>
                   <View style={styles.receiptRow}>
-                    <ThemedText style={[styles.receiptItem, hasBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>Convenience Fee</ThemedText>
-                    <ThemedText style={[styles.receiptAmount, hasBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>₱{convenienceBreakdown.totalConvenienceFee.toFixed(2)}</ThemedText>
+                    <ThemedText style={[styles.receiptItem, isAcceptedBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>Convenience Fee</ThemedText>
+                    <ThemedText style={[styles.receiptAmount, isAcceptedBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>₱{convenienceBreakdown.totalConvenienceFee.toFixed(2)}</ThemedText>
                   </View>
                   {typeof convenienceBreakdown.etaMinutes === 'number' && convenienceBreakdown.etaMinutes > 0 && (
                     <View style={styles.receiptRow}>
-                      <ThemedText style={[styles.receiptItem, hasBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>Estimated ETA</ThemedText>
-                      <ThemedText style={[styles.receiptAmount, hasBackjob ? { textDecorationLine: 'line-through', color: '#8E8E93' } : null]}>{convenienceBreakdown.etaMinutes} min</ThemedText>
+                      <ThemedText style={[styles.receiptItem, isAcceptedBackjob ? { color: '#8E8E93' } : null]}>Estimated ETA</ThemedText>
+                      <ThemedText style={[styles.receiptAmount, isAcceptedBackjob ? { color: '#8E8E93' } : null]}>{convenienceBreakdown.etaMinutes} min</ThemedText>
                     </View>
                   )}
                   {convenienceBreakdown.estimated && (
-                    <ThemedText style={{ color: '#8E8E93', marginTop: 6, fontStyle: 'italic', ...(hasBackjob ? { textDecorationLine: 'line-through' } : {}) }}>
+                    <ThemedText style={{ color: '#8E8E93', marginTop: 6, fontStyle: 'italic', ...(isAcceptedBackjob ? { textDecorationLine: 'line-through' } : {}) }}>
                       Estimated price until mechanic starts travel.
                     </ThemedText>
                   )}
@@ -2829,21 +2941,72 @@ export default function BookingDetailScreen() {
               )}
 
               <View style={styles.receiptDivider} />
-              <ThemedText style={[styles.noteLabel, { marginBottom: 8 }]}>Quotation</ThemedText>
-              {displayQuotation && sortedQuotationItems.length > 0 ? (
+
+              {isAcceptedBackjob && oldQuotationItems.length > 0 ? (
+                <View style={[styles.noteBox, { marginBottom: 10 }]}>
+                  <ThemedText style={[styles.noteLabel, { marginBottom: 8, color: '#8E8E93' }]}>Old Receipt (Already Paid)</ThemedText>
+                  {oldQuotationItems.slice(0, 8).map((it: any, idx: number) => {
+                    const desc = it?.description || it?.name || 'Item';
+                    const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
+                    const qty = Number(it?.quantity ?? 1) || 1;
+                    return (
+                      <View key={`old-mech-quote-${idx}`} style={styles.receiptRow}>
+                        <ThemedText style={[styles.receiptItem, { textDecorationLine: 'line-through', color: '#8E8E93' }]} numberOfLines={1}>{desc} x{qty}</ThemedText>
+                        <ThemedText style={[styles.receiptAmount, { textDecorationLine: 'line-through', color: '#8E8E93' }]}>₱{(price * qty).toFixed(2)}</ThemedText>
+                      </View>
+                    );
+                  })}
+                  {oldQuotationItems.length > 8 ? (
+                    <ThemedText style={[styles.noteText, { color: '#8E8E93', marginTop: 4 }]}>...and more old items</ThemedText>
+                  ) : null}
+                </View>
+              ) : null}
+
+              {isAcceptedBackjob && oldReceiptSubtotal > 0 ? (
+                <View style={[styles.receiptRow, { marginBottom: 10 }]}>
+                  <ThemedText style={[styles.receiptItem, { textDecorationLine: 'line-through', color: '#8E8E93' }]}>
+                    Previous quotation total (reference)
+                  </ThemedText>
+                  <ThemedText style={[styles.receiptAmount, { textDecorationLine: 'line-through', color: '#8E8E93' }]}>
+                    ₱{oldReceiptSubtotal.toFixed(2)}
+                  </ThemedText>
+                </View>
+              ) : null}
+
+              {isAcceptedBackjob && (oldQuotationItems.length > 0 || oldReceiptSubtotal > 0) ? (
+                <View style={styles.receiptDivider} />
+              ) : null}
+
+              <ThemedText style={[styles.noteLabel, { marginBottom: 8 }]}>
+                {isAcceptedBackjob ? 'New quotation (backjob)' : 'Quotation'}
+              </ThemedText>
+              {displayQuotation && visibleQuotationItems.length > 0 ? (
                 <>
-                  <TouchableOpacity
-                    style={[styles.quotationListAccordionHeader, quotationListExpanded ? styles.quotationListAccordionHeaderExpanded : null]}
-                    onPress={() => setQuotationListExpanded(prev => !prev)}
-                    activeOpacity={0.8}
-                  >
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                      <FontAwesome name="list" size={12} color="#A6ABB2" />
-                      <ThemedText style={styles.quotationListAccordionTitle}>Quotation Items ({sortedQuotationItems.length})</ThemedText>
-                    </View>
-                    <FontAwesome name={quotationListExpanded ? 'chevron-up' : 'chevron-down'} size={12} color="#A6ABB2" />
-                  </TouchableOpacity>
-                  {quotationListExpanded ? sortedQuotationItems.map(renderQuotationRow) : null}
+                  {isCompletedBooking ? (
+                    <>
+                      <View style={[styles.noteBox, { marginBottom: 8 }]}>
+                        <ThemedText style={styles.noteText}>
+                          Completed booking: quotation is frozen and shown as read-only reference.
+                        </ThemedText>
+                      </View>
+                      {visibleQuotationItems.map(renderQuotationRawRow)}
+                    </>
+                  ) : (
+                    <>
+                      <TouchableOpacity
+                        style={[styles.quotationListAccordionHeader, quotationListExpanded ? styles.quotationListAccordionHeaderExpanded : null]}
+                        onPress={() => setQuotationListExpanded(prev => !prev)}
+                        activeOpacity={0.8}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          <FontAwesome name="list" size={12} color="#A6ABB2" />
+                          <ThemedText style={styles.quotationListAccordionTitle}>Quotation Items ({visibleQuotationItems.length})</ThemedText>
+                        </View>
+                        <FontAwesome name={quotationListExpanded ? 'chevron-up' : 'chevron-down'} size={12} color="#A6ABB2" />
+                      </TouchableOpacity>
+                      {quotationListExpanded ? visibleQuotationItems.map(renderQuotationRow) : null}
+                    </>
+                  )}
                 </>
               ) : (
                 <View style={styles.noteBox}>
@@ -2851,7 +3014,7 @@ export default function BookingDetailScreen() {
                 </View>
               )}
 
-              {canEditQuotation && canOpenQuotationEditor && (
+              {canEditQuotation && canOpenQuotationEditor && !isCompletedBooking && (
                 <TouchableOpacity
                   style={[styles.finishLargeButton, { marginTop: 10 }]}
                   onPress={() => routerHook.push({ pathname: '/mechanic/booking/quotation_edit', params: { bookingId: String(booking.id) } })}
@@ -2861,19 +3024,24 @@ export default function BookingDetailScreen() {
                 </TouchableOpacity>
               )}
 
+              {isAcceptedBackjob ? (
+                <View style={[styles.receiptRow, { marginTop: 10 }]}>
+                  <ThemedText style={styles.receiptItem}>Newly added charges</ThemedText>
+                  <ThemedText style={styles.receiptAmount}>₱{resolvedBackjobCharge.toFixed(2)}</ThemedText>
+                </View>
+              ) : null}
+
               <View style={styles.receiptDivider} />
               <View style={styles.receiptRow}>
                 <ThemedText style={styles.receiptTotalLabel}>Convenience Fee Total</ThemedText>
                 <ThemedText style={styles.receiptTotalValue}>₱{effectiveConvenienceFee.toFixed(2)}</ThemedText>
               </View>
-              <View style={styles.receiptRow}>
-                <ThemedText style={styles.receiptTotalLabel}>
-                  {hasBackjob ? 'Backjob Added Charges' : 'Quotation Estimated Total'}
-                </ThemedText>
-                <ThemedText style={styles.receiptTotalValue}>
-                  ₱{effectiveQuotationEstimate.toFixed(2)}
-                </ThemedText>
-              </View>
+              {!isAcceptedBackjob ? (
+                <View style={styles.receiptRow}>
+                  <ThemedText style={styles.receiptTotalLabel}>Quotation Estimated Total</ThemedText>
+                  <ThemedText style={styles.receiptTotalValue}>₱{effectiveQuotationEstimate.toFixed(2)}</ThemedText>
+                </View>
+              ) : null}
               <View style={styles.receiptRow}>
                 <ThemedText style={styles.receiptTotalLabel}>Total Fee</ThemedText>
                 <ThemedText style={styles.receiptTotalValue}>₱{effectiveTotalFee.toFixed(2)}</ThemedText>
@@ -3175,9 +3343,9 @@ export default function BookingDetailScreen() {
             </View>
             <View style={styles.completionInfo}>
               <View style={styles.receiptList}>
-                {displayQuotation && sortedQuotationItems.length > 0 ? (
+                {displayQuotation && visibleQuotationItems.length > 0 ? (
                   <>
-                    {sortedQuotationItems.map(renderQuotationRow)}
+                    {visibleQuotationItems.map(renderQuotationRawRow)}
                     <View style={styles.receiptDivider} />
                     <View style={styles.receiptRow}>
                       <ThemedText style={styles.receiptTotalLabel}>Final Total</ThemedText>
