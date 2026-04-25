@@ -2166,7 +2166,7 @@ def list_mechanic_bookings(request):
                 # Need some booking items on this page; exclude backjob bookings already shown
                 booking_start = max(0, start_index - pending_count)
                 booking_end = end_index - pending_count
-                bookings_slice = bookings_queryset.exclude(backjob__isnull=False)[booking_start:booking_end]
+                bookings_slice = bookings_queryset.exclude(backjobs__isnull=False)[booking_start:booking_end]
                 paginated.extend(serialize_booking_list(bookings_slice))
 
             # Include tab counts so frontend doesn't need a separate request
@@ -2179,7 +2179,7 @@ def list_mechanic_bookings(request):
             cancelled_count = bookings_queryset.filter(status="cancelled").count()
             # Include any booking that has a Backjob (requested, accepted, or completed)
             reworked_count = bookings_queryset.filter(
-                Q(status="reworked") | Q(backjob__isnull=False)
+                Q(status="reworked") | Q(backjobs__isnull=False)
             ).count()
             disputed_count = bookings_queryset.filter(dispute_status=Booking.DisputeState.ACTIVE).count()
 
@@ -2295,12 +2295,12 @@ def list_mechanic_bookings(request):
         # in the mechanic's on-going/active filter.
         if status_filter.lower() == 'active':
             # include bookings that are active/paused OR that have a backjob requested
-            bookings_queryset = bookings_queryset.filter(Q(status__in=['active', 'paused']) | Q(backjob__isnull=False))
+            bookings_queryset = bookings_queryset.filter(Q(status__in=['active', 'paused']) | Q(backjobs__isnull=False))
         elif status_filter.lower() == 'reworked':
             # Include bookings explicitly marked reworked OR any bookings
             # that have a Backjob (so accepted/completed backjobs also appear)
             bookings_queryset = bookings_queryset.filter(
-                Q(status__in=['reworked', 'backjob_pending']) | Q(backjob__isnull=False)
+                Q(status__in=['reworked', 'backjob_pending']) | Q(backjobs__isnull=False)
             )
         else:
             bookings_queryset = bookings_queryset.filter(status=status_filter.lower())
@@ -2338,13 +2338,13 @@ def list_mechanic_bookings(request):
     completed_count = bookings_queryset.filter(status="completed").count()
     cancelled_count = bookings_queryset.filter(status="cancelled").count()
     reworked_count = bookings_queryset.filter(
-        Q(status="reworked") | Q(backjob__isnull=False)
+        Q(status="reworked") | Q(backjobs__isnull=False)
     ).count()
     disputed_count = bookings_queryset.filter(dispute_status=Booking.DisputeState.ACTIVE).count()
     # Include backjob bookings in the pending count, but only those not yet accepted.
     pending_count = _count_pending_direct_requests(account) + Booking.objects.filter(
         _mechanic_booking_access_q(account),
-        backjob__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
+        backjobs__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
     ).distinct().count()
 
     # Single DB aggregate — much cheaper than fetching all completed records

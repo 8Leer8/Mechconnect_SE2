@@ -15,7 +15,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 
-from users.models import Account, Mechanic, ShopOwner, TokenPurchase
+from users.models import Account, Mechanic, ShopOwner, TokenPurchase, TokenTransaction, Wallet
 from services.pricing_utils import get_token_pricing
 
 
@@ -23,17 +23,27 @@ logger = logging.getLogger(__name__)
 WEBHOOK_MAX_AGE_SECONDS = 30 * 60
 
 
-def _build_token_paymongo_redirect_urls(is_shop_owner=False):
-    """Build redirect URLs for token purchase payments."""
+def _build_token_paymongo_redirect_urls(user_type="mechanic"):
+    """Build redirect URLs for token purchase payments.
+    
+    Args:
+        user_type: 'mechanic', 'shop-owner', or 'client'
+    """
     base_url = str(getattr(settings, "PAYMONGO_REDIRECT_BASE_URL", "") or "").rstrip("/")
     if not base_url.startswith("https://"):
         raise ValueError("PAYMONGO_REDIRECT_BASE_URL must be an https URL")
     
-    # Use different redirect URLs for shop owner vs mechanic
-    user_type = "shop-owner" if is_shop_owner else "wallet"
+    # Map user types to URL paths
+    path_map = {
+        "shop-owner": "shop-owner",
+        "client": "client",  # Client has its own redirect paths
+        "mechanic": "wallet",
+    }
+    path = path_map.get(user_type, "wallet")
+    
     return (
-        f"{base_url}/api/users/{user_type}/redirect/success/",
-        f"{base_url}/api/users/{user_type}/redirect/failed/",
+        f"{base_url}/api/users/{path}/redirect/success/",
+        f"{base_url}/api/users/{path}/redirect/failed/",
     )
 
 
@@ -91,7 +101,7 @@ def _parse_token_purchase_body(request):
     return tokens, computed_price, raw_method
 
 
-def create_paymongo_source_for_tokens(amount, payment_method, purchase_id, account_id, is_shop_owner=False):
+def create_paymongo_source_for_tokens(amount, payment_method, purchase_id, account_id, user_type="mechanic"):
     """Create PayMongo source for token purchase and return checkout URL."""
     secret_key = settings.PAYMONGO_SECRET_KEY
     encoded_key = base64.b64encode(f"{secret_key}:".encode()).decode()
@@ -101,7 +111,7 @@ def create_paymongo_source_for_tokens(amount, payment_method, purchase_id, accou
         "maya": "paymaya",
     }
 
-    success_redirect, failed_redirect = _build_token_paymongo_redirect_urls(is_shop_owner)
+    success_redirect, failed_redirect = _build_token_paymongo_redirect_urls(user_type)
 
     amount_centavos = int(Decimal(amount) * 100)
 
@@ -119,7 +129,7 @@ def create_paymongo_source_for_tokens(amount, payment_method, purchase_id, accou
                     "purchase_id": str(purchase_id),
                     "account_id": str(account_id),
                     "purpose": "token_purchase",
-                    "is_shop_owner": str(is_shop_owner),
+                    "user_type": str(user_type),
                 },
             }
         }
@@ -139,7 +149,7 @@ def create_paymongo_source_for_tokens(amount, payment_method, purchase_id, accou
     return data["data"]["attributes"]["redirect"]["checkout_url"], data["data"]["id"]
 
 
-def create_paymongo_maya_intent_for_tokens(amount, purchase_id, account_id, is_shop_owner=False):
+def create_paymongo_maya_intent_for_tokens(amount, purchase_id, account_id, user_type="mechanic"):
     """Maya (PayMaya) checkout for token purchases — Payment Intent flow (same as booking Maya).
 
     PayMongo's Sources API with type ``paymaya`` is unreliable; booking payments use
@@ -153,7 +163,7 @@ def create_paymongo_maya_intent_for_tokens(amount, purchase_id, account_id, is_s
     }
 
     amount_centavos = int(Decimal(amount) * 100)
-    success_redirect, _failed_redirect = _build_token_paymongo_redirect_urls(is_shop_owner)
+    success_redirect, _failed_redirect = _build_token_paymongo_redirect_urls(user_type)
 
     intent_payload = {
         "data": {
@@ -165,7 +175,7 @@ def create_paymongo_maya_intent_for_tokens(amount, purchase_id, account_id, is_s
                     "purchase_id": str(purchase_id),
                     "account_id": str(account_id),
                     "purpose": "token_purchase",
-                    "is_shop_owner": str(is_shop_owner),
+                    "user_type": str(user_type),
                 },
             }
         }
@@ -231,6 +241,7 @@ def initiate_token_purchase(request):
     """Initiate PayMongo payment for token purchase.
     
     Creates a pending TokenPurchase record and returns checkout URL.
+    Supports mechanics, shop owners, and clients (shared wallet across roles).
     """
     account = _get_authenticated_account(request)
     if not account:
@@ -241,19 +252,25 @@ def initiate_token_purchase(request):
         return parsed
     tokens, computed_price, raw_method = parsed
 
-    # Determine if mechanic or shop owner
-    mechanic = None
-    shop_owner = None
+    # Determine user type: mechanic, shop owner, or client
+    # All roles share the same wallet (account.wallet)
+    user_type = None
     try:
-        mechanic = Mechanic.objects.get(account=account)
+        Mechanic.objects.get(account=account)
+        user_type = "mechanic"
     except Mechanic.DoesNotExist:
         try:
-            shop_owner = ShopOwner.objects.get(account=account)
+            ShopOwner.objects.get(account=account)
+            user_type = "shop-owner"
         except ShopOwner.DoesNotExist:
-            return Response(
-                {'error': 'User must be a mechanic or shop owner'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            # Check if client (any authenticated user can purchase tokens)
+            if hasattr(account, 'client'):
+                user_type = "client"
+            else:
+                return Response(
+                    {'error': 'User must be a mechanic, shop owner, or client'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
     # Create pending purchase record
     purchase = TokenPurchase.objects.create(
@@ -264,16 +281,13 @@ def initiate_token_purchase(request):
         status='pending',
     )
 
-    # Determine if shop owner for redirect URLs
-    is_shop_owner = shop_owner is not None
-
     try:
         if raw_method == "maya":
             checkout_url, intent_id = create_paymongo_maya_intent_for_tokens(
                 amount=computed_price,
                 purchase_id=purchase.id,
                 account_id=account.id,
-                is_shop_owner=is_shop_owner,
+                user_type=user_type,
             )
             purchase.ewallet_source_id = intent_id
             purchase.save(update_fields=["ewallet_source_id"])
@@ -283,7 +297,7 @@ def initiate_token_purchase(request):
                 payment_method=raw_method,
                 purchase_id=purchase.id,
                 account_id=account.id,
-                is_shop_owner=is_shop_owner,
+                user_type=user_type,
             )
             purchase.ewallet_source_id = source_id
             purchase.save(update_fields=["ewallet_source_id"])
@@ -430,7 +444,11 @@ def _charge_token_purchase_source(source_id, purchase, resource_attributes):
 
 
 def _finalize_token_purchase(purchase, resource_attributes):
-    """Finalize successful token purchase and add tokens to balance."""
+    """Finalize successful token purchase and add tokens to wallet balance.
+    
+    Updates the unified Wallet model and creates TokenTransaction ledger entries.
+    TokenPurchase and TokenTransaction remain as the universal ledger.
+    """
     if purchase.status == 'completed':
         return  # Already processed
 
@@ -440,20 +458,43 @@ def _finalize_token_purchase(purchase, resource_attributes):
         purchase.external_reference = resource_attributes.get('reference_number') or resource_attributes.get('id')
         purchase.save(update_fields=['status', 'external_reference'])
 
-        # Add tokens to user balance
+        # Get or create wallet for the account
+        wallet, _ = Wallet.objects.get_or_create(
+            account=purchase.account,
+            defaults={'balance': Decimal('0.00')}
+        )
+
+        # Add tokens to wallet balance (using Decimal for precision)
+        wallet.balance = wallet.balance + Decimal(str(purchase.tokens_amount))
+        wallet.save(update_fields=['balance'])
+
+        # Create TokenTransaction ledger entry (universal ledger)
+        # Cast to int since TokenTransaction.tokens is IntegerField
+        TokenTransaction.objects.create(
+            account=purchase.account,
+            tokens=int(purchase.tokens_amount),
+            reason=f'Purchase via {purchase.payment_method or "e-wallet"}'
+        )
+
+        # Log user type for audit trail
+        user_type = "unknown"
         try:
-            mechanic = Mechanic.objects.get(account=purchase.account)
-            mechanic.tokens_balance = mechanic.tokens_balance + purchase.tokens_amount
-            mechanic.save(update_fields=['tokens_balance'])
+            Mechanic.objects.get(account=purchase.account)
+            user_type = "mechanic"
         except Mechanic.DoesNotExist:
             try:
-                shop_owner = ShopOwner.objects.get(account=purchase.account)
-                shop_owner.tokens_balance = shop_owner.tokens_balance + purchase.tokens_amount
-                shop_owner.save(update_fields=['tokens_balance'])
+                ShopOwner.objects.get(account=purchase.account)
+                user_type = "shop_owner"
             except ShopOwner.DoesNotExist:
-                logger.error("No mechanic or shop owner found for purchase %s", purchase.id)
+                pass
 
-    logger.info("Token purchase %s completed: %s tokens added", purchase.id, purchase.tokens_amount)
+    logger.info(
+        "Token purchase %s completed: %s tokens added to %s (wallet balance: %s)",
+        purchase.id,
+        purchase.tokens_amount,
+        user_type,
+        wallet.balance
+    )
 
 
 def _build_token_redirect_bridge_page(target_deep_link, status_label):
@@ -519,17 +560,12 @@ def check_purchase_status(request, purchase_id):
     except TokenPurchase.DoesNotExist:
         return Response({'error': 'Purchase not found'}, status=status.HTTP_404_NOT_FOUND)
 
-    # Get current balance
-    balance = 0
+    # Get current balance from unified Wallet model
     try:
-        mechanic = Mechanic.objects.get(account=account)
-        balance = mechanic.tokens_balance
-    except Mechanic.DoesNotExist:
-        try:
-            shop_owner = ShopOwner.objects.get(account=account)
-            balance = shop_owner.tokens_balance
-        except ShopOwner.DoesNotExist:
-            pass
+        wallet = Wallet.objects.get(account=account)
+        balance = int(wallet.balance)
+    except Wallet.DoesNotExist:
+        balance = 0
 
     return Response({
         'purchase_id': purchase.id,

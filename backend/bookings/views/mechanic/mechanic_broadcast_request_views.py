@@ -13,7 +13,7 @@ from ...models import (
 from ...serializers import BroadcastRequestSerializer
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
-from users.models import Account
+from users.models import Account, TokenTransaction
 from services.pricing_utils import (
     get_distance_fee,
     get_traffic_surcharge,
@@ -313,7 +313,7 @@ def accept_broadcast_request(request, broadcast_id):
                 'convenience_fee': convenience_fee,
                 'traffic_level': traffic_level,
                 'estimated_eta_minutes': estimated_eta_minutes,
-                'tokens_remaining': mechanic.tokens_balance,
+                'tokens_remaining': int(mechanic.account.wallet.balance),
             }, status=status.HTTP_200_OK)
     
     except Account.DoesNotExist:

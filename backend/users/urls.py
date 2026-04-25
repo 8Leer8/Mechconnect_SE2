@@ -81,6 +81,11 @@ urlpatterns = [
     path('mechanic/wallet/transactions/', views.mechanic_wallet_transactions, name='mechanic_wallet_transactions'),
     path('mechanic/wallet/topup/', views.mechanic_wallet_topup, name='mechanic_wallet_topup'),
     path('mechanic/wallet/token-pricing/', views.get_token_pricing_view, name='mechanic-wallet-token-pricing'),
+    # Client wallet endpoints (shared wallet across roles)
+    path('client/wallet/', views.client_wallet, name='client_wallet'),
+    path('client/wallet/transactions/', views.client_wallet_transactions, name='client_wallet_transactions'),
+    path('client/wallet/topup/', views.client_wallet_topup, name='client_wallet_topup'),
+    path('client/wallet/token-pricing/', views.get_token_pricing_view, name='client-wallet-token-pricing'),
     # Token purchase PayMongo payment flow (Mechanic)
     path('wallet/initiate-payment/', initiate_token_purchase, name='initiate_token_purchase'),
     path('wallet/webhook/', token_purchase_webhook, name='token_purchase_webhook'),
@@ -92,6 +97,11 @@ urlpatterns = [
     path('shop-owner/wallet/purchase/<int:purchase_id>/status/', check_purchase_status, name='shop_owner_check_purchase_status'),
     path('shop-owner/redirect/success/', token_redirect_success, name='shop_owner_token_redirect_success'),
     path('shop-owner/redirect/failed/', token_redirect_failed, name='shop_owner_token_redirect_failed'),
+    # Token purchase PayMongo payment flow (Client) - uses same views
+    path('client/wallet/initiate-payment/', initiate_token_purchase, name='client_initiate_token_purchase'),
+    path('client/wallet/purchase/<int:purchase_id>/status/', check_purchase_status, name='client_check_purchase_status'),
+    path('client/redirect/success/', token_redirect_success, name='client_token_redirect_success'),
+    path('client/redirect/failed/', token_redirect_failed, name='client_token_redirect_failed'),
 ]
 
 #Admin Urls

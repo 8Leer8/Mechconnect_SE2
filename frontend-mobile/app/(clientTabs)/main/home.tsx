@@ -9,6 +9,7 @@ import { LineChart, BarChart } from 'react-native-chart-kit';
 import EmergencyModal from '@/components/EmergencyModal';
 import { SkeletonClientHome } from '@/components/skeletons/SkeletonLoaders';
 import NotificationBell from '@/components/notifications/NotificationBell';
+import WalletButton from '@/components/wallet/WalletButton';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import { getImageUrl } from '@/lib/imageUtils';
 import { fetchProfileDetailsCached } from '@/lib/profileCache';
@@ -257,7 +258,6 @@ export default function HomeScreen() {
           city: '',
           barangay: '',
           radiusKm: 5,
-          radius_km: 5,
         });
       }
     }
@@ -345,7 +345,10 @@ export default function HomeScreen() {
               <ThemedText style={styles.clientName}>{clientName || 'Client'}</ThemedText>
             </View>
           </View>
-          <NotificationBell />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <WalletButton />
+            <NotificationBell />
+          </View>
         </View>
         
       </View>

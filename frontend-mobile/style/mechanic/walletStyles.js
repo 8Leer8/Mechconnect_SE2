@@ -31,28 +31,78 @@ export const styles = StyleSheet.create({
   /* ── Scroll ── */
   scrollContent: { padding: 16, paddingTop: 20 },
 
-  /* ── Balance Card ── */
+  /* ── Balance Card - Horizontal Layout ── */
   balanceCard: {
-    backgroundColor: '#1A1C1E',
-    borderRadius: 18,
-    padding: 28,
+    backgroundColor: '#17171A',
+    borderRadius: 24,
+    padding: 20,
+    flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#FF8C0025',
-    marginBottom: 24,
+    borderColor: '#2A2A2E',
+    marginBottom: 16,
+    gap: 16,
   },
   balanceIconCircle: {
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: '#FF8C0015',
-    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 140, 0, 0.15)',
     alignItems: 'center',
-    marginBottom: 16,
+    justifyContent: 'center',
   },
-  balanceLabel: { fontSize: 13, color: '#8E8E93', marginBottom: 4 },
-  balanceValue: { fontSize: 40, fontWeight: '800', color: '#FF8C00' },
-  balanceSub: { fontSize: 13, color: '#666', marginTop: 4 },
+  balanceContent: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  balanceLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#8E8E93',
+    letterSpacing: 0.3,
+  },
+  balanceValueContainer: {
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  balanceValue: {
+    fontSize: 40,
+    fontWeight: '900',
+    color: '#FF8C00',
+    includeFontPadding: false,
+    lineHeight: 48,
+    minWidth: 60,
+  },
+  balanceValueLarge: {
+    fontSize: width < 400 ? 28 : 32,
+    fontWeight: '900',
+    color: '#FF8C00',
+    includeFontPadding: false,
+    lineHeight: width < 400 ? 36 : 40,
+    minWidth: 60,
+  },
+  sharedWalletNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 24,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: 'rgba(255, 140, 0, 0.08)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 140, 0, 0.15)',
+  },
+  sharedWalletNoteText: {
+    fontSize: 11,
+    color: '#B0B0B5',
+    fontWeight: '500',
+    lineHeight: 15,
+  },
+  balanceSub: { fontSize: 12, fontWeight: '500', color: '#6D6D70' },
 
   /* ── Section ── */
   section: { marginBottom: 24 },
@@ -74,8 +124,8 @@ export const styles = StyleSheet.create({
   packageCard: {
     width: (width - 44) / 2,
     backgroundColor: '#1A1C1E',
-    borderRadius: 14,
-    padding: 18,
+    borderRadius: 16,
+    padding: 16,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#2A2C2E',
@@ -115,12 +165,18 @@ export const styles = StyleSheet.create({
   emptySubtext: { color: '#555', fontSize: 13, marginTop: 4 },
 
   /* ── Transactions ── */
-  txList: {
+  txListContainer: {
+    maxHeight: 400,
     backgroundColor: '#1A1C1E',
     borderRadius: 14,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#2A2C2E',
+  },
+  txList: {
+    backgroundColor: '#1A1C1E',
+    maxHeight: 400,
+    overflow: 'scroll',
   },
   txRow: {
     flexDirection: 'row',
