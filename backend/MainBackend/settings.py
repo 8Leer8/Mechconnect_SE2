@@ -326,6 +326,11 @@ LOGGING = {
             'level': 'INFO',
             'propagate': False,
         },
+        'django.channels.server': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
         'bookings': {
             'handlers': ['console'],
             'level': 'DEBUG',
@@ -333,7 +338,7 @@ LOGGING = {
         },
         'MainBackend.supabase_storage': {
             'handlers': ['console'],
-            'level': 'DEBUG',
+            'level': 'WARNING',
             'propagate': False,
         },
         'boto3': {

@@ -279,6 +279,7 @@ export default function BookingLocationMapScreen() {
   const role: Role = params.role === 'client' ? 'client' : 'mechanic';
 
   const mapRef = useRef<MapView>(null);
+  const centerOnMeInFlightRef = useRef(false);
   const watcherRef = useRef<Location.LocationSubscription | null>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const updateIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -333,6 +334,7 @@ export default function BookingLocationMapScreen() {
   const [routeAccordionOpen, setRouteAccordionOpen] = useState(false);
   /** Device GPS speed (km/h) while mechanic is tracking; not the same as TomTom road-segment flow speed. */
   const [gpsSpeedKmh, setGpsSpeedKmh] = useState<number | null>(null);
+  const [locatingMe, setLocatingMe] = useState(false);
 
   const headerTitle = bookingStatusIsLiveTracking(status) ? 'Live Tracking' : 'Route to Client';
   const isOnTheWay = bookingStatusIsLiveTracking(status);
@@ -854,6 +856,53 @@ export default function BookingLocationMapScreen() {
     [bookingId]
   );
 
+  const handleCenterOnMyLocation = useCallback(async () => {
+    if (role !== 'mechanic') return;
+    if (centerOnMeInFlightRef.current) return;
+    centerOnMeInFlightRef.current = true;
+    setLocatingMe(true);
+    try {
+      const permission = await ensureForegroundLocationAccess();
+      if (!permission.granted) {
+        Alert.alert('Location', 'Allow location access to center the map on your position.');
+        return;
+      }
+
+      let target: Coordinates | null = null;
+      try {
+        const pos = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.High,
+        });
+        target = toValidCoordinate(pos.coords.latitude, pos.coords.longitude);
+      } catch {
+        target = null;
+      }
+
+      if (!target) {
+        target = mechanicCoordsRef.current;
+      }
+
+      if (!target || !isValidCoordinate(target.latitude, target.longitude)) {
+        Alert.alert('Location', 'Could not get your current position. Try again.');
+        return;
+      }
+
+      setMechanicCoords(target);
+      mapRef.current?.animateToRegion(
+        {
+          latitude: target.latitude,
+          longitude: target.longitude,
+          latitudeDelta: 0.012,
+          longitudeDelta: 0.012,
+        },
+        500
+      );
+    } finally {
+      centerOnMeInFlightRef.current = false;
+      setLocatingMe(false);
+    }
+  }, [role]);
+
   const openNavToClient = useCallback(() => {
     const c = clientCoordsRef.current;
     if (!c || !isValidCoordinate(c.latitude, c.longitude)) {
@@ -1317,6 +1366,21 @@ export default function BookingLocationMapScreen() {
             </Marker>
           ) : null}
         </MapView>
+
+        {role === 'mechanic' ? (
+          <TouchableOpacity
+            style={styles.locateMeButton}
+            onPress={handleCenterOnMyLocation}
+            activeOpacity={0.8}
+            disabled={locatingMe}
+          >
+            {locatingMe ? (
+              <ActivityIndicator size="small" color="#FF8C00" />
+            ) : (
+              <FontAwesome name="location-arrow" size={20} color="#FF8C00" />
+            )}
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       <View
@@ -1529,9 +1593,25 @@ const styles = StyleSheet.create({
   },
   mapWrap: {
     flex: 1,
+    position: 'relative',
   },
   map: {
     flex: 1,
+  },
+  locateMeButton: {
+    position: 'absolute',
+    right: 14,
+    top: 14,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: '#1A1C1E',
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+    elevation: 4,
   },
   loadingContainer: {
     flex: 1,

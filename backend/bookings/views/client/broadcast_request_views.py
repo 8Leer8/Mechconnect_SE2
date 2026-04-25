@@ -14,7 +14,7 @@ from ...models import (
     Request, BroadcastRequest, BroadcastOffer, Booking, ServiceLocation, BroadcastRequestAddOn
 )
 from ...serializers import BroadcastRequestSerializer, BroadcastOfferSerializer
-from users.models import Account
+from users.models import Account, TokenTransaction
 from services.models import Service, ServiceAddOn
 from services.pricing_utils import (
     get_distance_fee,
@@ -399,11 +399,12 @@ def select_mechanic(request, broadcast_id):
         required_tokens = get_required_tokens(total_amount)
         mechanic = winning_offer.mechanic
 
-        if mechanic.tokens_balance < required_tokens:
+        wallet_balance = mechanic.account.wallet.balance
+        if wallet_balance < required_tokens:
             return Response({
                 'error': 'Selected mechanic no longer has enough tokens to complete this booking',
                 'required_tokens': required_tokens,
-                'current_tokens': mechanic.tokens_balance,
+                'current_tokens': int(wallet_balance),
             }, status=status.HTTP_403_FORBIDDEN)
 
         other_offers = list(
@@ -442,10 +443,23 @@ def select_mechanic(request, broadcast_id):
             traffic_surcharge=_calculate_total_amount(broadcast_request, distance_km, traffic_level)['traffic_surcharge'],
         )
 
-        mechanic.tokens_balance = mechanic.tokens_balance - required_tokens
-        mechanic.save(update_fields=['tokens_balance'])
+        # Deduct from unified wallet
+        wallet = mechanic.account.wallet
+        wallet.balance -= required_tokens
+        wallet.save(update_fields=['balance'])
 
-        from users.models import TokenTransaction
+        # Log the deduction
+        TokenTransaction.objects.create(
+            account=mechanic.account,
+            transaction_type=TokenTransaction.Type.OFFER_ACCEPTED,
+            tokens=-required_tokens,
+            description=f'Tokens deducted for accepting broadcast offer {winning_offer.id}',
+            metadata={
+                'broadcast_request_id': broadcast_request.id,
+                'booking_id': booking.id,
+                'offer_id': winning_offer.id,
+            }
+        )
         TokenTransaction.objects.create(
             account=mechanic.account,
             tokens=-required_tokens,
@@ -528,7 +542,7 @@ def select_mechanic(request, broadcast_id):
             'booking_id': booking.id,
             'status': broadcast_request.status,
             'tokens_deducted': required_tokens,
-            'tokens_remaining': mechanic.tokens_balance,
+            'tokens_remaining': int(wallet.balance),
             'winner': BroadcastOfferSerializer(winning_offer, context={'request': request}).data,
             'rejected_offer_ids': [offer.id for offer in other_offers],
         }, status=status.HTTP_200_OK)

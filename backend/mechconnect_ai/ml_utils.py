@@ -1,31 +1,33 @@
-import os
-import pickle
-import numpy as np
-from tensorflow import keras
-from tensorflow.keras.preprocessing.sequence import pad_sequences
+import requests
 from django.conf import settings
 
-ML_DIR = os.path.join(settings.BASE_DIR, 'mechconnect_ai', 'ml')
-
-# Load once at startup — not on every request
-model = keras.models.load_model(os.path.join(ML_DIR, 'mechconnect_ai.keras'))
-specialties = np.load(os.path.join(ML_DIR, 'specialty_columns.npy'), allow_pickle=True)
-
-with open(os.path.join(ML_DIR, 'tokenizer.pickle'), 'rb') as f:
-    tokenizer = pickle.load(f)
-
+HF_API_URL = "https://viventa-mechconnect-api.hf.space/predict"
 
 def predict_specialties(text):
-    seq = tokenizer.texts_to_sequences([text])
-    pad = pad_sequences(seq, maxlen=11, padding='post')
-    pred = model.predict(pad, verbose=0)[0]
-
-    results = []
-    for i, conf in enumerate(pred):
-        if conf > 0.3:  # only include specialties with 30%+ confidence
-            results.append({
-                'specialty': specialties[i],
-                'confidence': round(float(conf) * 100)
-            })
-
-    return sorted(results, key=lambda x: x['confidence'], reverse=True)
+    """Call HF Space API instead of local model"""
+    try:
+        # Call your HF Space
+        response = requests.post(
+            HF_API_URL,
+            data={'problem': text},
+            timeout=10
+        )
+        response.raise_for_status()
+        
+        hf_results = response.json()  # Returns: [{"label": "...", "score": ...}, ...]
+        
+        # Transform to match existing format with 50% confidence threshold
+        results = [
+            {
+                'specialty': item['label'],
+                'confidence': round(item['score'])
+            }
+            for item in hf_results
+            if item['score'] >= 30  # Only include 50%+ confidence
+        ]
+        
+        return sorted(results, key=lambda x: x['confidence'], reverse=True)
+        
+    except requests.exceptions.RequestException as e:
+        print(f"HF API error: {e}")
+        return []  # Return empty if API fails

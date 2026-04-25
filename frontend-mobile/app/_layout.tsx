@@ -76,21 +76,42 @@ export default function RootLayout() {
 
       // Booking payment deep links
       if (normalizedUrl.startsWith('mechconnect://payment/success')) {
-        router.push('/payment/success');
+        router.push('/payment/success' as any);
       } else if (normalizedUrl.startsWith('mechconnect://payment/failed')) {
-        router.push('/payment/failed');
+        router.push('/payment/failed' as any);
       }
       // Wallet/token purchase payment deep links (Mechanic)
-      else if (normalizedUrl.includes('wallet/payment/success')) {
-        router.replace('/wallet/payment/success');
-      } else if (normalizedUrl.includes('wallet/payment/failed')) {
-        router.replace('/wallet/payment/failed');
+      else if (normalizedUrl.startsWith('mechconnect://wallet')) {
+        const paymentParam = new URL(url).searchParams.get('payment');
+        if (paymentParam === 'success') {
+          router.replace({ pathname: '/(mechanicTabs)/main/wallet', params: { paymentStatus: 'success' } });
+        } else if (paymentParam === 'failed') {
+          router.replace({ pathname: '/(mechanicTabs)/main/wallet', params: { paymentStatus: 'failed' } });
+        } else {
+          router.replace('/(mechanicTabs)/main/wallet');
+        }
       }
       // Shop Owner wallet payment deep links
-      else if (normalizedUrl.includes('shop-owner/payment/success')) {
-        router.replace('/shopowner/wallet');
-      } else if (normalizedUrl.includes('shop-owner/payment/failed')) {
-        router.replace('/shopowner/wallet');
+      else if (normalizedUrl.startsWith('mechconnect://shopowner/wallet')) {
+        const paymentParam = new URL(url).searchParams.get('payment');
+        if (paymentParam === 'success') {
+          router.replace({ pathname: '/shopowner/wallet', params: { paymentStatus: 'success' } });
+        } else if (paymentParam === 'failed') {
+          router.replace({ pathname: '/shopowner/wallet', params: { paymentStatus: 'failed' } });
+        } else {
+          router.replace('/shopowner/wallet');
+        }
+      }
+      // Client wallet payment deep links
+      else if (normalizedUrl.startsWith('mechconnect://client/wallet')) {
+        const paymentParam = new URL(url).searchParams.get('payment');
+        if (paymentParam === 'success') {
+          router.replace({ pathname: '/client/wallet/walletPage', params: { paymentStatus: 'success' } });
+        } else if (paymentParam === 'failed') {
+          router.replace({ pathname: '/client/wallet/walletPage', params: { paymentStatus: 'failed' } });
+        } else {
+          router.replace('/client/wallet/walletPage');
+        }
       }
     };
 

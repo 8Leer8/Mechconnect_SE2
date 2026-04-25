@@ -41,39 +41,75 @@ export const styles = StyleSheet.create({
   /* ── Scroll ── */
   scrollContent: { paddingHorizontal: PAGE_PAD, paddingTop: 20, paddingBottom: 32 },
 
-  /* ── Hero balance (premium card) ── */
-  heroShell: {
-    borderRadius: 20,
-    padding: 1.5,
-    marginBottom: 28,
-    backgroundColor: 'rgba(255, 140, 0, 0.22)',
-    shadowColor: '#FF8C00',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.12,
-    shadowRadius: 16,
-    elevation: 6,
-  },
-  heroCard: {
-    borderRadius: 18,
-    backgroundColor: '#121418',
-    paddingVertical: 26,
-    paddingHorizontal: 20,
+  /* ── Balance Card - Horizontal Layout ── */
+  balanceCard: {
+    backgroundColor: '#17171A',
+    borderRadius: 24,
+    padding: 20,
+    flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255, 140, 0, 0.12)',
+    borderColor: '#2A2A2E',
+    marginBottom: 16,
+    gap: 16,
   },
   balanceIconCircle: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: 'rgba(255, 140, 0, 0.12)',
-    justifyContent: 'center',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: 'rgba(255, 140, 0, 0.15)',
     alignItems: 'center',
-    marginBottom: 14,
+    justifyContent: 'center',
   },
-  balanceLabel: { fontSize: 12, color: '#6B7280', letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 6 },
-  balanceValue: { fontSize: 42, fontWeight: '800', color: '#FF8C00', letterSpacing: -0.5 },
-  balanceSub: { fontSize: 13, color: '#5C6370', marginTop: 8 },
+  balanceContent: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  balanceLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#8E8E93',
+    letterSpacing: 0.3,
+  },
+  balanceValueContainer: {
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  balanceValue: {
+    fontSize: 40,
+    fontWeight: '900',
+    color: '#FF8C00',
+    includeFontPadding: false,
+    lineHeight: 48,
+  },
+  balanceValueLarge: {
+    fontSize: 32,
+    fontWeight: '900',
+    color: '#FF8C00',
+    includeFontPadding: false,
+    lineHeight: 40,
+  },
+  sharedWalletNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 24,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: 'rgba(255, 140, 0, 0.08)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 140, 0, 0.15)',
+  },
+  sharedWalletNoteText: {
+    fontSize: 11,
+    color: '#B0B0B5',
+    fontWeight: '500',
+    lineHeight: 15,
+  },
 
   /* ── Section ── */
   section: { marginBottom: 24 },
@@ -97,11 +133,10 @@ export const styles = StyleSheet.create({
     width: colWidth,
     backgroundColor: '#121418',
     borderRadius: 16,
-    paddingVertical: 14,
-    paddingHorizontal: 12,
+    padding: 16,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#252830',
+    borderColor: '#2A2A2E',
   },
   packageIconCircle: {
     width: 40,
@@ -139,12 +174,16 @@ export const styles = StyleSheet.create({
   emptySubtext: { color: '#555', fontSize: 13, marginTop: 4 },
 
   /* ── Transactions ── */
-  txList: {
+  txListContainer: {
+    maxHeight: 400,
     backgroundColor: '#1A1C1E',
     borderRadius: 14,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#2A2C2E',
+  },
+  txList: {
+    backgroundColor: '#1A1C1E',
   },
   txRow: {
     flexDirection: 'row',

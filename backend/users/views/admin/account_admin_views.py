@@ -237,7 +237,7 @@ def admin_list_accounts(request):
                 'status': mechanic_profile.status if mechanic_profile else None,
                 'average_rating': mechanic_profile.average_rating if mechanic_profile else None,
                 'is_working_for_shop': mechanic_profile.is_working_for_shop if mechanic_profile else None,
-                'tokens_balance': mechanic_profile.tokens_balance if mechanic_profile else None,
+                'tokens_balance': int(mechanic_profile.account.wallet.balance) if mechanic_profile and hasattr(mechanic_profile, 'account') and mechanic_profile.account.wallet else 0,
                 'services': mechanic_services,
                 'specialties': mechanic_specialties,
             },

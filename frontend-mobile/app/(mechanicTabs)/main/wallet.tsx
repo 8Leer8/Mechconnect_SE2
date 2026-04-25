@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useLocalSearchParams } from 'expo-router';
 import { View, TouchableOpacity, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -62,12 +63,26 @@ function getStatusMeta(rawStatus: string) {
 }
 
 export default function TokensScreen() {
+  const { paymentStatus } = useLocalSearchParams<{ paymentStatus?: string }>();
   const [balance, setBalance] = useState<number | null>(null);
   const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
   const [topUpLoading, setTopUpLoading] = useState<number | null>(null);
   const [tokenPricing, setTokenPricing] = useState<TokenPricingData>(DEFAULT_TOKEN_PRICING);
   const [selectedPackage, setSelectedPackage] = useState<{ tokens: number; price: number } | null>(null);
   const [paymentModalVisible, setPaymentModalVisible] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [showFailedModal, setShowFailedModal] = useState(false);
+
+  // Handle payment status from deep link
+  useEffect(() => {
+    if (paymentStatus === 'success') {
+      setShowSuccessModal(true);
+      // Refresh balance after successful payment
+      fetchBalance();
+    } else if (paymentStatus === 'failed') {
+      setShowFailedModal(true);
+    }
+  }, [paymentStatus]);
 
   const tokenPackages = useMemo(() => {
     if (tokenPricing.token_packages.length > 0) {
@@ -189,11 +204,28 @@ export default function TokensScreen() {
         {/* Balance Card */}
         <View style={styles.balanceCard}>
           <View style={styles.balanceIconCircle}>
-            <FontAwesome name="database" size={28} color="#FF8C00" />
+            <FontAwesome name="database" size={24} color="#FF8C00" />
           </View>
-          <ThemedText style={styles.balanceLabel}>Credit Balance</ThemedText>
-          <ThemedText style={styles.balanceValue}>{balance === null ? '...' : balance}</ThemedText>
-          <ThemedText style={styles.balanceSub}>Available credits</ThemedText>
+          <View style={styles.balanceContent}>
+            <ThemedText style={styles.balanceLabel}>Credit Balance</ThemedText>
+            <View style={styles.balanceValueContainer}>
+              <ThemedText
+                style={(balance ?? 0) >= 1000 ? styles.balanceValueLarge : styles.balanceValue}
+                numberOfLines={1}
+                adjustsFontSizeToFit={true}
+              >
+                {balance === null ? '...' : balance}
+              </ThemedText>
+            </View>
+          </View>
+        </View>
+
+        {/* Info note about shared wallet */}
+        <View style={styles.sharedWalletNote}>
+          <FontAwesome name="info-circle" size={12} color="#FF8C00" />
+          <ThemedText style={styles.sharedWalletNoteText}>
+            Shared across all your roles (Client, Mechanic, Shop Owner)
+          </ThemedText>
         </View>
 
         {/* Buy Credits */}
@@ -246,35 +278,39 @@ export default function TokensScreen() {
               <ThemedText style={styles.emptySubtext}>Purchase credits to see your history</ThemedText>
             </View>
           ) : (
-            <View style={styles.txList}>
-              {transactions.map((item) => (
-                <View key={String(item.id)} style={styles.txRow}>
-                  <View style={styles.txIconCircle}>
-                    <FontAwesome name={getMethodMeta(item.payment_method).icon as any} size={14} color={getMethodMeta(item.payment_method).color} />
-                  </View>
-                  <View style={styles.txInfo}>
-                    <ThemedText style={styles.txType}>
-                      Top up • {getMethodMeta(item.payment_method).label}
-                    </ThemedText>
-                    <ThemedText style={styles.txTime}>
-                      {new Date(item.time).toLocaleString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </ThemedText>
-                  </View>
-                  <View style={styles.txRight}>
-                    <ThemedText style={styles.txAmount}>+{item.tokens}</ThemedText>
-                    <View style={[styles.statusBadge, getStatusMeta(item.status).style]}>
-                      <ThemedText style={[styles.statusBadgeText, getStatusMeta(item.status).textStyle]}>
-                        {getStatusMeta(item.status).label}
-                      </ThemedText>
+            <View style={styles.txListContainer}>
+              <ScrollView nestedScrollEnabled={true} showsVerticalScrollIndicator={true}>
+                <View style={styles.txList}>
+                  {transactions.map((item) => (
+                    <View key={String(item.id)} style={styles.txRow}>
+                      <View style={styles.txIconCircle}>
+                        <FontAwesome name={getMethodMeta(item.payment_method).icon as any} size={14} color={getMethodMeta(item.payment_method).color} />
+                      </View>
+                      <View style={styles.txInfo}>
+                        <ThemedText style={styles.txType}>
+                          Top up • {getMethodMeta(item.payment_method).label}
+                        </ThemedText>
+                        <ThemedText style={styles.txTime}>
+                          {new Date(item.time).toLocaleString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </ThemedText>
+                      </View>
+                      <View style={styles.txRight}>
+                        <ThemedText style={styles.txAmount}>+{item.tokens}</ThemedText>
+                        <View style={[styles.statusBadge, getStatusMeta(item.status).style]}>
+                          <ThemedText style={[styles.statusBadgeText, getStatusMeta(item.status).textStyle]}>
+                            {getStatusMeta(item.status).label}
+                          </ThemedText>
+                        </View>
+                      </View>
                     </View>
-                  </View>
+                  ))}
                 </View>
-              ))}
+              </ScrollView>
             </View>
           )}
         </View>
@@ -284,14 +320,49 @@ export default function TokensScreen() {
 
       <CreditsEWalletModal
         visible={paymentModalVisible}
+        tokens={selectedPackage?.tokens || 0}
         amount={selectedPackage?.price || 0}
         onClose={() => {
           if (topUpLoading !== null) return;
           setPaymentModalVisible(false);
           setSelectedPackage(null);
         }}
-        onConfirm={confirmWalletMethod}
+        onSelectMethod={confirmWalletMethod}
       />
+
+      {/* Payment Success Modal */}
+      {showSuccessModal && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <FontAwesome name="check-circle" size={64} color="#22c55e" />
+            <ThemedText style={styles.modalTitle}>Payment Successful!</ThemedText>
+            <ThemedText style={styles.modalText}>Your wallet has been topped up successfully.</ThemedText>
+            <TouchableOpacity
+              style={styles.modalButton}
+              onPress={() => setShowSuccessModal(false)}
+            >
+              <ThemedText style={styles.modalButtonText}>OK</ThemedText>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* Payment Failed Modal */}
+      {showFailedModal && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <FontAwesome name="times-circle" size={64} color="#ef4444" />
+            <ThemedText style={styles.modalTitle}>Payment Failed</ThemedText>
+            <ThemedText style={styles.modalText}>There was an issue with your payment. Please try again.</ThemedText>
+            <TouchableOpacity
+              style={[styles.modalButton, { backgroundColor: '#ef4444' }]}
+              onPress={() => setShowFailedModal(false)}
+            >
+              <ThemedText style={styles.modalButtonText}>OK</ThemedText>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
     </ThemedView>
   );
 }

@@ -1,37 +1,67 @@
-import { StyleSheet, Dimensions } from 'react-native';
-
-const { width } = Dimensions.get('window');
+import { StyleSheet } from 'react-native';
 
 export const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#111214' },
-
-  /* ── Header ── */
+  container: {
+    flex: 1,
+    backgroundColor: '#0F1419',
+  },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 56,
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 60,
     paddingBottom: 16,
-    backgroundColor: '#1A1C1E',
+    backgroundColor: '#17171A',
     borderBottomWidth: 1,
-    borderBottomColor: '#2A2C2E',
+    borderBottomColor: '#2A2A2E',
   },
-  headerTitle: { fontSize: 22, fontWeight: 'bold', color: '#fff' },
-  headerSubtitle: { fontSize: 13, color: '#8E8E93', marginTop: 2 },
+  backBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 140, 0, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerCenter: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  headerSubtitle: {
+    fontSize: 12,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
   refreshBtn: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#FF8C0015',
-    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 140, 0, 0.1)',
     alignItems: 'center',
+    justifyContent: 'center',
   },
-
-  /* ── Scroll ── */
-  scrollContent: { padding: 16, paddingTop: 20 },
-
-  /* ── Balance Card - Horizontal Layout ── */
+  scrollContent: {
+    padding: 16,
+    paddingTop: 20,
+  },
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 100,
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 14,
+    color: '#8E8E93',
+  },
+  // Balance Card - Horizontal Layout
   balanceCard: {
     backgroundColor: '#17171A',
     borderRadius: 24,
@@ -40,7 +70,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#2A2A2E',
-    marginBottom: 16,
+    marginBottom: 24,
     gap: 16,
   },
   balanceIconCircle: {
@@ -77,12 +107,17 @@ export const styles = StyleSheet.create({
     minWidth: 60,
   },
   balanceValueLarge: {
-    fontSize: width < 400 ? 28 : 32,
+    fontSize: 32,
     fontWeight: '900',
     color: '#FF8C00',
     includeFontPadding: false,
-    lineHeight: width < 400 ? 36 : 40,
+    lineHeight: 40,
     minWidth: 60,
+  },
+  balanceSub: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#6D6D70',
   },
   sharedWalletNote: {
     flexDirection: 'row',
@@ -102,140 +137,182 @@ export const styles = StyleSheet.create({
     fontWeight: '500',
     lineHeight: 15,
   },
-  balanceSub: { fontSize: 12, fontWeight: '500', color: '#6D6D70' },
-
-  /* ── Section ── */
-  section: { marginBottom: 24 },
+  // Section
+  section: {
+    marginBottom: 24,
+  },
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 14,
+    gap: 10,
+    marginBottom: 12,
   },
-  sectionDot: { width: 8, height: 8, borderRadius: 4 },
-  sectionTitle: { fontSize: 17, fontWeight: '600', color: '#fff' },
-
-  /* ── Token Package Grid ── */
+  sectionDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  sectionSubtitle: {
+    fontSize: 12,
+    color: '#8E8E93',
+    marginBottom: 16,
+  },
+  // Packages Grid
   packagesGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 12,
   },
   packageCard: {
-    width: (width - 44) / 2,
-    backgroundColor: '#1A1C1E',
+    width: '30%',
+    minWidth: 100,
+    flex: 1,
+    backgroundColor: '#1C1C1E',
     borderRadius: 16,
     padding: 16,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#2A2C2E',
+    borderColor: '#2A2A2E',
   },
   packageIconCircle: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#FF8C0015',
-    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 140, 0, 0.12)',
     alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: 10,
   },
-  packageAmount: { fontSize: 24, fontWeight: '800', color: '#fff' },
-  packageLabel: { fontSize: 12, color: '#8E8E93', marginTop: 2, marginBottom: 12 },
+  packageAmount: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  packageLabel: {
+    fontSize: 11,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+  packagePrice: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FF8C00',
+    marginTop: 6,
+  },
+  // Buy Button
   packageBuyBtn: {
-    width: '100%',
     backgroundColor: '#FF8C00',
-    paddingVertical: 10,
     borderRadius: 10,
-    alignItems: 'center',
-    minHeight: 36,
-    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+    marginTop: 12,
+    minWidth: 100,
   },
-  packageBuyText: { color: '#fff', fontWeight: '700', fontSize: 14 },
-
-  /* ── Empty State ── */
-  emptyCard: {
-    backgroundColor: '#1A1C1E',
-    borderRadius: 14,
-    padding: 30,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#2A2C2E',
+  packageBuyText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+    textAlign: 'center',
   },
-  emptyTitle: { color: '#ccc', fontSize: 15, fontWeight: '600', marginTop: 12 },
-  emptySubtext: { color: '#555', fontSize: 13, marginTop: 4 },
-
-  /* ── Transactions ── */
+  // Top Up Button
+  topUpBtn: {
+    backgroundColor: '#FF8C00',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    marginTop: 10,
+    minWidth: 80,
+  },
+  topUpBtnText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  // Transactions
   txListContainer: {
     maxHeight: 400,
-    backgroundColor: '#1A1C1E',
-    borderRadius: 14,
-    overflow: 'hidden',
+    backgroundColor: '#17171A',
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#2A2C2E',
+    borderColor: '#2A2A2E',
+    overflow: 'hidden',
   },
   txList: {
-    backgroundColor: '#1A1C1E',
-    maxHeight: 400,
-    overflow: 'scroll',
+    backgroundColor: '#17171A',
   },
   txRow: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#222426',
+    borderBottomColor: '#2A2A2E',
   },
   txIconCircle: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: '#34C75915',
-    justifyContent: 'center',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#1C1C1E',
     alignItems: 'center',
+    justifyContent: 'center',
     marginRight: 12,
   },
-  txInfo: { flex: 1 },
-  txType: { fontSize: 14, fontWeight: '600', color: '#fff' },
-  txTime: { fontSize: 12, color: '#8E8E93', marginTop: 2 },
+  txInfo: {
+    flex: 1,
+  },
+  txType: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  txTime: {
+    fontSize: 11,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
   txRight: {
     alignItems: 'flex-end',
-    gap: 6,
   },
-  txAmount: { fontSize: 16, fontWeight: '700', color: '#34C759' },
+  txAmount: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#34C759',
+  },
   statusBadge: {
-    borderRadius: 999,
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderWidth: 1,
+    borderRadius: 6,
+    marginTop: 4,
   },
   statusBadgeText: {
     fontSize: 10,
     fontWeight: '700',
-    textTransform: 'uppercase',
   },
   statusCompleted: {
-    backgroundColor: '#34C75922',
-    borderColor: '#34C75966',
+    backgroundColor: 'rgba(52, 199, 89, 0.15)',
   },
   statusCompletedText: {
     color: '#34C759',
   },
   statusPending: {
-    backgroundColor: '#FFD60A22',
-    borderColor: '#FFD60A66',
+    backgroundColor: 'rgba(255, 140, 0, 0.15)',
   },
   statusPendingText: {
-    color: '#FFD60A',
+    color: '#FF8C00',
   },
   statusFailed: {
-    backgroundColor: '#FF3B3022',
-    borderColor: '#FF3B3066',
+    backgroundColor: 'rgba(255, 59, 48, 0.15)',
   },
   statusFailedText: {
-    color: '#FF6B60',
+    color: '#FF3B30',
   },
 
-  /* ── Payment Modal Styles ── */
+  // Payment Modal Styles
   modalOverlay: {
     position: 'absolute',
     top: 0,
@@ -280,5 +357,26 @@ export const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     textAlign: 'center',
+  },
+
+  // Empty State
+  emptyCard: {
+    backgroundColor: '#17171A',
+    borderRadius: 16,
+    padding: 32,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#2A2A2E',
+  },
+  emptyTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginTop: 12,
+  },
+  emptySubtext: {
+    fontSize: 12,
+    color: '#8E8E93',
+    marginTop: 4,
   },
 });

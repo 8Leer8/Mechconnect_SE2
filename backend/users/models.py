@@ -200,7 +200,6 @@ class Mechanic(models.Model):
         blank=True,
         help_text="GCash or Maya number for receiving payouts",
     )
-    tokens_balance = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     def __str__(self):
@@ -261,7 +260,6 @@ class ShopOwner(models.Model):
         help_text="GCash or Maya number for receiving payouts",
     )
     owns_shop = models.BooleanField(default=False)
-    tokens_balance = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     def __str__(self):
@@ -354,4 +352,30 @@ class SMSOTPVerification(models.Model):
     def is_expired(self):
         from django.utils import timezone
         return timezone.now() > self.expires_at
+
+
+class Wallet(models.Model):
+    """Unified wallet model for storing account balance.
+
+    Each Account has one Wallet. Balance is stored as Decimal for precision.
+    TokenPurchase and TokenTransaction remain as the universal ledger.
+    """
+    account = models.OneToOneField(
+        Account,
+        on_delete=models.CASCADE,
+        related_name='wallet'
+    )
+    balance = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0.00
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Wallet for {self.account.username}: {self.balance}"
 

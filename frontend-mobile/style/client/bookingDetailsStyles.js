@@ -483,6 +483,12 @@ export const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#FF8C0030',
   },
+  navigateButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
   navigateIconCircle: {
     width: 42,
     height: 42,
