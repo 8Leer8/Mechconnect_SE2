@@ -4,6 +4,8 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.utils import timezone
 from datetime import timedelta
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 
 from ..models import Account, EmailVerification
 from ..serializers import (
@@ -19,6 +21,7 @@ from ..deactivation_utils import (
     purge_expired_deactivated_account,
     validate_account_verification_code,
 )
+from shops.models import Shop
 
 
 def _get_authenticated_account(request):
@@ -39,6 +42,25 @@ def _get_authenticated_account(request):
         return None
 
     return account
+
+
+def _broadcast_provider_status_update(provider_role, provider_id, raw_status):
+    """Notify connected client sockets so discovery can refresh provider availability."""
+    channel_layer = get_channel_layer()
+    if channel_layer is None:
+        return
+
+    payload = {
+        'type': 'notification_update',
+        'action': 'provider_status_updated',
+        'provider_role': provider_role,
+        'provider_id': provider_id,
+        'status': raw_status,
+    }
+
+    client_account_ids = Account.objects.filter(client__isnull=False).values_list('id', flat=True)
+    for account_id in client_account_ids:
+        async_to_sync(channel_layer.group_send)(f'user_{account_id}', payload)
 
 
 @api_view(['GET'])
@@ -336,6 +358,80 @@ def update_profile_settings(request):
         return Response({
             'error': str(e)
         }, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['PATCH'])
+@permission_classes([AllowAny])
+def update_availability_status(request):
+    """
+    Update provider availability for discovery listings.
+
+    Accepts:
+    - role: mechanic | shop_owner (optional, defaults to active session role)
+    - status: available | unavailable
+    """
+    account = _get_authenticated_account(request)
+    if not account:
+        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    role = str(request.data.get('role') or request.session.get('active_role') or '').strip().lower()
+    desired_status = str(request.data.get('status') or '').strip().lower()
+
+    if desired_status not in {'available', 'unavailable'}:
+        return Response(
+            {'error': "status must be either 'available' or 'unavailable'"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if role in {'mechanic'}:
+        if not hasattr(account, 'mechanic'):
+            return Response({'error': 'Mechanic profile not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        mechanic = account.mechanic
+        mechanic.status = (
+            mechanic.WorkStatus.AVAILABLE
+            if desired_status == 'available'
+            else mechanic.WorkStatus.WORKING
+        )
+        mechanic.save(update_fields=['status', 'updated_at'])
+        _broadcast_provider_status_update('mechanic', mechanic.id, mechanic.status)
+
+        return Response(
+            {
+                'message': 'Availability updated successfully',
+                'role': 'mechanic',
+                'status': desired_status,
+                'raw_status': mechanic.status,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    if role in {'shop_owner', 'shopowner'}:
+        if not hasattr(account, 'shopowner'):
+            return Response({'error': 'Shop owner profile not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        shop = Shop.objects.filter(shop_owner=account.shopowner).first()
+        if not shop:
+            return Response({'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        shop.status = Shop.Status.OPEN if desired_status == 'available' else Shop.Status.CLOSED
+        shop.save(update_fields=['status', 'updated_at'])
+        _broadcast_provider_status_update('shop', shop.id, shop.status)
+
+        return Response(
+            {
+                'message': 'Availability updated successfully',
+                'role': 'shop_owner',
+                'status': desired_status,
+                'raw_status': shop.status,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    return Response(
+        {'error': "role must be 'mechanic' or 'shop_owner'"},
+        status=status.HTTP_400_BAD_REQUEST,
+    )
 
 
 @api_view(['POST'])

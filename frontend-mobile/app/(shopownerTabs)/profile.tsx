@@ -437,14 +437,6 @@ export default function ShopOwnerProfileScreen() {
 
           {/* Info chips */}
           <View style={clientProfileStyles.infoChips}>
-            {currentProfile?.contact_number && (
-              <View style={clientProfileStyles.chip}>
-                <FontAwesome name="phone" size={12} color="#FF8C00" />
-                <ThemedText style={clientProfileStyles.chipText}>
-                  {currentProfile.contact_number}
-                </ThemedText>
-              </View>
-            )}
             <View style={clientProfileStyles.chip}>
               <FontAwesome name="id-badge" size={12} color="#FF8C00" />
               <ThemedText style={clientProfileStyles.chipText}>{currentRoleLabel}</ThemedText>

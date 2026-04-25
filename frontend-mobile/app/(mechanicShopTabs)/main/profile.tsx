@@ -203,18 +203,6 @@ export default function MechanicShopProfileScreen() {
             <View style={styles.divider} />
 
             <View style={styles.infoRow}>
-              <FontAwesome name="phone" size={16} color="#8E8E93" />
-              <View style={styles.infoContent}>
-                <ThemedText style={styles.infoLabel}>Contact Number</ThemedText>
-                <ThemedText style={styles.infoValue}>
-                  {profileData?.current_role_profile?.mechanic?.contact_number || 'Not set'}
-                </ThemedText>
-              </View>
-            </View>
-
-            <View style={styles.divider} />
-
-            <View style={styles.infoRow}>
               <FontAwesome name="star" size={16} color="#FFD700" />
               <View style={styles.infoContent}>
                 <ThemedText style={styles.infoLabel}>Rating</ThemedText>

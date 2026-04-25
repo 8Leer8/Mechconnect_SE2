@@ -209,14 +209,13 @@ export default function ShopProfileScreen() {
     }
   };
 
-  const getMechanicStatusColor = (status: string) => {
-    switch (status?.toLowerCase()) {
-      case 'active': return '#34C759';
-      case 'busy': return '#FF8C00';
-      case 'offline': return '#8E8E93';
-      default: return '#8E8E93';
-    }
-  };
+  const isMechanicAvailable = (status: string) => String(status || '').toLowerCase() === 'available';
+
+  const getMechanicStatusColor = (status: string) =>
+    (isMechanicAvailable(status) ? '#34C759' : '#FF3B30');
+
+  const getMechanicStatusLabel = (status: string) =>
+    (isMechanicAvailable(status) ? 'Available' : 'Unavailable');
 
   const handleBack = () => {
     if (router.canGoBack()) {
@@ -498,14 +497,6 @@ export default function ShopProfileScreen() {
                 <ThemedText style={styles.infoText}>{formatDistanceLabel(distance_km)}</ThemedText>
               </View>
             ) : null}
-            {profile.contact_number && (
-              <View style={styles.infoRow}>
-                <View style={styles.infoIconCircle}>
-                  <FontAwesome name="phone" size={14} color="#FF8C00" />
-                </View>
-                <ThemedText style={styles.infoText}>{profile.contact_number}</ThemedText>
-              </View>
-            )}
             {profile.email && (
               <View style={styles.infoRow}>
                 <View style={styles.infoIconCircle}>
@@ -595,7 +586,7 @@ export default function ShopProfileScreen() {
                       </ThemedText>
                       <View style={[styles.mechanicStatusDot, { backgroundColor: getMechanicStatusColor(mechanic.status) }]} />
                       <ThemedText style={[styles.ratingText, { color: getMechanicStatusColor(mechanic.status) }]}>
-                        {mechanic.status}
+                        {getMechanicStatusLabel(mechanic.status)}
                       </ThemedText>
                     </View>
                   </View>

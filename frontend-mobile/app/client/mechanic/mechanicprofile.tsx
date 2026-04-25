@@ -194,14 +194,11 @@ export default function MechanicProfileScreen() {
     return stars;
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status?.toLowerCase()) {
-      case 'active': return '#34C759';
-      case 'busy': return '#FF8C00';
-      case 'offline': return '#8E8E93';
-      default: return '#8E8E93';
-    }
-  };
+  const isMechanicAvailable = (status: string) => String(status || '').toLowerCase() === 'available';
+
+  const getStatusColor = (status: string) => (isMechanicAvailable(status) ? '#34C759' : '#FF3B30');
+
+  const getStatusLabel = (status: string) => (isMechanicAvailable(status) ? 'Available' : 'Unavailable');
 
   const navigateBackToBroadcastDetails = () => {
     let parsedParams: Record<string, string> = {};
@@ -546,7 +543,7 @@ export default function MechanicProfileScreen() {
           <View style={[styles.statusBadge, { backgroundColor: getStatusColor(profile.status) + '20' }]}>
             <View style={[styles.statusDot, { backgroundColor: getStatusColor(profile.status) }]} />
             <ThemedText style={[styles.statusLabel, { color: getStatusColor(profile.status) }]}>
-              {profile.status.charAt(0).toUpperCase() + profile.status.slice(1)}
+              {getStatusLabel(profile.status)}
             </ThemedText>
           </View>
 
@@ -694,14 +691,6 @@ export default function MechanicProfileScreen() {
                 <ThemedText style={styles.infoText}>{formatDistanceLabel(distance_km)}</ThemedText>
               </View>
             ) : null}
-            {profile.contact_number && (
-              <View style={styles.infoRow}>
-                <View style={styles.infoIconCircle}>
-                  <FontAwesome name="phone" size={14} color="#FF8C00" />
-                </View>
-                <ThemedText style={styles.infoText}>{profile.contact_number}</ThemedText>
-              </View>
-            )}
             {profile.is_part_of_shop && profile.shop_name && (
               <View style={styles.infoRow}>
                 <View style={styles.infoIconCircle}>

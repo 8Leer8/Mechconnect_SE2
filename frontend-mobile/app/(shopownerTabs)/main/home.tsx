@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { StyleSheet, View, ScrollView, RefreshControl, Dimensions, TouchableOpacity, Image } from 'react-native';
+import { StyleSheet, View, ScrollView, RefreshControl, Dimensions, TouchableOpacity, Image, Switch } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -10,6 +10,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { getImageUrl } from '@/lib/imageUtils';
 import { fetchProfileDetailsCached } from '@/lib/profileCache';
 import NotificationBell from '@/components/notifications/NotificationBell';
+import { useNotification } from '@/hooks/useNotification';
 
 const { width } = Dimensions.get('window');
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -34,11 +35,13 @@ const getGreeting = () => {
 };
 
 export default function ShopOwnerHome() {
+  const { showNotification } = useNotification();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [shopBannerUrl, setShopBannerUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [statusUpdating, setStatusUpdating] = useState(false);
   const { lastMessage } = useWebSocketContext();
 
   const fetchDashboardData = useCallback(async () => {
@@ -101,6 +104,42 @@ export default function ShopOwnerHome() {
     setRefreshing(true);
     fetchDashboardData();
   };
+
+  const updateShopAvailability = useCallback(async (isAvailable: boolean) => {
+    if (!dashboardData || statusUpdating) return;
+
+    const nextPublicStatus: 'available' | 'unavailable' = isAvailable ? 'available' : 'unavailable';
+    const nextRawStatus = isAvailable ? 'open' : 'closed';
+    const previousRawStatus = dashboardData.shop_status;
+
+    setStatusUpdating(true);
+    setDashboardData((prev) => (prev ? { ...prev, shop_status: nextRawStatus } : prev));
+
+    try {
+      const response = await fetch(`${API_URL}/users/profile/availability/`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: 'shop_owner', status: nextPublicStatus }),
+      });
+      const data = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to update availability');
+      }
+      showNotification({
+        type: 'success',
+        message: nextPublicStatus === 'available' ? 'Shop is now visible in discovery.' : 'Shop is now hidden from discovery.',
+      });
+    } catch (error) {
+      setDashboardData((prev) => (prev ? { ...prev, shop_status: previousRawStatus } : prev));
+      showNotification({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Failed to update availability',
+      });
+    } finally {
+      setStatusUpdating(false);
+    }
+  }, [dashboardData, showNotification, statusUpdating]);
 
   const handleNotificationPress = () => {
     console.log('Notification pressed');
@@ -190,6 +229,13 @@ export default function ShopOwnerHome() {
                     {dashboardData.shop_status === 'open' ? 'Open' : 'Closed'}
                   </ThemedText>
                 </View>
+                <Switch
+                  value={dashboardData.shop_status === 'open'}
+                  onValueChange={(value) => { void updateShopAvailability(value); }}
+                  disabled={statusUpdating}
+                  trackColor={{ false: '#3A3C3E', true: '#34C759' }}
+                  thumbColor="#fff"
+                />
               </View>
           </View>
 

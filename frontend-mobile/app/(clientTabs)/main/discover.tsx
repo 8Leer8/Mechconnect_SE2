@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Modal, View, TouchableOpacity, FlatList, Image, ListRenderItem, RefreshControl } from 'react-native';
 import * as Location from 'expo-location';
 import { ThemedText } from '@/components/themed-text';
@@ -12,6 +12,7 @@ import { useNotification } from '@/hooks/useNotification';
 import { useLocation } from '@/context/LocationContext';
 import { getDistanceKm } from '@/context/LocationContext';
 import { ensureForegroundLocationAccess } from '@/lib/locationPermission';
+import { useWebSocketContext } from '@/context/WebSocketContext';
 import {
   formatStructuredAddress,
   geocodeAddress,
@@ -24,7 +25,6 @@ interface Mechanic {
   id: number;
   name: string;
   profile_photo: string | null;
-  contact_number: string;
   address?: StructuredAccountAddress | null;
   address_label?: string | null;
   average_rating: number;
@@ -38,7 +38,6 @@ interface Shop {
   id: number;
   shop_name: string;
   owner_name: string;
-  contact_number: string;
   email: string;
   description: string;
   address?: StructuredAccountAddress | null;
@@ -151,6 +150,8 @@ export default function DiscoverScreen() {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const lastSocketRefreshAtRef = useRef(0);
+  const { lastMessage } = useWebSocketContext();
 
   useEffect(() => {
     if (selectedLocation && selectedLocation.latitude && selectedLocation.longitude) {
@@ -239,6 +240,26 @@ export default function DiscoverScreen() {
     fetchData(activeTab, true);
   }, [activeTab, providerFilter, clientLocation, fetchData]);
 
+  useEffect(() => {
+    if (!lastMessage) return;
+    if (activeTab === 'services') return;
+
+    const messageType = String(lastMessage.type || '').toLowerCase();
+    const action = String(lastMessage.action || '').toLowerCase();
+    const shouldRefresh =
+      messageType === 'booking_update' ||
+      messageType === 'notification_update' ||
+      action === 'provider_status_updated';
+
+    if (!shouldRefresh) return;
+
+    const now = Date.now();
+    if (now - lastSocketRefreshAtRef.current < 2500) return;
+    lastSocketRefreshAtRef.current = now;
+
+    void fetchData(activeTab, true);
+  }, [lastMessage, activeTab, fetchData]);
+
   const onRefresh = () => {
     setRefreshing(true);
     fetchData(activeTab, true);
@@ -303,7 +324,7 @@ export default function DiscoverScreen() {
     isAvailableStatus(statusValue, type) ? '#34C759' : '#FF3B30';
 
   const getAvailabilityLabel = (statusValue: string, type: 'mechanic' | 'shop') =>
-    isAvailableStatus(statusValue, type) ? 'Available' : 'Not Available';
+    isAvailableStatus(statusValue, type) ? 'Available' : 'Unavailable';
 
   const providerFilters: { key: ProviderFilterType; label: string }[] = [
     { key: 'all', label: 'All' },
@@ -456,10 +477,6 @@ export default function DiscoverScreen() {
           </ThemedText>
         </View>
       </View>
-      <View style={styles.cardFooter}>
-        <Feather name="phone" size={12} color="#8E8E93" />
-        <ThemedText style={styles.footerText}>{mechanic.contact_number || 'No contact number'}</ThemedText>
-      </View>
     </TouchableOpacity>
   ), [router]);
 
@@ -555,10 +572,6 @@ export default function DiscoverScreen() {
             {shop.email || 'No email'}
           </ThemedText>
         </View>
-      </View>
-      <View style={styles.cardFooter}>
-        <Feather name="phone" size={12} color="#8E8E93" />
-        <ThemedText style={styles.footerText}>{shop.contact_number || 'No contact number'}</ThemedText>
       </View>
     </TouchableOpacity>
   ), [router]);

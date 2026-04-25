@@ -6,6 +6,7 @@ import {
   RefreshControl,
   Dimensions,
   Image,
+  Switch,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -19,6 +20,7 @@ import NotificationBell from '@/components/notifications/NotificationBell';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import { getImageUrl } from '@/lib/imageUtils';
 import { fetchProfileDetailsCached } from '@/lib/profileCache';
+import { useNotification } from '@/hooks/useNotification';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -73,6 +75,7 @@ interface ProfilePayload {
     mechanic?: {
       profile_photo?: string | null;
       profile_photo_url?: string | null;
+      status?: string | null;
     };
   };
 }
@@ -88,6 +91,7 @@ interface MyDisputesResponse {
 }
 
 export default function HomeScreen() {
+  const { showNotification } = useNotification();
   const ACTIVE_DISPUTE_STATUSES = new Set([
     'active',
     'under_admin_review',
@@ -101,6 +105,8 @@ export default function HomeScreen() {
   const [stats, setStats] = useState<GroupedBookings | null>(null);
   const [mechanicName, setMechanicName] = useState<string>('Mechanic');
   const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null);
+  const [availabilityStatus, setAvailabilityStatus] = useState<'available' | 'unavailable'>('available');
+  const [availabilityUpdating, setAvailabilityUpdating] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -159,6 +165,8 @@ export default function HomeScreen() {
         if (n) setMechanicName(n);
         const mechanicProfile = p?.current_role_profile?.mechanic;
         setProfilePhotoUrl(mechanicProfile?.profile_photo || mechanicProfile?.profile_photo_url || null);
+        const currentStatus = String(mechanicProfile?.status || '').toLowerCase();
+        setAvailabilityStatus(currentStatus === 'available' ? 'available' : 'unavailable');
       }
     } catch (err: any) {
       setError(err.message || 'Failed to load dashboard');
@@ -184,6 +192,40 @@ export default function HomeScreen() {
     setRefreshing(true);
     fetchSections();
   };
+
+  const updateAvailability = useCallback(async (isAvailable: boolean) => {
+    if (availabilityUpdating) return;
+    const nextStatus: 'available' | 'unavailable' = isAvailable ? 'available' : 'unavailable';
+    const previousStatus = availabilityStatus;
+    setAvailabilityStatus(nextStatus);
+    setAvailabilityUpdating(true);
+
+    try {
+      const response = await fetch(`${API_URL}/users/profile/availability/`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: 'mechanic', status: nextStatus }),
+      });
+
+      const data = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to update availability');
+      }
+      showNotification({
+        type: 'success',
+        message: nextStatus === 'available' ? 'You are now visible in discovery.' : 'You are now hidden from discovery.',
+      });
+    } catch (error) {
+      setAvailabilityStatus(previousStatus);
+      showNotification({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Failed to update availability',
+      });
+    } finally {
+      setAvailabilityUpdating(false);
+    }
+  }, [availabilityStatus, availabilityUpdating, showNotification]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -257,6 +299,22 @@ export default function HomeScreen() {
             <ThemedText style={styles.quickStatValue}>{completedCount}</ThemedText>
             <ThemedText style={styles.quickStatLabel}>Done</ThemedText>
           </View>
+        </View>
+
+        <View style={styles.availabilityRow}>
+          <View style={{ flex: 1 }}>
+            <ThemedText style={styles.availabilityTitle}>Availability</ThemedText>
+            <ThemedText style={styles.availabilitySubtitle}>
+              {availabilityStatus === 'available' ? 'Visible in client discovery' : 'Hidden from client discovery'}
+            </ThemedText>
+          </View>
+          <Switch
+            value={availabilityStatus === 'available'}
+            onValueChange={(value) => { void updateAvailability(value); }}
+            disabled={availabilityUpdating}
+            trackColor={{ false: '#3A3C3E', true: '#34C759' }}
+            thumbColor="#fff"
+          />
         </View>
       </View>
 

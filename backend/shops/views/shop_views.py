@@ -136,7 +136,6 @@ def list_shops(request):
                 'id': shop.id,
                 'shop_name': shop.shop_name,
                 'owner_name': f"{shop.shop_owner.account.firstname} {shop.shop_owner.account.lastname}",
-                'contact_number': shop.contact_number,
                 'email': shop.email,
                 'website': shop.website,
                 'description': shop.description,

@@ -44,6 +44,7 @@ urlpatterns = [
     # Profile page endpoints
     path('profile/details/', views.get_profile_details, name='get_profile_details'),
     path('profile/settings/', views.update_profile_settings, name='update_profile_settings'),
+    path('profile/availability/', views.update_availability_status, name='update_availability_status'),
     path('profile/branches/', views.profile_branches, name='profile_branches'),
     path('profile/branches/<int:branch_id>/', views.profile_branch_detail, name='profile_branch_detail'),
     path('profile/branches/<int:branch_id>/set-main/', views.set_main_branch, name='set_main_branch'),

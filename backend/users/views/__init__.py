@@ -32,6 +32,7 @@ __all__ = [
     'update_profile',
     'get_profile_details',
     'update_profile_settings',
+    'update_availability_status',
     'profile_branches',
     'profile_branch_detail',
     'set_main_branch',
