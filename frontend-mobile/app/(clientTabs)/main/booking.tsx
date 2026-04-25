@@ -7,6 +7,7 @@ import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/client/bookingStyles';
 import { SkeletonBookingList } from '@/components/skeletons/SkeletonLoaders';
+import NotificationBell from '@/components/notifications/NotificationBell';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -247,9 +248,7 @@ export default function BookingScreen() {
             {totalCount} total {activeTab} booking{totalCount !== 1 ? 's' : ''}
           </ThemedText>
         </View>
-        <TouchableOpacity style={styles.refreshButton} onPress={onRefresh}>
-          <FontAwesome name="refresh" size={18} color="#FF8C00" />
-        </TouchableOpacity>
+        <NotificationBell />
       </View>
 
       {/* Tab Navigation */}

@@ -17,6 +17,7 @@ import { useWebSocketContext } from '@/context/WebSocketContext';
 import {
   fetchNotifications,
   formatNotificationTimestamp,
+  markAllNotificationsRead,
   markNotificationRead,
   NotificationItem,
 } from '@/lib/notifications';
@@ -26,7 +27,7 @@ interface NotificationBellProps {
   iconColor?: string;
 }
 
-const PREVIEW_PAGE_SIZE = 4;
+const PREVIEW_PAGE_SIZE = 3;
 
 function getBookingPath(role?: string | null) {
   switch (role) {
@@ -145,6 +146,17 @@ export default function NotificationBell({ iconColor = '#FF8C00' }: Notification
     router.push('/notifications');
   }, [closeBell]);
 
+  const handleReadAll = useCallback(async () => {
+    if (unreadCount <= 0) return;
+    try {
+      await markAllNotificationsRead();
+      setRecentNotifications((current) => current.map((item) => ({ ...item, is_read: true })));
+      setUnreadCount(0);
+    } catch {
+      // Ignore failures to keep modal responsive.
+    }
+  }, [unreadCount]);
+
   const badgeLabel = useMemo(() => {
     if (unreadCount <= 0) return null;
     return unreadCount > 99 ? '99+' : String(unreadCount);
@@ -171,8 +183,20 @@ export default function NotificationBell({ iconColor = '#FF8C00' }: Notification
                 <ThemedText style={styles.panelTitle}>Notifications</ThemedText>
                 <ThemedText style={styles.panelSubtitle}>Latest updates from your account</ThemedText>
               </View>
-              <View style={styles.unreadPill}>
-                <ThemedText style={styles.unreadPillText}>{unreadCount} unread</ThemedText>
+              <View style={styles.headerActions}>
+                <TouchableOpacity
+                  style={[styles.readAllButton, unreadCount <= 0 && styles.readAllButtonDisabled]}
+                  onPress={handleReadAll}
+                  activeOpacity={0.85}
+                  disabled={unreadCount <= 0}
+                >
+                  <ThemedText style={[styles.readAllText, unreadCount <= 0 && styles.readAllTextDisabled]}>
+                    Read all
+                  </ThemedText>
+                </TouchableOpacity>
+                <View style={styles.unreadPill}>
+                  <ThemedText style={styles.unreadPillText}>{unreadCount} unread</ThemedText>
+                </View>
               </View>
             </View>
 
@@ -263,6 +287,31 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: 12,
     marginBottom: 14,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  readAllButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255, 140, 0, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 140, 0, 0.28)',
+  },
+  readAllButtonDisabled: {
+    backgroundColor: 'rgba(142, 142, 147, 0.14)',
+    borderColor: 'rgba(142, 142, 147, 0.24)',
+  },
+  readAllText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FF8C00',
+  },
+  readAllTextDisabled: {
+    color: '#8E8E93',
   },
   panelTitle: {
     fontSize: 20,

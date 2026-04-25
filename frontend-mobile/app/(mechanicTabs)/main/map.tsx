@@ -349,8 +349,7 @@ export default function MapScreen() {
       return;
     }
 
-    const hasPendingRequest = broadcastToCancel.my_offer_status === 'pending'
-      || (awaitingClientSelectionBroadcastId !== null && awaitingClientSelectionBroadcastId === broadcastToCancel.id);
+    const hasPendingRequest = isBroadcastPendingClientSelection(broadcastToCancel);
     if (!hasPendingRequest) {
       minimizeBroadcastModal();
       return;
@@ -752,9 +751,7 @@ export default function MapScreen() {
       return;
     }
     setSelectedBroadcast(broadcast);
-    const hasPendingOffer = broadcast.my_offer_status === 'pending'
-      || pendingOffersByBroadcastId[broadcast.id]?.status === 'pending'
-      || awaitingClientSelectionBroadcastId === broadcast.id;
+    const hasPendingOffer = isBroadcastPendingClientSelection(broadcast);
     setAwaitingClientSelectionBroadcastId(hasPendingOffer ? broadcast.id : null);
     setOfferNotice(null);
     setAccepting(false);
@@ -784,9 +781,7 @@ export default function MapScreen() {
       return;
     }
     setSelectedBroadcast(broadcast);
-    const hasPendingOffer = broadcast.my_offer_status === 'pending'
-      || pendingOffersByBroadcastId[broadcast.id]?.status === 'pending'
-      || awaitingClientSelectionBroadcastId === broadcast.id;
+    const hasPendingOffer = isBroadcastPendingClientSelection(broadcast);
     setAwaitingClientSelectionBroadcastId(hasPendingOffer ? broadcast.id : null);
     setOfferNotice(null);
     setAccepting(false);
@@ -804,6 +799,13 @@ export default function MapScreen() {
     if (vehicleType) return vehicleType;
     if (vehicleModel) return vehicleModel;
     return 'Vehicle not specified';
+  };
+
+  const isBroadcastPendingClientSelection = (broadcast: BroadcastRequest | null | undefined): boolean => {
+    if (!broadcast) return false;
+    if (broadcast.my_offer_status === 'pending') return true;
+    if (pendingOffersByBroadcastId[broadcast.id]?.status === 'pending') return true;
+    return awaitingClientSelectionBroadcastId === broadcast.id;
   };
 
   const handleBroadcastMarkerPress = (broadcast: BroadcastRequest) => {
@@ -899,12 +901,26 @@ export default function MapScreen() {
     : (typeof selectedBroadcast?.required_tokens === 'number' ? selectedBroadcast.required_tokens : null);
   const hasInsufficientTokens = requiredTokensPreview !== null && tokensBalance !== null && tokensBalance < requiredTokensPreview;
   const selectedBroadcastCoordinate = selectedBroadcast ? toValidCoordinate(selectedBroadcast.latitude, selectedBroadcast.longitude) : null;
-  const isAwaitingClientSelection = selectedBroadcast !== null && awaitingClientSelectionBroadcastId === selectedBroadcast.id;
+  const isAwaitingClientSelection = isBroadcastPendingClientSelection(selectedBroadcast);
   const activePendingBroadcastId = useMemo(() => {
-    if (awaitingClientSelectionBroadcastId !== null) return awaitingClientSelectionBroadcastId;
+    if (awaitingClientSelectionBroadcastId !== null) {
+      const pendingFromOffers = pendingOffersByBroadcastId[awaitingClientSelectionBroadcastId]?.status === 'pending';
+      const pendingFromBroadcasts = broadcasts.some((broadcast) =>
+        broadcast.id === awaitingClientSelectionBroadcastId && broadcast.my_offer_status === 'pending'
+      );
+      if (pendingFromOffers || pendingFromBroadcasts) {
+        return awaitingClientSelectionBroadcastId;
+      }
+    }
     const pendingEntry = Object.entries(pendingOffersByBroadcastId).find(([, offer]) => offer.status === 'pending');
     return pendingEntry ? Number(pendingEntry[0]) : null;
-  }, [awaitingClientSelectionBroadcastId, pendingOffersByBroadcastId]);
+  }, [awaitingClientSelectionBroadcastId, pendingOffersByBroadcastId, broadcasts]);
+
+  useEffect(() => {
+    if (awaitingClientSelectionBroadcastId === null) return;
+    if (activePendingBroadcastId !== null) return;
+    setAwaitingClientSelectionBroadcastId(null);
+  }, [awaitingClientSelectionBroadcastId, activePendingBroadcastId]);
   const activePendingBroadcast = activePendingBroadcastId !== null
     ? broadcasts.find((broadcast) => broadcast.id === activePendingBroadcastId) ?? null
     : null;
@@ -1106,9 +1122,7 @@ export default function MapScreen() {
               )}
               {filteredBroadcasts.map((broadcast) => {
                 const lockedOut = isOtherBroadcastLocked && broadcast.id !== activePendingBroadcastId;
-                const isCardAwaitingClient = broadcast.my_offer_status === 'pending'
-                  || pendingOffersByBroadcastId[broadcast.id]?.status === 'pending'
-                  || activePendingBroadcastId === broadcast.id;
+                const isCardAwaitingClient = isBroadcastPendingClientSelection(broadcast);
                 return (
                 <TouchableOpacity
                   key={`broadcast-${broadcast.id}`}
@@ -1424,18 +1438,13 @@ export default function MapScreen() {
                   </>
                 )}
               </TouchableOpacity>
-              <TouchableOpacity style={styles.modalCancelButton} onPress={handleCancelBroadcastAction}>
+              <TouchableOpacity
+                style={styles.modalCancelButton}
+                onPress={() => { void handleCancelBroadcastAction(); }}
+              >
                 <ThemedText style={styles.modalCancelText}>{isAwaitingClientSelection ? 'Withdraw Request' : 'Cancel'}</ThemedText>
               </TouchableOpacity>
             </View>
-
-            {offerNotice && selectedBroadcast && offerNotice.broadcastId === selectedBroadcast.id && (
-              <View style={{ marginHorizontal: 20, marginBottom: 12, padding: 12, borderRadius: 12, backgroundColor: offerNotice.tone === 'warning' ? '#FF3B3018' : '#34C75918', borderWidth: 1, borderColor: offerNotice.tone === 'warning' ? '#FF3B3038' : '#34C75938' }}>
-                <ThemedText style={{ color: offerNotice.tone === 'warning' ? '#FFB4AA' : '#B8F2C3', fontSize: 13, fontWeight: '600' }}>
-                  {offerNotice.message}
-                </ThemedText>
-              </View>
-            )}
           </View>
         </View>
       </Modal>
