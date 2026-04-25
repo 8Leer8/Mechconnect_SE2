@@ -237,4 +237,24 @@ export const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
+  // Dummy Search Bar (clickable header)
+  dummySearchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1A1C1E',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#3A3A3C',
+    marginTop: 8,
+  },
+  dummySearchIcon: {
+    marginRight: 10,
+  },
+  dummySearchText: {
+    flex: 1,
+    color: '#FFFFFF',
+    fontSize: 15,
+  },
 });
