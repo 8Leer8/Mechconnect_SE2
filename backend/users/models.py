@@ -379,3 +379,17 @@ class Wallet(models.Model):
     def __str__(self):
         return f"Wallet for {self.account.username}: {self.balance}"
 
+class ShopEmployee(models.Model):
+    account = models.OneToOneField(Account, on_delete=models.CASCADE)
+    shop = models.ForeignKey(
+        'shops.Shop', 
+        on_delete=models.CASCADE, 
+        related_name='employees',
+        help_text="The shop this employee works for"
+    )
+    profile_photo = models.ImageField(upload_to='employees/profiles/', null=True, blank=True)    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.account.username} (Employee at {self.shop.name})"
