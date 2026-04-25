@@ -28,7 +28,13 @@ export default function PaymentSuccessModal({
   onClose,
 }: PaymentSuccessModalProps) {
   const methodLabel =
-    paymentMethod === 'gcash' ? 'GCash' : paymentMethod === 'maya' ? 'Maya' : 'Cash';
+    paymentMethod === 'gcash'
+      ? 'GCash'
+      : paymentMethod === 'maya'
+        ? 'Maya'
+        : paymentMethod === 'credits'
+          ? 'Credits'
+          : 'Cash';
   const normalizedStatus = String(paymentStatus || '').toLowerCase();
   const statusLabel =
     normalizedStatus === 'fully_paid'

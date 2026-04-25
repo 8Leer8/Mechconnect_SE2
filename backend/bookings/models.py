@@ -426,11 +426,8 @@ class Quotation(models.Model):
 
     def recalculate_totals(self):
         """
-        Keep labor and parts separated so backjob math is consistent.
-        For backjobs:
-        - labor is always discounted to 0
-        - parts remain payable
-        Only rows added for this backjob (is_backjob_line) count; original receipt lines stay reference-only.
+        Keep old paid rows out of backjob totals.
+        For backjobs, only new rows for the current backjob are payable.
         """
         labor_total = 0
         parts_total = 0
@@ -446,8 +443,8 @@ class Quotation(models.Model):
 
         self.original_labor_cost = labor_total
         if self.is_backjob:
-            self.backjob_discount = -labor_total
-            self.final_labor_total = 0
+            self.backjob_discount = 0
+            self.final_labor_total = labor_total
         else:
             self.backjob_discount = 0
             self.final_labor_total = labor_total

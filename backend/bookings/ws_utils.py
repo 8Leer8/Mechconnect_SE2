@@ -382,6 +382,7 @@ def post_quotation_chat_message(account, booking, quotation, action='created', r
                     "previous_description": original.get("description"),
                     "previous_quantity": original.get("quantity"),
                     "previous_unit_price": original.get("unit_price"),
+                    "is_backjob_new_line": bool(getattr(quotation, "is_backjob", False) and change.action_type == "added"),
                 }
                 row["line_total"] = float(row["quantity"]) * float(row["unit_price"])
                 items.append(row)
@@ -402,6 +403,9 @@ def post_quotation_chat_message(account, booking, quotation, action='created', r
                     'previous_description': getattr(it, 'previous_description', None),
                     'previous_quantity': getattr(it, 'previous_quantity', None),
                     'previous_unit_price': float(it.previous_unit_price) if getattr(it, 'previous_unit_price', None) is not None else None,
+                    'is_backjob_new_line': bool(getattr(it, 'is_backjob_line', False)),
+                    'created_at': it.created_at.isoformat() if getattr(it, 'created_at', None) else None,
+                    'updated_at': it.updated_at.isoformat() if getattr(it, 'updated_at', None) else None,
                     'purchase_receipt_image': it.purchase_receipt_image.url if getattr(it, 'purchase_receipt_image', None) else None,
                     'receipt_submitted_at': it.receipt_submitted_at.isoformat() if getattr(it, 'receipt_submitted_at', None) else None,
                 })
@@ -432,6 +436,7 @@ def post_quotation_chat_message(account, booking, quotation, action='created', r
         'mechanic_id': getattr(account, 'id', None),
         'mechanic_name': f"{getattr(account, 'firstname', '')} {getattr(account, 'lastname', '')}".strip(),
         'notes': getattr(quotation, 'notes', ''),
+        'is_backjob': bool(getattr(quotation, 'is_backjob', False)),
         'total_amount': float(quotation.total_amount) if quotation else None,
         'items': items,
         'created_at': quotation.created_at.isoformat() if quotation and getattr(quotation, 'created_at', None) else None,

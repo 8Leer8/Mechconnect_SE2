@@ -225,6 +225,7 @@ export default function ClientBookingDetailScreen() {
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [showQRConfirm, setShowQRConfirm] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [successPaymentSummary, setSuccessPaymentSummary] = useState<any | null>(null);
   const [qrScanData, setQrScanData] = useState<QRScanResult | null>(null);
   const [scannedToken, setScannedToken] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'gcash' | 'maya' | string>('cash');
@@ -792,12 +793,33 @@ export default function ClientBookingDetailScreen() {
       return sum;
     }, 0);
   }, [displayQuotation, booking]);
+
+  const getBackjobPendingSnapshotTotal = () => {
+    const items = Array.isArray(pendingQuoteSnapshot?.items) ? pendingQuoteSnapshot.items : [];
+    return items.reduce((sum: number, it: any) => {
+      const statusRaw = String(it?.status || it?.quotation_status || it?.state || '').toLowerCase();
+      if (statusRaw === 'rejected') return sum;
+      const changeLabel = getExplicitChangeLabel(it);
+      const shouldCount =
+        Boolean(it?.is_backjob_new_line) ||
+        changeLabel === 'Added';
+      if (!shouldCount) return sum;
+
+      const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
+      const qty = Number(it?.quantity ?? 1) || 1;
+      return sum + price * qty;
+    }, 0);
+  };
+
   const pendingRequestedQuotationTotal = useMemo(() => {
     if (!hasLivePendingQuoteRequest) return null;
+    if (bookingInBackjobPaymentPhase(booking) || isBackjobBookingData(booking)) {
+      return getBackjobPendingSnapshotTotal();
+    }
     const pendingTotal = Number((pendingQuoteSnapshot as any)?.total_amount);
     if (!Number.isFinite(pendingTotal) || pendingTotal < 0) return null;
     return pendingTotal;
-  }, [hasLivePendingQuoteRequest, pendingQuoteSnapshot]);
+  }, [hasLivePendingQuoteRequest, pendingQuoteSnapshot, booking]);
 
   const quotationPendingDeltaTotal = useMemo(() => {
     if (!sortedQuotationItems.length) return 0;
@@ -1533,6 +1555,7 @@ export default function ClientBookingDetailScreen() {
     : totalAmount;
   const noPendingPaymentLeft = booking.status === 'pending_payment' && remainingBalance <= 0;
   const canProceedToCompletion = noPendingPaymentLeft && !isQuotationPending;
+  const isPaymentBlockedByPendingQuote = isQuotationPending;
   const showPaymentCTA =
     (!backjobPaymentPhase || payableTotal > 0) &&
     (isBookedState || (booking.status === 'pending_payment' && remainingBalance > 0));
@@ -3125,12 +3148,28 @@ export default function ClientBookingDetailScreen() {
 
       {showPaymentCTA && (
         <View style={styles.actionButtonsContainer}>
-          <TouchableOpacity style={styles.finishLargeButton} onPress={() => setShowPaymentReceiptConfirm(true)}>
-            <FontAwesome name="credit-card" size={16} color="#fff" style={{ marginRight: 8 }} />
+          <TouchableOpacity
+            style={[
+              styles.finishLargeButton,
+              isPaymentBlockedByPendingQuote ? { backgroundColor: '#6B7280', opacity: 0.75 } : null,
+            ]}
+            onPress={() => {
+              if (!isPaymentBlockedByPendingQuote) setShowPaymentReceiptConfirm(true);
+            }}
+            disabled={isPaymentBlockedByPendingQuote}
+          >
+            <FontAwesome name={isPaymentBlockedByPendingQuote ? 'clock-o' : 'credit-card'} size={16} color="#fff" style={{ marginRight: 8 }} />
             <ThemedText style={styles.actionButtonText}>
-              {isBookedState ? 'Secure Booking (Optional Initial Payment)' : 'Proceed to Payment'}
+              {isPaymentBlockedByPendingQuote
+                ? 'Pending request'
+                : isBookedState ? 'Secure Booking (Optional Initial Payment)' : 'Proceed to Payment'}
             </ThemedText>
           </TouchableOpacity>
+          {isPaymentBlockedByPendingQuote ? (
+            <ThemedText style={[styles.noteText, { marginTop: 8, textAlign: 'center', color: '#C89B55' }]}>
+              Payment is locked until you respond to the pending quotation request.
+            </ThemedText>
+          ) : null}
         </View>
       )}
 
@@ -3145,7 +3184,7 @@ export default function ClientBookingDetailScreen() {
       )}
 
       <Modal
-        visible={showPaymentReceiptConfirm && showPaymentCTA}
+        visible={showPaymentReceiptConfirm && showPaymentCTA && !isPaymentBlockedByPendingQuote}
         transparent
         animationType="slide"
         onRequestClose={() => setShowPaymentReceiptConfirm(false)}
@@ -3288,10 +3327,11 @@ export default function ClientBookingDetailScreen() {
         bookingId={booking.id}
         totalAmount={modalAmountToPay}
         onClose={() => setShowCreditsModal(false)}
-        onPaymentSuccess={() => {
+        onPaymentSuccess={(data) => {
           setShowCreditsModal(false);
-          setShowSuccess(true);
           setPaymentMethod('credits');
+          setSuccessPaymentSummary(data?.summary || null);
+          setShowSuccess(true);
           fetchBookingDetail(true);
         }}
       />
@@ -3348,12 +3388,13 @@ export default function ClientBookingDetailScreen() {
         bookingId={booking.id}
         amount={currentPaymentAmount}
         paymentMethod={paymentMethod}
-        totalPaid={totalPaid}
-        remainingBalance={remainingBalance}
-        paymentStatus={paymentStatus}
+        totalPaid={Number(successPaymentSummary?.total_paid ?? totalPaid)}
+        remainingBalance={Number(successPaymentSummary?.remaining_balance ?? remainingBalance)}
+        paymentStatus={String(successPaymentSummary?.payment_status ?? paymentStatus)}
         installmentCount={installments.length}
         onClose={() => {
           setShowSuccess(false);
+          setSuccessPaymentSummary(null);
           fetchBookingDetail(true);
         }}
       />

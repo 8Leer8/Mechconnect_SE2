@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from django.db.models import Sum
+from django.db.models import Q, Sum
 
 from .models import Backjob, Booking, PaymentTransaction
 
@@ -116,7 +116,7 @@ def backjob_quotation_has_pending_client_lines(booking) -> bool:
 
 def backjob_accepted_payable_total(quotation) -> Decimal:
     """
-    Sum of client-accepted, new backjob quotation rows (is_backjob_line=True only).
+    Sum of client-accepted, new backjob quotation rows.
 
     Excludes the original job receipt (rows with is_backjob_line=False) so the client
     is not double-charged for the completed work.
@@ -127,10 +127,21 @@ def backjob_accepted_payable_total(quotation) -> Decimal:
     """
     if quotation is None:
         return Decimal("0.00")
+    backjob = get_booking_backjob(getattr(quotation, "booking", None))
+    new_line_filter = Q(is_backjob_line=True)
+    if backjob is not None and getattr(backjob, "created_at", None) is not None:
+        # Self-heal older accepted rows that were added after the backjob but were
+        # not flagged by older code.
+        new_line_filter = new_line_filter | Q(created_at__gte=backjob.created_at)
+
     total = Decimal("0.00")
     for item in quotation.items.filter(
-        is_backjob_line=True,
+        new_line_filter,
         status=quotation.Status.ACCEPTED,
     ):
+        if not getattr(item, "is_backjob_line", False):
+            item.is_backjob_line = True
+            item.backjob = backjob
+            item.save(update_fields=["is_backjob_line", "backjob", "updated_at"])
         total += Decimal(item.line_total or 0)
     return total.quantize(Decimal("0.01"))

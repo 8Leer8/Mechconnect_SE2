@@ -297,6 +297,29 @@ export default function BookingChatScreen() {
     return Boolean(isAssignedMechanicForBooking || myChatRole === 'lead_mechanic' || myChatRole === 'provider_mechanic');
   }, [canSendMessages, myChatRole, isAssignedMechanicForBooking]);
 
+  const backjobRequestStatus = useMemo(() => {
+    let nextStatus: 'pending' | 'accepted' | 'declined' | null = null;
+    messages.forEach((m: any) => {
+      const p = parseStructuredContent(m.content);
+      if (!p) return;
+      if (p.type === 'backjob_request') nextStatus = 'pending';
+      if (p.type === 'backjob_accepted') nextStatus = 'accepted';
+      if (p.type === 'backjob_declined') nextStatus = 'declined';
+    });
+    return nextStatus;
+  }, [messages]);
+
+  const latestBackjobRequestAt = useMemo(() => {
+    let latest = 0;
+    messages.forEach((m: any) => {
+      const p = parseStructuredContent(m.content);
+      if (!p || p.type !== 'backjob_request') return;
+      const createdMs = Number(new Date(String(m?.created_at || '')).getTime());
+      if (Number.isFinite(createdMs) && createdMs > latest) latest = createdMs;
+    });
+    return latest;
+  }, [messages]);
+
   const canOpenQuotationEditor = useMemo(() => {
     if (!canSendMessages) return false;
     if (myChatRole === 'assistant_mechanic' || myChatRole === 'client') return false;
@@ -803,8 +826,20 @@ export default function BookingChatScreen() {
         <View style={styles.messageRow}>
           <View style={[styles.systemBubbleContainer, styles.systemBubbleContainerAligned]}>
             <View style={styles.systemBubble}>
-              <ThemedText style={styles.systemTitle}>Backjob Request</ThemedText>
+              <ThemedText style={styles.systemTitle}>
+                {backjobRequestStatus === 'accepted'
+                  ? 'Backjob Accepted'
+                  : backjobRequestStatus === 'declined'
+                    ? 'Backjob Declined'
+                    : 'Backjob Request'}
+              </ThemedText>
               <ThemedText style={styles.systemText}>{parsed.requested_by_name || 'Client'} asked for a backjob</ThemedText>
+              {backjobRequestStatus === 'accepted' ? (
+                <ThemedText style={styles.systemText}>Mechanic accepted this backjob request.</ThemedText>
+              ) : null}
+              {backjobRequestStatus === 'declined' ? (
+                <ThemedText style={styles.systemText}>Mechanic declined this backjob request.</ThemedText>
+              ) : null}
               {parsed.reason ? <ThemedText style={styles.systemText}>{parsed.reason}</ThemedText> : null}
               {shouldLoadImages && Array.isArray(parsed.images) && parsed.images.length > 0 && (
                 <View style={{ marginTop: 8 }}>
@@ -813,7 +848,7 @@ export default function BookingChatScreen() {
                   ))}
                 </View>
               )}
-              {canModerateBackjobRequest ? (
+              {canModerateBackjobRequest && backjobRequestStatus !== 'accepted' && backjobRequestStatus !== 'declined' ? (
                 <View style={styles.actionButtonsRow}>
                   <TouchableOpacity
                     style={[styles.actionBtnBase, styles.actionBtnAccept]}
@@ -1180,20 +1215,36 @@ export default function BookingChatScreen() {
         removedItemsFromPrevious = visibleOrderedPreviousItems.filter((_: any, prevIdx: number) => !usedPrevIndexes.has(prevIdx));
       }
 
-      const removedRowsFromCurrent = matchedRows.filter((row: any) => Boolean(row?.isRemoved));
-      const removedItems = [...removedRowsFromCurrent.map((row: any) => row.currentIt), ...removedItemsFromPrevious];
       const visibleTotalAmount = Number(parsed.total_amount) || 0;
-      const isBackjobQuote = Boolean(parsed.is_backjob);
-      const pendingChargeTotal = Math.max(0, matchedRows.reduce((sum: number, row: any) => {
+      const messageCreatedMs = Number(new Date(String(item?.created_at || '')).getTime());
+      const wasSentAfterBackjobRequest =
+        Number.isFinite(messageCreatedMs) &&
+        latestBackjobRequestAt > 0 &&
+        messageCreatedMs >= latestBackjobRequestAt;
+      const isBackjobQuote = Boolean(parsed.is_backjob) || wasSentAfterBackjobRequest;
+      const isPendingBackjobQuote = isPending && isBackjobQuote;
+      const isAddedBackjobRow = (row: any) => {
+        const changeType = String(row?.currentIt?.change_type || '').toLowerCase();
+        return Boolean(row?.currentIt?.is_backjob_new_line) || row?.isAdded || changeType === 'added';
+      };
+      const rowsForDisplay = isPendingBackjobQuote
+        ? matchedRows.filter((row: any) => !row?.isRemoved && isAddedBackjobRow(row))
+        : matchedRows;
+      const removedRowsFromCurrent = matchedRows.filter((row: any) => Boolean(row?.isRemoved));
+      const removedItems = isPendingBackjobQuote
+        ? []
+        : [...removedRowsFromCurrent.map((row: any) => row.currentIt), ...removedItemsFromPrevious];
+      const pendingChargeTotal = Math.max(0, rowsForDisplay.reduce((sum: number, row: any) => {
         if (row?.isRemoved) return sum;
         const currentLine = Number(row?.currentIt?.line_total) || 0;
         const previousLine = Number(row?.previousIt?.line_total) || 0;
         if (row?.isAdded) return sum + currentLine;
+        if (isPendingBackjobQuote && Boolean(row?.currentIt?.is_backjob_new_line)) return sum + currentLine;
         if (row?.isEdited) return sum + (currentLine - previousLine);
         return sum;
       }, 0) - removedItems.reduce((sum: number, it: any) => sum + (Number(it?.line_total) || 0), 0));
       const displayTotalAmount = isPending && isBackjobQuote ? pendingChargeTotal : visibleTotalAmount;
-      const shouldHideLegacyEmptyPendingCard = isPending && visibleOrderedItemList.length === 0 && removedItems.length === 0;
+      const shouldHideLegacyEmptyPendingCard = isPending && rowsForDisplay.length === 0 && removedItems.length === 0;
       if (shouldHideLegacyEmptyPendingCard) {
         return null;
       }
@@ -1221,7 +1272,7 @@ export default function BookingChatScreen() {
                         Backjob: only new changes will be charged
                       </ThemedText>
                     ) : null}
-                    {matchedRows
+                    {rowsForDisplay
                       .filter((row: any) => !row?.isRemoved)
                       .map(({ currentIt: it, previousIt: prevIt, isAdded, isEdited }: any, idx: number) => {
                       const previousQuantity = Number(it?.previous_quantity ?? it?.quantity ?? 1) || 1;
@@ -1278,10 +1329,6 @@ export default function BookingChatScreen() {
                     <View style={{ height: 1, backgroundColor: '#2f3338', marginVertical: 8 }} />
                     {isPending && isBackjobQuote ? (
                       <>
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                          <ThemedText style={styles.quoteGhostLabel}>Previous quotation total</ThemedText>
-                          <ThemedText style={styles.quoteGhostValue}>₱{visibleTotalAmount.toFixed(2)}</ThemedText>
-                        </View>
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                           <ThemedText style={styles.quoteTotalLabel}>Pending additional charge</ThemedText>
                           <ThemedText style={styles.quoteTotalValue}>₱{displayTotalAmount.toFixed(2)}</ThemedText>

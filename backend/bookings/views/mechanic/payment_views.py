@@ -3,7 +3,7 @@ import hashlib
 import hmac
 import logging
 import uuid
-from decimal import Decimal
+from decimal import Decimal, ROUND_UP
 
 import requests
 from asgiref.sync import async_to_sync
@@ -523,7 +523,9 @@ def _finalize_payment_success(
 
     with transaction.atomic():
         booking = Booking.objects.select_for_update().get(id=booking.id)
+        _sync_booking_payable_total(booking)
         _ensure_installments_for_booking(booking)
+        _sync_pending_installments_to_total(booking)
 
         if reference:
             existing_tx = PaymentTransaction.objects.filter(
@@ -590,6 +592,9 @@ def _finalize_payment_success(
             receipt.ewallet_source_id = source_id
         if reference:
             receipt.transaction_id = reference
+        receipt.payment_method = method
+        if method in {"gcash", "maya"}:
+            receipt.ewallet_type = method
 
         receipt.save(
             update_fields=[
@@ -597,6 +602,8 @@ def _finalize_payment_success(
                 "paid_at",
                 "ewallet_source_id",
                 "transaction_id",
+                "payment_method",
+                "ewallet_type",
             ]
         )
 
@@ -615,7 +622,9 @@ def _finalize_payment_success(
         disbursed = trigger_disbursement(booking)
         if disbursed:
             _release_paid_installments(booking)
-            notify_payment_completed(booking)
+
+    if summary["fully_paid"]:
+        notify_payment_completed(booking)
 
     return {
         "installment": installment,
@@ -1015,6 +1024,12 @@ def notify_mechanic_waiting_payment(booking):
 def notify_payment_completed(booking):
     provider_id = getattr(booking.request.provider, "id", None)
     client_id = getattr(booking.request.client.account, "id", None)
+    summary = _get_payment_summary(booking)
+    payment_method = None
+    try:
+        payment_method = booking.receipt.payment_method
+    except Exception:
+        payment_method = None
     _send_ws_event(
         [provider_id, client_id],
         {
@@ -1022,6 +1037,10 @@ def notify_payment_completed(booking):
             "booking_id": booking.id,
             "status": booking.status,
             "message": "Payment completed",
+            "payment_method": payment_method,
+            "total_paid": str(summary.get("total_paid", "0.00")),
+            "remaining_balance": str(summary.get("remaining_balance", "0.00")),
+            "payment_status": summary.get("payment_status", Booking.PaymentStatus.UNPAID),
         },
     )
 
@@ -1299,9 +1318,8 @@ def confirm_qr_payment(request):
                     status=409,
                 )
 
-            booking = Booking.objects.select_related(
+            booking = Booking.objects.select_for_update().select_related(
                 "request__client__account",
-                "request__provider",
             ).get(id=qr_token.booking_id)
 
             if booking.request.client.account_id != account.id:
@@ -1603,38 +1621,49 @@ def pay_with_credits(request):
         return Response({"error": "Authentication required"}, status=401)
     
     booking_id = request.data.get('booking_id')
-    amount = Decimal(str(request.data.get('amount', 0)))
+    requested_amount = Decimal(str(request.data.get('amount', 0)))
     
     if not booking_id:
         return Response({"error": "Booking ID is required"}, status=400)
     
-    if amount <= 0:
+    if requested_amount <= 0:
         return Response({"error": "Amount must be greater than 0"}, status=400)
-    
-    # Required credits (1:1 ratio, rounded up)
-    required_credits = int(amount)
-    
+
     try:
         with db_transaction.atomic():
-            # Lock client's wallet
+            # Get booking and verify ownership
+            booking = Booking.objects.select_for_update().select_related(
+                'request__client__account',
+            ).get(id=booking_id)
+            
+            if booking.request.client.account_id != account.id:
+                return Response({"error": "Unauthorized"}, status=403)
+
+            _sync_booking_payable_total(booking)
+            if booking_has_backjob(booking) and _to_money(booking.amount_fee) <= Decimal("0.00"):
+                return Response({"error": "This backjob has no payable amount"}, status=400)
+            if not _is_payment_open(booking):
+                return Response({"error": "Booking is not ready for payment"}, status=400)
+
+            _ensure_installments_for_booking(booking)
+            _sync_pending_installments_to_total(booking)
+            target_installment = _get_next_installment_for_charge(booking)
+            if target_installment is None or target_installment.status == PaymentInstallment.Status.PAID:
+                return Response({"error": "Booking is already fully paid"}, status=400)
+
+            amount_to_pay = _to_money(target_installment.amount)
+            required_credits = int(amount_to_pay.to_integral_value(rounding=ROUND_UP))
+
+            # Lock client's wallet after we know the real payable installment.
             client_wallet = account.wallet
             client_wallet.refresh_from_db()
-            
+
             if client_wallet.balance < required_credits:
                 return Response({
                     "error": "Insufficient credits",
                     "required": required_credits,
                     "available": int(client_wallet.balance),
                 }, status=402)
-            
-            # Get booking and verify ownership
-            booking = Booking.objects.select_related(
-                'request__client__account',
-                'request__provider',
-            ).get(id=booking_id)
-            
-            if booking.request.client.account_id != account.id:
-                return Response({"error": "Unauthorized"}, status=403)
             
             # Deduct from client
             client_wallet.balance -= required_credits
@@ -1664,17 +1693,26 @@ def pay_with_credits(request):
                 )
             
             # Mark payment as successful
-            _finalize_payment_success(
+            payment_result = _finalize_payment_success(
                 booking,
                 paid_at=timezone.now(),
                 external_reference=f'credits_{booking_id}_{timezone.now().timestamp()}',
+                installment_type=target_installment.installment_type,
                 method='credits',
             )
+            summary = payment_result.get("summary") or {}
             
             return Response({
                 "success": True,
                 "credits_deducted": required_credits,
                 "remaining_balance": int(client_wallet.balance),
+                "summary": {
+                    "total_amount": str(summary.get("total_amount", "0.00")),
+                    "total_paid": str(summary.get("total_paid", "0.00")),
+                    "remaining_balance": str(summary.get("remaining_balance", "0.00")),
+                    "payment_status": summary.get("payment_status", Booking.PaymentStatus.UNPAID),
+                    "fully_paid": bool(summary.get("fully_paid", False)),
+                },
                 "message": f"Payment of {required_credits} credits successful",
             })
             

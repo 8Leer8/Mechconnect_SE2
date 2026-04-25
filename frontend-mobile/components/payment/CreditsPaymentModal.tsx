@@ -11,7 +11,7 @@ interface CreditsPaymentModalProps {
   bookingId: number;
   totalAmount: number;
   onClose: () => void;
-  onPaymentSuccess: () => void;
+  onPaymentSuccess: (data?: any) => void;
 }
 
 export default function CreditsPaymentModal({
@@ -76,8 +76,7 @@ export default function CreditsPaymentModal({
         throw new Error(data.error || 'Payment failed');
       }
 
-      Alert.alert('Payment Successful', `You paid ₱${totalAmount.toFixed(2)} using ${requiredCredits} credits.`);
-      onPaymentSuccess();
+      onPaymentSuccess(data);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Payment failed';
       Alert.alert('Payment Error', message);

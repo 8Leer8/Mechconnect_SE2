@@ -1730,14 +1730,16 @@ def mechanic_accept_backjob(request, booking_id):
     except Exception:
         return Response({"error": "No backjob found for this booking"}, status=status.HTTP_404_NOT_FOUND)
 
-    # If already accepted or in progress, ensure booking state is updated then return success
-    if backjob.status in [
+    # If already accepted or in progress, still continue below so the chat request
+    # has an accepted system message instead of staying as an actionable request.
+    already_accepted_or_active = backjob.status in [
         Booking.Status.ACCEPTED,
         Booking.Status.ON_THE_WAY,
         Booking.Status.AT_LOCATION,
         Booking.Status.DIAGNOSING,
         Booking.Status.ACTIVE,
-    ]:
+    ]
+    if already_accepted_or_active:
         try:
             booking.status = Booking.Status.ACCEPTED
             booking.amount_fee = Decimal("0.00")
@@ -1755,10 +1757,10 @@ def mechanic_accept_backjob(request, booking_id):
                 pass
         except Exception:
             pass
-        return Response({"message": "Backjob already accepted or in progress (booking ensured booked)", "backjob_id": backjob.id, "status": backjob.status}, status=status.HTTP_200_OK)
 
-    backjob.status = Booking.Status.ACCEPTED
-    backjob.save(update_fields=["status", "updated_at"])
+    if not already_accepted_or_active:
+        backjob.status = Booking.Status.ACCEPTED
+        backjob.save(update_fields=["status", "updated_at"])
 
     # Notify participants via websocket util
     try:
@@ -1828,8 +1830,14 @@ def mechanic_accept_backjob(request, booking_id):
             'message': 'Mechanic accepted the backjob and set it as booked (no cost).',
         }
 
-        # Create a system-style message (no sender) so UI renders it as a system event
-        msg = Message.objects.create(conversation=conv, sender=None, content=json.dumps(payload))
+        existing_msg = Message.objects.filter(
+            Q(content__contains='backjob_accepted') &
+            Q(content__contains=f'"backjob_id": {backjob.id}'),
+            conversation=conv,
+        ).order_by('-id').first()
+
+        # Create a system-style message (no sender) so UI renders it as a system event.
+        msg = existing_msg or Message.objects.create(conversation=conv, sender=None, content=json.dumps(payload))
         conv.save()
         ser = MessageSerializer(msg, context={'request': request})
 

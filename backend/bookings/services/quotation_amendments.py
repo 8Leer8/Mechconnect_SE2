@@ -180,6 +180,12 @@ def resolve_amendment(amendment_id: int, decision: str) -> QuotationAmendment:
             raise ValueError("Amendment was already resolved.")
 
         quotation = amendment.quotation
+        current_backjob = None
+        if getattr(quotation, "is_backjob", False):
+            try:
+                current_backjob = quotation.booking.backjob
+            except Exception:
+                current_backjob = None
         if decision_norm == "accepted":
             for change in amendment.items.all().order_by("id"):
                 if change.action_type == AmendmentItem.ActionType.ADDED:
@@ -215,6 +221,9 @@ def resolve_amendment(amendment_id: int, decision: str) -> QuotationAmendment:
                         placeholder.previous_description = None
                         placeholder.previous_quantity = None
                         placeholder.previous_unit_price = None
+                        if getattr(quotation, "is_backjob", False):
+                            placeholder.is_backjob_line = True
+                            placeholder.backjob = current_backjob
                         placeholder.save(
                             update_fields=[
                                 "status",
@@ -222,6 +231,8 @@ def resolve_amendment(amendment_id: int, decision: str) -> QuotationAmendment:
                                 "previous_description",
                                 "previous_quantity",
                                 "previous_unit_price",
+                                "is_backjob_line",
+                                "backjob",
                                 "updated_at",
                             ]
                         )
@@ -236,6 +247,8 @@ def resolve_amendment(amendment_id: int, decision: str) -> QuotationAmendment:
                             quantity=proposed_qty,
                             unit_price=proposed_unit,
                             status=Quotation.Status.ACCEPTED,
+                            is_backjob_line=bool(getattr(quotation, "is_backjob", False)),
+                            backjob=current_backjob,
                         )
                 elif change.action_type == AmendmentItem.ActionType.EDITED and change.original_item_id:
                     proposed = change.proposed_changes or {}
