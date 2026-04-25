@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -10,6 +10,10 @@ import {
   TouchableOpacity,
   View,
   useWindowDimensions,
+  Dimensions,
+  FlatList,
+  StyleSheet,
+  Text,
 } from 'react-native';
 import Slider from '@react-native-community/slider';
 import MapView, { Circle, PROVIDER_GOOGLE, Region } from 'react-native-maps';
@@ -46,7 +50,7 @@ export default function MapScreen() {
   const { bottom } = useSafeAreaInsets();
   const { height: screenHeight } = useWindowDimensions();
   const mapRef = useRef<MapView>(null);
-  const geocodeDebounceRef = useRef<number | null>(null);
+  const geocodeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const locationRequestInFlight = useRef(false);
   const mapHeightAnim = useRef(new Animated.Value(340)).current;
   const params = useLocalSearchParams();
@@ -74,6 +78,15 @@ export default function MapScreen() {
   ));
   const [radiusError, setRadiusError] = useState('');
   const [topBarHeight, setTopBarHeight] = useState(0);
+
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<Array<{ id: string; address: { freeformAddress: string }; position: { lat: number; lon: number } }>>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [showSearchResults, setShowSearchResults] = useState(false);
+  const [isSearchActive, setIsSearchActive] = useState(false);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const TOMTOM_API_KEY = process.env.EXPO_PUBLIC_TOMTOM_API_KEY;
   const COLLAPSED_SHEET_CONTENT_HEIGHT = 220;
   const EXPANDED_SHEET_CONTENT_HEIGHT = 340;
 
@@ -93,6 +106,9 @@ export default function MapScreen() {
     return () => {
       if (geocodeDebounceRef.current !== null) {
         clearTimeout(geocodeDebounceRef.current);
+      }
+      if (searchDebounceRef.current !== null) {
+        clearTimeout(searchDebounceRef.current);
       }
     };
   }, []);
@@ -285,17 +301,96 @@ export default function MapScreen() {
       clearTimeout(geocodeDebounceRef.current);
     }
 
-    geocodeDebounceRef.current = setTimeout(async () => {
-      const point = {
-        latitude: nextRegion.latitude,
-        longitude: nextRegion.longitude,
-      };
-      try {
-        await reverseGeocodePoint(point.latitude, point.longitude);
-      } catch {
-        // Keep existing address if geocoding fails during drag.
+    geocodeDebounceRef.current = setTimeout(() => {
+      void reverseGeocodePoint(nextRegion.latitude, nextRegion.longitude);
+    }, 500);
+  };
+
+  // TomTom Search Functions
+  const fetchSearchSuggestions = useCallback(async (query: string) => {
+    // Strict API key check
+    if (!TOMTOM_API_KEY) {
+      console.warn('[TomTom] API key is missing. Please set EXPO_PUBLIC_TOMTOM_API_KEY in your environment.');
+      return;
+    }
+
+    if (!query.trim()) return;
+
+    setIsSearching(true);
+    try {
+      const encodedQuery = encodeURIComponent(query.trim());
+      const url = `https://api.tomtom.com/search/2/search/${encodedQuery}.json?key=${TOMTOM_API_KEY}&countrySet=PH&limit=5&idxSet=POI,PAD,Str,Geo`;
+      const response = await fetch(url);
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.log('[TomTom] Error response:', errorText);
+        throw new Error(`Search failed: ${response.status}`);
       }
-    }, 450) as unknown as number;
+      const data = await response.json();
+      const results = (data.results || []).map((result: any) => ({
+        id: result.id || String(Math.random()),
+        address: result.address || { freeformAddress: result.address?.freeformAddress || 'Unknown location' },
+        position: result.position || { lat: 0, lon: 0 },
+      }));
+      setSearchResults(results);
+      setShowSearchResults(results.length > 0);
+    } catch (error) {
+      console.error('[TomTom] search error:', error);
+      setSearchResults([]);
+      setShowSearchResults(false);
+    } finally {
+      setIsSearching(false);
+    }
+  }, []);
+
+  const handleSearchQueryChange = (text: string) => {
+    setSearchQuery(text);
+
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
+
+    if (text.trim().length < 2) {
+      setSearchResults([]);
+      setShowSearchResults(false);
+      return;
+    }
+
+    searchDebounceRef.current = setTimeout(() => {
+      void fetchSearchSuggestions(text);
+    }, 500);
+  };
+
+  const handleSelectSearchResult = (result: { id: string; address: { freeformAddress: string }; position: { lat: number; lon: number } }) => {
+    const { lat, lon } = result.position;
+
+    // Update map region and pin
+    const newRegion: Region = {
+      latitude: lat,
+      longitude: lon,
+      latitudeDelta: 0.018,
+      longitudeDelta: 0.018,
+    };
+
+    setRegion(newRegion);
+    setCircleCenter({ latitude: lat, longitude: lon });
+    setAddress(result.address.freeformAddress);
+    setSearchQuery(result.address.freeformAddress);
+    setSearchResults([]);
+    setShowSearchResults(false);
+    setIsSearchActive(false); // Close the search overlay
+
+    // Animate map to new location
+    mapRef.current?.animateToRegion(newRegion, 500);
+
+    // Clear any pending geocode debounce
+    if (geocodeDebounceRef.current !== null) {
+      clearTimeout(geocodeDebounceRef.current);
+    }
+
+    geocodeDebounceRef.current = setTimeout(() => {
+      void reverseGeocodePoint(newRegion.latitude, newRegion.longitude);
+    }, 500);
   };
 
   const handleLocateMe = async () => {
@@ -414,22 +509,31 @@ export default function MapScreen() {
           <ThemedText style={styles.title}>Map</ThemedText>
           <View style={styles.spacer} />
         </View>
-        <ThemedText style={styles.addressText} numberOfLines={2}>
-          {address || 'Move the map to choose your exact service area center.'}
-        </ThemedText>
+        {/* Clickable Dummy Search Bar */}
+        <TouchableOpacity
+          style={styles.dummySearchBar}
+          onPress={() => setIsSearchActive(true)}
+          activeOpacity={0.8}
+        >
+          <FontAwesome name="search" size={16} color="#8E8E93" style={styles.dummySearchIcon} />
+          <Text style={styles.dummySearchText} numberOfLines={1}>
+            {address || 'Search location...'}
+          </Text>
+          <FontAwesome name="chevron-right" size={14} color="#8E8E93" />
+        </TouchableOpacity>
       </View>
 
-      <Animated.View style={[styles.mapWrap, { height: mapHeightAnim }]}> 
-      <MapView
-        ref={mapRef}
-        style={styles.map}
-        provider={PROVIDER_GOOGLE}
-        initialRegion={region}
-        onRegionChange={handleRegionChange}
-        onRegionChangeComplete={handleRegionChangeComplete}
-        showsUserLocation
-        showsMyLocationButton={false}
-      >
+      <Animated.View style={[styles.mapWrap, { height: mapHeightAnim }]}>
+        <MapView
+          ref={mapRef}
+          style={styles.map}
+          provider={PROVIDER_GOOGLE}
+          initialRegion={region}
+          onRegionChange={handleRegionChange}
+          onRegionChangeComplete={handleRegionChangeComplete}
+          showsUserLocation
+          showsMyLocationButton={false}
+        >
         {circleCenter && (
           <Circle
             center={circleCenter}
@@ -648,6 +752,287 @@ export default function MapScreen() {
           </ScrollView>
         )}
       </View>
+
+      {/* Full-screen Search Overlay */}
+      {isSearchActive && (
+        <View style={searchStyles.overlay}>
+          {/* Header with back button and search input */}
+          <View style={searchStyles.overlayHeader}>
+            <TouchableOpacity
+              onPress={() => setIsSearchActive(false)}
+              style={searchStyles.backButton}
+              activeOpacity={0.7}
+            >
+              <FontAwesome name="arrow-left" size={20} color="#FFFFFF" />
+            </TouchableOpacity>
+            <View style={searchStyles.overlayInputWrapper}>
+              <FontAwesome name="search" size={16} color="#8E8E93" style={searchStyles.overlaySearchIcon} />
+              <TextInput
+                style={searchStyles.overlayInput}
+                placeholder="Search location..."
+                placeholderTextColor="#8E8E93"
+                value={searchQuery}
+                onChangeText={handleSearchQueryChange}
+                autoFocus={true}
+                returnKeyType="search"
+              />
+              {searchQuery.length > 0 && (
+                <TouchableOpacity
+                  onPress={() => {
+                    setSearchQuery('');
+                    setSearchResults([]);
+                  }}
+                  style={searchStyles.overlayClearButton}
+                  activeOpacity={0.7}
+                >
+                  <FontAwesome name="times-circle" size={20} color="#8E8E93" />
+                </TouchableOpacity>
+              )}
+              {isSearching && (
+                <ActivityIndicator size="small" color="#FF8C00" style={searchStyles.overlayLoadingIndicator} />
+              )}
+            </View>
+          </View>
+
+          {/* Search Results List */}
+          <FlatList
+            data={searchResults}
+            keyExtractor={(item) => item.id}
+            style={searchStyles.overlayResultsList}
+            contentContainerStyle={searchStyles.overlayResultsContent}
+            keyboardShouldPersistTaps="handled"
+            ListEmptyComponent={
+              searchQuery.length > 1 && !isSearching ? (
+                <View style={searchStyles.emptyState}>
+                  <FontAwesome name="search" size={40} color="#3A3A3C" />
+                  <Text style={searchStyles.emptyStateText}>
+                    {searchQuery.length > 0 ? 'No results found' : 'Start typing to search'}
+                  </Text>
+                </View>
+              ) : null
+            }
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                style={searchStyles.overlayResultItem}
+                onPress={() => handleSelectSearchResult(item)}
+                activeOpacity={0.7}
+              >
+                <FontAwesome name="map-marker" size={18} color="#FF8C00" style={searchStyles.overlayResultIcon} />
+                <View style={searchStyles.overlayResultTextContainer}>
+                  <Text style={searchStyles.overlayResultText} numberOfLines={2}>
+                    {item.address.freeformAddress}
+                  </Text>
+                </View>
+                <FontAwesome name="chevron-right" size={14} color="#8E8E93" />
+              </TouchableOpacity>
+            )}
+          />
+        </View>
+      )}
     </View>
   );
 }
+
+// Search styles
+const searchStyles = StyleSheet.create({
+  searchContainer: {
+    position: 'absolute',
+    top: 16,
+    left: 16,
+    right: 16,
+    zIndex: 100,
+    elevation: 100,
+  },
+  searchInputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1A1C1E',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
+    borderWidth: 1,
+    borderColor: '#3A3A3C',
+  },
+  searchIcon: {
+    marginRight: 10,
+  },
+  searchInput: {
+    flex: 1,
+    color: '#FFFFFF',
+    fontSize: 16,
+    paddingVertical: 4,
+  },
+  clearButton: {
+    padding: 4,
+    marginLeft: 8,
+  },
+  searchingIndicator: {
+    marginLeft: 8,
+  },
+  resultsList: {
+    backgroundColor: '#1A1C1E',
+    borderRadius: 12,
+    marginTop: 8,
+    maxHeight: 250,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
+    borderWidth: 1,
+    borderColor: '#3A3A3C',
+  },
+  resultsContent: {
+    paddingVertical: 8,
+  },
+  resultItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2C2C2E',
+  },
+  resultIcon: {
+    marginRight: 12,
+  },
+  resultTextContainer: {
+    flex: 1,
+    flexShrink: 1,
+  },
+  resultText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+
+  // Full-screen overlay styles
+  overlay: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#0A0A0A',
+    zIndex: 999,
+    elevation: 999,
+  },
+  overlayHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === 'ios' ? 60 : 40,
+    paddingBottom: 12,
+    backgroundColor: '#0A0A0A',
+    borderBottomWidth: 1,
+    borderBottomColor: '#2C2C2E',
+  },
+  backButton: {
+    padding: 8,
+    marginRight: 8,
+  },
+  overlayInputWrapper: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1A1C1E',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#3A3A3C',
+  },
+  overlaySearchIcon: {
+    marginRight: 10,
+  },
+  overlayInput: {
+    flex: 1,
+    color: '#FFFFFF',
+    fontSize: 16,
+    paddingVertical: 4,
+  },
+  overlayClearButton: {
+    padding: 4,
+    marginLeft: 8,
+  },
+  overlayLoadingIndicator: {
+    marginLeft: 8,
+  },
+  overlayResultsList: {
+    flex: 1,
+    backgroundColor: '#0A0A0A',
+  },
+  overlayResultsContent: {
+    paddingVertical: 8,
+  },
+  overlayResultItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2C2C2E',
+  },
+  overlayResultIcon: {
+    marginRight: 12,
+  },
+  overlayResultTextContainer: {
+    flex: 1,
+    flexShrink: 1,
+  },
+  overlayResultText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  emptyState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 100,
+  },
+  emptyStateText: {
+    color: '#8E8E93',
+    fontSize: 16,
+    marginTop: 16,
+  },
+  dummySearchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1A1C1E',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#3A3A3C',
+    marginTop: 8,
+  },
+  dummySearchIcon: {
+    marginRight: 10,
+  },
+  dummySearchText: {
+    flex: 1,
+    color: '#FFFFFF',
+    fontSize: 15,
+  },
+  headerText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+    lineHeight: 22,
+  },
+  addressText: {
+    color: '#A1A1A6',
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 4,
+  },
+  mapWrap: {
+    // Add styles for mapWrap here
+  },
+});
