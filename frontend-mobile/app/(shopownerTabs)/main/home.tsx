@@ -11,6 +11,7 @@ import { getImageUrl } from '@/lib/imageUtils';
 import { fetchProfileDetailsCached } from '@/lib/profileCache';
 import NotificationBell from '@/components/notifications/NotificationBell';
 import { useNotification } from '@/hooks/useNotification';
+import { router } from 'expo-router';
 
 const { width } = Dimensions.get('window');
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -265,6 +266,29 @@ export default function ShopOwnerHome() {
           addHref="/shopowner/wallet"
         />
 
+        {/* Shop Management */}
+        <View style={styles.summarySection}>
+          <ThemedText style={styles.sectionTitle}>Shop Management</ThemedText>
+          <TouchableOpacity
+            style={styles.managementActionCard}
+            activeOpacity={0.8}
+            onPress={() => router.push('/shopowner/others/edit-profile')}
+          >
+            <View style={styles.managementActionLeft}>
+              <View style={styles.managementActionIcon}>
+                <FontAwesome name="sitemap" size={16} color="#FF8C00" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <ThemedText style={styles.managementActionTitle}>Manage Branches</ThemedText>
+                <ThemedText style={styles.managementActionSubtitle}>
+                  Add branches, set main branch, and update branch labels.
+                </ThemedText>
+              </View>
+            </View>
+            <FontAwesome name="chevron-right" size={14} color="#8E8E93" />
+          </TouchableOpacity>
+        </View>
+
         {/* Stats Grid - 2x2 */}
         <View style={styles.statsSection}>
           <ThemedText style={styles.sectionTitle}>Quick Stats</ThemedText>
@@ -405,6 +429,7 @@ export default function ShopOwnerHome() {
             </View>
           </View>
         </View>
+
       </ScrollView>
     </ThemedView>
   );
@@ -737,5 +762,41 @@ const styles = StyleSheet.create({
   divider: {
     height: 1,
     backgroundColor: '#2A2A2A',
+  },
+  managementActionCard: {
+    backgroundColor: '#151515',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#252525',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  managementActionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  managementActionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: '#FF8C0020',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  managementActionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  managementActionSubtitle: {
+    fontSize: 12,
+    color: '#8E8E93',
+    marginTop: 2,
+    lineHeight: 17,
   },
 });

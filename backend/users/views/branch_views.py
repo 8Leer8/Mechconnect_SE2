@@ -66,6 +66,23 @@ def _next_branch_label(account):
     return f'Branch {max_index + 1}'
 
 
+def _dedupe_branch_label(account, preferred_label, exclude_branch_ids=None):
+    label = (preferred_label or '').strip()
+    if not label:
+        return _next_branch_label(account)
+
+    exclude_branch_ids = exclude_branch_ids or set()
+    existing_labels = {
+        (branch.label or '').strip().lower()
+        for branch in account.branch_locations.all()
+        if branch.id not in exclude_branch_ids
+    }
+    if label.lower() not in existing_labels:
+        return label
+
+    return _next_branch_label(account)
+
+
 def _renumber_branches(account):
     return None
 
@@ -241,26 +258,31 @@ def set_main_branch(request, branch_id):
                 'lng': main_address.lng,
                 'formatted_address': _build_formatted_address(main_address),
                 'barangay': main_address.barangay,
+                'label': (main_address.label or '').strip(),
             }
 
         main_address.lat = branch.lat
         main_address.lng = branch.lng
         main_address.formatted_address = branch.formatted_address
         main_address.barangay = branch.barangay or main_address.barangay
-        main_address.label = 'Main Branch'
+        # Preserve the chosen branch label when promoting to main.
+        main_address.label = (branch.label or '').strip() or 'Main Branch'
         main_address.is_main = True
         main_address.save()
 
         branch.delete()
 
         if previous_main_snapshot and previous_main_snapshot.get('formatted_address'):
+            previous_label = previous_main_snapshot.get('label') or ''
+            if previous_label.lower() == 'main branch':
+                previous_label = ''
             AccountBranchLocation.objects.create(
                 account=account,
                 lat=previous_main_snapshot.get('lat'),
                 lng=previous_main_snapshot.get('lng'),
                 formatted_address=previous_main_snapshot.get('formatted_address'),
                 barangay=previous_main_snapshot.get('barangay'),
-                label=_next_branch_label(account),
+                label=_dedupe_branch_label(account, previous_label),
                 branch_type=branch.branch_type,
                 is_main=False,
             )
