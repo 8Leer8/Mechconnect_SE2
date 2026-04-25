@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   ActivityIndicator,
   Modal,
@@ -63,9 +64,11 @@ export default function NotificationBell({ iconColor = '#FF8C00' }: Notification
     }
   }, []);
 
-  useEffect(() => {
-    loadNotifications();
-  }, [loadNotifications]);
+  useFocusEffect(
+    useCallback(() => {
+      loadNotifications();
+    }, [loadNotifications])
+  );
 
   useEffect(() => {
     if (lastMessage?.type === 'booking_update' || lastMessage?.type === 'notification_update') {
@@ -90,6 +93,27 @@ export default function NotificationBell({ iconColor = '#FF8C00' }: Notification
   }, []);
 
   const navigateToTarget = useCallback((notification: NotificationItem) => {
+    const payload = notification.payload;
+    const action = String(payload?.action ?? '').toLowerCase();
+    const broadcastId = Number(payload?.broadcast_id ?? 0) || null;
+
+    if (broadcastId && payload?.target_role === 'client' && action === 'broadcast_offer_created') {
+      router.push({
+        pathname: '/client/request/broadcast/broadcastdetail',
+        params: { id: String(broadcastId) },
+      } as never);
+      return;
+    }
+
+    if (
+      broadcastId &&
+      (payload?.target_role === 'mechanic' || payload?.target_role === 'mechanic_shop') &&
+      action === 'broadcast_offer_pending'
+    ) {
+      router.push('/(mechanicTabs)/main/map' as never);
+      return;
+    }
+
     const bookingId = notification.payload?.booking_id;
     if (!bookingId) return;
 

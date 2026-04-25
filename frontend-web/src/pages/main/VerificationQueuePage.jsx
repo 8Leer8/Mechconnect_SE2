@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Check, Eye } from "lucide-react";
+import { Check, ChevronDown, Eye } from "lucide-react";
 import { AdminLayout } from "../AdminLayout";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -77,6 +77,7 @@ export function VerificationQueuePage() {
   const [rejectionNote, setRejectionNote] = useState("");
   const [actionError, setActionError] = useState("");
   const [processingKey, setProcessingKey] = useState("");
+  const [expandedUsers, setExpandedUsers] = useState({});
 
   function itemKey(item) {
     return `${item.target_type}-${item.id}`;
@@ -137,6 +138,41 @@ export function VerificationQueuePage() {
     }));
   }
 
+  // Group specialty requests by user email
+  const groupedSpecialtyUsers = useMemo(() => {
+    if (activeFilter !== "specialty") return [];
+    
+    const groups = {};
+    (queueData.specialty_results || []).forEach((item) => {
+      const key = item.provider_email || item.provider_name || "Unknown";
+      if (!groups[key]) {
+        groups[key] = {
+          userEmail: key,
+          userName: item.provider_name || "Unknown",
+          requests: [],
+        };
+      }
+      groups[key].requests.push({
+        ...item,
+        kind: "specialty",
+        title: item.specialty_name,
+        detail: `${formatSourceType(item.source_type)} source`,
+        date: item.requested_at,
+      });
+    });
+    
+    return Object.values(groups);
+  }, [activeFilter, queueData.specialty_results]);
+
+  const totalSpecialtyRequests = useMemo(() => {
+    return (queueData.specialty_results || []).length;
+  }, [queueData.specialty_results]);
+
+  const paginatedSpecialtyUsers = useMemo(() => {
+    const start = (currentPage - 1) * ITEMS_PER_PAGE;
+    return groupedSpecialtyUsers.slice(start, start + ITEMS_PER_PAGE);
+  }, [currentPage, groupedSpecialtyUsers]);
+
   const displayItems = useMemo(() => {
     if (activeFilter === "mechanic") {
       return buildMechanicItems();
@@ -151,15 +187,24 @@ export function VerificationQueuePage() {
     () => ({
       mechanic: (queueData.mechanic_results || []).length,
       shops: (queueData.shop_results || []).length,
-      specialty: (queueData.specialty_results || []).length,
+      specialty: groupedSpecialtyUsers.length,
     }),
-    [queueData.mechanic_results, queueData.shop_results, queueData.specialty_results],
+    [queueData.mechanic_results, queueData.shop_results, groupedSpecialtyUsers.length],
   );
 
-  const totalPages = useMemo(
-    () => Math.max(Math.ceil(displayItems.length / ITEMS_PER_PAGE), 1),
-    [displayItems.length],
-  );
+  function toggleUserExpanded(userEmail) {
+    setExpandedUsers((prev) => ({
+      ...prev,
+      [userEmail]: !prev[userEmail],
+    }));
+  }
+
+  const totalPages = useMemo(() => {
+    if (activeFilter === "specialty") {
+      return Math.max(Math.ceil(groupedSpecialtyUsers.length / ITEMS_PER_PAGE), 1);
+    }
+    return Math.max(Math.ceil(displayItems.length / ITEMS_PER_PAGE), 1);
+  }, [activeFilter, displayItems.length, groupedSpecialtyUsers.length]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -288,7 +333,8 @@ export function VerificationQueuePage() {
               </Card>
             ))}
 
-          {!isLoading && displayItems.length === 0 && (
+          {/* Empty states */}
+          {!isLoading && activeFilter !== "specialty" && displayItems.length === 0 && (
             <Card>
               <CardContent className="p-4 text-sm text-muted-foreground">
                 No pending verification submissions.
@@ -296,52 +342,141 @@ export function VerificationQueuePage() {
             </Card>
           )}
 
-          {!isLoading &&
-            paginatedItems.map((item) => (
-              <Card key={item.id}>
-              <CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-center gap-3">
-                  <Avatar>
-                    <AvatarFallback>{getInitialsFromLabel(item.title)}</AvatarFallback>
-                  </Avatar>
-                  <div>
-                    <p className="font-medium">{item.title}</p>
-                    <p className="text-sm text-muted-foreground">{item.subtitle}</p>
-                    <p className="text-xs text-muted-foreground">{item.detail}</p>
-                    <p className="text-xs text-muted-foreground">{formatDate(item.date)}</p>
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="secondary" className="capitalize">{item.kind}</Badge>
-                  <Badge className="bg-amber-500 text-black hover:bg-amber-500">Pending</Badge>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="rounded-lg border-primary/35 bg-primary/10 text-primary hover:bg-primary/20"
-                    onClick={() => openDetails(item)}
-                  >
-                    <Eye className="size-4" />
-                    View Details
-                  </Button>
-                  <Button
-                    size="sm"
-                    className="rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
-                    onClick={() => handleDecision(item, "approve")}
-                    disabled={processingKey === itemKey(item)}
-                  >
-                    <Check className="size-4" />
-                    {processingKey === itemKey(item) ? "Processing..." : "Approve"}
-                  </Button>
-                </div>
+          {!isLoading && activeFilter === "specialty" && groupedSpecialtyUsers.length === 0 && (
+            <Card>
+              <CardContent className="p-4 text-sm text-muted-foreground">
+                No pending specialty requests.
               </CardContent>
+            </Card>
+          )}
+
+          {/* Specialty Requests - Accordion Layout by User */}
+          {!isLoading &&
+            activeFilter === "specialty" &&
+            paginatedSpecialtyUsers.map((userGroup) => (
+              <Card
+                key={userGroup.userEmail}
+                className="overflow-hidden border border-border/70 bg-card transition-all"
+              >
+                {/* Parent Row - Always Visible */}
+                <CardContent className="p-0">
+                  <button
+                    type="button"
+                    onClick={() => toggleUserExpanded(userGroup.userEmail)}
+                    className="flex w-full items-center justify-between p-4 text-left transition-colors hover:bg-muted/30"
+                  >
+                    <div className="flex items-center gap-3">
+                      <Avatar>
+                        <AvatarFallback>{getInitialsFromLabel(userGroup.userName)}</AvatarFallback>
+                      </Avatar>
+                      <div>
+                        <p className="font-medium text-foreground">{userGroup.userName}</p>
+                        <p className="text-sm text-muted-foreground">{userGroup.userEmail}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Badge className="bg-amber-500 text-white hover:bg-amber-500">
+                        {userGroup.requests.length} Pending Request{userGroup.requests.length !== 1 ? "s" : ""}
+                      </Badge>
+                      <ChevronDown
+                        className={`size-5 text-muted-foreground transition-transform duration-200 ${
+                          expandedUsers[userGroup.userEmail] ? "rotate-180" : ""
+                        }`}
+                      />
+                    </div>
+                  </button>
+
+                  {/* Child Rows - Expanded Content */}
+                  {expandedUsers[userGroup.userEmail] && (
+                    <div className="border-t border-border/70 bg-card/50">
+                      {userGroup.requests.map((request) => (
+                        <div
+                          key={itemKey(request)}
+                          className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
+                        >
+                          <div className="space-y-1">
+                            <p className="font-medium text-foreground">{request.title}</p>
+                            <p className="text-xs text-muted-foreground">{request.detail}</p>
+                            <p className="text-xs text-muted-foreground">{formatDate(request.date)}</p>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge className="bg-amber-500 text-white hover:bg-amber-500">Pending</Badge>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="rounded-lg border-primary/35 bg-primary/10 text-white hover:bg-primary/20"
+                              onClick={() => openDetails(request)}
+                            >
+                              <Eye className="size-4" />
+                              View Details
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
               </Card>
             ))}
 
-          {!isLoading && displayItems.length > 0 && (
+          {/* Mechanic & Shops - Standard Layout */}
+          {!isLoading &&
+            activeFilter !== "specialty" &&
+            paginatedItems.map((item) => (
+              <Card key={item.id}>
+                <CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-3">
+                    <Avatar>
+                      <AvatarFallback>{getInitialsFromLabel(item.title)}</AvatarFallback>
+                    </Avatar>
+                    <div>
+                      <p className="font-medium">{item.title}</p>
+                      <p className="text-sm text-muted-foreground">{item.subtitle}</p>
+                      <p className="text-xs text-muted-foreground">{item.detail}</p>
+                      <p className="text-xs text-muted-foreground">{formatDate(item.date)}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="secondary" className="capitalize">{item.kind}</Badge>
+                    <Badge className="bg-amber-500 text-white hover:bg-amber-500">Pending</Badge>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="rounded-lg border-primary/35 bg-primary/10 text-primary hover:bg-primary/20"
+                      onClick={() => openDetails(item)}
+                    >
+                      <Eye className="size-4" />
+                      View Details
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
+                      onClick={() => handleDecision(item, "approve")}
+                      disabled={processingKey === itemKey(item)}
+                    >
+                      <Check className="size-4" />
+                      {processingKey === itemKey(item) ? "Processing..." : "Approve"}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+
+          {/* Pagination */}
+          {!isLoading && activeFilter !== "specialty" && displayItems.length > 0 && (
             <PaginationControls
               currentPage={currentPage}
               totalItems={displayItems.length}
+              pageSize={ITEMS_PER_PAGE}
+              onPageChange={setCurrentPage}
+            />
+          )}
+
+          {!isLoading && activeFilter === "specialty" && groupedSpecialtyUsers.length > 0 && (
+            <PaginationControls
+              currentPage={currentPage}
+              totalItems={groupedSpecialtyUsers.length}
               pageSize={ITEMS_PER_PAGE}
               onPageChange={setCurrentPage}
             />

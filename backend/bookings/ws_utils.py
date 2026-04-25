@@ -2,7 +2,7 @@ from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 import logging
 
-from notification.models import Notification
+from notification.upsert import upsert_notification
 from users.models import Account
 
 
@@ -51,23 +51,174 @@ def _resolve_target_role(account_id):
     return None
 
 
-def _create_booking_notification(account_id, booking_id, booking_status, message, action=None):
+def _service_line_from_request(req):
+    from .models import DirectRequest
+
+    service_line = ''
+    try:
+        rtype = str(req.request_type or '').lower()
+        if rtype == 'broadcast':
+            br = getattr(req, 'broadcast_request', None)
+            if br:
+                service_line = (br.description or 'Broadcast').strip()[:80]
+        elif rtype == 'direct':
+            dr = DirectRequest.objects.select_related('service').filter(request=req).first()
+            if dr and dr.service:
+                service_line = dr.service.name
+        elif rtype == 'custom':
+            cr = getattr(req, 'customrequest', None)
+            if cr:
+                service_line = (cr.description or 'Custom request').strip()[:80]
+        elif rtype == 'emergency':
+            er = getattr(req, 'emergencyrequest', None)
+            if er and er.description:
+                service_line = er.description.strip()[:80]
+            else:
+                service_line = 'Emergency'
+    except Exception:
+        service_line = ''
+
+    if not service_line:
+        service_line = str(req.request_type or 'service').replace('_', ' ').title()
+    return service_line
+
+
+def _enrich_thread_body(receiver_account_id, base_message, *, booking=None, request=None):
+    """Shared header: Request/Booking #, service label, counterparty, then status line."""
+    from .models import Request
+
+    if booking is not None:
+        req = booking.request
+        if not req:
+            return base_message
+        header = f'Booking #{booking.id} · {_service_line_from_request(req)}'
+    elif request is not None:
+        if isinstance(request, int):
+            req = Request.objects.select_related('client__account', 'provider').filter(id=request).first()
+        else:
+            req = request
+        if not req:
+            return base_message
+        header = f'Request #{req.id} · {_service_line_from_request(req)}'
+    else:
+        return base_message
+
+    client_nm = ''
+    mech_nm = ''
+    try:
+        if req.client and req.client.account:
+            client_nm = f'{req.client.account.firstname} {req.client.account.lastname}'.strip()
+    except Exception:
+        pass
+    try:
+        if req.provider:
+            mech_nm = f'{req.provider.firstname} {req.provider.lastname}'.strip()
+    except Exception:
+        pass
+
+    try:
+        receiver_aid = int(receiver_account_id)
+    except (TypeError, ValueError):
+        receiver_aid = None
+
+    client_aid = int(req.client.account_id) if getattr(req, 'client', None) else None
+    prov_aid = int(req.provider_id) if getattr(req, 'provider_id', None) else None
+
+    party_line = ''
+    if receiver_aid and client_aid and receiver_aid == client_aid:
+        party_line = f'Mechanic: {mech_nm}' if mech_nm else ''
+    elif receiver_aid and prov_aid and receiver_aid == prov_aid:
+        party_line = f'Client: {client_nm}' if client_nm else ''
+    else:
+        parts = [p for p in [client_nm, mech_nm] if p]
+        party_line = ' · '.join(parts)
+
+    lines = [header]
+    if party_line:
+        lines.append(party_line)
+    lines.append(base_message)
+    return '\n'.join(lines)
+
+
+def _enrich_booking_notification_body(booking_id, receiver_account_id, base_message):
+    from .models import Booking
+
+    booking = (
+        Booking.objects.select_related(
+            'request__client__account',
+            'request__provider',
+        )
+        .filter(id=booking_id)
+        .first()
+    )
+    if not booking:
+        return base_message
+    return _enrich_thread_body(receiver_account_id, base_message, booking=booking)
+
+
+def _enrich_request_thread_body(request_id, receiver_account_id, base_message):
+    return _enrich_thread_body(receiver_account_id, base_message, request=request_id)
+
+
+def upsert_request_thread_notification(account_id, request_id, title, message, payload, mark_unread=True):
+    """One row per (receiver, request) for pre-booking updates (e.g. broadcast offers)."""
+    body = _enrich_request_thread_body(request_id, account_id, message)
+    upsert_notification(
+        receiver_id=account_id,
+        correlation_key=f'request:{request_id}',
+        title=title,
+        message=body,
+        payload=payload,
+        mark_unread=mark_unread,
+    )
+
+
+def upsert_booking_party_notification(account_id, booking, title, message, action=None):
+    """Single in-app row per service request per receiver (broadcast → booking lifecycle)."""
+    target_role = _resolve_target_role(account_id)
     payload = {
-        'booking_id': booking_id,
-        'status': booking_status,
+        'booking_id': booking.id,
+        'request_id': booking.request_id,
+        'status': booking.status,
     }
     if action:
         payload['action'] = action
-
-    target_role = _resolve_target_role(account_id)
     if target_role:
         payload['target_role'] = target_role
 
-    Notification.objects.create(
+    try:
+        if booking.request and str(booking.request.request_type or '').lower() == 'broadcast':
+            br = getattr(booking.request, 'broadcast_request', None)
+            if br:
+                payload['broadcast_id'] = br.id
+    except Exception:
+        pass
+
+    body = _enrich_booking_notification_body(booking.id, account_id, message)
+    upsert_notification(
         receiver_id=account_id,
-        title=_notification_title_for_booking_status(booking_status, message),
-        message=message,
+        correlation_key=f'request:{booking.request_id}',
+        title=title,
+        message=body,
         payload=payload,
+        mark_unread=True,
+    )
+
+
+def _create_booking_notification(account_id, booking_id, booking_status, message, action=None):
+    from .models import Booking
+
+    booking = Booking.objects.filter(id=booking_id).first()
+    if not booking:
+        return
+
+    title = _notification_title_for_booking_status(booking_status, message)
+    upsert_booking_party_notification(
+        account_id,
+        booking,
+        title,
+        message,
+        action=action,
     )
 
 

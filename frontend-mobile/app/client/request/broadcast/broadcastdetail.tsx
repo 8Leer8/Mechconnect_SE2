@@ -67,6 +67,9 @@ export default function BroadcastDetailScreen() {
   const [broadcastData, setBroadcastData] = useState<BroadcastOffersResponse | null>(null);
   const [offers, setOffers] = useState<BroadcastOffer[]>([]);
   const [selectingOfferId, setSelectingOfferId] = useState<number | null>(null);
+  const [expandedOfferId, setExpandedOfferId] = useState<number | null>(null);
+  const [mechanicAddressById, setMechanicAddressById] = useState<Record<number, string>>({});
+  const [loadingAddressById, setLoadingAddressById] = useState<Record<number, boolean>>({});
   const [timeRemaining, setTimeRemaining] = useState<number>(0);
 
   const broadcastId = params.id;
@@ -255,6 +258,156 @@ export default function BroadcastDetailScreen() {
     return `${eta} min`;
   };
 
+  const getMechanicAddress = (offer: BroadcastOffer): string | null => {
+    const data = offer as BroadcastOffer & {
+      address?: string;
+      mechanic_address?: string;
+      mechanic?: {
+        address?: string;
+        current_address?: string;
+        street_name?: string;
+        barangay?: string;
+        city_municipality?: string;
+        province?: string;
+      };
+      street_name?: string;
+      barangay?: string;
+      city_municipality?: string;
+      province?: string;
+    };
+
+    const directAddress = [
+      data.mechanic?.current_address,
+      data.mechanic?.address,
+      data.mechanic_address,
+      data.address,
+    ].find((item) => typeof item === 'string' && item.trim().length > 0);
+
+    if (directAddress) return directAddress;
+
+    const parts = [
+      data.mechanic?.street_name || data.street_name,
+      data.mechanic?.barangay || data.barangay,
+      data.mechanic?.city_municipality || data.city_municipality,
+      data.mechanic?.province || data.province,
+    ].filter((item): item is string => Boolean(item && item.trim().length > 0));
+
+    return parts.length > 0 ? parts.join(', ') : null;
+  };
+
+  const buildAddressFromProfile = (payload: unknown): string | null => {
+    const data = payload as {
+      mechanic?: {
+        address?: {
+          formatted_address?: string | null;
+          street_name?: string | null;
+          barangay?: string | null;
+          city_municipality?: string | null;
+          province?: string | null;
+        } | null;
+        addresses?: Array<{
+          is_main?: boolean;
+          formatted_address?: string | null;
+          street_name?: string | null;
+          barangay?: string | null;
+          city_municipality?: string | null;
+          province?: string | null;
+        }>;
+      };
+    };
+
+    const primary =
+      data?.mechanic?.address ||
+      data?.mechanic?.addresses?.find((item) => item?.is_main) ||
+      data?.mechanic?.addresses?.[0] ||
+      null;
+
+    if (!primary) return null;
+
+    if (typeof primary.formatted_address === 'string' && primary.formatted_address.trim().length > 0) {
+      return primary.formatted_address;
+    }
+
+    const parts = [
+      primary.street_name,
+      primary.barangay,
+      primary.city_municipality,
+      primary.province,
+    ].filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+
+    return parts.length > 0 ? parts.join(', ') : null;
+  };
+
+  const fetchMechanicAddress = async (mechanicId: number) => {
+    if (!mechanicId || mechanicAddressById[mechanicId] || loadingAddressById[mechanicId]) return;
+
+    setLoadingAddressById((prev) => ({ ...prev, [mechanicId]: true }));
+    try {
+      const response = await fetch(`${API_URL}/users/mechanics/${mechanicId}/profile/`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      const payload = await response.json();
+      const resolvedAddress = buildAddressFromProfile(payload);
+      if (resolvedAddress) {
+        setMechanicAddressById((prev) => ({ ...prev, [mechanicId]: resolvedAddress }));
+      }
+    } catch {
+      // Keep UI fallback text when profile address cannot be fetched.
+    } finally {
+      setLoadingAddressById((prev) => ({ ...prev, [mechanicId]: false }));
+    }
+  };
+
+  const getAddressLabel = (offer: BroadcastOffer) => {
+    const inlineAddress = getMechanicAddress(offer);
+    if (inlineAddress) return inlineAddress;
+
+    const cachedAddress = mechanicAddressById[offer.mechanic.id];
+    if (cachedAddress) return cachedAddress;
+
+    if (loadingAddressById[offer.mechanic.id]) return 'Loading address...';
+
+    return 'Address not available';
+  };
+
+  const openMechanicProfile = (offer: BroadcastOffer) => {
+    const returnParams = JSON.stringify({
+      id: params.id,
+      description: params.description,
+      status: params.status,
+      services: params.services,
+      provider: params.provider,
+      providersNote: params.providersNote,
+      concernPicture: params.concernPicture,
+      serviceLocation: params.serviceLocation,
+      createdAt: params.createdAt,
+      expiresAt: params.expiresAt,
+      acceptedAt: params.acceptedAt,
+      hasBooking: params.hasBooking,
+    });
+
+    router.push({
+      pathname: '/client/booking/mechanic-profile/[id]',
+      params: {
+        id: String(offer.mechanic.id),
+        mechanicId: String(offer.mechanic.id),
+        distance_km: offer.distance_km !== null && offer.distance_km !== undefined ? String(offer.distance_km) : undefined,
+        source: 'broadcast',
+        fromBroadcast: 'true',
+        broadcastId: String(broadcastId),
+        offerId: String(offer.id),
+        returnParams,
+      },
+    });
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'searching': return '#007AFF';
@@ -301,52 +454,114 @@ export default function BroadcastDetailScreen() {
     >
       <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
         <View style={{ flex: 1 }}>
-          <ThemedText style={{ fontSize: 15, fontWeight: '700' }}>{offer.mechanic.name}</ThemedText>
+          <ThemedText style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>{offer.mechanic.name}</ThemedText>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 }}>
             <FontAwesome name="star" size={12} color="#FFB000" />
             <ThemedText style={{ fontSize: 12, color: '#B8B8C0' }}>{getMechanicDisplayRating(offer.mechanic_rating)}</ThemedText>
           </View>
+          <TouchableOpacity
+            style={{ marginTop: 8, alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6 }}
+            onPress={() => {
+              setExpandedOfferId((prev) => {
+                const nextValue = prev === offer.id ? null : offer.id;
+                if (nextValue === offer.id && !getMechanicAddress(offer) && !mechanicAddressById[offer.mechanic.id]) {
+                  fetchMechanicAddress(offer.mechanic.id);
+                }
+                return nextValue;
+              });
+            }}
+            activeOpacity={0.8}
+          >
+            <ThemedText style={{ fontSize: 12, fontWeight: '700', color: '#FFB000' }}>
+              {expandedOfferId === offer.id ? 'Hide details' : 'See details'}
+            </ThemedText>
+            <FontAwesome
+              name={expandedOfferId === offer.id ? 'chevron-up' : 'chevron-down'}
+              size={10}
+              color="#FFB000"
+            />
+          </TouchableOpacity>
         </View>
         <View style={[styles.statusBadge, { backgroundColor: offer.status === 'pending' ? '#FF8C00' : '#34C759' }]}>
           <ThemedText style={styles.statusBadgeText}>{offer.status.toUpperCase()}</ThemedText>
         </View>
       </View>
 
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 12, flexWrap: 'wrap' }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <FontAwesome name="map-marker" size={12} color="#8E8E93" />
-          <ThemedText style={{ fontSize: 12, color: '#C9C9CF' }}>{formatDistance(offer.distance_km)}</ThemedText>
-        </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <FontAwesome name="clock-o" size={12} color="#8E8E93" />
-          <ThemedText style={{ fontSize: 12, color: '#C9C9CF' }}>{formatEta(offer.estimated_eta_minutes)}</ThemedText>
-        </View>
-      </View>
+      {expandedOfferId === offer.id && (
+        <View
+          style={{
+            marginTop: 12,
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: '#FFFFFF1A',
+            backgroundColor: '#FFFFFF0A',
+            padding: 12,
+            gap: 8,
+          }}
+        >
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
+            <ThemedText style={{ fontSize: 12, color: '#AFAFB7' }}>Current Location</ThemedText>
+            <ThemedText style={{ fontSize: 12, color: '#fff', fontWeight: '600', flex: 1, textAlign: 'right' }}>
+              {formatDistance(offer.distance_km)}
+            </ThemedText>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
+            <ThemedText style={{ fontSize: 12, color: '#AFAFB7' }}>ETA</ThemedText>
+            <ThemedText style={{ fontSize: 12, color: '#fff', fontWeight: '600', flex: 1, textAlign: 'right' }}>
+              {formatEta(offer.estimated_eta_minutes)}
+            </ThemedText>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
+            <ThemedText style={{ fontSize: 12, color: '#AFAFB7' }}>Address</ThemedText>
+            <ThemedText style={{ fontSize: 12, color: '#fff', fontWeight: '600', flex: 1, textAlign: 'right' }}>
+              {getAddressLabel(offer)}
+            </ThemedText>
+          </View>
 
-      <TouchableOpacity
-        style={{
-          marginTop: 14,
-          borderRadius: 14,
-          backgroundColor: selectingOfferId === offer.id ? '#FF8C00AA' : '#FF8C00',
-          paddingVertical: 12,
-          alignItems: 'center',
-          flexDirection: 'row',
-          justifyContent: 'center',
-          gap: 8,
-        }}
-        onPress={() => handleSelectMechanic(offer.id)}
-        disabled={selectingOfferId !== null}
-        activeOpacity={0.8}
-      >
-        {selectingOfferId === offer.id ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <FontAwesome name="check" size={13} color="#fff" />
-        )}
-        <ThemedText style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>
-          Confirm Selection
-        </ThemedText>
-      </TouchableOpacity>
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 6 }}>
+            <TouchableOpacity
+              style={{
+                flex: 1,
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: '#FF8C00',
+                paddingVertical: 11,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+              onPress={() => openMechanicProfile(offer)}
+              activeOpacity={0.8}
+            >
+              <ThemedText style={{ color: '#FFB45E', fontSize: 12, fontWeight: '700' }}>View Profile</ThemedText>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{
+                flex: 1,
+                borderRadius: 12,
+                backgroundColor: selectingOfferId === offer.id ? '#FF8C00AA' : '#FF8C00',
+                paddingVertical: 11,
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexDirection: 'row',
+                gap: 6,
+              }}
+              onPress={() => handleSelectMechanic(offer.id)}
+              disabled={selectingOfferId !== null}
+              activeOpacity={0.8}
+            >
+              {selectingOfferId === offer.id ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <FontAwesome name="check" size={12} color="#fff" />
+              )}
+              <ThemedText style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+                Accept Mechanic
+              </ThemedText>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
     </View>
   );
 
@@ -372,16 +587,16 @@ export default function BroadcastDetailScreen() {
         }
       >
         {/* Status Card */}
-        <View style={[styles.statusCard, { borderColor: getStatusColor(status) + '40' }]}>
-          <View style={[styles.statusIconLarge, { backgroundColor: getStatusColor(status) + '20' }]}>
-            <FontAwesome name={getStatusIcon(status) as any} size={28} color={getStatusColor(status)} />
+        <View style={[styles.statusCard, { borderColor: getStatusColor(currentStatus) + '40' }]}>
+          <View style={[styles.statusIconLarge, { backgroundColor: getStatusColor(currentStatus) + '20' }]}>
+            <FontAwesome name={getStatusIcon(currentStatus) as any} size={28} color={getStatusColor(currentStatus)} />
           </View>
           <View style={styles.statusInfo}>
-            <View style={[styles.statusBadge, { backgroundColor: getStatusColor(status) }]}>
-              <ThemedText style={styles.statusBadgeText}>{getStatusLabel(status)}</ThemedText>
+            <View style={[styles.statusBadge, { backgroundColor: getStatusColor(currentStatus) }]}>
+              <ThemedText style={styles.statusBadgeText}>{getStatusLabel(currentStatus)}</ThemedText>
             </View>
             <ThemedText style={styles.broadcastType}>Broadcast Request</ThemedText>
-            {status === 'searching' && timeRemaining > 0 && (
+            {currentStatus === 'searching' && timeRemaining > 0 && (
               <View style={styles.timerContainer}>
                 <FontAwesome name="clock-o" size={14} color="#FF8C00" />
                 <ThemedText style={styles.timerText}>

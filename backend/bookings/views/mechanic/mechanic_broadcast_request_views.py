@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django.utils import timezone
 from django.db import transaction
+import logging
 import math
 
 from ...models import (
@@ -19,6 +20,10 @@ from services.pricing_utils import (
     get_convenience_fee,
     apply_min_job_price,
 )
+
+from ...ws_utils import upsert_request_thread_notification
+
+logger = logging.getLogger(__name__)
 
 
 def _haversine_km(lat1, lon1, lat2, lon2):
@@ -231,6 +236,44 @@ def accept_broadcast_request(request, broadcast_id):
                 offer.save()
 
             base_request = broadcast_request.request
+
+            mechanic_display = f'{account.firstname} {account.lastname}'.strip()
+            client_offer_message = (
+                f'{mechanic_display} requested to accept your broadcast.'
+                if mechanic_display
+                else 'A mechanic requested to accept your broadcast.'
+            )
+
+            # Same correlation_key as booking updates: request:{id} → one card from offer → booking.
+            try:
+                upsert_request_thread_notification(
+                    base_request.client.account_id,
+                    base_request.id,
+                    'Mechanic Offer Received',
+                    client_offer_message,
+                    payload={
+                        'action': 'broadcast_offer_created',
+                        'broadcast_id': broadcast_request.id,
+                        'offer_id': offer.id,
+                        'request_id': base_request.id,
+                        'target_role': 'client',
+                    },
+                )
+                upsert_request_thread_notification(
+                    account.id,
+                    base_request.id,
+                    'Offer Submitted',
+                    'Waiting for the client to accept your offer.',
+                    payload={
+                        'action': 'broadcast_offer_pending',
+                        'broadcast_id': broadcast_request.id,
+                        'offer_id': offer.id,
+                        'request_id': base_request.id,
+                        'target_role': 'mechanic',
+                    },
+                )
+            except Exception:
+                logger.exception('Failed to upsert broadcast-offer notifications')
 
             # Notify the broadcast owner that a mechanic has requested to accept.
             try:

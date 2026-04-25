@@ -161,6 +161,9 @@ export default function MapScreen() {
   const cachedRouteData = useRef<CachedRouteData | null>(null);
   const markerTapRef = useRef<Record<number, number>>({});
   const lastBroadcastFetchLocationRef = useRef<{ latitude: number; longitude: number } | null>(null);
+  const broadcastFetchInFlightRef = useRef(false);
+  const pendingBroadcastRefreshRef = useRef(false);
+  const lastBroadcastFetchAtRef = useRef(0);
   const { showNotification } = useNotification();
   const pathname = usePathname();
   const segments = useSegments();
@@ -675,17 +678,32 @@ export default function MapScreen() {
       return;
     }
     setRefreshing(true);
-    if (userLocationRef.current) fetchBroadcasts(true);
+    if (userLocationRef.current) fetchBroadcasts(true, { force: true });
     else { setRefreshing(false); void initializeMap(); }
   };
 
-  const fetchBroadcasts = async (silent = false) => {
+  const fetchBroadcasts = async (silent = false, options?: { force?: boolean }) => {
     if (!broadcastFetchEnabled) {
       setBroadcasts([]);
       setLoading(false);
       setRefreshing(false);
       return;
     }
+
+    const force = options?.force === true;
+    const now = Date.now();
+    if (!force && now - lastBroadcastFetchAtRef.current < 1500) {
+      return;
+    }
+
+    if (broadcastFetchInFlightRef.current) {
+      pendingBroadcastRefreshRef.current = true;
+      return;
+    }
+
+    broadcastFetchInFlightRef.current = true;
+    lastBroadcastFetchAtRef.current = now;
+
     try {
       if (!silent) setLoading(true);
       setError(null);
@@ -708,10 +726,31 @@ export default function MapScreen() {
         }, {})
       );
     } catch (err: any) { if (!silent) setError(err.message); }
-    finally { setLoading(false); setRefreshing(false); }
+    finally {
+      setLoading(false);
+      setRefreshing(false);
+      broadcastFetchInFlightRef.current = false;
+
+      if (pendingBroadcastRefreshRef.current) {
+        pendingBroadcastRefreshRef.current = false;
+        setTimeout(() => {
+          if (broadcastFetchEnabled) {
+            void fetchBroadcasts(true, { force: true });
+          }
+        }, 250);
+      }
+    }
   };
 
   const handleBroadcastPress = async (broadcast: BroadcastRequest) => {
+    if (!canInteractWithBroadcast(broadcast)) {
+      showNotification({
+        type: 'info',
+        title: 'Request in progress',
+        message: 'Withdraw or wait for the client before accepting another broadcast.',
+      });
+      return;
+    }
     setSelectedBroadcast(broadcast);
     setAwaitingClientSelectionBroadcastId(null);
     setOfferNotice(null);
@@ -720,8 +759,27 @@ export default function MapScreen() {
     setModalVisible(true);
     void fetchTokensBalance();
   };
-  const handleCardPressShowRoute = async (broadcast: BroadcastRequest) => { setSelectedBroadcast(broadcast); await fetchRouteAndTraffic(broadcast); };
+  const handleCardPressShowRoute = async (broadcast: BroadcastRequest) => {
+    if (!canInteractWithBroadcast(broadcast)) {
+      showNotification({
+        type: 'info',
+        title: 'Request in progress',
+        message: 'Withdraw or wait for the client before accepting another broadcast.',
+      });
+      return;
+    }
+    setSelectedBroadcast(broadcast);
+    await fetchRouteAndTraffic(broadcast);
+  };
   const handleViewAndAccept = (broadcast: BroadcastRequest) => {
+    if (!canInteractWithBroadcast(broadcast)) {
+      showNotification({
+        type: 'info',
+        title: 'Request in progress',
+        message: 'Withdraw or wait for the client before accepting another broadcast.',
+      });
+      return;
+    }
     setSelectedBroadcast(broadcast);
     setAwaitingClientSelectionBroadcastId(null);
     setOfferNotice(null);
@@ -743,6 +801,14 @@ export default function MapScreen() {
   };
 
   const handleBroadcastMarkerPress = (broadcast: BroadcastRequest) => {
+    if (!canInteractWithBroadcast(broadcast)) {
+      showNotification({
+        type: 'info',
+        title: 'Request in progress',
+        message: 'Withdraw or wait for the client before accepting another broadcast.',
+      });
+      return;
+    }
     const now = Date.now(); const lastTap = markerTapRef.current[broadcast.id] ?? 0;
     markerTapRef.current[broadcast.id] = now;
     if (now - lastTap < 350) { void handleBroadcastPress(broadcast); return; }
@@ -837,6 +903,13 @@ export default function MapScreen() {
   const activePendingBroadcast = activePendingBroadcastId !== null
     ? broadcasts.find((broadcast) => broadcast.id === activePendingBroadcastId) ?? null
     : null;
+  /** Mechanic may not accept another broadcast while one offer is pending client approval. */
+  const isOtherBroadcastLocked = !isShopOwnerMap && activePendingBroadcastId !== null;
+  const canInteractWithBroadcast = (broadcast: BroadcastRequest) => {
+    if (isShopOwnerMap) return true;
+    if (activePendingBroadcastId === null) return true;
+    return broadcast.id === activePendingBroadcastId;
+  };
   const sx = styles as any;
 
   return (
@@ -902,9 +975,20 @@ export default function MapScreen() {
             {routeCoords.length >= 2 && (
               <Polyline coordinates={routeCoords} strokeColor="#FF8C00" strokeWidth={5} geodesic lineCap="round" lineJoin="round" />
             )}
-            {filteredBroadcasts.map((broadcast) => (
-              <Marker key={`broadcast-${broadcast.id}`} coordinate={{ latitude: broadcast.latitude, longitude: broadcast.longitude }} title="Broadcast Request" description={broadcast.description} pinColor="#34C759" onPress={() => handleBroadcastMarkerPress(broadcast)} />
-            ))}
+            {filteredBroadcasts.map((broadcast) => {
+              const lockedOut = isOtherBroadcastLocked && broadcast.id !== activePendingBroadcastId;
+              return (
+                <Marker
+                  key={`broadcast-${broadcast.id}`}
+                  coordinate={{ latitude: broadcast.latitude, longitude: broadcast.longitude }}
+                  title="Broadcast Request"
+                  description={broadcast.description}
+                  pinColor={lockedOut ? '#6C6C70' : '#34C759'}
+                  opacity={lockedOut ? 0.45 : 1}
+                  onPress={() => handleBroadcastMarkerPress(broadcast)}
+                />
+              );
+            })}
             {selectedBroadcastCoordinate && modalVisible && (
               <Marker coordinate={selectedBroadcastCoordinate} pinColor="#FF3B30" />
             )}
@@ -943,35 +1027,6 @@ export default function MapScreen() {
         </TouchableOpacity>
       </View>
 
-      {activePendingBroadcast && !modalVisible && (
-        <View style={styles.waitingBanner}>
-          <View style={styles.waitingBannerHeader}>
-            <View style={styles.waitingBannerIcon}>
-              <FontAwesome name="clock-o" size={16} color="#FF8C00" />
-            </View>
-            <View style={styles.waitingBannerTextWrap}>
-              <ThemedText style={styles.waitingBannerTitle}>Waiting for client approval</ThemedText>
-              <ThemedText style={styles.waitingBannerText} numberOfLines={2}>
-                Your request stays active while you switch tabs or log out.
-              </ThemedText>
-            </View>
-          </View>
-          <View style={styles.waitingBannerActions}>
-            <TouchableOpacity style={styles.waitingBannerActionPrimary} onPress={() => {
-              setSelectedBroadcast(activePendingBroadcast);
-              setModalVisible(true);
-            }}>
-              <ThemedText style={styles.waitingBannerActionPrimaryText}>View</ThemedText>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.waitingBannerActionSecondary} onPress={() => {
-              void handleCancelBroadcastAction(activePendingBroadcast);
-            }}>
-              <ThemedText style={styles.waitingBannerActionSecondaryText}>Withdraw</ThemedText>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
-
       <View style={styles.jobListContainer}>
         <View style={styles.jobListHeaderRow}>
           <ThemedText style={styles.jobListTitle}>Available Jobs</ThemedText>
@@ -987,6 +1042,34 @@ export default function MapScreen() {
         </View>
         <ScrollView style={styles.jobList} showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF8C00" />}>
+          {activePendingBroadcast && !modalVisible && (
+            <View style={[styles.waitingBanner, { marginHorizontal: 0, marginTop: 0, marginBottom: 14 }]}>
+              <View style={styles.waitingBannerHeader}>
+                <View style={styles.waitingBannerIcon}>
+                  <FontAwesome name="clock-o" size={16} color="#FF8C00" />
+                </View>
+                <View style={styles.waitingBannerTextWrap}>
+                  <ThemedText style={styles.waitingBannerTitle}>Waiting for client approval</ThemedText>
+                  <ThemedText style={styles.waitingBannerText} numberOfLines={2}>
+                    Your request stays active while you switch tabs or log out.
+                  </ThemedText>
+                </View>
+              </View>
+              <View style={styles.waitingBannerActions}>
+                <TouchableOpacity style={styles.waitingBannerActionPrimary} onPress={() => {
+                  setSelectedBroadcast(activePendingBroadcast);
+                  setModalVisible(true);
+                }}>
+                  <ThemedText style={styles.waitingBannerActionPrimaryText}>View</ThemedText>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.waitingBannerActionSecondary} onPress={() => {
+                  void handleCancelBroadcastAction(activePendingBroadcast);
+                }}>
+                  <ThemedText style={styles.waitingBannerActionSecondaryText}>Withdraw</ThemedText>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
           {!broadcastFetchEnabled ? (
             <View style={styles.emptyContainer}>
               <FontAwesome name="pause-circle" size={64} color="#8E8E93" />
@@ -1011,8 +1094,21 @@ export default function MapScreen() {
             </View>
           ) : (
             <>
-              {filteredBroadcasts.map((broadcast) => (
-                <TouchableOpacity key={`broadcast-${broadcast.id}`} style={[styles.jobCard, styles.broadcastCard]} activeOpacity={0.9} onPress={() => { void handleCardPressShowRoute(broadcast); }}>
+              {isOtherBroadcastLocked && (
+                <ThemedText style={{ fontSize: 12, color: '#8E8E93', marginBottom: 10, lineHeight: 18 }}>
+                  Other broadcasts are unavailable until you withdraw or the client responds to your pending request.
+                </ThemedText>
+              )}
+              {filteredBroadcasts.map((broadcast) => {
+                const lockedOut = isOtherBroadcastLocked && broadcast.id !== activePendingBroadcastId;
+                return (
+                <TouchableOpacity
+                  key={`broadcast-${broadcast.id}`}
+                  style={[styles.jobCard, styles.broadcastCard, lockedOut ? { opacity: 0.42 } : null]}
+                  activeOpacity={lockedOut ? 1 : 0.9}
+                  disabled={lockedOut}
+                  onPress={() => { void handleCardPressShowRoute(broadcast); }}
+                >
                   <View style={styles.jobCardHeader}>
                     <View style={[styles.statusDot, { backgroundColor: '#34C759' }]} />
                     <ThemedText style={styles.jobTitle} numberOfLines={1}>Broadcast Request</ThemedText>
@@ -1039,7 +1135,8 @@ export default function MapScreen() {
                       <ThemedText style={styles.timerText}>{getTimeRemaining(broadcast.expires_at)}</ThemedText>
                     </View>
                     <TouchableOpacity
-                      style={styles.acceptButton}
+                      style={[styles.acceptButton, lockedOut ? { opacity: 0.5 } : null]}
+                      disabled={lockedOut}
                       onPress={() => handleViewAndAccept(broadcast)}
                     >
                       <ThemedText style={styles.acceptText}>
@@ -1049,7 +1146,8 @@ export default function MapScreen() {
                     </TouchableOpacity>
                   </View>
                 </TouchableOpacity>
-              ))}
+              );
+              })}
             </>
           )}
         </ScrollView>

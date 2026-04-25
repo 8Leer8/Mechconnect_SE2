@@ -23,7 +23,7 @@ from ...backjob_utils import (
     backjob_scoped_payments_active,
 )
 from users.models import Account, Mechanic, MechanicReview, TokenTransaction
-from notification.models import Notification
+from ...ws_utils import upsert_booking_party_notification
 
 
 logger = logging.getLogger(__name__)
@@ -90,30 +90,15 @@ def _broadcast_booking_action(booking, action, message):
 
         for account_id in participant_ids:
             try:
-                target_role = None
-                try:
-                    participant_account = Account.objects.get(id=account_id)
-                    if hasattr(participant_account, 'client'):
-                        target_role = 'client'
-                    elif hasattr(participant_account, 'mechanic'):
-                        target_role = 'mechanic'
-                    elif hasattr(participant_account, 'shopowner'):
-                        target_role = 'shopowner'
-                except Exception:
-                    target_role = None
-
-                Notification.objects.create(
-                    receiver_id=account_id,
-                    title=notification_title,
-                    message=message,
-                    payload={
-                        'booking_id': booking.id,
-                        'action': action,
-                        'target_role': target_role,
-                    },
+                upsert_booking_party_notification(
+                    account_id,
+                    booking,
+                    notification_title,
+                    message,
+                    action=action,
                 )
             except Exception:
-                logger.exception('Failed to create notification for account %s', account_id)
+                logger.exception('Failed to upsert notification for account %s', account_id)
 
             async_to_sync(channel_layer.group_send)(f'user_{account_id}', payload)
     except Exception:

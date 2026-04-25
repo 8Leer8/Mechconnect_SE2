@@ -48,7 +48,7 @@ def list_notifications(request):
     page = _parse_int(request.GET.get('page', 1), default=1, maximum=1_000_000)
     page_size = _parse_int(request.GET.get('page_size', DEFAULT_PAGE_SIZE), default=DEFAULT_PAGE_SIZE)
 
-    base_queryset = Notification.objects.filter(receiver=account).order_by('-created_at')
+    base_queryset = Notification.objects.filter(receiver=account).order_by('-updated_at', '-created_at')
     filtered_queryset = base_queryset.filter(is_read=False) if unread_only else base_queryset
     unread_count = base_queryset.filter(is_read=False).count()
 
