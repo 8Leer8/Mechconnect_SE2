@@ -175,7 +175,21 @@ def upsert_request_thread_notification(account_id, request_id, title, message, p
 
 def upsert_booking_party_notification(account_id, booking, title, message, action=None):
     """Single in-app row per service request per receiver (broadcast → booking lifecycle)."""
-    target_role = _resolve_target_role(account_id)
+    target_role = None
+    try:
+        req = booking.request
+        if req:
+            if getattr(req, 'provider_id', None) and int(req.provider_id) == int(account_id):
+                target_role = 'mechanic'
+            elif getattr(req, 'client', None) and getattr(req.client, 'account_id', None) and int(req.client.account_id) == int(account_id):
+                target_role = 'client'
+            elif getattr(req, 'shop', None) and getattr(req.shop, 'shop_owner', None) and getattr(req.shop.shop_owner, 'account_id', None) and int(req.shop.shop_owner.account_id) == int(account_id):
+                target_role = 'shopowner'
+    except Exception:
+        target_role = None
+
+    if not target_role:
+        target_role = _resolve_target_role(account_id)
     payload = {
         'booking_id': booking.id,
         'request_id': booking.request_id,

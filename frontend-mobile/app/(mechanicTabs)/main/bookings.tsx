@@ -8,6 +8,7 @@ import { useThemeColor } from '@/hooks/use-theme-color';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/mechanic/bookingsStyles';
 import WalletBadge from '@/components/wallet-badge';
+import NotificationBell from '@/components/notifications/NotificationBell';
 import { SkeletonBookingList } from '@/components/skeletons/SkeletonLoaders';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 
@@ -489,9 +490,7 @@ export default function BookingsScreen() {
           </ThemedText>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <TouchableOpacity style={styles.refreshButton} onPress={onRefresh}>
-            <FontAwesome name="refresh" size={18} color="#FF8C00" />
-          </TouchableOpacity>
+          <NotificationBell />
           <WalletBadge onPress={() => router.push('/mechanic/wallet')} />
         </View>
       </View>

@@ -25,6 +25,7 @@ from services.pricing_utils import (
     get_required_tokens,
 )
 from ...ws_utils import upsert_booking_party_notification
+from notification.upsert import upsert_notification
 
 
 def _send_user_event(account_id, payload):
@@ -475,8 +476,38 @@ def select_mechanic(request, broadcast_id):
             'offer_id': winning_offer.id,
             'booking_id': booking.id,
             'status': booking.status,
-            'message': 'Your offer was selected by the client',
+            'message': 'Client accepted your request.',
         })
+        _send_user_event(mechanic.account_id, {
+            'type': 'notification_update',
+            'action': 'booking_finalized',
+            'broadcast_id': broadcast_request.id,
+            'offer_id': winning_offer.id,
+            'booking_id': booking.id,
+            'status': booking.status,
+            'message': 'Client accepted your request.',
+        })
+
+        # Guaranteed winner notification row for bell/list, even if helper upsert fails later.
+        try:
+            upsert_notification(
+                receiver_id=mechanic.account_id,
+                correlation_key=f'request:{booking.request_id}',
+                title='Client accepted your request',
+                message='Client accepted your request.',
+                payload={
+                    'booking_id': booking.id,
+                    'request_id': booking.request_id,
+                    'broadcast_id': broadcast_request.id,
+                    'offer_id': winning_offer.id,
+                    'status': booking.status,
+                    'action': 'booking_finalized',
+                    'target_role': 'mechanic',
+                },
+                mark_unread=True,
+            )
+        except Exception:
+            logger.exception('Failed to upsert direct mechanic winner notification')
 
         _send_user_event(base_request.client.account_id, {
             'type': 'booking_update',
@@ -513,8 +544,8 @@ def select_mechanic(request, broadcast_id):
             upsert_booking_party_notification(
                 mechanic.account_id,
                 booking,
-                'Offer selected',
-                'Your offer was selected by the client.',
+                'Client accepted your request',
+                'Client accepted your request.',
                 action='booking_finalized',
             )
             upsert_booking_party_notification(

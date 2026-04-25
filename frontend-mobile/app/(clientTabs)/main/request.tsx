@@ -7,6 +7,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { styles } from '@/style/client/requestStyles';
 import { SkeletonRequestList } from '@/components/skeletons/SkeletonLoaders';
+import NotificationBell from '@/components/notifications/NotificationBell';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -634,9 +635,7 @@ export default function RequestScreen() {
             {totalPages > 1 ? ` · page ${currentPage} of ${totalPages}` : ''}
           </ThemedText>
         </View>
-        <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh}>
-          <FontAwesome name="refresh" size={16} color="#FF8C00" />
-        </TouchableOpacity>
+        <NotificationBell />
       </View>
 
       {/* Filter Buttons */}

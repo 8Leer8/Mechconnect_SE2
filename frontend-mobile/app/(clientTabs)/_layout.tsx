@@ -22,7 +22,7 @@ export default function ClientTabLayout() {
     mechanicName: '',
     message: 'A mechanic requested to accept your broadcast.',
   });
-  const lastHandledMessageTimestampRef = React.useRef<number | null>(null);
+  const lastHandledMessageKeyRef = React.useRef<string | null>(null);
   const mountedAtRef = React.useRef<number>(Date.now());
 
   useTabsBackToHome('/(clientTabs)/main/home');
@@ -35,12 +35,13 @@ export default function ClientTabLayout() {
     // Ignore stale messages that existed before this layout was mounted
     // (e.g. switching account views with an old cached lastMessage).
     if (messageTimestamp < mountedAtRef.current) return;
-    if (lastHandledMessageTimestampRef.current === messageTimestamp) return;
-    lastHandledMessageTimestampRef.current = messageTimestamp;
-
     const broadcastId = Number(
       (lastMessage as any).broadcast_id ?? (lastMessage as any).broadcastId ?? 0
     ) || null;
+    const offerId = Number((lastMessage as any).offer_id ?? (lastMessage as any).offerId ?? 0) || null;
+    const dedupeKey = `${String(lastMessage.action || 'unknown')}-${String(broadcastId || '')}-${String(offerId || '')}-${String(messageTimestamp)}`;
+    if (lastHandledMessageKeyRef.current === dedupeKey) return;
+    lastHandledMessageKeyRef.current = dedupeKey;
 
     const mechanicName = String((lastMessage as any)?.mechanic?.name || '').trim();
     const messageText = String(lastMessage.message || '').trim()

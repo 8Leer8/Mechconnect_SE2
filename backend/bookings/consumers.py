@@ -43,3 +43,6 @@ class BookingConsumer(AsyncWebsocketConsumer):
             pass
     async def booking_update(self, event):
         await self.send(text_data=json.dumps(event))
+
+    async def notification_update(self, event):
+        await self.send(text_data=json.dumps(event))
