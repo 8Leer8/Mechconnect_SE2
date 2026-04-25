@@ -26,6 +26,9 @@ WEBHOOK_MAX_AGE_SECONDS = 30 * 60
 def _build_token_paymongo_redirect_urls(user_type="mechanic"):
     """Build redirect URLs for token purchase payments.
     
+    PayMongo requires absolute HTTPS URLs. We use backend endpoints that
+    then redirect to the app deeplinks.
+    
     Args:
         user_type: 'mechanic', 'shop-owner', or 'client'
     """
@@ -33,18 +36,9 @@ def _build_token_paymongo_redirect_urls(user_type="mechanic"):
     if not base_url.startswith("https://"):
         raise ValueError("PAYMONGO_REDIRECT_BASE_URL must be an https URL")
     
-    # Map user types to URL paths
-    path_map = {
-        "shop-owner": "shop-owner",
-        "client": "client",  # Client has its own redirect paths
-        "mechanic": "wallet",
-    }
-    path = path_map.get(user_type, "wallet")
-    
-    return (
-        f"{base_url}/api/users/{path}/redirect/success/",
-        f"{base_url}/api/users/{path}/redirect/failed/",
-    )
+    success_redirect = f"{base_url}/api/users/tokens/payment/redirect/success/?user_type={user_type}"
+    failed_redirect = f"{base_url}/api/users/tokens/payment/redirect/failed/?user_type={user_type}"
+    return success_redirect, failed_redirect
 
 
 def _get_authenticated_account(request):
@@ -113,7 +107,8 @@ def create_paymongo_source_for_tokens(amount, payment_method, purchase_id, accou
 
     success_redirect, failed_redirect = _build_token_paymongo_redirect_urls(user_type)
 
-    amount_centavos = int(Decimal(amount) * 100)
+    # Ensure amount is strictly an integer in centavos
+    amount_centavos = int(float(amount) * 100)
 
     payload = {
         "data": {
@@ -135,6 +130,8 @@ def create_paymongo_source_for_tokens(amount, payment_method, purchase_id, accou
         }
     }
 
+    logger.info(f"Creating PayMongo source for {user_type}: amount={amount_centavos}, method={payment_method}")
+
     response = requests.post(
         "https://api.paymongo.com/v1/sources",
         json=payload,
@@ -144,7 +141,20 @@ def create_paymongo_source_for_tokens(amount, payment_method, purchase_id, accou
         },
         timeout=30,
     )
-    response.raise_for_status()
+
+    # Better error handling with detailed logging
+    if not response.ok:
+        try:
+            error_data = response.json()
+            error_msg = error_data.get('errors', [{}])[0].get('detail', str(error_data))
+        except Exception:
+            error_msg = response.text
+        logger.error(f"PayMongo source creation failed: {response.status_code} - {error_msg}")
+        raise requests.exceptions.HTTPError(
+            f"PayMongo Error {response.status_code}: {error_msg}",
+            response=response
+        )
+
     data = response.json()
     return data["data"]["attributes"]["redirect"]["checkout_url"], data["data"]["id"]
 
@@ -310,15 +320,26 @@ def initiate_token_purchase(request):
             'payment_method': raw_method,
         }, status=status.HTTP_200_OK)
 
+    except requests.exceptions.HTTPError as e:
+        # PayMongo specific error - return 400 with details
+        error_msg = str(e)
+        logger.error(f"PayMongo HTTPError: {error_msg}")
+        # Mark purchase as failed
+        purchase.status = 'failed'
+        purchase.save(update_fields=['status'])
+        return Response({
+            'error': 'PayMongo Error',
+            'details': error_msg
+        }, status=status.HTTP_400_BAD_REQUEST)
     except Exception as e:
         logger.exception("PayMongo source creation failed for token purchase")
         # Mark purchase as failed
         purchase.status = 'failed'
         purchase.save(update_fields=['status'])
-        return Response(
-            {'error': 'Unable to initialize e-wallet payment'},
-            status=status.HTTP_502_BAD_GATEWAY
-        )
+        return Response({
+            'error': 'Unable to initialize e-wallet payment',
+            'details': str(e)
+        }, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(['POST'])
@@ -535,7 +556,17 @@ def _build_token_redirect_bridge_page(target_deep_link, status_label):
 @permission_classes([AllowAny])
 def token_redirect_success(request):
     """Redirect handler for successful token purchase payment."""
-    html = _build_token_redirect_bridge_page("mechconnect://wallet/payment/success", "Successful")
+    user_type = request.GET.get('user_type', 'mechanic')
+    
+    # Build appropriate deeplink based on user type
+    if user_type == 'mechanic':
+        deeplink = "mechconnect://wallet?payment=success"
+    elif user_type == 'shop_owner':
+        deeplink = "mechconnect://shopowner/wallet?payment=success"
+    else:
+        deeplink = "mechconnect://client/wallet?payment=success"
+    
+    html = _build_token_redirect_bridge_page(deeplink, "Successful")
     return HttpResponse(html)
 
 
@@ -543,7 +574,17 @@ def token_redirect_success(request):
 @permission_classes([AllowAny])
 def token_redirect_failed(request):
     """Redirect handler for failed token purchase payment."""
-    html = _build_token_redirect_bridge_page("mechconnect://wallet/payment/failed", "Failed")
+    user_type = request.GET.get('user_type', 'mechanic')
+    
+    # Build appropriate deeplink based on user type
+    if user_type == 'mechanic':
+        deeplink = "mechconnect://wallet?payment=failed"
+    elif user_type == 'shop_owner':
+        deeplink = "mechconnect://shopowner/wallet?payment=failed"
+    else:
+        deeplink = "mechconnect://client/wallet?payment=failed"
+    
+    html = _build_token_redirect_bridge_page(deeplink, "Failed")
     return HttpResponse(html)
 
 

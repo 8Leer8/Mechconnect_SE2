@@ -20,6 +20,7 @@ import {
   QRScannerModal,
   type QRScanResult,
 } from '@/components/payment';
+import CreditsPaymentModal from '@/components/payment/CreditsPaymentModal';
 import ReportNoShowModal from '@/components/booking/ReportNoShowModal';
 import MechanicRatingModal from '@/components/booking/MechanicRatingModal';
 import {
@@ -220,6 +221,7 @@ export default function ClientBookingDetailScreen() {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showPaymentReceiptConfirm, setShowPaymentReceiptConfirm] = useState(false);
   const [showEWalletModal, setShowEWalletModal] = useState(false);
+  const [showCreditsModal, setShowCreditsModal] = useState(false);
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [showQRConfirm, setShowQRConfirm] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -3158,6 +3160,24 @@ export default function ClientBookingDetailScreen() {
             setShowPaymentModal(false);
             setShowEWalletModal(true);
           }
+
+          if (method === 'credits') {
+            setShowPaymentModal(false);
+            setShowCreditsModal(true);
+          }
+        }}
+      />
+
+      <CreditsPaymentModal
+        visible={showCreditsModal && (!backjobPaymentPhase || payableTotal > 0)}
+        bookingId={booking.id}
+        totalAmount={modalAmountToPay}
+        onClose={() => setShowCreditsModal(false)}
+        onPaymentSuccess={() => {
+          setShowCreditsModal(false);
+          setShowSuccess(true);
+          setPaymentMethod('credits');
+          fetchBookingDetail(true);
         }}
       />
 

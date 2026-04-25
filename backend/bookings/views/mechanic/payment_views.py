@@ -1586,3 +1586,100 @@ def paymongo_webhook(request):
                 )
 
     return Response({"received": True})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def pay_with_credits(request):
+    """Process booking payment using user's credits (1:1 ratio with PHP).
+    
+    Deducts credits from client's wallet and adds them to mechanic's wallet.
+    """
+    from users.models import Account, TokenTransaction
+    from django.db import transaction as db_transaction
+    
+    account = _get_authenticated_account(request)
+    if not account:
+        return Response({"error": "Authentication required"}, status=401)
+    
+    booking_id = request.data.get('booking_id')
+    amount = Decimal(str(request.data.get('amount', 0)))
+    
+    if not booking_id:
+        return Response({"error": "Booking ID is required"}, status=400)
+    
+    if amount <= 0:
+        return Response({"error": "Amount must be greater than 0"}, status=400)
+    
+    # Required credits (1:1 ratio, rounded up)
+    required_credits = int(amount)
+    
+    try:
+        with db_transaction.atomic():
+            # Lock client's wallet
+            client_wallet = account.wallet
+            client_wallet.refresh_from_db()
+            
+            if client_wallet.balance < required_credits:
+                return Response({
+                    "error": "Insufficient credits",
+                    "required": required_credits,
+                    "available": int(client_wallet.balance),
+                }, status=402)
+            
+            # Get booking and verify ownership
+            booking = Booking.objects.select_related(
+                'request__client__account',
+                'request__provider',
+            ).get(id=booking_id)
+            
+            if booking.request.client.account_id != account.id:
+                return Response({"error": "Unauthorized"}, status=403)
+            
+            # Deduct from client
+            client_wallet.balance -= required_credits
+            client_wallet.save(update_fields=['balance'])
+            
+            # Log client transaction
+            TokenTransaction.objects.create(
+                account=account,
+                tokens=-required_credits,
+                reason=f'Payment for booking #{booking_id}',
+                related_booking_id=booking_id,
+            )
+            
+            # Add to mechanic/provider wallet
+            mechanic_account = booking.request.provider
+            if mechanic_account and hasattr(mechanic_account, 'wallet'):
+                mechanic_wallet = mechanic_account.wallet
+                mechanic_wallet.balance += required_credits
+                mechanic_wallet.save(update_fields=['balance'])
+                
+                # Log mechanic transaction
+                TokenTransaction.objects.create(
+                    account=mechanic_account,
+                    tokens=required_credits,
+                    reason=f'Earnings from booking #{booking_id}',
+                    related_booking_id=booking_id,
+                )
+            
+            # Mark payment as successful
+            _finalize_payment_success(
+                booking,
+                paid_at=timezone.now(),
+                external_reference=f'credits_{booking_id}_{timezone.now().timestamp()}',
+                method='credits',
+            )
+            
+            return Response({
+                "success": True,
+                "credits_deducted": required_credits,
+                "remaining_balance": int(client_wallet.balance),
+                "message": f"Payment of {required_credits} credits successful",
+            })
+            
+    except Booking.DoesNotExist:
+        return Response({"error": "Booking not found"}, status=404)
+    except Exception as e:
+        logger.exception("Credits payment failed")
+        return Response({"error": str(e)}, status=500)

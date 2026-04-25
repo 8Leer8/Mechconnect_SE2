@@ -61,6 +61,7 @@ urlpatterns = [
     path('payments/redirect/success/', payment_views.payment_redirect_success, name='payments-redirect-success'),
     path('payments/redirect/failed/', payment_views.payment_redirect_failed, name='payments-redirect-failed'),
     path('payments/webhook/', payment_views.paymongo_webhook, name='payments-webhook'),
+    path('payments/pay-with-credits/', payment_views.pay_with_credits, name='pay-with-credits'),
     path('bookings/<int:booking_id>/quotation/accept/', views.client_accept_quotation, name='client-accept-quotation'),
     path('bookings/<int:booking_id>/quotation/reject/', views.client_reject_quotation, name='client-reject-quotation'),
     path('bookings/<int:booking_id>/report-no-show/', views.ReportNoShowView.as_view(), name='report-no-show'),

@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import { useLocalSearchParams } from 'expo-router';
+import { View, TouchableOpacity, ScrollView, ActivityIndicator, Linking } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { styles } from '@/style/client/walletStyles';
+import CreditsEWalletModal from '@/components/payment/CreditsEWalletModal';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -61,10 +63,27 @@ function getStatusMeta(rawStatus: string) {
 }
 
 export default function ClientWalletScreen() {
+  const { paymentStatus } = useLocalSearchParams<{ paymentStatus?: string }>();
   const [balance, setBalance] = useState<number | null>(null);
   const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
   const [tokenPricing, setTokenPricing] = useState<TokenPricingData>(DEFAULT_TOKEN_PRICING);
   const [loading, setLoading] = useState(true);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [showFailedModal, setShowFailedModal] = useState(false);
+  // Payment modal state
+  const [topUpLoading, setTopUpLoading] = useState<number | null>(null);
+  const [selectedPackage, setSelectedPackage] = useState<{ tokens: number; price: number } | null>(null);
+  const [paymentModalVisible, setPaymentModalVisible] = useState(false);
+
+  // Handle payment status from deep link
+  useEffect(() => {
+    if (paymentStatus === 'success') {
+      setShowSuccessModal(true);
+      loadWalletData();
+    } else if (paymentStatus === 'failed') {
+      setShowFailedModal(true);
+    }
+  }, [paymentStatus]);
 
   const tokenPackages = useMemo(() => {
     if (tokenPricing.token_packages.length > 0) {
@@ -136,6 +155,48 @@ export default function ClientWalletScreen() {
     } catch (e) {}
   }
 
+  // Payment modal functions
+  function openPaymentMethodModal(pkg: { tokens: number; price: number }) {
+    setSelectedPackage(pkg);
+    setPaymentModalVisible(true);
+  }
+
+  async function confirmWalletMethod(method: 'gcash' | 'maya') {
+    if (!selectedPackage || topUpLoading !== null) return;
+    setTopUpLoading(selectedPackage.tokens);
+    setPaymentModalVisible(false);
+    await topUp(selectedPackage, method);
+    setTopUpLoading(null);
+    setSelectedPackage(null);
+  }
+
+  async function topUp(pkg: { tokens: number; price: number }, method: 'gcash' | 'maya') {
+    try {
+      const res = await fetch(`${API_URL}/users/client/wallet/initiate-payment/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          amount: pkg.price,
+          tokens: pkg.tokens,
+          payment_method: method,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Payment initiation failed');
+        return;
+      }
+      if (data.checkout_url) {
+        await Linking.openURL(data.checkout_url);
+      } else {
+        alert('No checkout URL returned');
+      }
+    } catch (e: any) {
+      alert(e?.message || 'Network error');
+    }
+  }
+
   return (
     <ThemedView style={styles.container}>
       {/* Header */}
@@ -200,14 +261,26 @@ export default function ClientWalletScreen() {
               </ThemedText>
               <View style={styles.packagesGrid}>
                 {tokenPackages.map((pkg) => (
-                  <View key={pkg.tokens} style={styles.packageCard}>
+                  <TouchableOpacity
+                    key={pkg.tokens}
+                    style={styles.packageCard}
+                    onPress={() => openPaymentMethodModal(pkg)}
+                    disabled={topUpLoading === pkg.tokens}
+                    activeOpacity={0.7}
+                  >
                     <View style={styles.packageIconCircle}>
                       <FontAwesome name="database" size={20} color="#FF8C00" />
                     </View>
                     <ThemedText style={styles.packageAmount}>{pkg.tokens}</ThemedText>
-                    <ThemedText style={styles.packageLabel}>credits</ThemedText>
-                    <ThemedText style={styles.packagePrice}>₱{pkg.price.toFixed(2)}</ThemedText>
-                  </View>
+                    <ThemedText style={styles.packageLabel}>credits • ₱{pkg.price.toFixed(2)}</ThemedText>
+                    <View style={styles.packageBuyBtn}>
+                      {topUpLoading === pkg.tokens ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <ThemedText style={styles.packageBuyText}>Buy</ThemedText>
+                      )}
+                    </View>
+                  </TouchableOpacity>
                 ))}
               </View>
             </View>
@@ -266,6 +339,53 @@ export default function ClientWalletScreen() {
           </>
         )}
       </ScrollView>
+
+      {/* Payment Method Modal */}
+      <CreditsEWalletModal
+        visible={paymentModalVisible}
+        tokens={selectedPackage?.tokens || 0}
+        amount={selectedPackage?.price || 0}
+        onClose={() => {
+          if (topUpLoading !== null) return;
+          setPaymentModalVisible(false);
+          setSelectedPackage(null);
+        }}
+        onSelectMethod={confirmWalletMethod}
+      />
+
+      {/* Payment Success Modal */}
+      {showSuccessModal && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <FontAwesome name="check-circle" size={64} color="#22c55e" />
+            <ThemedText style={styles.modalTitle}>Payment Successful!</ThemedText>
+            <ThemedText style={styles.modalText}>Your wallet has been topped up successfully.</ThemedText>
+            <TouchableOpacity
+              style={styles.modalButton}
+              onPress={() => setShowSuccessModal(false)}
+            >
+              <ThemedText style={styles.modalButtonText}>OK</ThemedText>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* Payment Failed Modal */}
+      {showFailedModal && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <FontAwesome name="times-circle" size={64} color="#ef4444" />
+            <ThemedText style={styles.modalTitle}>Payment Failed</ThemedText>
+            <ThemedText style={styles.modalText}>There was an issue with your payment. Please try again.</ThemedText>
+            <TouchableOpacity
+              style={[styles.modalButton, { backgroundColor: '#ef4444' }]}
+              onPress={() => setShowFailedModal(false)}
+            >
+              <ThemedText style={styles.modalButtonText}>OK</ThemedText>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
     </ThemedView>
   );
 }

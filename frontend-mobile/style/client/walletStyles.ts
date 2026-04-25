@@ -204,6 +204,36 @@ export const styles = StyleSheet.create({
     color: '#FF8C00',
     marginTop: 6,
   },
+  // Buy Button
+  packageBuyBtn: {
+    backgroundColor: '#FF8C00',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+    marginTop: 12,
+    minWidth: 100,
+  },
+  packageBuyText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  // Top Up Button
+  topUpBtn: {
+    backgroundColor: '#FF8C00',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    marginTop: 10,
+    minWidth: 80,
+  },
+  topUpBtnText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
   // Transactions
   txListContainer: {
     maxHeight: 400,
@@ -281,6 +311,54 @@ export const styles = StyleSheet.create({
   statusFailedText: {
     color: '#FF3B30',
   },
+
+  // Payment Modal Styles
+  modalOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100,
+  },
+  modalContent: {
+    backgroundColor: '#1A1C1E',
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    width: '80%',
+    maxWidth: 300,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#fff',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  modalText: {
+    fontSize: 14,
+    color: '#aaa',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  modalButton: {
+    backgroundColor: '#22c55e',
+    paddingHorizontal: 32,
+    paddingVertical: 12,
+    borderRadius: 8,
+    minWidth: 120,
+  },
+  modalButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+
   // Empty State
   emptyCard: {
     backgroundColor: '#17171A',

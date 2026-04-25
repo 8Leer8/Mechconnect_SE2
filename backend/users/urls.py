@@ -89,19 +89,16 @@ urlpatterns = [
     # Token purchase PayMongo payment flow (Mechanic)
     path('wallet/initiate-payment/', initiate_token_purchase, name='initiate_token_purchase'),
     path('wallet/webhook/', token_purchase_webhook, name='token_purchase_webhook'),
-    path('wallet/redirect/success/', token_redirect_success, name='token_redirect_success'),
-    path('wallet/redirect/failed/', token_redirect_failed, name='token_redirect_failed'),
     path('wallet/purchase/<int:purchase_id>/status/', check_purchase_status, name='check_purchase_status'),
     # Token purchase PayMongo payment flow (Shop Owner) - uses same views
     path('shop-owner/wallet/initiate-payment/', initiate_token_purchase, name='shop_owner_initiate_token_purchase'),
     path('shop-owner/wallet/purchase/<int:purchase_id>/status/', check_purchase_status, name='shop_owner_check_purchase_status'),
-    path('shop-owner/redirect/success/', token_redirect_success, name='shop_owner_token_redirect_success'),
-    path('shop-owner/redirect/failed/', token_redirect_failed, name='shop_owner_token_redirect_failed'),
     # Token purchase PayMongo payment flow (Client) - uses same views
     path('client/wallet/initiate-payment/', initiate_token_purchase, name='client_initiate_token_purchase'),
     path('client/wallet/purchase/<int:purchase_id>/status/', check_purchase_status, name='client_check_purchase_status'),
-    path('client/redirect/success/', token_redirect_success, name='client_token_redirect_success'),
-    path('client/redirect/failed/', token_redirect_failed, name='client_token_redirect_failed'),
+    # Unified redirect endpoints for PayMongo callbacks (all user types)
+    path('tokens/payment/redirect/success/', token_redirect_success, name='token_redirect_success'),
+    path('tokens/payment/redirect/failed/', token_redirect_failed, name='token_redirect_failed'),
 ]
 
 #Admin Urls
