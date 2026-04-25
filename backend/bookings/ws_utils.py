@@ -339,7 +339,7 @@ def _ensure_conversation_for_booking(booking, account):
     return conv
 
 
-def post_quotation_chat_message(account, booking, quotation, action='created', request=None):
+def post_quotation_chat_message(account, booking, quotation, action='created', request=None, amendment=None):
     """Post a structured quotation system message into the booking conversation and broadcast it.
     action can be: 'created', 'updated', 'retracted', 'accepted', 'rejected'
     """
@@ -354,29 +354,81 @@ def post_quotation_chat_message(account, booking, quotation, action='created', r
 
     items = []
     try:
-        for it in quotation.items.all():
-            items.append({
-                'id': it.id,
-                'line_kind': getattr(it, 'line_kind', 'item'),
-                'source': getattr(it, 'source', None),
-                'service': it.service_id,
-                'service_add_on': it.service_add_on_id,
-                'description': it.description,
-                'quantity': int(it.quantity),
-                'unit_price': float(it.unit_price),
-                'line_total': float(it.line_total),
-                'purchase_receipt_image': it.purchase_receipt_image.url if getattr(it, 'purchase_receipt_image', None) else None,
-                'receipt_submitted_at': it.receipt_submitted_at.isoformat() if getattr(it, 'receipt_submitted_at', None) else None,
-            })
+        # For pending amendment requests (action=updated), show the staged delta rows.
+        # For resolved actions (accepted/rejected), always show the current quotation rows
+        # so old removed deltas do not leak into future diff baselines.
+        use_amendment_rows = amendment is not None and action == "updated"
+        if use_amendment_rows:
+            for change in amendment.items.all().order_by("id"):
+                proposed = change.proposed_changes or {}
+                original = change.original_snapshot or {}
+                stable_original_id = change.original_item_id
+                if stable_original_id is None:
+                    try:
+                        stable_original_id = int(original.get("id"))
+                    except Exception:
+                        stable_original_id = None
+                row = {
+                    "id": stable_original_id,
+                    "line_kind": proposed.get("line_kind") or original.get("line_kind") or "item",
+                    "source": proposed.get("source") if proposed.get("source") is not None else original.get("source"),
+                    "service": proposed.get("service") if proposed.get("service") is not None else original.get("service"),
+                    "service_add_on": proposed.get("service_add_on") if proposed.get("service_add_on") is not None else original.get("service_add_on"),
+                    "description": proposed.get("description") if proposed.get("description") is not None else original.get("description"),
+                    "quantity": int(proposed.get("quantity") if proposed.get("quantity") is not None else (original.get("quantity") or 1)),
+                    "unit_price": float(proposed.get("unit_price") if proposed.get("unit_price") is not None else (original.get("unit_price") or 0)),
+                    "status": "pending" if action == "updated" else getattr(amendment, "status", None),
+                    "change_type": change.action_type,
+                    "previous_description": original.get("description"),
+                    "previous_quantity": original.get("quantity"),
+                    "previous_unit_price": original.get("unit_price"),
+                }
+                row["line_total"] = float(row["quantity"]) * float(row["unit_price"])
+                items.append(row)
+        else:
+            for it in quotation.items.all():
+                items.append({
+                    'id': it.id,
+                    'line_kind': getattr(it, 'line_kind', 'item'),
+                    'source': getattr(it, 'source', None),
+                    'service': it.service_id,
+                    'service_add_on': it.service_add_on_id,
+                    'description': it.description,
+                    'quantity': int(it.quantity),
+                    'unit_price': float(it.unit_price),
+                    'line_total': float(it.line_total),
+                    'status': getattr(it, 'status', None),
+                    'change_type': getattr(it, 'change_type', None),
+                    'previous_description': getattr(it, 'previous_description', None),
+                    'previous_quantity': getattr(it, 'previous_quantity', None),
+                    'previous_unit_price': float(it.previous_unit_price) if getattr(it, 'previous_unit_price', None) is not None else None,
+                    'purchase_receipt_image': it.purchase_receipt_image.url if getattr(it, 'purchase_receipt_image', None) else None,
+                    'receipt_submitted_at': it.receipt_submitted_at.isoformat() if getattr(it, 'receipt_submitted_at', None) else None,
+                })
     except Exception:
         items = []
+
+    # Prefer amendment lifecycle for bundled flows; quotation instance may be stale
+    # in-memory right after request creation.
+    request_status = (
+        getattr(amendment, "status", None)
+        if amendment is not None
+        else getattr(quotation, 'status', None)
+    )
+    if action == 'accepted':
+        request_status = 'accepted'
+    elif action == 'rejected':
+        request_status = 'rejected'
+    elif action == 'retracted':
+        request_status = 'retracted'
 
     payload = {
         'type': 'quotation_request',
         'action': action,
         'quotation_id': quotation.id if quotation else None,
+        'amendment_id': amendment.id if amendment is not None else None,
         'booking_id': booking.id,
-        'status': getattr(quotation, 'status', None),
+        'status': request_status,
         'mechanic_id': getattr(account, 'id', None),
         'mechanic_name': f"{getattr(account, 'firstname', '')} {getattr(account, 'lastname', '')}".strip(),
         'notes': getattr(quotation, 'notes', ''),
@@ -384,7 +436,6 @@ def post_quotation_chat_message(account, booking, quotation, action='created', r
         'items': items,
         'created_at': quotation.created_at.isoformat() if quotation and getattr(quotation, 'created_at', None) else None,
     }
-
     if action == 'retracted':
         payload['message'] = 'Mechanic retracted this request.'
 

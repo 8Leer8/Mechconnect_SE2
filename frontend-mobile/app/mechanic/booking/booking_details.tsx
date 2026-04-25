@@ -250,6 +250,7 @@ export default function BookingDetailScreen() {
   const [quotationListExpanded, setQuotationListExpanded] = useState(false);
   const [expandedQuoteItems, setExpandedQuoteItems] = useState<Record<string, boolean>>({});
   const [chatChangeLabelByKey, setChatChangeLabelByKey] = useState<Record<string, 'Added' | 'Edited' | 'Removed'>>({});
+  const [pendingQuoteSnapshot, setPendingQuoteSnapshot] = useState<any | null>(null);
   const [chatPreview, setChatPreview] = useState<string | null>(null);
   const [visibleBeforePhotoCount, setVisibleBeforePhotoCount] = useState(6);
   const [visibleAfterPhotoCount, setVisibleAfterPhotoCount] = useState(6);
@@ -438,6 +439,43 @@ export default function BookingDetailScreen() {
       }
       return rows;
     })();
+    const applyPendingSnapshotOverlay = (baseRows: any[]) => {
+      const snapshotItems = Array.isArray(pendingQuoteSnapshot?.items) ? pendingQuoteSnapshot.items : [];
+      if (!snapshotItems.length) return baseRows;
+
+      const mergedRows = [...baseRows];
+      const rowById = new Map<string, number>();
+      mergedRows.forEach((row: any, idx: number) => {
+        if (row?.id != null) rowById.set(String(row.id), idx);
+      });
+
+      snapshotItems.forEach((row: any) => {
+        const changeType = String(row?.change_type || '').toLowerCase();
+        const rowId = row?.id != null ? String(row.id) : null;
+        const targetIdx = rowId != null && rowById.has(rowId) ? Number(rowById.get(rowId)) : -1;
+
+        if (changeType === 'added') {
+          mergedRows.push({
+            ...row,
+            status: 'pending',
+            change_type: 'added',
+          });
+          return;
+        }
+
+        if (targetIdx >= 0) {
+          mergedRows[targetIdx] = {
+            ...mergedRows[targetIdx],
+            ...row,
+            status: 'pending',
+            change_type: changeType || mergedRows[targetIdx]?.change_type || null,
+          };
+        }
+      });
+
+      return mergedRows;
+    };
+
     if (quotation && (quotation.items || []).length > 0) {
       const mergedItems = [...(quotation.items || [])];
       expectedServiceItems.forEach((svcRow: any) => {
@@ -446,15 +484,17 @@ export default function BookingDetailScreen() {
         const exists = mergedItems.some((it: any) => Number(it?.service) === sid && String(it?.status || '').toLowerCase() !== 'rejected');
         if (!exists) mergedItems.push(svcRow);
       });
-      const mergedTotal = mergedItems.reduce((sum: number, it: any) => {
+      const overlayedItems = applyPendingSnapshotOverlay(mergedItems);
+      const mergedTotal = overlayedItems.reduce((sum: number, it: any) => {
         const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
         const qty = Number(it?.quantity ?? 1) || 1;
         return sum + (price * qty);
       }, 0);
       return {
         ...quotation,
-        items: mergedItems,
-        total_amount: Math.max(Number(quotation?.total_amount || 0), mergedTotal),
+        status: pendingQuoteSnapshot?.status || quotation?.status,
+        items: overlayedItems,
+        total_amount: Math.max(Number(pendingQuoteSnapshot?.total_amount || 0), Number(quotation?.total_amount || 0), mergedTotal),
       };
     }
 
@@ -530,7 +570,12 @@ export default function BookingDetailScreen() {
   };
 
   const displayQuotation = getDisplayQuotation();
-  const isQuotationPending = Boolean((quotation && quotation.status === 'pending') || (displayQuotation && displayQuotation.status === 'pending'));
+  const hasLivePendingQuoteRequest = Boolean(
+    pendingQuoteSnapshot && String(pendingQuoteSnapshot?.status || '').toLowerCase() === 'pending'
+  );
+  const isQuotationPending = hasLivePendingQuoteRequest || Boolean(
+    (quotation && quotation.status === 'pending') || (displayQuotation && displayQuotation.status === 'pending')
+  );
 
   const convenienceBreakdown = useMemo(() => {
     if (!booking) return null;
@@ -666,6 +711,14 @@ export default function BookingDetailScreen() {
     return null;
   };
 
+  const getExplicitChangeLabel = (it: any): 'Added' | 'Edited' | 'Removed' | null => {
+    const raw = String(it?.change_type || it?.change || it?.modification_type || '').toLowerCase();
+    if (raw === 'added' || raw.includes('add')) return 'Added';
+    if (raw === 'edited' || raw.includes('edit') || raw.includes('update') || raw.includes('modify')) return 'Edited';
+    if (raw === 'removed' || raw.includes('remove') || raw.includes('delete')) return 'Removed';
+    return null;
+  };
+
   const inferChangeLabel = (it: any, acceptedByAssoc: Record<string, any>, acceptedRows: any[], removedRows: any[]) => {
     const normalizeText = (v: any) => String(v ?? '').trim().toLowerCase();
     const normalizeNum = (v: any) => Number(v ?? 0);
@@ -701,6 +754,8 @@ export default function BookingDetailScreen() {
       return isLikelyRename(rowDesc, curDesc);
     });
 
+    const explicit = getExplicitChangeLabel(it);
+    if (explicit) return explicit;
     const raw = String(it?.change_type || it?.change || it?.modification_type || '').toLowerCase();
     if (raw.includes('edit') || raw.includes('update') || raw.includes('modify')) return 'Edited';
     if (it?.previous_description || it?.previous_quantity != null || it?.previous_unit_price != null) {
@@ -737,6 +792,12 @@ export default function BookingDetailScreen() {
       return sum;
     }, 0);
   }, [displayQuotation, quotation]);
+  const pendingRequestedQuotationTotal = React.useMemo(() => {
+    if (!hasLivePendingQuoteRequest) return null;
+    const pendingTotal = Number((pendingQuoteSnapshot as any)?.total_amount);
+    if (!Number.isFinite(pendingTotal) || pendingTotal < 0) return null;
+    return pendingTotal;
+  }, [hasLivePendingQuoteRequest, pendingQuoteSnapshot]);
 
   useEffect(() => {
     try { navigation.setOptions && navigation.setOptions({ headerShown: false }); } catch (e) {}
@@ -933,6 +994,17 @@ export default function BookingDetailScreen() {
     return () => clearInterval(interval);
   }, [fetchBookingDetail]);
 
+  // Faster temporary sync while quotation request is pending
+  // so accept/reject updates reflect quickly in pricing/details.
+  useEffect(() => {
+    if (!hasLivePendingQuoteRequest) return;
+    const quickInterval = setInterval(() => {
+      fetchBookingDetail();
+      refreshChatQuotationLabels();
+    }, 2000);
+    return () => clearInterval(quickInterval);
+  }, [hasLivePendingQuoteRequest, fetchBookingDetail, refreshChatQuotationLabels]);
+
   const fetchQuotation = async () => {
     if (!bookingId) return;
     try {
@@ -1007,25 +1079,46 @@ export default function BookingDetailScreen() {
         return null;
       };
 
-      const ordered = [...rows].reverse();
-      const latestQuoteMsg = ordered.find((m: any) => {
-        const p = parsePayload(m?.content);
-        return p && p.type === 'quotation_request' && String(p?.status || '').toLowerCase() === 'pending';
-      }) || ordered.find((m: any) => {
-        const p = parsePayload(m?.content);
-        return p && p.type === 'quotation_request';
-      });
-      if (!latestQuoteMsg) return;
-      const payload = parsePayload(latestQuoteMsg.content);
+      const quoteMessages = rows
+        .map((m: any) => ({ ...m, __payload: parsePayload(m?.content) }))
+        .filter((m: any) => m.__payload && m.__payload.type === 'quotation_request')
+        .sort((a: any, b: any) => {
+          const ta = Number(new Date(String(a?.created_at || '')).getTime()) || 0;
+          const tb = Number(new Date(String(b?.created_at || '')).getTime()) || 0;
+          if (tb !== ta) return tb - ta;
+          return Number(b?.id || 0) - Number(a?.id || 0);
+        });
+      const latestQuoteMsg = quoteMessages[0];
+      if (!latestQuoteMsg) {
+        setPendingQuoteSnapshot(null);
+        setChatChangeLabelByKey({});
+        return;
+      }
+      const payload = latestQuoteMsg.__payload;
+      if (payload && payload.type === 'quotation_request' && String(payload?.status || '').toLowerCase() === 'pending') {
+        setPendingQuoteSnapshot(payload);
+      } else {
+        setPendingQuoteSnapshot(null);
+        setChatChangeLabelByKey({});
+        return;
+      }
       const items = Array.isArray(payload?.items) ? payload.items : [];
 
-      const previousQuoteMsg = ordered.find((m: any) => {
+      const previousQuoteMsg = quoteMessages.find((m: any) => {
         if (m?.id === latestQuoteMsg?.id) return false;
-        const p = parsePayload(m?.content);
-        return p && p.type === 'quotation_request' && String(p?.quotation_id || '') === String(payload?.quotation_id || '');
+        return String(m?.__payload?.quotation_id || '') === String(payload?.quotation_id || '');
       });
-      const previousPayload = previousQuoteMsg ? parsePayload(previousQuoteMsg.content) : null;
-      const previousItems = Array.isArray(previousPayload?.items) ? previousPayload.items : [];
+      const previousPayload = previousQuoteMsg ? previousQuoteMsg.__payload : null;
+      let previousItems = Array.isArray(previousPayload?.items) ? previousPayload.items : [];
+      if (String(previousPayload?.status || '').toLowerCase() === 'accepted') {
+        previousItems = previousItems.filter((it: any) => {
+          const ct = String(it?.change_type || '').toLowerCase();
+          const st = String(it?.status || '').toLowerCase();
+          if (ct === 'removed' || ct.includes('remove')) return false;
+          if (st === 'rejected') return false;
+          return true;
+        });
+      }
 
       const normalizeText = (v: any) => String(v ?? '').trim().toLowerCase();
       const normalizeNum = (v: any) => Number(v ?? 0);
@@ -1817,9 +1910,10 @@ export default function BookingDetailScreen() {
   const shouldIncludeItemInBackjobQuoteAmountTotals = (it: any) => {
     if (Boolean(it?.is_backjob_new_line)) return true;
     if (isLineCreatedAfterBackjob(it)) return true;
+    const explicit = getExplicitChangeLabel(it);
     const inferred = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
     const chat = getQuoteSnapshotKeys(it).map((k) => chatChangeLabelByKey[k]).find(Boolean) || null;
-    const raw = chat || inferred || null;
+    const raw = explicit || chat || inferred || null;
     return raw === 'Added';
   };
 
@@ -1830,9 +1924,10 @@ export default function BookingDetailScreen() {
     const statusRaw = String(it?.status || it?.quotation_status || it?.state || quotation?.status || '').toLowerCase();
     if (statusRaw !== 'pending') return sum;
 
+    const explicitChangeLabel = getExplicitChangeLabel(it);
     const inferredChangeLabel = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
     const chatDerivedChangeLabel = getQuoteSnapshotKeys(it).map((k) => chatChangeLabelByKey[k]).find(Boolean) || null;
-    const rawChangeLabel = chatDerivedChangeLabel || inferredChangeLabel || null;
+    const rawChangeLabel = explicitChangeLabel || chatDerivedChangeLabel || inferredChangeLabel || null;
     let changeLabel = rawChangeLabel;
     if (
       bookingInBackjobPaymentPhase(booking) &&
@@ -1863,9 +1958,10 @@ export default function BookingDetailScreen() {
     const statusRaw = String(it?.status || it?.quotation_status || it?.state || quotation?.status || '').toLowerCase();
     if (statusRaw !== 'accepted') return sum;
 
+    const explicitChangeLabel = getExplicitChangeLabel(it);
     const inferredChangeLabel = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
     const chatDerivedChangeLabel = getQuoteSnapshotKeys(it).map((k) => chatChangeLabelByKey[k]).find(Boolean) || null;
-    let changeLabel = chatDerivedChangeLabel || inferredChangeLabel || null;
+    let changeLabel = explicitChangeLabel || chatDerivedChangeLabel || inferredChangeLabel || null;
     if (
       bookingInBackjobPaymentPhase(booking) &&
       !changeLabel &&
@@ -1887,9 +1983,10 @@ export default function BookingDetailScreen() {
     const isPending = statusRaw === 'pending';
     const quotationStatusRaw = String((quotation && quotation.status) || '').toLowerCase();
     const isPendingQuotationRequest = quotationStatusRaw === 'pending';
+    const explicitChangeLabel = getExplicitChangeLabel(it);
     const inferredChangeLabel = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
     const chatDerivedChangeLabel = getQuoteSnapshotKeys(it).map((k) => chatChangeLabelByKey[k]).find(Boolean) || null;
-    const rawChangeLabel = chatDerivedChangeLabel || inferredChangeLabel || null;
+    const rawChangeLabel = explicitChangeLabel || chatDerivedChangeLabel || inferredChangeLabel || null;
     const changeLabel = (isPending || isPendingQuotationRequest) ? rawChangeLabel : null;
     const isRemoved = changeLabel === 'Removed';
     const desc = it?.description || it?.name || (it.service && `Service #${it.service}`) || 'Item';
@@ -2052,10 +2149,12 @@ export default function BookingDetailScreen() {
           : 'unpaid';
   const paymentProgressPct =
     totalAmount > 0 ? Math.min(100, Math.max(0, (totalPaid / totalAmount) * 100)) : 0;
-  const showBackjobCompletionFlow =
-    backjobPaymentPhase && booking.status === 'pending_payment' && totalAmount <= 0;
+  const noPendingPaymentLeft = booking.status === 'pending_payment' && remainingBalance <= 0;
+  const canProceedToCompletion = noPendingPaymentLeft && !isQuotationPending;
+  const showBackjobCompletionFlow = canProceedToCompletion && backjobPaymentPhase;
+  const showGeneralCompletionFlow = canProceedToCompletion && !backjobPaymentPhase;
   const showPendingPaymentFlow =
-    booking.status === 'pending_payment' && !showBackjobCompletionFlow && (!backjobPaymentPhase || totalAmount > 0);
+    booking.status === 'pending_payment' && remainingBalance > 0;
   const canShowPaymentModals =
     (!backjobPaymentPhase || totalAmount > 0) &&
     (booking.status === 'pending_payment' || booking.status === 'accepted');
@@ -2587,6 +2686,29 @@ export default function BookingDetailScreen() {
               </TouchableOpacity>
             </>
           )}
+
+          {showGeneralCompletionFlow && (
+            <>
+              <View style={styles.noteBox}>
+                <ThemedText style={styles.noteText}>
+                  Payment is already settled and there are no pending quotation requests. You can now complete this job.
+                </ThemedText>
+              </View>
+              <TouchableOpacity
+                style={[styles.finishLargeButton, completing && styles.actionButtonDisabled]}
+                onPress={handleCompleteBooking}
+                disabled={transitioning || completing}
+                activeOpacity={0.85}
+              >
+                {completing ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <FontAwesome name="check" size={18} color="#fff" />
+                )}
+                <ThemedText style={styles.actionBarBtnText}>Complete job</ThemedText>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
       </View>
 
@@ -2885,7 +3007,7 @@ export default function BookingDetailScreen() {
               <View style={styles.receiptDivider} />
             </View>
 
-            {isQuotationPending ? (
+            {hasLivePendingQuoteRequest ? (
               <View style={styles.pendingHintBanner}>
                 <FontAwesome name="clock-o" size={12} color="#C89B55" />
                 <ThemedText style={styles.pendingHintText}>Pending changes are waiting for client approval.</ThemedText>
@@ -3040,6 +3162,12 @@ export default function BookingDetailScreen() {
                 <View style={styles.receiptRow}>
                   <ThemedText style={styles.receiptTotalLabel}>Quotation Estimated Total</ThemedText>
                   <ThemedText style={styles.receiptTotalValue}>₱{effectiveQuotationEstimate.toFixed(2)}</ThemedText>
+                </View>
+              ) : null}
+              {pendingRequestedQuotationTotal != null ? (
+                <View style={styles.receiptRow}>
+                  <ThemedText style={styles.receiptTotalLabel}>Pending Requested Total</ThemedText>
+                  <ThemedText style={[styles.receiptTotalValue, { color: '#F2B15C' }]}>₱{pendingRequestedQuotationTotal.toFixed(2)}</ThemedText>
                 </View>
               ) : null}
               <View style={styles.receiptRow}>

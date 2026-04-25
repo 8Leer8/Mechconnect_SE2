@@ -506,6 +506,53 @@ class QuotationItem(models.Model):
         return self.quantity * self.unit_price
 
 
+class QuotationAmendment(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending"
+        ACCEPTED = "accepted"
+        REJECTED = "rejected"
+
+    quotation = models.ForeignKey(
+        Quotation,
+        on_delete=models.CASCADE,
+        related_name="amendments",
+    )
+    mechanic = models.ForeignKey(Account, on_delete=models.CASCADE)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class AmendmentItem(models.Model):
+    class ActionType(models.TextChoices):
+        ADDED = "added"
+        EDITED = "edited"
+        REMOVED = "removed"
+
+    amendment = models.ForeignKey(
+        QuotationAmendment,
+        on_delete=models.CASCADE,
+        related_name="items",
+    )
+    # Client requirement asks for UUID and nullable.
+    item_id = models.UUIDField(null=True, blank=True)
+    # Internal pointer to the original quotation row to update/delete safely.
+    original_item = models.ForeignKey(
+        QuotationItem,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="amendment_items",
+    )
+    action_type = models.CharField(max_length=20, choices=ActionType.choices)
+    proposed_changes = models.JSONField(default=dict, blank=True)
+    original_snapshot = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
 class BroadcastRequest(models.Model):
     """
     Broadcast Request - Similar to Uber/Grab ride-hailing flow.

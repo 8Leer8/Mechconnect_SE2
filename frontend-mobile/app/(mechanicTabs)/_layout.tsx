@@ -16,7 +16,7 @@ export default function MechanicTabLayout() {
     visible: boolean;
     title: string;
     bookingId: number | null;
-    mode: 'accepted' | 'rejected';
+    mode: 'accepted' | 'rejected' | 'info';
   }>({
     visible: false,
     title: 'Client has accepted your request',
@@ -28,14 +28,21 @@ export default function MechanicTabLayout() {
 
   React.useEffect(() => {
     if (!lastMessage) return;
+    const actionText = String(lastMessage.action || '').toLowerCase();
+    const messageText = String((lastMessage as any).message || '').toLowerCase();
+    const isQuotationUpdate = actionText.includes('quotation') || messageText.includes('quotation');
     const isBroadcastFinalize =
-      lastMessage.action === 'booking_finalized'
-      || (lastMessage.type === 'notification_update' && lastMessage.action === 'booking_finalized')
-      || (lastMessage.type === 'booking_update' && String(lastMessage.status || '').toLowerCase() === 'accepted');
+      actionText === 'booking_finalized'
+      || (lastMessage.type === 'notification_update' && actionText === 'booking_finalized')
+      || (
+        lastMessage.type === 'booking_update' &&
+        String(lastMessage.status || '').toLowerCase() === 'accepted' &&
+        !isQuotationUpdate
+      );
     const isOfferRejected =
-      lastMessage.action === 'offer_rejected'
-      || (lastMessage.type === 'notification_update' && lastMessage.action === 'offer_rejected');
-    if (!isBroadcastFinalize && !isOfferRejected) return;
+      actionText === 'offer_rejected'
+      || (lastMessage.type === 'notification_update' && actionText === 'offer_rejected');
+    if (!isBroadcastFinalize && !isOfferRejected && !isQuotationUpdate) return;
 
     const messageTimestamp = Number(lastMessage._timestamp || 0) || null;
     if (!messageTimestamp) return;
@@ -45,6 +52,22 @@ export default function MechanicTabLayout() {
     lastHandledMessageKeyRef.current = dedupeKey;
 
     const bookingId = Number((lastMessage as any).booking_id ?? (lastMessage as any).bookingId ?? 0) || null;
+    if (isQuotationUpdate) {
+      const isQuotationRejected = actionText.includes('rejected') || messageText.includes('rejected');
+      const isQuotationAccepted = actionText.includes('accepted') || messageText.includes('accepted');
+      setMechanicGlobalModal({
+        visible: true,
+        title: isQuotationRejected
+          ? 'Quotation rejected by client'
+          : isQuotationAccepted
+            ? 'Quotation accepted by client'
+            : 'Quotation request sent',
+        bookingId,
+        mode: isQuotationAccepted ? 'accepted' : (isQuotationRejected ? 'rejected' : 'info'),
+      });
+      return;
+    }
+
     setMechanicGlobalModal({
       visible: true,
       title: isOfferRejected
@@ -177,9 +200,9 @@ export default function MechanicTabLayout() {
               }}
             >
               <FontAwesome
-                name={mechanicGlobalModal.mode === 'rejected' ? 'exclamation-circle' : 'check-circle'}
+                name={mechanicGlobalModal.mode === 'rejected' ? 'exclamation-circle' : (mechanicGlobalModal.mode === 'info' ? 'info-circle' : 'check-circle')}
                 size={24}
-                color={mechanicGlobalModal.mode === 'rejected' ? '#FF9500' : '#34C759'}
+                color={mechanicGlobalModal.mode === 'rejected' ? '#FF9500' : (mechanicGlobalModal.mode === 'info' ? '#0A84FF' : '#34C759')}
               />
             </View>
 

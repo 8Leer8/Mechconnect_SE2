@@ -40,7 +40,8 @@ from services.models import MechanicService
 from ..client.client_booking_views import _serialize_bookings, _serialize_single_booking
 from ...serializers import QuotationSerializer
 from ...ws_utils import notify_booking_parties, post_quotation_chat_message
-from .payment_views import _sync_booking_payable_total
+from .payment_views import _sync_booking_payable_total, _get_payment_summary
+from ...services import create_amendment_request
 from chat.models import Conversation, Message
 from chat.serializers import MessageSerializer
 from asgiref.sync import async_to_sync
@@ -292,6 +293,60 @@ def _refresh_on_the_way_metrics(booking, mechanic_lat=None, mechanic_lng=None, s
     }
 
 
+def _broadcast_mechanic_location(booking, loc):
+    """Send the latest mechanic GPS to booking viewers."""
+    try:
+        channel_layer = get_channel_layer()
+        if channel_layer is None:
+            return
+
+        recipient_ids = set()
+        try:
+            if booking.request and booking.request.client and booking.request.client.account_id:
+                recipient_ids.add(booking.request.client.account_id)
+        except Exception:
+            pass
+        try:
+            if (
+                booking.request
+                and booking.request.shop
+                and booking.request.shop.shop_owner
+                and booking.request.shop.shop_owner.account_id
+            ):
+                recipient_ids.add(booking.request.shop.shop_owner.account_id)
+        except Exception:
+            pass
+
+        ws_event = {
+            "type": "booking_update",
+            "action": "mechanic_location_update",
+            "booking_id": booking.id,
+            "status": booking.status,
+            "latitude": float(loc.latitude),
+            "longitude": float(loc.longitude),
+        }
+        for rid in recipient_ids:
+            if rid:
+                async_to_sync(channel_layer.group_send)(f"user_{rid}", ws_event)
+    except Exception:
+        pass
+
+
+def _save_mechanic_location(booking, mechanic_lat, mechanic_lng):
+    if mechanic_lat is None or mechanic_lng is None:
+        return None
+
+    loc, _ = MechanicLocation.objects.update_or_create(
+        booking=booking,
+        defaults={
+            "latitude": Decimal(str(mechanic_lat)).quantize(Decimal('0.000001')),
+            "longitude": Decimal(str(mechanic_lng)).quantize(Decimal('0.000001')),
+        },
+    )
+    _broadcast_mechanic_location(booking, loc)
+    return loc
+
+
 
 # (All imports are already at the top of the file. No need to repeat here.)
 
@@ -322,6 +377,7 @@ def mechanic_start_travel(request, booking_id):
 
     refresh_result = _refresh_on_the_way_metrics(booking, mechanic_lat, mechanic_lng)
     traffic_level = refresh_result["traffic_level"]
+    _save_mechanic_location(booking, mechanic_lat, mechanic_lng)
 
     notify_booking_parties(
         account.id,
@@ -1400,7 +1456,6 @@ def mechanic_booking_quotation(request, booking_id):
             data = dict(raw)
         except Exception:
             data = raw if isinstance(raw, dict) else {}
-        ser = QuotationSerializer(data=data, context={'request': request, 'booking': booking, 'mechanic': account})
         original_booking_status = booking.status
         try:
             # If quotation exists, update instead
@@ -1422,15 +1477,31 @@ def mechanic_booking_quotation(request, booking_id):
                 except Exception:
                     pass
                 return Response({'message': 'Quotation deleted'}, status=status.HTTP_200_OK)
+            if existing is None:
+                existing = Quotation.objects.create(
+                    booking=booking,
+                    mechanic=account,
+                    status=Quotation.Status.ACCEPTED,
+                    notes=data.get("notes", ""),
+                    is_final=bool(data.get("is_final", False)),
+                    is_backjob=booking_has_backjob(booking),
+                )
 
-            # Persist quotation first; post chat after commit so a chat/WS failure cannot roll back the save.
-            was_update = existing is not None
+            # Create a single amendment bundle from staged UI rows.
             try:
                 with transaction.atomic():
-                    if was_update:
-                        quotation = ser.update(existing, data)
-                    else:
-                        quotation = ser.create(data)
+                    if "notes" in data:
+                        existing.notes = data.get("notes")
+                    if "is_final" in data:
+                        existing.is_final = bool(data.get("is_final", existing.is_final))
+                    existing.is_backjob = booking_has_backjob(booking)
+                    existing.save(update_fields=["notes", "is_final", "is_backjob", "updated_at"])
+                    amendment = create_amendment_request(
+                        quotation_id=existing.id,
+                        mechanic_id=account.id,
+                        changes=data.get("items") or [],
+                    )
+                    existing.refresh_from_db()
             except Exception as e:
                 logging.getLogger(__name__).exception('Failed to create/update quotation: %s', e)
                 return Response(
@@ -1442,9 +1513,10 @@ def mechanic_booking_quotation(request, booking_id):
                 post_quotation_chat_message(
                     account,
                     booking,
-                    quotation,
-                    action='updated' if was_update else 'created',
+                    existing,
+                    action='updated',
                     request=request,
+                    amendment=amendment,
                 )
             except Exception as e:
                 logging.getLogger(__name__).exception(
@@ -1457,26 +1529,8 @@ def mechanic_booking_quotation(request, booking_id):
                     booking.request.client.account_id,
                     booking.id,
                     booking.status,
-                    'Quotation updated' if was_update else 'Quotation created',
+                    'Quotation amendment request sent',
                 )
-            except Exception:
-                pass
-
-            # Safeguard: remove stale rejected quotation items only after a non-pending state.
-            # While pending, rejected rows may represent removal proposals awaiting client decision.
-            try:
-                if str(getattr(quotation, 'status', '')).lower() != Quotation.Status.PENDING:
-                    deleted_count, _ = QuotationItem.objects.filter(
-                        quotation=quotation,
-                        status=Quotation.Status.REJECTED,
-                    ).delete()
-                    if deleted_count:
-                        try:
-                            fresh_total = sum(float(it.line_total) for it in quotation.items.exclude(status=Quotation.Status.REJECTED))
-                        except Exception:
-                            fresh_total = 0
-                        quotation.total_amount = fresh_total
-                        quotation.save(update_fields=['total_amount', 'updated_at'])
             except Exception:
                 pass
 
@@ -1497,7 +1551,10 @@ def mechanic_booking_quotation(request, booking_id):
             except Exception:
                 pass
 
-            return Response(QuotationSerializer(quotation, context={'request': request}).data, status=status.HTTP_200_OK)
+            payload = QuotationSerializer(existing, context={'request': request}).data
+            payload["amendment_id"] = amendment.id
+            payload["status"] = "pending"
+            return Response(payload, status=status.HTTP_200_OK)
         except Exception as e:
             logging.getLogger(__name__).error("Quotation save failed: %s", traceback.format_exc())
             return Response({"error": "Failed to save quotation", "details": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -1840,6 +1897,24 @@ def mechanic_location_view(request, booking_id):
                 "updated_at": loc.updated_at.isoformat(),
             }, status=status.HTTP_200_OK)
         except MechanicLocation.DoesNotExist:
+            accepted_offer = _get_accepted_offer_for_booking(booking)
+            if (
+                accepted_offer
+                and accepted_offer.mechanic_latitude is not None
+                and accepted_offer.mechanic_longitude is not None
+            ):
+                loc = _save_mechanic_location(
+                    booking,
+                    float(accepted_offer.mechanic_latitude),
+                    float(accepted_offer.mechanic_longitude),
+                )
+                if loc is not None:
+                    return Response({
+                        "latitude": float(loc.latitude),
+                        "longitude": float(loc.longitude),
+                        "updated_at": loc.updated_at.isoformat(),
+                    }, status=status.HTTP_200_OK)
+
             return Response({"error": "Mechanic location not available yet"}, status=status.HTTP_404_NOT_FOUND)
 
     # POST — solo jobs use request.provider as the mechanic; shop jobs use RequestAssignment.
@@ -1869,41 +1944,7 @@ def mechanic_location_view(request, booking_id):
                    "longitude": Decimal(str(longitude)).quantize(Decimal('0.000001'))},
     )
 
-    # Push live coordinates to the client (and shop owner) over websocket so the app
-    # does not need to poll GET /mechanic-location/ on a timer.
-    try:
-        channel_layer = get_channel_layer()
-        if channel_layer is not None:
-            recipient_ids = set()
-            try:
-                if booking.request and booking.request.client and booking.request.client.account_id:
-                    recipient_ids.add(booking.request.client.account_id)
-            except Exception:
-                pass
-            try:
-                if (
-                    booking.request
-                    and booking.request.shop
-                    and booking.request.shop.shop_owner
-                    and booking.request.shop.shop_owner.account_id
-                ):
-                    recipient_ids.add(booking.request.shop.shop_owner.account_id)
-            except Exception:
-                pass
-            ws_event = {
-                "type": "booking_update",
-                "action": "mechanic_location_update",
-                "booking_id": booking.id,
-                "status": booking.status,
-                "latitude": float(loc.latitude),
-                "longitude": float(loc.longitude),
-            }
-            for rid in recipient_ids:
-                if not rid:
-                    continue
-                async_to_sync(channel_layer.group_send)(f"user_{rid}", ws_event)
-    except Exception:
-        pass
+    _broadcast_mechanic_location(booking, loc)
 
     return Response({
         "latitude": float(loc.latitude),
@@ -2676,16 +2717,38 @@ def mechanic_complete_booking(request, booking_id):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    # Block manual completion while payment is pending/unconfirmed.
-    if booking.status == Booking.Status.PENDING_PAYMENT and not booking_has_backjob(booking):
-        return Response(
-            {
-                "error": "Cannot complete booking. Payment is pending confirmation."
-            },
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+    has_pending_quotation_request = False
+    quotation = getattr(booking, "quotation", None)
+    if quotation is not None:
+        quotation_status = str(quotation.status or "").lower()
+        has_pending_quotation_request = quotation_status == Quotation.Status.PENDING
+        if not has_pending_quotation_request:
+            has_pending_quotation_request = quotation.items.filter(status=Quotation.Status.PENDING).exists()
 
-    if not booking_has_backjob(booking):
+    payment_summary = _get_payment_summary(booking)
+    remaining_balance = Decimal(str(payment_summary.get("remaining_balance", 0) or 0)).quantize(Decimal("0.01"))
+
+    # For normal jobs, allow completion from pending_payment only when no balance remains
+    # and no quotation request is still waiting for client action.
+    if booking.status == Booking.Status.PENDING_PAYMENT and not booking_has_backjob(booking):
+        if remaining_balance > Decimal("0.00"):
+            return Response(
+                {
+                    "error": "Cannot complete booking. Payment is still pending.",
+                    "remaining_balance": float(remaining_balance),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if has_pending_quotation_request:
+            return Response(
+                {
+                    "error": "Cannot complete booking. A quotation request is still pending client action.",
+                    "code": "quotation_pending_client_approval",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    if not booking_has_backjob(booking) and remaining_balance > Decimal("0.00"):
         try:
             receipt = booking.receipt
             if not receipt.payment_received:

@@ -13,7 +13,7 @@ import logging
 from ...models import (
     Booking, Request, ActiveBooking, CancelBooking,
     ReworkBooking, DisputeBooking, CompleteBooking, Receipt, BroadcastOffer, PaymentInstallment, Quotation, RequestAssignment,
-    BroadcastRequest, BroadcastRequestAddOn, DirectRequestAddOn, MechanicLocation
+    BroadcastRequest, BroadcastRequestAddOn, DirectRequestAddOn, MechanicLocation, QuotationItem
 )
 from ...serializers import BookingSerializer, BookingPaymentSerializer
 from ...backjob_utils import (
@@ -1102,6 +1102,25 @@ def _serialize_single_booking(booking, viewer_account=None):
     if accepted_offer and accepted_offer.traffic_level:
         traffic_level_value = accepted_offer.traffic_level
 
+    mechanic_location_payload = None
+    mechanic_location = MechanicLocation.objects.filter(booking=booking).first()
+    if mechanic_location is not None:
+        mechanic_location_payload = {
+            'latitude': float(mechanic_location.latitude),
+            'longitude': float(mechanic_location.longitude),
+            'updated_at': mechanic_location.updated_at.isoformat() if mechanic_location.updated_at else None,
+        }
+    elif (
+        accepted_offer
+        and accepted_offer.mechanic_latitude is not None
+        and accepted_offer.mechanic_longitude is not None
+    ):
+        mechanic_location_payload = {
+            'latitude': float(accepted_offer.mechanic_latitude),
+            'longitude': float(accepted_offer.mechanic_longitude),
+            'updated_at': accepted_offer.responded_at.isoformat() if accepted_offer.responded_at else None,
+        }
+
     is_mechanic_viewer = bool(viewer_account and hasattr(viewer_account, 'mechanic'))
     is_completed_for_mechanic = is_mechanic_viewer and booking.status == 'completed'
 
@@ -1145,6 +1164,7 @@ def _serialize_single_booking(booking, viewer_account=None):
         'distance_km': float(distance_value) if distance_value is not None else None,
         'estimated_eta_minutes': int(eta_value) if eta_value is not None else None,
         'traffic_level': traffic_level_value,
+        'mechanic_location': mechanic_location_payload,
         'booked_at': booking.booked_at.isoformat(),
         'updated_at': booking.updated_at.isoformat(),
         'completed_at': booking.completed_at.isoformat() if booking.completed_at else None,
@@ -1495,127 +1515,34 @@ def client_accept_quotation(request, booking_id):
         except Exception:
             return Response({'error': 'No quotation found'}, status=status.HTTP_404_NOT_FOUND)
 
-        from ...models import Quotation
-        quotation.status = Quotation.Status.ACCEPTED
-        quotation.save(update_fields=['status'])
-
-        # Only promote pending proposal rows to accepted.
-        # Rejected rows are pending removal proposals and should be removed on accept.
-        try:
-            quotation.items.filter(status=Quotation.Status.PENDING).update(status=Quotation.Status.ACCEPTED)
-            quotation.items.filter(status=Quotation.Status.ACCEPTED).update(
-                change_type=None,
-                previous_description=None,
-                previous_quantity=None,
-                previous_unit_price=None,
+        from ...models import QuotationAmendment
+        from ...services import resolve_amendment
+        pending = (
+            quotation.amendments.filter(status=QuotationAmendment.Status.PENDING)
+            .order_by("-created_at", "-id")
+            .first()
+        )
+        if pending is None:
+            return Response(
+                {"error": "No pending amendment request found."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
-            quotation.items.filter(status=Quotation.Status.REJECTED).delete()
-        except Exception as e:
-            print(f"DEBUG: Failed to update QuotationItem statuses for Quotation {quotation.id}: {e}")
-
-        # Verify persistence immediately and print DB value for debugging
+        amendment = resolve_amendment(pending.id, "accepted")
+        quotation.refresh_from_db()
         try:
-            fresh = Quotation.objects.get(id=quotation.id)
-            print(f"DEBUG: Quotation {quotation.id} after save status in DB is: {fresh.status}")
-            # print a sample of item statuses
-            item_statuses = list(fresh.items.values_list('id', 'status'))
-            print(f"DEBUG: Quotation {quotation.id} item statuses: {item_statuses}")
-        except Exception as e:
-            print(f"DEBUG: Failed to re-load Quotation {quotation.id} after save: {e}")
+            from ...ws_utils import post_quotation_chat_message
+            post_quotation_chat_message(
+                account=booking.request.provider,
+                booking=booking,
+                quotation=quotation,
+                action="accepted",
+                request=request,
+                amendment=amendment,
+            )
+        except Exception:
+            pass
 
-        print(f"DEBUG: Acceptance triggered for Quotation {quotation.id}")
-
-        # Find and update only the latest pending quotation request message for this quotation.
-        # Do not rewrite historical rejected/accepted snapshots.
-        try:
-            from chat.models import Message as ChatMessage
-            import json
-
-            messages = ChatMessage.objects.filter(
-                conversation__booking_id=booking.id,
-                content__contains='"quotation_id"'
-            ).order_by('-created_at')
-
-            latest_pending_message_id = None
-            for m in messages:
-                try:
-                    payload = json.loads(m.content) if isinstance(m.content, str) else m.content
-                except Exception:
-                    continue
-                if not isinstance(payload, dict):
-                    continue
-                if payload.get('type') != 'quotation_request':
-                    continue
-                if str(payload.get('quotation_id')) != str(quotation.id):
-                    continue
-                if str(payload.get('status', '')).lower() == 'pending':
-                    latest_pending_message_id = m.id
-                    break
-
-            updated = 0
-            for m in messages:
-                try:
-                    payload = json.loads(m.content) if isinstance(m.content, str) else m.content
-                except Exception:
-                    # skip non-json content
-                    continue
-
-                try:
-                    # Ensure payload is a dict and matches the quotation id (compare as strings to be robust)
-                    if isinstance(payload, dict) and payload.get('type') == 'quotation_request' and str(payload.get('quotation_id')) == str(quotation.id):
-                        if str(payload.get('status', '')).lower() != 'pending':
-                            continue
-                        if latest_pending_message_id is not None and m.id != latest_pending_message_id:
-                            continue
-
-                        payload['status'] = 'accepted'
-                        # keep accepted message items aligned with DB accepted rows only
-                        payload['items'] = []
-                        try:
-                            for it in quotation.items.filter(status=Quotation.Status.ACCEPTED):
-                                payload['items'].append({
-                                    'id': it.id,
-                                    'line_kind': getattr(it, 'line_kind', 'item'),
-                                    'source': getattr(it, 'source', None),
-                                    'service': it.service_id,
-                                    'service_add_on': it.service_add_on_id,
-                                    'description': it.description,
-                                    'quantity': int(it.quantity),
-                                    'unit_price': float(it.unit_price),
-                                    'line_total': float(it.line_total),
-                                    'status': 'accepted',
-                                    'purchase_receipt_image': it.purchase_receipt_image.url if getattr(it, 'purchase_receipt_image', None) else None,
-                                    'receipt_submitted_at': it.receipt_submitted_at.isoformat() if getattr(it, 'receipt_submitted_at', None) else None,
-                                })
-                        except Exception:
-                            pass
-                        # overwrite content with updated payload and save normally so auto timestamps update
-                        m.content = json.dumps(payload)
-                        m.save()
-                        updated += 1
-                except Exception:
-                    continue
-
-            print(f"DEBUG: Updated {updated} messages for quotation {quotation.id}")
-            # Explicit success trace required for debugging acceptance propagation
-            print(f"DEBUG: Successfully updated message payload to ACCEPTED. Broadcasting now...")
-        except Exception as e:
-            print(f"DEBUG: Error while updating chat messages for quotation {quotation.id}: {e}")
-
-        # Recalculate totals from accepted rows only and enforce backjob pricing rules.
-        quotation.is_backjob = booking_has_backjob(booking)
-        quotation.recalculate_totals()
-        quotation.save(update_fields=[
-            'is_backjob',
-            'original_labor_cost',
-            'backjob_discount',
-            'final_labor_total',
-            'total_amount',
-            'updated_at',
-        ])
-
-        # Update booking amount. For backjobs, quotation.total_amount from recalculate_totals()
-        # drops service-typed new lines; payable is the sum of accepted is_backjob_line (service + item).
+        # Update booking amount after amendment apply.
         if booking_has_backjob(booking):
             effective_fee = backjob_accepted_payable_total(quotation)
         else:
@@ -1705,208 +1632,30 @@ def client_reject_quotation(request, booking_id):
         except Exception:
             return Response({'error': 'No quotation found'}, status=status.HTTP_404_NOT_FOUND)
 
-        from ...models import Quotation
-        # Reject only pending proposal items. If a pending item was an edit of an
-        # accepted item, restore it from the latest accepted chat snapshot.
-        latest_accepted_snapshot = {}
-        latest_baseline_snapshot = {}
-        latest_pending_message_id = None
-        try:
-            from chat.models import Message as ChatMessage
-            import json
-
-            snapshot_messages = ChatMessage.objects.filter(
-                conversation__booking_id=booking.id,
-                content__contains='"quotation_id"'
-            ).order_by('-created_at')
-
-            pending_seen = False
-            for sm in snapshot_messages:
-                try:
-                    sp = json.loads(sm.content) if isinstance(sm.content, str) else sm.content
-                except Exception:
-                    continue
-                if not isinstance(sp, dict):
-                    continue
-                if sp.get('type') != 'quotation_request':
-                    continue
-                if str(sp.get('quotation_id')) != str(quotation.id):
-                    continue
-                msg_status = str(sp.get('status', '')).lower()
-
-                if not pending_seen and msg_status == 'pending':
-                    pending_seen = True
-                    latest_pending_message_id = sm.id
-                    continue
-
-                if pending_seen and msg_status == 'accepted' and not latest_accepted_snapshot:
-                    for idx, sit in enumerate((sp.get('items') or [])):
-                        try:
-                            sid = int(sit.get('id')) if sit.get('id') is not None else None
-                        except Exception:
-                            sid = None
-                        if sid is None:
-                            sid = -(idx + 1)
-                        latest_accepted_snapshot[sid] = sit
-
-                if pending_seen and msg_status != 'rejected' and not latest_baseline_snapshot:
-                    for idx, sit in enumerate((sp.get('items') or [])):
-                        try:
-                            sid = int(sit.get('id')) if sit.get('id') is not None else None
-                        except Exception:
-                            sid = None
-                        if sid is None:
-                            sid = -(idx + 1)
-                        latest_baseline_snapshot[sid] = sit
-
-                if latest_accepted_snapshot and latest_baseline_snapshot:
-                    break
-        except Exception:
-            latest_accepted_snapshot = {}
-            latest_baseline_snapshot = {}
-            latest_pending_message_id = None
-
-        snapshot_to_restore = latest_accepted_snapshot or latest_baseline_snapshot
-
-        pending_exists = quotation.items.filter(status=Quotation.Status.PENDING).exists()
-        pending_request_exists = pending_exists or (latest_pending_message_id is not None) or (str(getattr(quotation, 'status', '')).lower() == 'pending')
-
-        # Strong revert guarantee: when rejecting pending edits, rebuild current quotation items
-        # from the latest accepted snapshot so no edited value can push through.
-        if pending_request_exists and snapshot_to_restore:
-            try:
-                quotation.items.all().delete()
-            except Exception:
-                pass
-
-            for _sid, snap in snapshot_to_restore.items():
-                try:
-                    # Reject means rollback to baseline state, so restored rows must be accepted.
-                    item_status = Quotation.Status.ACCEPTED
-                    quotation.items.create(
-                        line_kind=snap.get('line_kind') or QuotationItem.LineKind.ITEM,
-                        source=snap.get('source'),
-                        service_id=snap.get('service') if snap.get('service') is not None else None,
-                        service_add_on_id=snap.get('service_add_on') if snap.get('service_add_on') is not None else None,
-                        description=snap.get('description', ''),
-                        quantity=snap.get('quantity', 1),
-                        unit_price=snap.get('unit_price', 0),
-                        status=item_status,
-                        change_type=None,
-                        previous_description=None,
-                        previous_quantity=None,
-                        previous_unit_price=None,
-                    )
-                except Exception:
-                    continue
-        else:
-            # Fallback behavior when snapshot is unavailable.
-            pending_items = list(quotation.items.filter(status=Quotation.Status.PENDING))
-            for pit in pending_items:
-                snap = latest_accepted_snapshot.get(pit.id)
-                if snap:
-                    pit.description = snap.get('description', pit.description)
-                    pit.quantity = snap.get('quantity', pit.quantity)
-                    pit.unit_price = snap.get('unit_price', pit.unit_price)
-                    pit.line_kind = snap.get('line_kind') or pit.line_kind
-                    pit.source = snap.get('source')
-                    pit.service_id = snap.get('service') if snap.get('service') is not None else None
-                    pit.service_add_on_id = snap.get('service_add_on') if snap.get('service_add_on') is not None else None
-                    pit.status = Quotation.Status.ACCEPTED
-                    pit.change_type = None
-                    pit.previous_description = None
-                    pit.previous_quantity = None
-                    pit.previous_unit_price = None
-                    pit.save()
-                else:
-                    # Safety fallback: don't drop data when snapshot is unavailable.
-                    # Revert proposal state so edited accepted rows do not disappear.
-                    pit.status = Quotation.Status.ACCEPTED
-                    pit.change_type = None
-                    pit.previous_description = None
-                    pit.previous_quantity = None
-                    pit.previous_unit_price = None
-                    pit.save()
-
-            # If snapshot is unavailable, also revert pending removal proposals.
-            try:
-                quotation.items.filter(status=Quotation.Status.REJECTED).update(
-                    status=Quotation.Status.ACCEPTED,
-                    change_type=None,
-                    previous_description=None,
-                    previous_quantity=None,
-                    previous_unit_price=None,
-                )
-            except Exception:
-                pass
-
-        # Hard guard: after reject rollback there must be no lingering pending rows.
-        try:
-            quotation.items.filter(status=Quotation.Status.PENDING).update(
-                status=Quotation.Status.ACCEPTED,
-                change_type=None,
-                previous_description=None,
-                previous_quantity=None,
-                previous_unit_price=None,
+        from ...models import QuotationAmendment
+        from ...services import resolve_amendment
+        pending = (
+            quotation.amendments.filter(status=QuotationAmendment.Status.PENDING)
+            .order_by("-created_at", "-id")
+            .first()
+        )
+        if pending is None:
+            return Response(
+                {"error": "No pending amendment request found."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
-        except Exception:
-            pass
-
-        accepted_items_qs = quotation.items.filter(status=Quotation.Status.ACCEPTED)
-        accepted_total = 0
-        try:
-            accepted_total = sum(float(it.line_total) for it in accepted_items_qs)
-        except Exception:
-            accepted_total = 0
-
-        quotation.status = Quotation.Status.ACCEPTED if accepted_items_qs.exists() else Quotation.Status.REJECTED
-        quotation.total_amount = accepted_total
-        quotation.save(update_fields=['status', 'total_amount', 'updated_at'])
-
-        # Rejected pending deltas must not affect the booking amount.
-        try:
-            booking.amount_fee = accepted_total
-            booking.save(update_fields=['amount_fee', 'updated_at'])
-        except Exception:
-            pass
-
-        # Update any existing quotation_request chat messages for this quotation so
-        # clients/mechanics see the rejected status on that exact request card.
-        try:
-            from chat.models import Message as ChatMessage
-            import json
-
-            messages = ChatMessage.objects.filter(conversation__booking_id=booking.id, content__contains='"quotation_id"')
-            for m in messages:
-                try:
-                    payload = json.loads(m.content) if isinstance(m.content, str) else m.content
-                except Exception:
-                    continue
-
-                if isinstance(payload, dict) and payload.get('type') == 'quotation_request' and str(payload.get('quotation_id')) == str(quotation.id):
-                    # Preserve historical accepted snapshots. Only stamp currently-pending
-                    # quotation requests as rejected.
-                    if str(payload.get('status', '')).lower() != 'pending':
-                        continue
-                    if latest_pending_message_id is not None and m.id != latest_pending_message_id:
-                        continue
-                    payload['status'] = 'rejected'
-                    for pit in payload.get('items', []) or []:
-                        try:
-                            pstatus = str((pit or {}).get('status', '')).lower()
-                            if pstatus == 'pending':
-                                pit['status'] = 'rejected'
-                        except Exception:
-                            continue
-                    m.content = json.dumps(payload)
-                    m.save()
-        except Exception:
-            pass
-
-        # post system chat message about rejection
+        amendment = resolve_amendment(pending.id, "rejected")
+        quotation.refresh_from_db()
         try:
             from ...ws_utils import post_quotation_chat_message
-            post_quotation_chat_message(account, booking, quotation, action='rejected', request=request)
+            post_quotation_chat_message(
+                account=booking.request.provider,
+                booking=booking,
+                quotation=quotation,
+                action="rejected",
+                request=request,
+                amendment=amendment,
+            )
         except Exception:
             pass
 
