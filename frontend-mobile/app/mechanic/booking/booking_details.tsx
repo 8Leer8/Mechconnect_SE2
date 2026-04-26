@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 // Ensure the router header is hidden for this route so only the in-page header shows
 export const screenOptions = { headerShown: false } as const;
 import { View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Modal, useWindowDimensions } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import { router, useLocalSearchParams, useFocusEffect, useNavigation, useRouter } from 'expo-router';
@@ -151,6 +152,11 @@ interface BookingDetail {
       released_at?: string | null;
     }>;
   };
+  payment?: {
+    payment_method?: string | null;
+    payment_received?: boolean;
+    transaction_id?: string | null;
+  } | null;
 }
 
 interface PricingConfig {
@@ -250,6 +256,7 @@ export default function BookingDetailScreen() {
   const [quotationListExpanded, setQuotationListExpanded] = useState(false);
   const [expandedQuoteItems, setExpandedQuoteItems] = useState<Record<string, boolean>>({});
   const [chatChangeLabelByKey, setChatChangeLabelByKey] = useState<Record<string, 'Added' | 'Edited' | 'Removed'>>({});
+  const [pendingQuoteSnapshot, setPendingQuoteSnapshot] = useState<any | null>(null);
   const [chatPreview, setChatPreview] = useState<string | null>(null);
   const [visibleBeforePhotoCount, setVisibleBeforePhotoCount] = useState(6);
   const [visibleAfterPhotoCount, setVisibleAfterPhotoCount] = useState(6);
@@ -266,6 +273,14 @@ export default function BookingDetailScreen() {
   const isMechanicShopSource = source === 'mechanic_shop';
   const [quotation, setQuotation] = useState<any | null>(null);
   const [currentAccountId, setCurrentAccountId] = useState<number | null>(null);
+  const [paidPopupData, setPaidPopupData] = useState<{
+    bookingId: number;
+    methodLabel: string;
+    totalPaid: number;
+    remaining: number;
+  } | null>(null);
+  const lastKnownPaymentPaidRef = useRef(false);
+  const paidPopupShownKeyRef = useRef<string | null>(null);
   const { lastMessage } = useWebSocketContext();
 
   useEffect(() => {
@@ -438,6 +453,43 @@ export default function BookingDetailScreen() {
       }
       return rows;
     })();
+    const applyPendingSnapshotOverlay = (baseRows: any[]) => {
+      const snapshotItems = Array.isArray(pendingQuoteSnapshot?.items) ? pendingQuoteSnapshot.items : [];
+      if (!snapshotItems.length) return baseRows;
+
+      const mergedRows = [...baseRows];
+      const rowById = new Map<string, number>();
+      mergedRows.forEach((row: any, idx: number) => {
+        if (row?.id != null) rowById.set(String(row.id), idx);
+      });
+
+      snapshotItems.forEach((row: any) => {
+        const changeType = String(row?.change_type || '').toLowerCase();
+        const rowId = row?.id != null ? String(row.id) : null;
+        const targetIdx = rowId != null && rowById.has(rowId) ? Number(rowById.get(rowId)) : -1;
+
+        if (changeType === 'added') {
+          mergedRows.push({
+            ...row,
+            status: 'pending',
+            change_type: 'added',
+          });
+          return;
+        }
+
+        if (targetIdx >= 0) {
+          mergedRows[targetIdx] = {
+            ...mergedRows[targetIdx],
+            ...row,
+            status: 'pending',
+            change_type: changeType || mergedRows[targetIdx]?.change_type || null,
+          };
+        }
+      });
+
+      return mergedRows;
+    };
+
     if (quotation && (quotation.items || []).length > 0) {
       const mergedItems = [...(quotation.items || [])];
       expectedServiceItems.forEach((svcRow: any) => {
@@ -446,15 +498,17 @@ export default function BookingDetailScreen() {
         const exists = mergedItems.some((it: any) => Number(it?.service) === sid && String(it?.status || '').toLowerCase() !== 'rejected');
         if (!exists) mergedItems.push(svcRow);
       });
-      const mergedTotal = mergedItems.reduce((sum: number, it: any) => {
+      const overlayedItems = applyPendingSnapshotOverlay(mergedItems);
+      const mergedTotal = overlayedItems.reduce((sum: number, it: any) => {
         const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
         const qty = Number(it?.quantity ?? 1) || 1;
         return sum + (price * qty);
       }, 0);
       return {
         ...quotation,
-        items: mergedItems,
-        total_amount: Math.max(Number(quotation?.total_amount || 0), mergedTotal),
+        status: pendingQuoteSnapshot?.status || quotation?.status,
+        items: overlayedItems,
+        total_amount: Math.max(Number(pendingQuoteSnapshot?.total_amount || 0), Number(quotation?.total_amount || 0), mergedTotal),
       };
     }
 
@@ -530,7 +584,12 @@ export default function BookingDetailScreen() {
   };
 
   const displayQuotation = getDisplayQuotation();
-  const isQuotationPending = Boolean((quotation && quotation.status === 'pending') || (displayQuotation && displayQuotation.status === 'pending'));
+  const hasLivePendingQuoteRequest = Boolean(
+    pendingQuoteSnapshot && String(pendingQuoteSnapshot?.status || '').toLowerCase() === 'pending'
+  );
+  const isQuotationPending = hasLivePendingQuoteRequest || Boolean(
+    (quotation && quotation.status === 'pending') || (displayQuotation && displayQuotation.status === 'pending')
+  );
 
   const convenienceBreakdown = useMemo(() => {
     if (!booking) return null;
@@ -666,6 +725,14 @@ export default function BookingDetailScreen() {
     return null;
   };
 
+  const getExplicitChangeLabel = (it: any): 'Added' | 'Edited' | 'Removed' | null => {
+    const raw = String(it?.change_type || it?.change || it?.modification_type || '').toLowerCase();
+    if (raw === 'added' || raw.includes('add')) return 'Added';
+    if (raw === 'edited' || raw.includes('edit') || raw.includes('update') || raw.includes('modify')) return 'Edited';
+    if (raw === 'removed' || raw.includes('remove') || raw.includes('delete')) return 'Removed';
+    return null;
+  };
+
   const inferChangeLabel = (it: any, acceptedByAssoc: Record<string, any>, acceptedRows: any[], removedRows: any[]) => {
     const normalizeText = (v: any) => String(v ?? '').trim().toLowerCase();
     const normalizeNum = (v: any) => Number(v ?? 0);
@@ -701,6 +768,8 @@ export default function BookingDetailScreen() {
       return isLikelyRename(rowDesc, curDesc);
     });
 
+    const explicit = getExplicitChangeLabel(it);
+    if (explicit) return explicit;
     const raw = String(it?.change_type || it?.change || it?.modification_type || '').toLowerCase();
     if (raw.includes('edit') || raw.includes('update') || raw.includes('modify')) return 'Edited';
     if (it?.previous_description || it?.previous_quantity != null || it?.previous_unit_price != null) {
@@ -737,6 +806,33 @@ export default function BookingDetailScreen() {
       return sum;
     }, 0);
   }, [displayQuotation, quotation]);
+
+  const getBackjobPendingSnapshotTotal = () => {
+    const items = Array.isArray(pendingQuoteSnapshot?.items) ? pendingQuoteSnapshot.items : [];
+    return items.reduce((sum: number, it: any) => {
+      const statusRaw = String(it?.status || it?.quotation_status || it?.state || '').toLowerCase();
+      if (statusRaw === 'rejected') return sum;
+      const changeLabel = getExplicitChangeLabel(it);
+      const shouldCount =
+        Boolean(it?.is_backjob_new_line) ||
+        changeLabel === 'Added';
+      if (!shouldCount) return sum;
+
+      const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
+      const qty = Number(it?.quantity ?? 1) || 1;
+      return sum + price * qty;
+    }, 0);
+  };
+
+  const pendingRequestedQuotationTotal = React.useMemo(() => {
+    if (!hasLivePendingQuoteRequest) return null;
+    if (bookingInBackjobPaymentPhase(booking) || bookingHasBackjob(booking)) {
+      return getBackjobPendingSnapshotTotal();
+    }
+    const pendingTotal = Number((pendingQuoteSnapshot as any)?.total_amount);
+    if (!Number.isFinite(pendingTotal) || pendingTotal < 0) return null;
+    return pendingTotal;
+  }, [hasLivePendingQuoteRequest, pendingQuoteSnapshot, booking]);
 
   useEffect(() => {
     try { navigation.setOptions && navigation.setOptions({ headerShown: false }); } catch (e) {}
@@ -801,6 +897,77 @@ export default function BookingDetailScreen() {
       setShowPendingPayment(false);
     }
   }, [booking?.status, booking?.has_backjob, booking?.backjob?.status]);
+
+  useEffect(() => {
+    if (!booking?.id) return;
+    let cancelled = false;
+
+    const summary = booking.payment_summary || {};
+    const paymentStatusRaw = String(summary.payment_status || '').toLowerCase();
+    const totalPaidAmount = Number(summary.total_paid || 0);
+    const remainingAmount = Number(summary.remaining_balance || 0);
+    const isPaid =
+      paymentStatusRaw === 'fully_paid' ||
+      Boolean(booking.payment?.payment_received) ||
+      (totalPaidAmount > 0 && remainingAmount <= 0);
+
+    if (!isPaid) {
+      lastKnownPaymentPaidRef.current = false;
+      paidPopupShownKeyRef.current = null;
+      return;
+    }
+
+    const popupKey = `${booking.id}:${paymentStatusRaw}:${totalPaidAmount.toFixed(2)}`;
+    if (lastKnownPaymentPaidRef.current && paidPopupShownKeyRef.current === popupKey) {
+      return () => { cancelled = true; };
+    }
+
+    const showPopupIfNeeded = async () => {
+      const storageKey = `mechanic_paid_popup_shown:${popupKey}`;
+      const alreadyShown = await AsyncStorage.getItem(storageKey).catch(() => null);
+      if (cancelled) return;
+      if (alreadyShown === '1') {
+        paidPopupShownKeyRef.current = popupKey;
+        lastKnownPaymentPaidRef.current = true;
+        return;
+      }
+
+      const rawMethod = String(booking.payment?.payment_method || '').toLowerCase();
+      const methodLabel = rawMethod === 'gcash'
+        ? 'GCash'
+        : rawMethod === 'maya'
+          ? 'Maya'
+          : rawMethod === 'credits'
+            ? 'Credits'
+            : rawMethod === 'cash'
+              ? 'Cash'
+              : 'Payment';
+
+      await AsyncStorage.setItem(storageKey, '1').catch(() => null);
+      if (cancelled) return;
+      paidPopupShownKeyRef.current = popupKey;
+      lastKnownPaymentPaidRef.current = true;
+      setShowCashQR(false);
+      setShowPendingPayment(false);
+      setPaymentReceived(true);
+      setPaidPopupData({
+        bookingId: booking.id,
+        methodLabel,
+        totalPaid: totalPaidAmount,
+        remaining: Math.max(0, remainingAmount),
+      });
+    };
+
+    showPopupIfNeeded();
+    return () => { cancelled = true; };
+  }, [
+    booking?.id,
+    booking?.payment?.payment_method,
+    booking?.payment?.payment_received,
+    booking?.payment_summary?.payment_status,
+    booking?.payment_summary?.total_paid,
+    booking?.payment_summary?.remaining_balance,
+  ]);
 
   const fetchBookingDetail = useCallback(async () => {
     if (!bookingId) return;
@@ -933,6 +1100,17 @@ export default function BookingDetailScreen() {
     return () => clearInterval(interval);
   }, [fetchBookingDetail]);
 
+  // Faster temporary sync while quotation request is pending
+  // so accept/reject updates reflect quickly in pricing/details.
+  useEffect(() => {
+    if (!hasLivePendingQuoteRequest) return;
+    const quickInterval = setInterval(() => {
+      fetchBookingDetail();
+      refreshChatQuotationLabels();
+    }, 2000);
+    return () => clearInterval(quickInterval);
+  }, [hasLivePendingQuoteRequest, fetchBookingDetail, refreshChatQuotationLabels]);
+
   const fetchQuotation = async () => {
     if (!bookingId) return;
     try {
@@ -1007,25 +1185,46 @@ export default function BookingDetailScreen() {
         return null;
       };
 
-      const ordered = [...rows].reverse();
-      const latestQuoteMsg = ordered.find((m: any) => {
-        const p = parsePayload(m?.content);
-        return p && p.type === 'quotation_request' && String(p?.status || '').toLowerCase() === 'pending';
-      }) || ordered.find((m: any) => {
-        const p = parsePayload(m?.content);
-        return p && p.type === 'quotation_request';
-      });
-      if (!latestQuoteMsg) return;
-      const payload = parsePayload(latestQuoteMsg.content);
+      const quoteMessages = rows
+        .map((m: any) => ({ ...m, __payload: parsePayload(m?.content) }))
+        .filter((m: any) => m.__payload && m.__payload.type === 'quotation_request')
+        .sort((a: any, b: any) => {
+          const ta = Number(new Date(String(a?.created_at || '')).getTime()) || 0;
+          const tb = Number(new Date(String(b?.created_at || '')).getTime()) || 0;
+          if (tb !== ta) return tb - ta;
+          return Number(b?.id || 0) - Number(a?.id || 0);
+        });
+      const latestQuoteMsg = quoteMessages[0];
+      if (!latestQuoteMsg) {
+        setPendingQuoteSnapshot(null);
+        setChatChangeLabelByKey({});
+        return;
+      }
+      const payload = latestQuoteMsg.__payload;
+      if (payload && payload.type === 'quotation_request' && String(payload?.status || '').toLowerCase() === 'pending') {
+        setPendingQuoteSnapshot(payload);
+      } else {
+        setPendingQuoteSnapshot(null);
+        setChatChangeLabelByKey({});
+        return;
+      }
       const items = Array.isArray(payload?.items) ? payload.items : [];
 
-      const previousQuoteMsg = ordered.find((m: any) => {
+      const previousQuoteMsg = quoteMessages.find((m: any) => {
         if (m?.id === latestQuoteMsg?.id) return false;
-        const p = parsePayload(m?.content);
-        return p && p.type === 'quotation_request' && String(p?.quotation_id || '') === String(payload?.quotation_id || '');
+        return String(m?.__payload?.quotation_id || '') === String(payload?.quotation_id || '');
       });
-      const previousPayload = previousQuoteMsg ? parsePayload(previousQuoteMsg.content) : null;
-      const previousItems = Array.isArray(previousPayload?.items) ? previousPayload.items : [];
+      const previousPayload = previousQuoteMsg ? previousQuoteMsg.__payload : null;
+      let previousItems = Array.isArray(previousPayload?.items) ? previousPayload.items : [];
+      if (String(previousPayload?.status || '').toLowerCase() === 'accepted') {
+        previousItems = previousItems.filter((it: any) => {
+          const ct = String(it?.change_type || '').toLowerCase();
+          const st = String(it?.status || '').toLowerCase();
+          if (ct === 'removed' || ct.includes('remove')) return false;
+          if (st === 'rejected') return false;
+          return true;
+        });
+      }
 
       const normalizeText = (v: any) => String(v ?? '').trim().toLowerCase();
       const normalizeNum = (v: any) => Number(v ?? 0);
@@ -1817,9 +2016,10 @@ export default function BookingDetailScreen() {
   const shouldIncludeItemInBackjobQuoteAmountTotals = (it: any) => {
     if (Boolean(it?.is_backjob_new_line)) return true;
     if (isLineCreatedAfterBackjob(it)) return true;
+    const explicit = getExplicitChangeLabel(it);
     const inferred = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
     const chat = getQuoteSnapshotKeys(it).map((k) => chatChangeLabelByKey[k]).find(Boolean) || null;
-    const raw = chat || inferred || null;
+    const raw = explicit || chat || inferred || null;
     return raw === 'Added';
   };
 
@@ -1830,9 +2030,10 @@ export default function BookingDetailScreen() {
     const statusRaw = String(it?.status || it?.quotation_status || it?.state || quotation?.status || '').toLowerCase();
     if (statusRaw !== 'pending') return sum;
 
+    const explicitChangeLabel = getExplicitChangeLabel(it);
     const inferredChangeLabel = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
     const chatDerivedChangeLabel = getQuoteSnapshotKeys(it).map((k) => chatChangeLabelByKey[k]).find(Boolean) || null;
-    const rawChangeLabel = chatDerivedChangeLabel || inferredChangeLabel || null;
+    const rawChangeLabel = explicitChangeLabel || chatDerivedChangeLabel || inferredChangeLabel || null;
     let changeLabel = rawChangeLabel;
     if (
       bookingInBackjobPaymentPhase(booking) &&
@@ -1863,9 +2064,10 @@ export default function BookingDetailScreen() {
     const statusRaw = String(it?.status || it?.quotation_status || it?.state || quotation?.status || '').toLowerCase();
     if (statusRaw !== 'accepted') return sum;
 
+    const explicitChangeLabel = getExplicitChangeLabel(it);
     const inferredChangeLabel = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
     const chatDerivedChangeLabel = getQuoteSnapshotKeys(it).map((k) => chatChangeLabelByKey[k]).find(Boolean) || null;
-    let changeLabel = chatDerivedChangeLabel || inferredChangeLabel || null;
+    let changeLabel = explicitChangeLabel || chatDerivedChangeLabel || inferredChangeLabel || null;
     if (
       bookingInBackjobPaymentPhase(booking) &&
       !changeLabel &&
@@ -1887,9 +2089,10 @@ export default function BookingDetailScreen() {
     const isPending = statusRaw === 'pending';
     const quotationStatusRaw = String((quotation && quotation.status) || '').toLowerCase();
     const isPendingQuotationRequest = quotationStatusRaw === 'pending';
+    const explicitChangeLabel = getExplicitChangeLabel(it);
     const inferredChangeLabel = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
     const chatDerivedChangeLabel = getQuoteSnapshotKeys(it).map((k) => chatChangeLabelByKey[k]).find(Boolean) || null;
-    const rawChangeLabel = chatDerivedChangeLabel || inferredChangeLabel || null;
+    const rawChangeLabel = explicitChangeLabel || chatDerivedChangeLabel || inferredChangeLabel || null;
     const changeLabel = (isPending || isPendingQuotationRequest) ? rawChangeLabel : null;
     const isRemoved = changeLabel === 'Removed';
     const desc = it?.description || it?.name || (it.service && `Service #${it.service}`) || 'Item';
@@ -2052,12 +2255,16 @@ export default function BookingDetailScreen() {
           : 'unpaid';
   const paymentProgressPct =
     totalAmount > 0 ? Math.min(100, Math.max(0, (totalPaid / totalAmount) * 100)) : 0;
-  const showBackjobCompletionFlow =
-    backjobPaymentPhase && booking.status === 'pending_payment' && totalAmount <= 0;
+  const noPendingPaymentLeft = booking.status === 'pending_payment' && remainingBalance <= 0;
+  const canProceedToCompletion = noPendingPaymentLeft && !isQuotationPending;
+  const showBackjobCompletionFlow = canProceedToCompletion && backjobPaymentPhase;
+  const showGeneralCompletionFlow = canProceedToCompletion && !backjobPaymentPhase;
+  const isPaymentBlockedByPendingQuote = isQuotationPending;
   const showPendingPaymentFlow =
-    booking.status === 'pending_payment' && !showBackjobCompletionFlow && (!backjobPaymentPhase || totalAmount > 0);
+    booking.status === 'pending_payment' && remainingBalance > 0;
   const canShowPaymentModals =
     (!backjobPaymentPhase || totalAmount > 0) &&
+    !isQuotationPending &&
     (booking.status === 'pending_payment' || booking.status === 'accepted');
 
   const getPaymentStatusColor = (status: string) => {
@@ -2111,6 +2318,7 @@ export default function BookingDetailScreen() {
       </View>
 
       {/* Action Buttons */}
+      {!isCompletedBooking ? (
       <View style={[styles.actionButtonsContainer, { paddingBottom: 16 + Math.max(insets.bottom, 6) }]}>
         <View style={styles.actionBarInner}>
           {/* Pending: Decline + Accept */}
@@ -2508,14 +2716,27 @@ export default function BookingDetailScreen() {
           {showPendingPaymentFlow && (
             <>
               <TouchableOpacity
-                style={[styles.finishLargeButton, transitioning && styles.actionButtonDisabled]}
-                onPress={() => setShowPaymentReceiptConfirm(true)}
-                disabled={transitioning}
+                style={[
+                  styles.finishLargeButton,
+                  (transitioning || isPaymentBlockedByPendingQuote) && styles.actionButtonDisabled,
+                  isPaymentBlockedByPendingQuote ? { backgroundColor: '#6B7280', borderColor: '#4B5563' } : null,
+                ]}
+                onPress={() => {
+                  if (!isPaymentBlockedByPendingQuote) setShowPaymentReceiptConfirm(true);
+                }}
+                disabled={transitioning || isPaymentBlockedByPendingQuote}
                 activeOpacity={0.85}
               >
-                <FontAwesome name="credit-card" size={18} color="#fff" />
-                <ThemedText style={styles.actionBarBtnText}>Proceed to payment</ThemedText>
+                <FontAwesome name={isPaymentBlockedByPendingQuote ? 'clock-o' : 'credit-card'} size={18} color="#fff" />
+                <ThemedText style={styles.actionBarBtnText}>
+                  {isPaymentBlockedByPendingQuote ? 'Pending request' : 'Proceed to payment'}
+                </ThemedText>
               </TouchableOpacity>
+              {isPaymentBlockedByPendingQuote ? (
+                <ThemedText style={[styles.noteText, { marginTop: 8, marginBottom: 4, textAlign: 'center', color: '#C89B55' }]}>
+                  Payment is locked until the client responds to the pending quotation request.
+                </ThemedText>
+              ) : null}
               <TouchableOpacity
                 style={[styles.neutralSecondaryButton, pendingRevertLoading && styles.actionButtonDisabled]}
                 onPress={async () => {
@@ -2587,8 +2808,32 @@ export default function BookingDetailScreen() {
               </TouchableOpacity>
             </>
           )}
+
+          {showGeneralCompletionFlow && (
+            <>
+              <View style={styles.noteBox}>
+                <ThemedText style={styles.noteText}>
+                  Payment is already settled and there are no pending quotation requests. You can now complete this job.
+                </ThemedText>
+              </View>
+              <TouchableOpacity
+                style={[styles.finishLargeButton, completing && styles.actionButtonDisabled]}
+                onPress={handleCompleteBooking}
+                disabled={transitioning || completing}
+                activeOpacity={0.85}
+              >
+                {completing ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <FontAwesome name="check" size={18} color="#fff" />
+                )}
+                <ThemedText style={styles.actionBarBtnText}>Complete job</ThemedText>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
       </View>
+      ) : null}
 
       <ScrollView
         style={styles.scrollView}
@@ -2885,7 +3130,7 @@ export default function BookingDetailScreen() {
               <View style={styles.receiptDivider} />
             </View>
 
-            {isQuotationPending ? (
+            {hasLivePendingQuoteRequest ? (
               <View style={styles.pendingHintBanner}>
                 <FontAwesome name="clock-o" size={12} color="#C89B55" />
                 <ThemedText style={styles.pendingHintText}>Pending changes are waiting for client approval.</ThemedText>
@@ -3040,6 +3285,12 @@ export default function BookingDetailScreen() {
                 <View style={styles.receiptRow}>
                   <ThemedText style={styles.receiptTotalLabel}>Quotation Estimated Total</ThemedText>
                   <ThemedText style={styles.receiptTotalValue}>₱{effectiveQuotationEstimate.toFixed(2)}</ThemedText>
+                </View>
+              ) : null}
+              {pendingRequestedQuotationTotal != null ? (
+                <View style={styles.receiptRow}>
+                  <ThemedText style={styles.receiptTotalLabel}>Pending Requested Total</ThemedText>
+                  <ThemedText style={[styles.receiptTotalValue, { color: '#F2B15C' }]}>₱{pendingRequestedQuotationTotal.toFixed(2)}</ThemedText>
                 </View>
               ) : null}
               <View style={styles.receiptRow}>
@@ -3433,7 +3684,55 @@ export default function BookingDetailScreen() {
       </ScrollView>
 
       <Modal
-        visible={showPaymentReceiptConfirm && showPendingPaymentFlow}
+        visible={!!paidPopupData}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPaidPopupData(null)}
+      >
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.72)', padding: 22 }}>
+          <View style={{ width: '100%', maxWidth: 360, backgroundColor: '#1A1C1E', borderRadius: 22, borderWidth: 1, borderColor: '#2A2C2E', padding: 20 }}>
+            <View style={{ alignItems: 'center', marginBottom: 14 }}>
+              <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#34C75922', alignItems: 'center', justifyContent: 'center', marginBottom: 10 }}>
+                <FontAwesome name="check-circle" size={46} color="#34C759" />
+              </View>
+              <ThemedText style={{ color: '#ECEDEE', fontSize: 22, fontWeight: '800', textAlign: 'center' }}>
+                Client Already Paid
+              </ThemedText>
+              <ThemedText style={{ color: '#9BA1A6', marginTop: 6, textAlign: 'center' }}>
+                Payment for booking #{paidPopupData?.bookingId} has been confirmed.
+              </ThemedText>
+            </View>
+
+            <View style={{ backgroundColor: '#151718', borderRadius: 14, borderWidth: 1, borderColor: '#2A2C2E', padding: 14, gap: 10 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <ThemedText style={{ color: '#8E8E93' }}>Method</ThemedText>
+                <ThemedText style={{ color: '#ECEDEE', fontWeight: '800' }}>{paidPopupData?.methodLabel || 'Payment'}</ThemedText>
+              </View>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <ThemedText style={{ color: '#8E8E93' }}>Paid Amount</ThemedText>
+                <ThemedText style={{ color: '#34C759', fontWeight: '800' }}>₱{Number(paidPopupData?.totalPaid || 0).toFixed(2)}</ThemedText>
+              </View>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <ThemedText style={{ color: '#8E8E93' }}>Remaining</ThemedText>
+                <ThemedText style={{ color: Number(paidPopupData?.remaining || 0) > 0 ? '#FFD60A' : '#34C759', fontWeight: '800' }}>
+                  ₱{Number(paidPopupData?.remaining || 0).toFixed(2)}
+                </ThemedText>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.finishLargeButton, { marginTop: 16 }]}
+              onPress={() => setPaidPopupData(null)}
+              activeOpacity={0.85}
+            >
+              <ThemedText style={styles.actionBarBtnText}>Got it</ThemedText>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={showPaymentReceiptConfirm && showPendingPaymentFlow && !isPaymentBlockedByPendingQuote}
         transparent
         animationType="slide"
         onRequestClose={() => setShowPaymentReceiptConfirm(false)}

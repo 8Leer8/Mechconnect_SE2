@@ -516,6 +516,14 @@ export default function ShopOwnerBookingDetailScreen() {
     return null;
   };
 
+  const getExplicitChangeLabel = (it: any): 'Added' | 'Edited' | 'Removed' | null => {
+    const raw = String(it?.change_type || it?.change || it?.modification_type || '').toLowerCase();
+    if (raw === 'added' || raw.includes('add')) return 'Added';
+    if (raw === 'edited' || raw.includes('edit') || raw.includes('update') || raw.includes('modify')) return 'Edited';
+    if (raw === 'removed' || raw.includes('remove') || raw.includes('delete')) return 'Removed';
+    return null;
+  };
+
   const inferChangeLabel = (it: any, acceptedByAssoc: Record<string, any>, acceptedRows: any[], removedRows: any[]) => {
     const isLikelyRename = (aRaw: any, bRaw: any) => {
       const a = normalizeText(aRaw);
@@ -541,6 +549,8 @@ export default function ShopOwnerBookingDetailScreen() {
       return isLikelyRename(rowDesc, curDesc);
     });
 
+    const explicit = getExplicitChangeLabel(it);
+    if (explicit) return explicit;
     const raw = String(it?.change_type || it?.change || it?.modification_type || '').toLowerCase();
     if (raw.includes('edit') || raw.includes('update') || raw.includes('modify')) return 'Edited';
     if (it?.previous_description || it?.previous_quantity != null || it?.previous_unit_price != null) {
@@ -1048,8 +1058,9 @@ export default function ShopOwnerBookingDetailScreen() {
                     const itemStatus = it?.status || displayQuotation?.status || quotation?.status;
                     const isPending = String(itemStatus).toLowerCase() === 'pending';
                     const isRejected = String(itemStatus).toLowerCase() === 'rejected';
+                    const explicit = getExplicitChangeLabel(it);
                     const inferred = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
-                    const changeLabel = inferred || (String(itemStatus).toLowerCase() === 'pending' ? 'Edited' : null);
+                    const changeLabel = explicit || inferred || (String(itemStatus).toLowerCase() === 'pending' ? 'Edited' : null);
                     const assocKey = getAssocKey(it);
                     const beforeItem = it?.previous_description || it?.previous_quantity != null || it?.previous_unit_price != null
                       ? {
