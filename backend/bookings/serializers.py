@@ -10,6 +10,7 @@ from users.models import Account, Client
 from shops.models import Shop
 from MainBackend.storage_utils import get_media_url
 from .backjob_utils import booking_has_backjob, booking_has_live_backjob, get_booking_backjob
+from .direct_request_utils import direct_request_service_ids, iter_direct_request_services
 
 
 class ServiceLocationSerializer(serializers.ModelSerializer):
@@ -72,11 +73,16 @@ class CustomRequestSerializer(serializers.ModelSerializer):
 
 class DirectRequestSerializer(serializers.ModelSerializer):
     service = ServiceBasicSerializer(read_only=True)
+    services = serializers.SerializerMethodField()
     add_ons = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = DirectRequest
-        fields = ['id', 'service', 'request_status', 'add_ons']
+        fields = ['id', 'service', 'services', 'request_status', 'add_ons']
+
+    def get_services(self, obj):
+        rows = iter_direct_request_services(obj.request)
+        return ServiceBasicSerializer(rows, many=True).data
     
     def get_add_ons(self, obj):
         add_ons = DirectRequestAddOn.objects.filter(request=obj.request).select_related('service_add_on')
@@ -320,11 +326,8 @@ class BookingSerializer(serializers.ModelSerializer):
             services = request.broadcast_request.services.all()
             return [service.name for service in services]
 
-        # Handle DirectRequest - single service
         if hasattr(request, 'directrequest') and request.directrequest:
-            service = request.directrequest.service
-            if service:
-                return [service.name]
+            return [s.name for s in iter_direct_request_services(request) if s and s.name]
 
         return []
 
@@ -760,9 +763,7 @@ class QuotationSerializer(serializers.Serializer):
             requested_service_ids = set()
             try:
                 request_obj = getattr(instance.booking, 'request', None)
-                direct = getattr(request_obj, 'directrequest', None)
-                if direct and direct.service_id:
-                    requested_service_ids.add(int(direct.service_id))
+                requested_service_ids.update(direct_request_service_ids(request_obj))
                 broadcast = getattr(request_obj, 'broadcast_request', None)
                 if broadcast:
                     requested_service_ids.update(int(sid) for sid in broadcast.services.values_list('id', flat=True))
@@ -913,8 +914,7 @@ class QuotationSerializer(serializers.Serializer):
                 req = getattr(bk, 'request', None)
                 if req is None:
                     return ids
-                if hasattr(req, 'directrequest') and req.directrequest and req.directrequest.service_id:
-                    ids.add(int(req.directrequest.service_id))
+                ids.update(direct_request_service_ids(req))
                 if hasattr(req, 'broadcast_request') and req.broadcast_request:
                     for svc in req.broadcast_request.services.all():
                         try:
@@ -1017,8 +1017,7 @@ class QuotationSerializer(serializers.Serializer):
                 req = getattr(bk, 'request', None)
                 if req is None:
                     return ids
-                if hasattr(req, 'directrequest') and req.directrequest and req.directrequest.service_id:
-                    ids.add(int(req.directrequest.service_id))
+                ids.update(direct_request_service_ids(req))
                 if hasattr(req, 'broadcast_request') and req.broadcast_request:
                     for svc in req.broadcast_request.services.all():
                         try:

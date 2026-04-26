@@ -62,9 +62,9 @@ def _requested_service_ids(quotation: Quotation) -> set[int]:
         return service_ids
 
     try:
-        direct = getattr(request_obj, "directrequest", None)
-        if direct and direct.service_id:
-            service_ids.add(int(direct.service_id))
+        from ..direct_request_utils import direct_request_service_ids
+
+        service_ids.update(direct_request_service_ids(request_obj))
     except Exception:
         pass
 

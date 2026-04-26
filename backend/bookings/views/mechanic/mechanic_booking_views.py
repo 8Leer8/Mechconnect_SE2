@@ -30,6 +30,7 @@ from ...models import (
     ActiveBookingPhoto,
 )
 from ...models import Quotation, QuotationItem
+from ...direct_request_utils import iter_direct_request_services
 from ...backjob_utils import (
     booking_has_backjob,
     backjob_accepted_payable_total,
@@ -2048,16 +2049,17 @@ def _serialize_pending_direct_requests(account):
     for req in pending_reqs:
         direct = req.directrequest
 
-        # Base price + add-ons (use mechanic's specific price if available)
-        try:
-            mechanic_service = MechanicService.objects.get(
-                mechanic=account.mechanic,
-                service=direct.service,
-            )
-            base_price = float(mechanic_service.price)
-        except MechanicService.DoesNotExist:
-            # Fallback to admin-defined minimum_price on Service
-            base_price = float(getattr(direct.service, "minimum_price", 0))
+        # Base price for every booked service + add-ons (mechanic price when set)
+        base_price = 0.0
+        for svc in iter_direct_request_services(req):
+            try:
+                mechanic_service = MechanicService.objects.get(
+                    mechanic=account.mechanic,
+                    service=svc,
+                )
+                base_price += float(mechanic_service.price)
+            except MechanicService.DoesNotExist:
+                base_price += float(getattr(svc, "minimum_price", 0))
 
         add_ons_total = 0.0
         for addon in req.directrequestaddon_set.all():
@@ -2539,15 +2541,17 @@ def mechanic_accept_direct_request(request, request_id):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    # Calculate total amount from service + add-ons (same logic as pending)
-    try:
-        mechanic_service = MechanicService.objects.get(
-            mechanic=account.mechanic,
-            service=direct.service,
-        )
-        base_price = float(mechanic_service.price)
-    except MechanicService.DoesNotExist:
-        base_price = float(getattr(direct.service, "minimum_price", 0))
+    # Calculate total amount from all services + add-ons (same logic as pending list)
+    base_price = 0.0
+    for svc in iter_direct_request_services(req):
+        try:
+            mechanic_service = MechanicService.objects.get(
+                mechanic=account.mechanic,
+                service=svc,
+            )
+            base_price += float(mechanic_service.price)
+        except MechanicService.DoesNotExist:
+            base_price += float(getattr(svc, "minimum_price", 0))
 
     add_ons_total = 0.0
     for addon in DirectRequestAddOn.objects.filter(request=req).select_related(

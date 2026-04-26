@@ -14,6 +14,7 @@ from .models import (
 	Booking,
 	DirectRequest,
 	DirectRequestAddOn,
+	DirectRequestServiceLine,
 	Quotation,
 	QuotationItem,
 	Request,
@@ -78,6 +79,13 @@ class MechanicDirectRequestAddonTests(TestCase):
 			description='Legacy row that should not appear for this mechanic',
 			price=75,
 		)
+
+		self.service_two = Service.objects.create(
+			name='Brake Inspection',
+			description='Check brakes',
+			minimum_price=100,
+		)
+		MechanicService.objects.create(mechanic=self.mechanic, service=self.service_two, price=300)
 
 	def test_mechanic_service_addons_endpoint_excludes_global_addons(self):
 		response = self.http_client.get(
@@ -162,6 +170,43 @@ class MechanicDirectRequestAddonTests(TestCase):
 		self.assertEqual(DirectRequest.objects.count(), 1)
 		self.assertEqual(DirectRequestAddOn.objects.count(), 1)
 		self.assertEqual(DirectRequestAddOn.objects.first().service_add_on_id, self.mechanic_addon.id)
+
+	def test_mechanic_direct_request_accepts_service_lines_multi_service(self):
+		session = self.http_client.session
+		session['account_id'] = self.client_account.id
+		session.save()
+
+		response = self.http_client.post(
+			'/api/bookings/direct/mechanic/create/',
+			data=json.dumps({
+				'provider_id': self.mechanic_account.id,
+				'service_lines': [
+					{'service_id': self.service.id, 'add_on_ids': [self.mechanic_addon.id]},
+					{'service_id': self.service_two.id, 'add_on_ids': []},
+				],
+				'vehicle_type': 'Car',
+				'vehicle_brand': 'Toyota',
+				'vehicle_model': 'Vios',
+				'service_location': {
+					'street_name': 'Main St',
+					'barangay': 'Barangay 1',
+					'city_municipality': 'Metro City',
+					'latitude': 14.5995,
+					'longitude': 120.9842,
+				},
+			}),
+			content_type='application/json',
+		)
+
+		self.assertEqual(response.status_code, 201)
+		payload = json.loads(response.content)
+		self.assertAlmostEqual(payload['total_amount'], 550.0)
+
+		new_req = Request.objects.order_by('-id').first()
+		self.assertEqual(DirectRequestServiceLine.objects.filter(request=new_req).count(), 2)
+		self.assertEqual(DirectRequestAddOn.objects.filter(request=new_req).count(), 1)
+		dr = DirectRequest.objects.get(request=new_req)
+		self.assertEqual(dr.service_id, self.service.id)
 
 	def test_mechanic_direct_request_rejects_unavailable_mechanic(self):
 		session = self.http_client.session

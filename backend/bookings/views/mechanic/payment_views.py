@@ -37,6 +37,7 @@ from ...backjob_utils import (
     booking_has_backjob,
     get_booking_backjob,
 )
+from ...direct_request_utils import iter_direct_request_services
 
 
 logger = logging.getLogger(__name__)
@@ -328,11 +329,12 @@ def _compute_request_service_subtotal(booking):
     except Exception:
         pass
 
-    # Direct request path: service minimum price + direct add-ons.
+    # Direct request path: minimum price per booked service + direct add-ons.
     try:
         direct = getattr(request_obj, "directrequest", None)
         if direct is not None:
-            subtotal += _to_money(getattr(direct.service, "minimum_price", 0))
+            for svc in iter_direct_request_services(request_obj):
+                subtotal += _to_money(getattr(svc, "minimum_price", 0))
             for addon_rel in request_obj.directrequestaddon_set.select_related("service_add_on").all():
                 subtotal += _to_money(getattr(addon_rel.service_add_on, "price", 0))
             if subtotal > 0:

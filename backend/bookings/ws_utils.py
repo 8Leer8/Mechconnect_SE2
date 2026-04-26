@@ -53,8 +53,6 @@ def _resolve_target_role(account_id):
 
 
 def _service_line_from_request(req):
-    from .models import DirectRequest
-
     service_line = ''
     try:
         rtype = str(req.request_type or '').lower()
@@ -63,9 +61,11 @@ def _service_line_from_request(req):
             if br:
                 service_line = (br.description or 'Broadcast').strip()[:80]
         elif rtype == 'direct':
-            dr = DirectRequest.objects.select_related('service').filter(request=req).first()
-            if dr and dr.service:
-                service_line = dr.service.name
+            from .direct_request_utils import iter_direct_request_services
+
+            names = [s.name for s in iter_direct_request_services(req) if getattr(s, "name", None)]
+            if names:
+                service_line = ", ".join(names)[:80]
         elif rtype == 'custom':
             cr = getattr(req, 'customrequest', None)
             if cr:
@@ -424,9 +424,9 @@ def post_quotation_chat_message(account, booking, quotation, action='created', r
             requested_service_ids = set()
             try:
                 request_obj = getattr(booking, "request", None)
-                direct = getattr(request_obj, "directrequest", None)
-                if direct and direct.service_id:
-                    requested_service_ids.add(int(direct.service_id))
+                from .direct_request_utils import direct_request_service_ids
+
+                requested_service_ids.update(direct_request_service_ids(request_obj))
                 broadcast = getattr(request_obj, "broadcast_request", None)
                 if broadcast:
                     requested_service_ids.update(int(sid) for sid in broadcast.services.values_list("id", flat=True))

@@ -324,9 +324,9 @@ def admin_list_bookings(request):
         if request_obj.request_type == Request.Type.BROADCAST and hasattr(request_obj, 'broadcast_request'):
             services_list = [service.name for service in request_obj.broadcast_request.services.all()]
         elif request_obj.request_type == Request.Type.DIRECT and hasattr(request_obj, 'directrequest'):
-            direct_service = request_obj.directrequest.service
-            if direct_service:
-                services_list = [direct_service.name]
+            from ...direct_request_utils import iter_direct_request_services
+
+            services_list = [s.name for s in iter_direct_request_services(request_obj) if getattr(s, "name", None)]
 
         # Build payment breakdown
         convenience_fee = booking.convenience_fee or 0

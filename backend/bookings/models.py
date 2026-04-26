@@ -58,6 +58,25 @@ class DirectRequestAddOn(models.Model):
     request = models.ForeignKey(Request, on_delete=models.CASCADE)
     service_add_on = models.ForeignKey(ServiceAddOn, on_delete=models.CASCADE)
 
+
+class DirectRequestServiceLine(models.Model):
+    """
+    Optional extra services on a mechanic direct request (multi-service jobs).
+    The first line always matches DirectRequest.service for backward compatibility.
+    """
+
+    request = models.ForeignKey(
+        Request,
+        on_delete=models.CASCADE,
+        related_name="direct_request_service_lines",
+    )
+    service = models.ForeignKey(Service, on_delete=models.CASCADE)
+    sort_order = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+
+
 class EmergencyRequest(models.Model):
     request = models.OneToOneField(Request, on_delete=models.CASCADE)
     description = models.TextField(null=True, blank=True)

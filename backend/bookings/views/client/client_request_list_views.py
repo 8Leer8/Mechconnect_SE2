@@ -3,9 +3,18 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django.utils import timezone
+from django.db.models import Prefetch
 from datetime import timedelta
 
-from ...models import Request, DirectRequestAddOn, BroadcastRequest, Booking, CancelBooking
+from ...models import (
+    Request,
+    DirectRequestAddOn,
+    DirectRequestServiceLine,
+    BroadcastRequest,
+    Booking,
+    CancelBooking,
+)
+from ...direct_request_utils import iter_direct_request_services
 from users.models import Account
 from services.models import MechanicService, ShopService
 
@@ -144,32 +153,28 @@ def list_requests(request):
                     'has_booking': hasattr(req, 'booking')
                 })
             elif req.request_type == 'direct' and hasattr(req, 'directrequest'):
-                # Get add-ons for this request
                 add_ons = DirectRequestAddOn.objects.filter(request=req).select_related('service_add_on')
-                
-                # Get the price for this service (shop or mechanic)
-                service_price = req.directrequest.service.minimum_price  # Default to minimum_price
-                if req.shop:
-                    # For shop requests, get shop's price
-                    try:
-                        shop_service = ShopService.objects.get(
-                            shop=req.shop,
-                            service=req.directrequest.service
-                        )
-                        service_price = shop_service.price
-                    except ShopService.DoesNotExist:
-                        pass  # Use minimum_price as fallback
-                elif req.provider and hasattr(req.provider, 'mechanic'):
-                    # For mechanic requests, get mechanic's price
-                    try:
-                        mechanic_service = MechanicService.objects.get(
-                            mechanic=req.provider.mechanic,
-                            service=req.directrequest.service
-                        )
-                        service_price = mechanic_service.price
-                    except MechanicService.DoesNotExist:
-                        pass  # Use minimum_price as fallback
-                
+                services_payload = []
+                for svc in iter_direct_request_services(req):
+                    p = float(getattr(svc, "minimum_price", 0) or 0)
+                    if req.shop:
+                        try:
+                            shop_service = ShopService.objects.get(shop=req.shop, service=svc)
+                            p = float(shop_service.price)
+                        except ShopService.DoesNotExist:
+                            pass
+                    elif req.provider and hasattr(req.provider, 'mechanic'):
+                        try:
+                            mechanic_service = MechanicService.objects.get(
+                                mechanic=req.provider.mechanic,
+                                service=svc,
+                            )
+                            p = float(mechanic_service.price)
+                        except MechanicService.DoesNotExist:
+                            pass
+                    services_payload.append({'id': svc.id, 'name': svc.name, 'price': p})
+
+                first = services_payload[0] if services_payload else None
                 direct_requests.append({
                     'id': req.id,
                     'vehicle_type': req.vehicle_type,
@@ -185,11 +190,8 @@ def list_requests(request):
                         'contact_number': req.shop.contact_number,
                         'email': req.shop.email
                     } if req.shop else None,
-                    'service': {
-                        'id': req.directrequest.service.id,
-                        'name': req.directrequest.service.name,
-                        'price': float(service_price)  # Use shop's or mechanic's specific price
-                    },
+                    'service': first,
+                    'services': services_payload,
                     'add_ons': [{
                         'id': addon.service_add_on.id,
                         'name': addon.service_add_on.name,
@@ -304,7 +306,21 @@ def get_request_detail(request, request_id):
     request details before a booking is created.
     """
     try:
-        req = Request.objects.select_related('provider', 'shop', 'service_location').prefetch_related('directrequest', 'customrequest', 'broadcast_request').get(id=request_id)
+        req = (
+            Request.objects.select_related('provider', 'shop', 'service_location', 'client', 'client__account')
+            .prefetch_related(
+                Prefetch(
+                    'direct_request_service_lines',
+                    queryset=DirectRequestServiceLine.objects.select_related('service').order_by(
+                        'sort_order', 'id'
+                    ),
+                ),
+                'directrequest',
+                'customrequest',
+                'broadcast_request',
+            )
+            .get(id=request_id)
+        )
 
         if (
             req.request_type == 'emergency'
@@ -351,30 +367,32 @@ def get_request_detail(request, request_id):
 
         # direct
         elif req.request_type == 'direct' and hasattr(req, 'directrequest'):
-            # determine service price
-            service_price = req.directrequest.service.minimum_price
-            from services.models import MechanicService, ShopService
-            if req.shop:
-                try:
-                    shop_service = ShopService.objects.get(shop=req.shop, service=req.directrequest.service)
-                    service_price = shop_service.price
-                except ShopService.DoesNotExist:
-                    pass
-            elif req.provider and hasattr(req.provider, 'mechanic'):
-                try:
-                    mechanic_service = MechanicService.objects.get(mechanic=req.provider.mechanic, service=req.directrequest.service)
-                    service_price = mechanic_service.price
-                except MechanicService.DoesNotExist:
-                    pass
+            services_payload = []
+            for svc in iter_direct_request_services(req):
+                p = float(getattr(svc, "minimum_price", 0) or 0)
+                if req.shop:
+                    try:
+                        shop_service = ShopService.objects.get(shop=req.shop, service=svc)
+                        p = float(shop_service.price)
+                    except ShopService.DoesNotExist:
+                        pass
+                elif req.provider and hasattr(req.provider, 'mechanic'):
+                    try:
+                        mechanic_service = MechanicService.objects.get(
+                            mechanic=req.provider.mechanic,
+                            service=svc,
+                        )
+                        p = float(mechanic_service.price)
+                    except MechanicService.DoesNotExist:
+                        pass
+                services_payload.append({'id': svc.id, 'name': svc.name, 'price': p})
 
+            first = services_payload[0] if services_payload else None
             add_ons = DirectRequestAddOn.objects.filter(request=req).select_related('service_add_on')
             base.update({
                 'type': 'direct',
-                'service': {
-                    'id': req.directrequest.service.id,
-                    'name': req.directrequest.service.name,
-                    'price': float(service_price)
-                },
+                'service': first,
+                'services': services_payload,
                 'add_ons': [{
                     'id': addon.service_add_on.id,
                     'name': addon.service_add_on.name,
@@ -385,13 +403,23 @@ def get_request_detail(request, request_id):
 
         # broadcast
         elif req.request_type == 'broadcast' and hasattr(req, 'broadcast_request'):
+            br = req.broadcast_request
+            addon_rows = br.add_ons.select_related('service_add_on').all()
             base.update({
                 'type': 'broadcast',
-                'description': req.broadcast_request.description,
-                'services': [{'id': s.id, 'name': s.name} for s in req.broadcast_request.services.all()],
-                'status': req.broadcast_request.status,
-                'concern_picture': req.broadcast_request.concern_picture.url if req.broadcast_request.concern_picture else None,
-                'expires_at': req.broadcast_request.expires_at.isoformat() if req.broadcast_request.expires_at else None,
+                'description': br.description,
+                'services': [{'id': s.id, 'name': s.name} for s in br.services.all()],
+                'add_ons': [
+                    {
+                        'id': rel.service_add_on.id,
+                        'name': rel.service_add_on.name,
+                        'price': float(rel.service_add_on.price),
+                    }
+                    for rel in addon_rows
+                ],
+                'status': br.status,
+                'concern_picture': br.concern_picture.url if br.concern_picture else None,
+                'expires_at': br.expires_at.isoformat() if br.expires_at else None,
             })
 
         # emergency
@@ -409,11 +437,20 @@ def get_request_detail(request, request_id):
                 'remaining_seconds': remaining_seconds,
             })
 
-        # include minimal client info if available
+        # include minimal client info if available (names live on Account)
         if hasattr(req, 'client') and req.client:
+            acc = getattr(req.client, 'account', None)
             base['client'] = {
                 'id': req.client.id,
-                'name': f"{req.client.firstname} {req.client.lastname}" if getattr(req.client, 'firstname', None) else getattr(req.client, 'name', None)
+                'firstname': getattr(acc, 'firstname', None) if acc else None,
+                'lastname': getattr(acc, 'lastname', None) if acc else None,
+                'username': getattr(acc, 'username', None) if acc else None,
+                'email': getattr(acc, 'email', None) if acc else None,
+                'name': (
+                    f"{acc.firstname} {acc.lastname}".strip()
+                    if acc
+                    else None
+                ),
             }
 
         return Response({'request': base}, status=status.HTTP_200_OK)

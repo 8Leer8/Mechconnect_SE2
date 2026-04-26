@@ -51,6 +51,92 @@ function mergeGalleryWithLegacy(gallery: string[] | undefined, legacy: string | 
   return [leg, ...list];
 }
 
+/** `/bookings/requests/:id/` returns a flat `request` object; normalize to `request_details` like booking APIs. */
+function buildSyntheticRequestDetailsFromRequestListApi(requestObj: Record<string, unknown>): Record<string, unknown> | null {
+  if (requestObj.request_details && typeof requestObj.request_details === 'object') {
+    return requestObj.request_details as Record<string, unknown>;
+  }
+  const rtype = String(requestObj.type || requestObj.request_type || '').toLowerCase();
+  if (rtype === 'direct') {
+    const services =
+      Array.isArray(requestObj.services) && requestObj.services.length > 0
+        ? (requestObj.services as unknown[])
+        : requestObj.service
+          ? [requestObj.service]
+          : [];
+    return {
+      service: requestObj.service || null,
+      services,
+      add_ons: Array.isArray(requestObj.add_ons) ? requestObj.add_ons : [],
+      request_status: requestObj.status,
+    };
+  }
+  if (rtype === 'broadcast') {
+    return {
+      description: requestObj.description,
+      services: Array.isArray(requestObj.services) ? requestObj.services : [],
+      add_ons: Array.isArray(requestObj.add_ons) ? requestObj.add_ons : [],
+      concern_picture: requestObj.concern_picture,
+      status: requestObj.status,
+    };
+  }
+  if (rtype === 'emergency') {
+    return {
+      description: requestObj.description,
+      concern_picture: requestObj.concern_picture,
+      providers_note: requestObj.providers_note,
+    };
+  }
+  if (rtype === 'custom') {
+    return {
+      description: requestObj.description,
+      quoted_price: requestObj.quoted_price,
+      providers_note: requestObj.providers_note,
+      concern_picture: requestObj.concern_picture,
+    };
+  }
+  return null;
+}
+
+function normalizeBookedServiceRows(details: Record<string, unknown> | null | undefined): Array<Record<string, unknown>> {
+  if (!details || typeof details !== 'object') return [];
+  const multi = details.services;
+  if (Array.isArray(multi) && multi.length > 0) {
+    return multi.filter((s) => s && typeof s === 'object') as Array<Record<string, unknown>>;
+  }
+  const one = details.service;
+  if (one && typeof one === 'object') {
+    const row = one as Record<string, unknown>;
+    if (row.id != null || row.name) return [row];
+  }
+  return [];
+}
+
+function normalizeRequestedAddOnRows(details: Record<string, unknown> | null | undefined): Array<Record<string, unknown>> {
+  if (!details || !Array.isArray(details.add_ons)) return [];
+  return (details.add_ons as unknown[]).filter((x) => x && typeof x === 'object') as Array<Record<string, unknown>>;
+}
+
+function sumDirectRequestListPrice(requestObj: Record<string, unknown>): number {
+  const services =
+    Array.isArray(requestObj.services) && requestObj.services.length > 0
+      ? (requestObj.services as unknown[])
+      : requestObj.service
+        ? [requestObj.service]
+        : [];
+  let t = 0;
+  for (const s of services) {
+    const row = s as Record<string, unknown>;
+    t += Number(row.price ?? row.minimum_price ?? 0) || 0;
+  }
+  const addons = Array.isArray(requestObj.add_ons) ? (requestObj.add_ons as unknown[]) : [];
+  for (const a of addons) {
+    const row = a as Record<string, unknown>;
+    t += Number(row.price ?? 0) || 0;
+  }
+  return t;
+}
+
 interface BookingDetail {
   id: number;
   status: string;
@@ -446,8 +532,7 @@ export default function BookingDetailScreen() {
     // Backjob: do not re-inject originally booked base service into quotation display.
     const expectedServiceItems: any[] = isBackjobBooking ? [] : (() => {
       const rows: any[] = [];
-      if (details?.service) {
-        const svc: any = details.service;
+      normalizeBookedServiceRows(details as Record<string, unknown> | null).forEach((svc: any) => {
         rows.push({
           description: svc.name || 'Service',
           quantity: 1,
@@ -456,19 +541,7 @@ export default function BookingDetailScreen() {
           line_kind: 'service',
           status: 'accepted',
         });
-      }
-      if (Array.isArray(details?.services) && details.services.length > 0) {
-        details.services.forEach((svc: any) => {
-          rows.push({
-            description: svc?.name || 'Service',
-            quantity: 1,
-            unit_price: toPrice(svc?.minimum_price ?? svc?.price),
-            service: svc?.id,
-            line_kind: 'service',
-            status: 'accepted',
-          });
-        });
-      }
+      });
       return rows;
     })();
     const applyPendingSnapshotOverlay = (baseRows: any[]) => {
@@ -566,18 +639,10 @@ export default function BookingDetailScreen() {
     if (!details) return null;
     const items: any[] = [];
 
-    if (details?.service) {
-      const svc: any = details.service;
+    normalizeBookedServiceRows(details as Record<string, unknown> | null).forEach((svc: any) => {
       const unit = toPrice(svc.minimum_price ?? svc.price);
       items.push({ description: svc.name || 'Service', quantity: 1, unit_price: unit, service: svc.id });
-    }
-
-    if (Array.isArray(details?.services) && details.services.length > 0) {
-      details.services.forEach((svc: any) => {
-        const unit = toPrice(svc?.minimum_price ?? svc?.price);
-        items.push({ description: svc?.name || 'Service', quantity: 1, unit_price: unit, service: svc?.id });
-      });
-    }
+    });
 
     if (Array.isArray(details?.add_ons) && details.add_ons.length > 0) {
       details.add_ons.forEach((addOn: any) => {
@@ -733,10 +798,7 @@ export default function BookingDetailScreen() {
   const serviceItemIds = React.useMemo(() => {
     const details = (booking && booking.request && (booking.request as any).request_details) || null;
     const ids = new Set<number>();
-    const single = Number(details?.service?.id);
-    if (Number.isFinite(single) && single > 0) ids.add(single);
-    const list = Array.isArray(details?.services) ? details.services : [];
-    list.forEach((svc: any) => {
+    normalizeBookedServiceRows(details as Record<string, unknown> | null).forEach((svc: any) => {
       const parsed = Number(svc?.id);
       if (Number.isFinite(parsed) && parsed > 0) ids.add(parsed);
     });
@@ -745,9 +807,7 @@ export default function BookingDetailScreen() {
   const bookedServiceNames = React.useMemo(() => {
     const details = (booking && booking.request && (booking.request as any).request_details) || null;
     const names: string[] = [];
-    if (details?.service?.name) names.push(String(details.service.name));
-    const list = Array.isArray(details?.services) ? details.services : [];
-    list.forEach((svc: any) => {
+    normalizeBookedServiceRows(details as Record<string, unknown> | null).forEach((svc: any) => {
       if (svc?.name) names.push(String(svc.name));
     });
     return names;
@@ -1164,24 +1224,53 @@ export default function BookingDetailScreen() {
         if (reqRes.ok) {
           const reqData = await reqRes.json() as any;
           const requestObj = reqData.request || reqData;
+          const flat = requestObj as Record<string, unknown>;
+          const rtype = String(flat.type || flat.request_type || '').toLowerCase();
+          const syntheticDetails = buildSyntheticRequestDetailsFromRequestListApi(flat);
+          let amountFee = Number(flat.quoted_price ?? flat.amount_fee ?? 0) || 0;
+          if (!amountFee && rtype === 'direct') {
+            amountFee = sumDirectRequestListPrice(flat);
+          }
+          const rawClient = (flat.client || flat.user) as Record<string, unknown> | null | undefined;
+          const mappedClient =
+            rawClient && typeof rawClient === 'object'
+              ? {
+                  id: Number(rawClient.id) || 0,
+                  firstname: (rawClient.firstname as string) || '',
+                  lastname: (rawClient.lastname as string) || '',
+                  username: (rawClient.username as string) || undefined,
+                  email: (rawClient.email as string) || undefined,
+                }
+              : null;
           // Map request shape to BookingDetail-like object for the UI
           const mappedBooking = {
             id: Number(requestObj.id),
             status: 'pending',
-            amount_fee: requestObj.quoted_price ?? requestObj.amount_fee ?? 0,
+            amount_fee: amountFee,
             booked_at: requestObj.created_at || new Date().toISOString(),
             updated_at: requestObj.updated_at || requestObj.created_at || new Date().toISOString(),
             request: {
               id: requestObj.id,
-              type: requestObj.type,
-              vehicle_type: requestObj.vehicle_type ?? requestObj.request_details?.vehicle_type ?? null,
+              type: (flat.type || flat.request_type) as string,
+              vehicle_type:
+                flat.vehicle_type ??
+                (flat.request_details as any)?.vehicle_type ??
+                null,
+              vehicle_brand:
+                flat.vehicle_brand ??
+                (flat.request_details as any)?.vehicle_brand ??
+                null,
+              vehicle_model:
+                flat.vehicle_model ??
+                (flat.request_details as any)?.vehicle_model ??
+                null,
               created_at: requestObj.created_at,
-              request_details: requestObj.request_details || null,
+              request_details: syntheticDetails,
             },
             provider: null,
             service_location: requestObj.service_location || null,
             active_details: null,
-            client: requestObj.client || requestObj.user || null,
+            client: mappedClient,
             has_backjob: false,
           } as unknown as BookingDetail;
 
@@ -2039,7 +2128,10 @@ export default function BookingDetailScreen() {
   }
 
   const clientName = booking.client
-    ? `${booking.client.firstname || ''} ${booking.client.lastname || ''}`.trim() || booking.client.username || 'Client'
+    ? `${booking.client.firstname || ''} ${booking.client.lastname || ''}`.trim() ||
+        (booking.client as any).name ||
+        booking.client.username ||
+        'Client'
     : 'Client';
   const resolvedVehicleType =
     booking.request?.vehicle_type ||
@@ -2056,6 +2148,13 @@ export default function BookingDetailScreen() {
     (booking.request as any)?.request_details?.vehicle_model ||
     (booking.request as any)?.request_details?.vehicle?.model ||
     null;
+
+  const scopeDetailsRaw = (booking.request as any)?.request_details as Record<string, unknown> | null | undefined;
+  const scopeServices = normalizeBookedServiceRows(scopeDetailsRaw);
+  const scopeAddOns = normalizeRequestedAddOnRows(scopeDetailsRaw);
+  const scopeDescription = String(scopeDetailsRaw?.description || '').trim();
+  const reqTypeLower = String(booking.request?.type || (booking.request as any)?.request_type || '').toLowerCase();
+
   const locationText = (value?: string | null, fallback = 'Unavailable') => {
     const text = String(value || '').trim();
     if (!text) return fallback;
@@ -3095,9 +3194,68 @@ export default function BookingDetailScreen() {
               </ThemedText>
             </View>
           </View>
+
+          {scopeDescription ? (
+            <View style={{ marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: '#2A2C2E' }}>
+              <ThemedText style={styles.infoLabel}>What the client needs</ThemedText>
+              <ThemedText style={[styles.infoValue, { marginTop: 6 }]}>{scopeDescription}</ThemedText>
+            </View>
+          ) : null}
+
+          {scopeServices.length > 0 ? (
+            <View style={{ marginTop: scopeDescription ? 12 : 14, paddingTop: scopeDescription ? 0 : 14, borderTopWidth: scopeDescription ? 0 : 1, borderTopColor: '#2A2C2E' }}>
+              <ThemedText style={styles.infoLabel}>Requested services</ThemedText>
+              {scopeServices.map((svc, idx) => {
+                const sid = Number((svc as any).id);
+                const name = String((svc as any).name || 'Service');
+                const priceRaw = (svc as any).minimum_price ?? (svc as any).price;
+                const priceNum = Number(priceRaw);
+                const priceStr =
+                  Number.isFinite(priceNum) && priceNum > 0 ? `₱${priceNum.toFixed(2)}` : null;
+                return (
+                  <View
+                    key={Number.isFinite(sid) && sid > 0 ? `svc-${sid}` : `svc-row-${idx}`}
+                    style={{ marginTop: 8, flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}
+                  >
+                    <ThemedText style={[styles.infoValue, { flex: 1 }]}>{name}</ThemedText>
+                    {priceStr ? (
+                      <ThemedText style={[styles.infoValue, { color: '#FF8C00', fontWeight: '600' }]}>{priceStr}</ThemedText>
+                    ) : null}
+                  </View>
+                );
+              })}
+            </View>
+          ) : reqTypeLower === 'direct' && scopeServices.length === 0 ? (
+            <View style={{ marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: '#2A2C2E' }}>
+              <ThemedText style={[styles.infoValue, styles.infoLabel]}>
+                No services were attached to this request. Pull down to refresh, or contact support if this looks wrong.
+              </ThemedText>
+            </View>
+          ) : null}
+
+          {scopeAddOns.length > 0 ? (
+            <View style={{ marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: '#2A2C2E' }}>
+              <ThemedText style={styles.infoLabel}>Add-ons</ThemedText>
+              {scopeAddOns.map((addon, idx) => {
+                const aid = Number((addon as any).id);
+                const name = String((addon as any).name || 'Add-on');
+                const priceNum = Number((addon as any).price ?? 0);
+                const priceStr = Number.isFinite(priceNum) && priceNum > 0 ? `₱${priceNum.toFixed(2)}` : null;
+                return (
+                  <View
+                    key={Number.isFinite(aid) && aid > 0 ? `addon-${aid}` : `addon-row-${idx}`}
+                    style={{ marginTop: 8, flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}
+                  >
+                    <ThemedText style={[styles.infoValue, { flex: 1 }]}>{name}</ThemedText>
+                    {priceStr ? (
+                      <ThemedText style={[styles.infoValue, { color: '#FF8C00', fontWeight: '600' }]}>{priceStr}</ThemedText>
+                    ) : null}
+                  </View>
+                );
+              })}
+            </View>
+          ) : null}
         </View>
-
-
 
         {/* Client Info Section */}
         <View style={styles.sectionCard}>

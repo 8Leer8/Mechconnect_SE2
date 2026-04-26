@@ -226,9 +226,11 @@ def _build_rescue_description(original_request, booking):
 
     if hasattr(original_request, 'directrequest') and original_request.directrequest is not None:
         try:
-            service_name = original_request.directrequest.service.name
-            if service_name:
-                return f"Auto-rescue no-show for {service_name}"
+            from ...direct_request_utils import iter_direct_request_services
+
+            names = [s.name for s in iter_direct_request_services(original_request) if getattr(s, "name", None)]
+            if names:
+                return f"Auto-rescue no-show for {', '.join(names)}"
         except Exception:
             pass
 
@@ -1357,16 +1359,27 @@ def _serialize_single_booking(booking, viewer_account=None):
         req = booking.request
         rd = {'type': req.request_type}
 
-        # Direct request: single service + possible add-ons
+        # Direct request: one or more services + possible add-ons
         if hasattr(req, 'directrequest') and getattr(req, 'directrequest') is not None:
             try:
-                svc = req.directrequest.service
-                if svc:
+                from ...direct_request_utils import iter_direct_request_services
+
+                svc_rows = iter_direct_request_services(req)
+                if svc_rows:
+                    first = svc_rows[0]
                     rd['service'] = {
-                        'id': svc.id,
-                        'name': svc.name,
-                        'minimum_price': float(svc.minimum_price) if getattr(svc, 'minimum_price', None) is not None else None,
+                        'id': first.id,
+                        'name': first.name,
+                        'minimum_price': float(first.minimum_price) if getattr(first, 'minimum_price', None) is not None else None,
                     }
+                    rd['services'] = [
+                        {
+                            'id': s.id,
+                            'name': s.name,
+                            'minimum_price': float(s.minimum_price) if getattr(s, 'minimum_price', None) is not None else None,
+                        }
+                        for s in svc_rows
+                    ]
                 # collect add-ons for direct requests
                 addons = []
                 from ...models import DirectRequestAddOn

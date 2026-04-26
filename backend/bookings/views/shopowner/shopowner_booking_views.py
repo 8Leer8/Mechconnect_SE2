@@ -33,6 +33,7 @@ from ...models import (
 from ...serializers import RequestSerializer
 from ...serializers import QuotationSerializer
 from ...backjob_utils import booking_has_backjob
+from ...direct_request_utils import iter_direct_request_services
 from ...services import create_amendment_request
 from users.models import Account, TokenTransaction
 from services.models import ShopService
@@ -755,13 +756,15 @@ def shopowner_accept_direct_request(request, request_id):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    # Calculate total from ShopService price or fallback to service minimum
-    try:
-        shop = req.shop or account.shopowner.shop
-        shop_service = ShopService.objects.get(shop=shop, service=direct.service)
-        base_price = float(shop_service.price)
-    except (ShopService.DoesNotExist, Exception):
-        base_price = float(getattr(direct.service, "minimum_price", 0))
+    # Sum base price for every service line (shop price or service minimum)
+    shop = req.shop or account.shopowner.shop
+    base_price = 0.0
+    for svc in iter_direct_request_services(req):
+        try:
+            shop_service = ShopService.objects.get(shop=shop, service=svc)
+            base_price += float(shop_service.price)
+        except ShopService.DoesNotExist:
+            base_price += float(getattr(svc, "minimum_price", 0))
 
     add_ons_total = 0.0
     for addon in DirectRequestAddOn.objects.filter(request=req).select_related("service_add_on"):
