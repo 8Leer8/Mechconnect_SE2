@@ -9,7 +9,7 @@ from services.models import Service, ServiceAddOn
 from users.models import Account, Client
 from shops.models import Shop
 from MainBackend.storage_utils import get_media_url
-from .backjob_utils import booking_has_backjob, booking_has_live_backjob
+from .backjob_utils import booking_has_backjob, booking_has_live_backjob, get_booking_backjob
 
 
 class ServiceLocationSerializer(serializers.ModelSerializer):
@@ -565,6 +565,7 @@ class QuotationItemSerializer(serializers.ModelSerializer):
     line_total = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
     is_backjob_new_line = serializers.SerializerMethodField()
+    backjob_id = serializers.SerializerMethodField()
 
     class Meta:
         model = booking_models.QuotationItem
@@ -586,6 +587,7 @@ class QuotationItemSerializer(serializers.ModelSerializer):
             'previous_quantity',
             'previous_unit_price',
             'is_backjob_new_line',
+            'backjob_id',
             'created_at',
             'updated_at',
         ]
@@ -607,6 +609,9 @@ class QuotationItemSerializer(serializers.ModelSerializer):
 
     def get_is_backjob_new_line(self, obj):
         return bool(getattr(obj, 'is_backjob_line', False))
+
+    def get_backjob_id(self, obj):
+        return getattr(obj, 'backjob_id', None)
 
 
 def _quotation_line_shape(raw, existing_item=None):
@@ -707,6 +712,7 @@ class QuotationSerializer(serializers.Serializer):
         quotation.is_backjob = booking_has_backjob(booking)
         requested_service_ids = get_requested_service_ids(booking)
         new_row_is_backjob = booking_has_live_backjob(booking)
+        current_backjob = get_booking_backjob(booking)
         # If quotation is newly created, create provided items; if it already exists, append/update items without deleting existing ones
         total = 0
         existing_items = {it.id: it for it in QuotationItem.objects.filter(quotation=quotation)}
@@ -759,6 +765,7 @@ class QuotationSerializer(serializers.Serializer):
                     status=default_status,
                     change_type='added' if default_status == Quotation.Status.PENDING else None,
                     is_backjob_line=new_row_is_backjob,
+                    backjob=current_backjob if new_row_is_backjob else None,
                 )
             try:
                 total += float(qitem.line_total)
@@ -801,6 +808,7 @@ class QuotationSerializer(serializers.Serializer):
         instance.is_backjob = booking_has_backjob(instance.booking)
         is_backjob_flow = bool(instance.is_backjob)
         new_row_is_backjob = booking_has_live_backjob(instance.booking)
+        current_backjob = get_booking_backjob(instance.booking)
         items_data = validated_data.pop('items', []) if isinstance(validated_data, dict) else []
 
         # load existing items mapping
@@ -936,6 +944,7 @@ class QuotationSerializer(serializers.Serializer):
                     status=default_status,
                     change_type='added' if default_status == Quotation.Status.PENDING else None,
                     is_backjob_line=new_row_is_backjob,
+                    backjob=current_backjob if new_row_is_backjob else None,
                 )
                 # if payload included a status explicitly, set it
                 if 'status' in raw and raw.get('status') is not None:

@@ -3,7 +3,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 
-from ..models import Account, Mechanic, ShopOwner, AccountRole
+from ..models import Account, Mechanic, ShopOwner, AccountRole, ShopEmployee
 from ..serializers import MechanicSerializer, ShopOwnerSerializer
 
 
@@ -73,6 +73,14 @@ def switch_role(request):
                         message = 'Shop owner role is not yet approved.'
 
                     return Response({'error': message}, status=status.HTTP_403_FORBIDDEN)
+
+            if new_role == 'shop_employee':
+                if not hasattr(account, 'shopemployee'):
+                    return Response({
+                        'error': 'Shop employee profile not found. Please register first.'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+                # Shop employees don't need admin approval, they can switch immediately
             
             # Update session with new active role
             request.session['active_role'] = new_role
@@ -93,6 +101,9 @@ def switch_role(request):
             elif new_role == 'shop_owner' and hasattr(account, 'shopowner'):
                 from ..serializers import ShopOwnerSerializer
                 profile_data = ShopOwnerSerializer(account.shopowner).data
+            elif new_role == 'shop_employee' and hasattr(account, 'shopemployee'):
+                from ..serializers import ShopEmployeeSerializer
+                profile_data = ShopEmployeeSerializer(account.shopemployee).data
             
             return Response({
                 'message': f'Successfully switched to {new_role} role',
@@ -168,6 +179,7 @@ def get_role_status(request):
         is_client = hasattr(account, 'client')
         is_mechanic = hasattr(account, 'mechanic')
         is_shop_owner = hasattr(account, 'shopowner')
+        is_shop_employee = hasattr(account, 'shopemployee')
 
         mechanic_verification_status = (
             account.mechanic.verification_status if is_mechanic else None
@@ -190,6 +202,7 @@ def get_role_status(request):
             is_shop_owner
             and shop_owner_verification_status == ShopOwner.VerificationStatus.APPROVED
         )
+        can_switch_shop_employee = bool(is_shop_employee)
 
         pending_approvals = []
         if mechanic_verification_status == Mechanic.VerificationStatus.PENDING:
@@ -197,9 +210,16 @@ def get_role_status(request):
         if shop_owner_verification_status == ShopOwner.VerificationStatus.PENDING:
             pending_approvals.append('shop_owner')
         
+        # Get shop employee shop info
+        shop_employee_shop_name = None
+        shop_employee_shop_id = None
+        if is_shop_employee and account.shopemployee.shop:
+            shop_employee_shop_name = account.shopemployee.shop.shop_name
+            shop_employee_shop_id = account.shopemployee.shop.id
+
         # Get active role from session
         active_role = request.session.get('active_role')
-        
+
         # Get all roles from AccountRole
         roles = list(account.accountrole_set.values_list('account_role', flat=True))
         
@@ -214,6 +234,7 @@ def get_role_status(request):
             'is_client': is_client,
             'is_mechanic': is_mechanic,
             'is_shop_owner': is_shop_owner,
+            'is_shop_employee': is_shop_employee,
             'active_role': active_role,
             'registered_roles': roles,
             'mechanic_verification_status': mechanic_verification_status,
@@ -222,7 +243,10 @@ def get_role_status(request):
             'shop_owner_rejection_note': shop_owner_rejection_note,
             'can_switch_mechanic': can_switch_mechanic,
             'can_switch_shop_owner': can_switch_shop_owner,
+            'can_switch_shop_employee': can_switch_shop_employee,
             'pending_approvals': pending_approvals,
+            'shop_employee_shop_name': shop_employee_shop_name,
+            'shop_employee_shop_id': shop_employee_shop_id,
         }, status=status.HTTP_200_OK)
         
     except Account.DoesNotExist:

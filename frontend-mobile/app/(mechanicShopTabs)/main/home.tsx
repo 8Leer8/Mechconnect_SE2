@@ -235,6 +235,16 @@ export default function MechanicShopDashboardScreen() {
     fetchDashboardData();
   };
 
+  const handleOpenBookingDetails = useCallback((bookingId: number) => {
+    router.push({
+      pathname: '/mechanic/booking/booking_details',
+      params: {
+        bookingId: bookingId.toString(),
+        source: 'mechanic_shop',
+      },
+    });
+  }, []);
+
   const completionRate = assignedCount > 0 ? Math.round((completedCount / assignedCount) * 100) : 0;
   const avgCompletedValue = completedCount > 0 ? totalEarnings / completedCount : 0;
   const openStatuses = new Set(['accepted', 'on_the_way', 'at_location', 'diagnosing', 'active', 'paused', 'pending_payment']);
@@ -442,7 +452,14 @@ export default function MechanicShopDashboardScreen() {
             </View>
           ) : recentJobs.length > 0 ? (
             recentJobs.map((job) => (
-              <View key={job.id} style={styles.activityRow}>
+              <TouchableOpacity
+                key={job.id}
+                style={styles.activityRow}
+                activeOpacity={0.7}
+                onPress={() => handleOpenBookingDetails(job.id)}
+                accessibilityRole="button"
+                accessibilityLabel={`Open booking ${job.id} details`}
+              >
                 <View style={[styles.activityDot, { backgroundColor: getStatusColor(job.status) }]} />
                 <View style={styles.activityContent}>
                   <ThemedText style={styles.activityTitle} numberOfLines={1}>
@@ -455,7 +472,8 @@ export default function MechanicShopDashboardScreen() {
                 <ThemedText style={[styles.activityStatus, { color: getStatusColor(job.status) }]}>
                   {getStatusLabel(job.status)}
                 </ThemedText>
-              </View>
+                <FontAwesome name="chevron-right" size={12} color="#8E8E93" style={styles.activityChevron} />
+              </TouchableOpacity>
             ))
           ) : (
             <View style={styles.emptyState}>
@@ -826,6 +844,9 @@ const styles = StyleSheet.create({
   activityStatus: {
     fontSize: 11,
     fontWeight: '700',
+    marginLeft: 10,
+  },
+  activityChevron: {
     marginLeft: 10,
   },
   performanceCard: {

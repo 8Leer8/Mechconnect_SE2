@@ -8,6 +8,7 @@ from .views.admin import (
     admin_resolve_dispute,
     admin_list_bookings,
     admin_list_requests,
+    admin_booking_chat_history,
 )
 
 urlpatterns = [
@@ -125,4 +126,5 @@ admin_urlpatterns = [
     path('disputes/<int:dispute_id>/resolve/', admin_resolve_dispute, name='admin-resolve-dispute'),
     path('list/', admin_list_bookings, name='admin-list-bookings'),
     path('requests/', admin_list_requests, name='admin-list-requests'),
+    path('<int:booking_id>/chat-history/', admin_booking_chat_history, name='admin-booking-chat-history'),
 ]

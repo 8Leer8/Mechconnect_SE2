@@ -210,8 +210,15 @@ export default function HomeScreen() {
         if (n) setClientName(n);
         const clientProfile = p?.current_role_profile?.client;
         setProfilePhotoUrl(clientProfile?.profile_photo || clientProfile?.profile_photo_url || null);
-        // Check if user has verified mobile number
-        const contactNumber = p?.contact_number || '';
+        // Check if user has verified mobile number (nested inside current_role_profile)
+        const roleProfiles = p?.current_role_profile || {};
+        let contactNumber = '';
+        for (const role of Object.values(roleProfiles)) {
+          if (role && typeof role === 'object' && (role as any).contact_number) {
+            contactNumber = (role as any).contact_number;
+            break;
+          }
+        }
         setHasMobileNumber(!!contactNumber && contactNumber.length > 0);
       }
     } catch (err: any) {

@@ -426,17 +426,30 @@ class Quotation(models.Model):
 
     def recalculate_totals(self):
         """
-        Keep labor and parts separated so backjob math is consistent.
-        For backjobs:
-        - labor is always discounted to 0
-        - parts remain payable
-        Only rows added for this backjob (is_backjob_line) count; original receipt lines stay reference-only.
+        Keep old paid rows out of backjob totals.
+        For backjobs, only new rows for the current backjob are payable.
         """
         labor_total = 0
         parts_total = 0
         qs = self.items.exclude(status=self.Status.REJECTED)
         if self.is_backjob:
-            qs = qs.filter(is_backjob_line=True)
+            try:
+                from .backjob_utils import get_booking_backjob
+                current_backjob = get_booking_backjob(self.booking)
+            except Exception:
+                current_backjob = None
+
+            if current_backjob is None:
+                qs = qs.none()
+            else:
+                qs = qs.filter(
+                    models.Q(backjob=current_backjob)
+                    | models.Q(
+                        backjob__isnull=True,
+                        is_backjob_line=True,
+                        created_at__gte=current_backjob.created_at,
+                    )
+                )
         for item in qs:
             line_total = item.line_total
             if item.line_kind == QuotationItem.LineKind.SERVICE:
@@ -446,8 +459,8 @@ class Quotation(models.Model):
 
         self.original_labor_cost = labor_total
         if self.is_backjob:
-            self.backjob_discount = -labor_total
-            self.final_labor_total = 0
+            self.backjob_discount = 0
+            self.final_labor_total = labor_total
         else:
             self.backjob_discount = 0
             self.final_labor_total = labor_total
@@ -504,6 +517,53 @@ class QuotationItem(models.Model):
     @property
     def line_total(self):
         return self.quantity * self.unit_price
+
+
+class QuotationAmendment(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending"
+        ACCEPTED = "accepted"
+        REJECTED = "rejected"
+
+    quotation = models.ForeignKey(
+        Quotation,
+        on_delete=models.CASCADE,
+        related_name="amendments",
+    )
+    mechanic = models.ForeignKey(Account, on_delete=models.CASCADE)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class AmendmentItem(models.Model):
+    class ActionType(models.TextChoices):
+        ADDED = "added"
+        EDITED = "edited"
+        REMOVED = "removed"
+
+    amendment = models.ForeignKey(
+        QuotationAmendment,
+        on_delete=models.CASCADE,
+        related_name="items",
+    )
+    # Client requirement asks for UUID and nullable.
+    item_id = models.UUIDField(null=True, blank=True)
+    # Internal pointer to the original quotation row to update/delete safely.
+    original_item = models.ForeignKey(
+        QuotationItem,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="amendment_items",
+    )
+    action_type = models.CharField(max_length=20, choices=ActionType.choices)
+    proposed_changes = models.JSONField(default=dict, blank=True)
+    original_snapshot = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
 
 
 class BroadcastRequest(models.Model):

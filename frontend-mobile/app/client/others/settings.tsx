@@ -41,7 +41,7 @@ type SettingsApiError = {
 
 type FlowStep = 'password' | 'email' | 'otp' | 'done';
 type DeactivationStep = 'password' | 'email' | 'otp';
-type NumberStep = 'input' | 'verify' | 'done';
+type NumberStep = 'input' | 'verify' | 'done' | 'verify-current' | 'input-new' | 'verify-new';
 type SettingsViewMode = 'menu' | 'change-email' | 'change-password' | 'deactivate-account' | 'verify-number';
 
 const stepOrder: FlowStep[] = ['password', 'email', 'otp', 'done'];
@@ -101,12 +101,16 @@ export default function SettingsScreen() {
   const [numberStep, setNumberStep] = useState<NumberStep>('input');
   const [phoneLocal, setPhoneLocal] = useState('');
   const [mobileNumber, setMobileNumber] = useState('');
+  const [newPhoneLocal, setNewPhoneLocal] = useState('');
+  const [newMobileNumber, setNewMobileNumber] = useState('');
   const [numberOtpCode, setNumberOtpCode] = useState('');
   const [hasMobileNumber, setHasMobileNumber] = useState(false);
+  const [currentMobileNumber, setCurrentMobileNumber] = useState('');
   const [sendingNumberOtp, setSendingNumberOtp] = useState(false);
   const [verifyingNumberOtp, setVerifyingNumberOtp] = useState(false);
   const [numberResendCountdown, setNumberResendCountdown] = useState(0);
   const [numberVerified, setNumberVerified] = useState(false);
+  const [currentNumberVerified, setCurrentNumberVerified] = useState(false);
 
   const [passwordVerified, setPasswordVerified] = useState(false);
   const [otpVerified, setOtpVerified] = useState(false);
@@ -159,8 +163,17 @@ export default function SettingsScreen() {
 
   const loadMobileNumberStatus = async () => {
     const profile = await fetchProfileDetailsCached(false);
-    const contactNumber = profile?.contact_number || '';
+    // contact_number is nested inside current_role_profile (e.g., client, mechanic, shop_owner)
+    const roleProfiles = profile?.current_role_profile || {};
+    let contactNumber = '';
+    for (const role of Object.values(roleProfiles)) {
+      if (role && typeof role === 'object' && (role as any).contact_number) {
+        contactNumber = (role as any).contact_number;
+        break;
+      }
+    }
     setHasMobileNumber(!!contactNumber && contactNumber.length > 0);
+    setCurrentMobileNumber(contactNumber);
     if (contactNumber && contactNumber.startsWith('+63')) {
       setPhoneLocal(contactNumber.slice(3));
     }
@@ -223,6 +236,10 @@ export default function SettingsScreen() {
     return phoneLocal.length === 10 && !isBusy;
   }, [phoneLocal, isBusy]);
 
+  const canSendCurrentNumberOtp = useMemo(() => {
+    return !!currentMobileNumber && currentMobileNumber.length > 0 && !isBusy;
+  }, [currentMobileNumber, isBusy]);
+
   const canVerifyNumberOtp = useMemo(() => {
     return numberOtpCode.trim().length === 6 && !isBusy;
   }, [numberOtpCode, isBusy]);
@@ -275,8 +292,11 @@ export default function SettingsScreen() {
     setNumberStep('input');
     setPhoneLocal('');
     setMobileNumber('');
+    setNewPhoneLocal('');
+    setNewMobileNumber('');
     setNumberOtpCode('');
     setNumberVerified(false);
+    setCurrentNumberVerified(false);
     setNumberResendCountdown(0);
     setSendingNumberOtp(false);
     setVerifyingNumberOtp(false);
@@ -293,10 +313,37 @@ export default function SettingsScreen() {
   };
 
   const startVerifyNumber = async () => {
-    await loadMobileNumberStatus();
+    const profile = await fetchProfileDetailsCached(false);
+    // contact_number is nested inside current_role_profile (e.g., client, mechanic, shop_owner)
+    const roleProfiles = profile?.current_role_profile || {};
+    let contactNumber = '';
+    for (const role of Object.values(roleProfiles)) {
+      if (role && typeof role === 'object' && (role as any).contact_number) {
+        contactNumber = (role as any).contact_number;
+        break;
+      }
+    }
+    const hasNumber = !!contactNumber && contactNumber.length > 0;
+
     resetNumberVerificationFlow();
+    setHasMobileNumber(hasNumber);
+    setCurrentMobileNumber(contactNumber);
+
+    // If user has a number, start with verifying current number
+    if (hasNumber && contactNumber) {
+      setNumberStep('verify-current');
+    }
     setViewMode('verify-number');
   };
+
+  const handleNewPhoneLocalChange = (v: string) => {
+    const digits = v.replace(/\D/g, '').slice(0, 10);
+    setNewPhoneLocal(digits);
+  };
+
+  const canSendNewNumberOtp = useMemo(() => {
+    return newPhoneLocal.length === 10 && !isBusy;
+  }, [newPhoneLocal, isBusy]);
 
   const handleSendNumberOtp = async () => {
     if (!ensureApiUrl()) return;
@@ -365,6 +412,25 @@ export default function SettingsScreen() {
         return;
       }
 
+      // Save contact_number to backend
+      try {
+        const saveResponse = await fetch(`${API_URL}/users/profile/settings/`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: getHeaders(),
+          body: JSON.stringify({ contact_number: mobileNumber }),
+        });
+
+        if (!saveResponse.ok) {
+          const saveData = await saveResponse.json().catch(() => ({}));
+          console.error('Failed to save contact_number:', saveData);
+          // Continue anyway - OTP was verified, we'll let user know there was a save issue
+        }
+      } catch (saveError) {
+        console.error('Error saving contact_number:', saveError);
+        // Continue anyway - OTP was verified
+      }
+
       // Update profile cache with new mobile number
       const profile = await fetchProfileDetailsCached(true);
       if (profile) {
@@ -391,7 +457,196 @@ export default function SettingsScreen() {
 
   const handleResendNumberOtp = async () => {
     if (numberResendCountdown > 0 || sendingNumberOtp) return;
-    await handleSendNumberOtp();
+    // Resend based on current step
+    if (numberStep === 'verify-current') {
+      await handleSendCurrentNumberOtp();
+    } else if (numberStep === 'verify-new') {
+      await handleSendNewNumberOtp();
+    } else {
+      await handleSendNumberOtp();
+    }
+  };
+
+  // Handler for sending OTP to current number (when changing number)
+  const handleSendCurrentNumberOtp = async () => {
+    if (!ensureApiUrl()) return;
+    if (!currentMobileNumber) {
+      showNotification({ type: 'error', message: 'No current mobile number found.' });
+      return;
+    }
+
+    setSendingNumberOtp(true);
+    try {
+      const response = await fetch(`${API_URL}/users/send-otp/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: getHeaders(),
+        body: JSON.stringify({ contact_number: currentMobileNumber }),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as SettingsApiError;
+
+      if (!response.ok) {
+        showNotification({
+          type: 'error',
+          message: extractErrorMessage(data, 'Failed to send verification code.'),
+        });
+        return;
+      }
+
+      setNumberOtpCode('');
+      setNumberResendCountdown(RESEND_COOLDOWN_SECONDS);
+      showNotification({ type: 'success', message: 'Verification code sent to your current mobile number.' });
+    } catch {
+      showNotification({ type: 'error', message: 'Connection failed. Please check your network.' });
+    } finally {
+      setSendingNumberOtp(false);
+    }
+  };
+
+  // Handler for verifying current number OTP (when changing number)
+  const handleVerifyCurrentNumberOtp = async () => {
+    if (!ensureApiUrl()) return;
+    const code = numberOtpCode.trim();
+
+    if (code.length !== 6) {
+      showNotification({ type: 'error', message: 'Please enter the 6-digit OTP code.' });
+      return;
+    }
+
+    setVerifyingNumberOtp(true);
+    try {
+      const response = await fetch(`${API_URL}/users/verify-otp/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: getHeaders(),
+        body: JSON.stringify({ contact_number: currentMobileNumber, otp_code: code }),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as SettingsApiError;
+
+      if (!response.ok) {
+        showNotification({
+          type: 'error',
+          message: extractErrorMessage(data, 'Invalid or expired OTP code.'),
+        });
+        return;
+      }
+
+      setCurrentNumberVerified(true);
+      setNumberOtpCode('');
+      setNumberResendCountdown(0);
+      setNumberStep('input-new');
+      showNotification({ type: 'success', message: 'Current number verified. Enter your new number.' });
+    } catch {
+      showNotification({ type: 'error', message: 'Connection failed. Please check your network.' });
+    } finally {
+      setVerifyingNumberOtp(false);
+    }
+  };
+
+  // Handler for sending OTP to new number
+  const handleSendNewNumberOtp = async () => {
+    if (!ensureApiUrl()) return;
+    if (newPhoneLocal.length !== 10) {
+      showNotification({ type: 'error', message: 'Please enter a valid 10-digit mobile number.' });
+      return;
+    }
+
+    const fullNumber = '+63' + newPhoneLocal;
+    setSendingNumberOtp(true);
+    try {
+      const response = await fetch(`${API_URL}/users/send-otp/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: getHeaders(),
+        body: JSON.stringify({ contact_number: fullNumber }),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as SettingsApiError;
+
+      if (!response.ok) {
+        showNotification({
+          type: 'error',
+          message: extractErrorMessage(data, 'Failed to send verification code.'),
+        });
+        return;
+      }
+
+      setNewMobileNumber(fullNumber);
+      setNumberOtpCode('');
+      setNumberResendCountdown(RESEND_COOLDOWN_SECONDS);
+      setNumberStep('verify-new');
+      showNotification({ type: 'success', message: 'Verification code sent to your new mobile number.' });
+    } catch {
+      showNotification({ type: 'error', message: 'Connection failed. Please check your network.' });
+    } finally {
+      setSendingNumberOtp(false);
+    }
+  };
+
+  // Handler for verifying new number OTP and saving
+  const handleVerifyNewNumberOtp = async () => {
+    if (!ensureApiUrl()) return;
+    const code = numberOtpCode.trim();
+
+    if (code.length !== 6) {
+      showNotification({ type: 'error', message: 'Please enter the 6-digit OTP code.' });
+      return;
+    }
+
+    setVerifyingNumberOtp(true);
+    try {
+      // Verify the OTP for the new number
+      const response = await fetch(`${API_URL}/users/verify-otp/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: getHeaders(),
+        body: JSON.stringify({ contact_number: newMobileNumber, otp_code: code }),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as SettingsApiError;
+
+      if (!response.ok) {
+        showNotification({
+          type: 'error',
+          message: extractErrorMessage(data, 'Invalid or expired OTP code.'),
+        });
+        return;
+      }
+
+      // Save the new contact_number to backend
+      try {
+        const saveResponse = await fetch(`${API_URL}/users/profile/settings/`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: getHeaders(),
+          body: JSON.stringify({ contact_number: newMobileNumber }),
+        });
+
+        if (!saveResponse.ok) {
+          const saveData = await saveResponse.json().catch(() => ({}));
+          console.error('Failed to save contact_number:', saveData);
+          showNotification({ type: 'error', message: 'Failed to save new number. Please try again.' });
+          return;
+        }
+
+        // Clear cache to reflect the new number
+        await clearProfileDetailsCache();
+      } catch (saveError) {
+        console.error('Error saving contact_number:', saveError);
+        showNotification({ type: 'error', message: 'Failed to save new number. Please try again.' });
+        return;
+      }
+
+      setNumberVerified(true);
+      setNumberStep('done');
+      showNotification({ type: 'success', message: 'Mobile number updated successfully.' });
+    } catch {
+      showNotification({ type: 'error', message: 'Connection failed. Please check your network.' });
+    } finally {
+      setVerifyingNumberOtp(false);
+    }
   };
 
   const handleVerifyPassword = async () => {
@@ -899,6 +1154,14 @@ export default function SettingsScreen() {
       return;
     }
 
+    if (viewMode === 'verify-number') {
+      if (!isBusy) {
+        setViewMode('menu');
+        resetNumberVerificationFlow();
+      }
+      return;
+    }
+
     const idx = stepOrder.indexOf(step);
     if (idx <= 0) {
       setViewMode('menu');
@@ -1158,9 +1421,16 @@ export default function SettingsScreen() {
                   ? 'Enter your mobile number to receive a verification code.'
                   : numberStep === 'verify'
                   ? 'Enter the 6-digit code sent to your mobile number.'
-                  : 'Your mobile number has been verified successfully.'}
+                  : numberStep === 'verify-current'
+                  ? 'Verify your current number to proceed with changing it.'
+                  : numberStep === 'input-new'
+                  ? 'Enter your new mobile number.'
+                  : numberStep === 'verify-new'
+                  ? 'Enter the 6-digit code sent to your new mobile number.'
+                  : 'Your mobile number has been updated successfully.'}
               </Text>
 
+              {/* Step: Input (for new users without a number) */}
               {numberStep === 'input' && (
                 <View style={styles.section}>
                   <ThemedText style={[styles.sectionTitle, { color: palette.textPrimary }]}>Mobile Number</ThemedText>
@@ -1197,6 +1467,7 @@ export default function SettingsScreen() {
                 </View>
               )}
 
+              {/* Step: Verify (for new users - original flow) */}
               {numberStep === 'verify' && (
                 <View style={styles.section}>
                   <ThemedText style={[styles.sectionTitle, { color: palette.textPrimary }]}>
@@ -1244,16 +1515,160 @@ export default function SettingsScreen() {
                 </View>
               )}
 
+              {/* Step: Verify Current Number (for users changing number) */}
+              {numberStep === 'verify-current' && (
+                <View style={styles.section}>
+                  <ThemedText style={[styles.sectionTitle, { color: palette.textPrimary }]}>
+                    Step 1: Verify Current Number
+                  </ThemedText>
+                  <ThemedText style={[styles.metaText, { color: palette.textSecondary }]}>
+                    Current number: {currentMobileNumber}
+                  </ThemedText>
+                  <ThemedText style={[styles.metaText, { color: palette.textSecondary, marginTop: 8 }]}>
+                    We'll send a verification code to your current number to confirm it's you.
+                  </ThemedText>
+
+                  <TextInput
+                    style={[styles.input, { borderColor: palette.inputBorder, backgroundColor: palette.inputBg, color: palette.inputText, marginTop: 16 }]}
+                    value={numberOtpCode}
+                    onChangeText={setNumberOtpCode}
+                    keyboardType="number-pad"
+                    maxLength={6}
+                    placeholder="Enter 6-digit code"
+                    placeholderTextColor="#8E8E93"
+                    editable={!isBusy}
+                  />
+
+                  <TouchableOpacity
+                    style={[styles.primaryButton, !canVerifyNumberOtp && styles.disabledButton]}
+                    onPress={handleVerifyCurrentNumberOtp}
+                    disabled={!canVerifyNumberOtp}
+                  >
+                    {verifyingNumberOtp ? (
+                      <ActivityIndicator color="#111214" />
+                    ) : (
+                      <Text style={[styles.primaryButtonText, { color: palette.textPrimary }]}>Verify Current Number</Text>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.secondaryButton,
+                      { backgroundColor: palette.secondaryBtnBg, borderColor: palette.secondaryBtnBorder },
+                      numberResendCountdown > 0 && styles.disabledButton,
+                    ]}
+                    onPress={handleSendCurrentNumberOtp}
+                    disabled={numberResendCountdown > 0 || isBusy}
+                  >
+                    <Text style={[styles.secondaryButtonText, { color: palette.secondaryBtnText }]}>
+                      {numberResendCountdown > 0 ? `Resend in ${formatCountdown(numberResendCountdown)}` : 'Send Code to Current Number'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* Step: Input New Number (for users changing number) */}
+              {numberStep === 'input-new' && (
+                <View style={styles.section}>
+                  <ThemedText style={[styles.sectionTitle, { color: palette.textPrimary }]}>
+                    Step 2: Enter New Number
+                  </ThemedText>
+                  <ThemedText style={[styles.metaText, { color: palette.textSecondary }]}>
+                    Your current number has been verified. Now enter your new number.
+                  </ThemedText>
+
+                  <View style={[styles.phoneInputWrap, { borderColor: palette.inputBorder, backgroundColor: palette.inputBg, marginTop: 16 }]}>
+                    <Text style={[styles.phonePrefix, { color: palette.textSecondary }]}>+63</Text>
+                    <TextInput
+                      style={[styles.phoneInput, { color: palette.inputText }]}
+                      value={newPhoneLocal}
+                      onChangeText={handleNewPhoneLocalChange}
+                      keyboardType="phone-pad"
+                      maxLength={10}
+                      placeholder="9XX XXX XXXX"
+                      placeholderTextColor="#8E8E93"
+                      editable={!isBusy}
+                    />
+                  </View>
+                  <ThemedText style={[styles.metaText, { color: palette.textSecondary }]}>
+                    Enter a valid Philippine mobile number
+                  </ThemedText>
+
+                  <TouchableOpacity
+                    style={[styles.primaryButton, !canSendNewNumberOtp && styles.disabledButton]}
+                    onPress={handleSendNewNumberOtp}
+                    disabled={!canSendNewNumberOtp}
+                  >
+                    {sendingNumberOtp ? (
+                      <ActivityIndicator color="#111214" />
+                    ) : (
+                      <Text style={[styles.primaryButtonText, { color: palette.textPrimary }]}>
+                        Send Code to New Number
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* Step: Verify New Number (for users changing number) */}
+              {numberStep === 'verify-new' && (
+                <View style={styles.section}>
+                  <ThemedText style={[styles.sectionTitle, { color: palette.textPrimary }]}>
+                    Step 3: Verify New Number
+                  </ThemedText>
+                  <ThemedText style={[styles.metaText, { color: palette.textSecondary }]}>
+                    Code sent to {newMobileNumber}
+                  </ThemedText>
+                  <TextInput
+                    style={[styles.input, { borderColor: palette.inputBorder, backgroundColor: palette.inputBg, color: palette.inputText }]}
+                    value={numberOtpCode}
+                    onChangeText={setNumberOtpCode}
+                    keyboardType="number-pad"
+                    maxLength={6}
+                    placeholder="Enter 6-digit code"
+                    placeholderTextColor="#8E8E93"
+                    editable={!isBusy}
+                  />
+
+                  <TouchableOpacity
+                    style={[styles.primaryButton, !canVerifyNumberOtp && styles.disabledButton]}
+                    onPress={handleVerifyNewNumberOtp}
+                    disabled={!canVerifyNumberOtp}
+                  >
+                    {verifyingNumberOtp ? (
+                      <ActivityIndicator color="#111214" />
+                    ) : (
+                      <Text style={[styles.primaryButtonText, { color: palette.textPrimary }]}>Verify & Update Number</Text>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.secondaryButton,
+                      { backgroundColor: palette.secondaryBtnBg, borderColor: palette.secondaryBtnBorder },
+                      numberResendCountdown > 0 && styles.disabledButton,
+                    ]}
+                    onPress={handleResendNumberOtp}
+                    disabled={numberResendCountdown > 0 || isBusy}
+                  >
+                    <Text style={[styles.secondaryButtonText, { color: palette.secondaryBtnText }]}>
+                      {numberResendCountdown > 0 ? `Resend in ${formatCountdown(numberResendCountdown)}` : 'Resend Code'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* Step: Done */}
               {numberStep === 'done' && (
                 <View style={styles.section}>
                   <View style={[styles.doneIconWrap, { backgroundColor: palette.doneIconBg }]}>
                     <FontAwesome name="check" size={20} color="#34C759" />
                   </View>
                   <ThemedText style={[styles.sectionTitle, { color: palette.textPrimary }]}>
-                    Number Verified
+                    {hasMobileNumber ? 'Number Updated' : 'Number Verified'}
                   </ThemedText>
                   <ThemedText style={[styles.metaText, { color: palette.textSecondary }]}>
-                    {mobileNumber}
+                    {newMobileNumber || mobileNumber}
                   </ThemedText>
 
                   <TouchableOpacity
@@ -1268,18 +1683,21 @@ export default function SettingsScreen() {
                 </View>
               )}
 
-              <TouchableOpacity
-                style={[styles.secondaryButton, { backgroundColor: palette.secondaryBtnBg, borderColor: palette.secondaryBtnBorder }]}
-                onPress={() => {
-                  if (!isBusy) {
-                    setViewMode('menu');
-                    resetNumberVerificationFlow();
-                  }
-                }}
-                disabled={isBusy}
-              >
-                <Text style={[styles.secondaryButtonText, { color: palette.secondaryBtnText }]}>Cancel</Text>
-              </TouchableOpacity>
+              {/* Cancel button - hide on done step */}
+              {numberStep !== 'done' && (
+                <TouchableOpacity
+                  style={[styles.secondaryButton, { backgroundColor: palette.secondaryBtnBg, borderColor: palette.secondaryBtnBorder }]}
+                  onPress={() => {
+                    if (!isBusy) {
+                      setViewMode('menu');
+                      resetNumberVerificationFlow();
+                    }
+                  }}
+                  disabled={isBusy}
+                >
+                  <Text style={[styles.secondaryButtonText, { color: palette.secondaryBtnText }]}>Cancel</Text>
+                </TouchableOpacity>
+              )}
             </>
           ) : viewMode === 'deactivate-account' ? (
             <>
