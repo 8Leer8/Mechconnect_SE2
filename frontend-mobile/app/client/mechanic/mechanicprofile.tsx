@@ -6,6 +6,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import { styles } from '@/style/client/mechanicProfileStyles';
 import { getImageUrl } from '@/lib/imageUtils';
 import { formatStructuredAddress } from '@/lib/locationAddress';
@@ -605,9 +606,9 @@ export default function MechanicProfileScreen() {
                   onPress={handleDirectRequest}
                   disabled={!mechanicAvailable}
                 >
-                  <FontAwesome name={mechanicAvailable ? 'paper-plane' : 'ban'} size={16} color="#fff" />
+                  <Feather name={mechanicAvailable ? 'send' : 'slash'} size={16} color="#fff" />
                   <ThemedText style={styles.directRequestText}>
-                    {mechanicAvailable ? 'Send Direct Request' : 'Mechanic not available for booking'}
+                    {mechanicAvailable ? 'Send Direct Request' : 'Not Available'}
                   </ThemedText>
                 </TouchableOpacity>
                 <TouchableOpacity

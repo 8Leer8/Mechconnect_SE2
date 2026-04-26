@@ -413,6 +413,8 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
     required_tokens = serializers.SerializerMethodField()
     my_offer_id = serializers.SerializerMethodField()
     my_offer_status = serializers.SerializerMethodField()
+    mechanic_can_accept = serializers.SerializerMethodField()
+    mechanic_accept_block_reason = serializers.SerializerMethodField()
     search_radius_km = serializers.FloatField(read_only=True)
     radius_km = serializers.SerializerMethodField()
     latitude = serializers.FloatField()
@@ -429,7 +431,7 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
             'services', 'add_ons', 'search_radius_km', 'radius_km',
             'created_at', 'expires_at', 'accepted_at',
             'status', 'concern_picture', 'required_tokens',
-            'my_offer_id', 'my_offer_status',
+            'my_offer_id', 'my_offer_status', 'mechanic_can_accept', 'mechanic_accept_block_reason',
         ]
     
     def get_concern_picture(self, obj):
@@ -495,6 +497,38 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
     def get_my_offer_status(self, obj):
         offer = self._get_current_mechanic_offer(obj)
         return offer.status if offer else None
+
+    def _get_current_mechanic(self):
+        request = self.context.get('request')
+        if not request:
+            return None
+
+        account_id = getattr(request, 'session', {}).get('account_id') if hasattr(request, 'session') else None
+        if not account_id:
+            return None
+
+        try:
+            account = Account.objects.get(id=account_id)
+        except Account.DoesNotExist:
+            return None
+
+        if not hasattr(account, 'mechanic'):
+            return None
+        return account.mechanic
+
+    def get_mechanic_can_accept(self, obj):
+        mechanic = self._get_current_mechanic()
+        if mechanic is None:
+            return True
+        return mechanic.status == mechanic.WorkStatus.AVAILABLE
+
+    def get_mechanic_accept_block_reason(self, obj):
+        mechanic = self._get_current_mechanic()
+        if mechanic is None:
+            return None
+        if mechanic.status != mechanic.WorkStatus.AVAILABLE:
+            return 'mechanic_unavailable'
+        return None
 
 
 class BroadcastOfferSerializer(serializers.ModelSerializer):

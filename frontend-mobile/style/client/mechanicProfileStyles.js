@@ -112,7 +112,13 @@ export const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#fff',
   },
-  directRequestText: { fontSize: 15, fontWeight: '700', color: '#fff' },
+  directRequestText: {
+    fontSize: 14,
+    fontWeight: '400',
+    color: '#fff',
+    textAlign: 'center',
+    flexShrink: 1,
+  },
   shopOwnerActionsRow: {
     width: '100%',
     flexDirection: 'row',
