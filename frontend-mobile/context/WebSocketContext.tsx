@@ -17,6 +17,8 @@ export interface BookingUpdateMessage {
   status?: string;
   message?: string;
   action?: string;
+  /** Backend hint for UI (e.g. mechanic_accepted_direct). */
+  event_source?: string;
   _timestamp?: number;
   /** Live mechanic GPS pushed from backend after POST /mechanic-location/ */
   latitude?: number;

@@ -73,7 +73,16 @@ export default function NotificationBell({ iconColor = '#FF8C00' }: Notification
 
   useEffect(() => {
     if (lastMessage?.type === 'booking_update' || lastMessage?.type === 'notification_update') {
-      loadNotifications();
+      void loadNotifications();
+    }
+    if (
+      lastMessage?.type === 'booking_update' &&
+      String((lastMessage as { event_source?: string }).event_source || '') === 'mechanic_accepted_direct'
+    ) {
+      const retry = setTimeout(() => {
+        void loadNotifications();
+      }, 450);
+      return () => clearTimeout(retry);
     }
   }, [lastMessage, loadNotifications]);
 

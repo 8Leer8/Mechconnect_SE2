@@ -174,7 +174,7 @@ def upsert_request_thread_notification(account_id, request_id, title, message, p
     )
 
 
-def upsert_booking_party_notification(account_id, booking, title, message, action=None):
+def upsert_booking_party_notification(account_id, booking, title, message, action=None, payload_extra=None):
     """Single in-app row per service request per receiver (broadcast → booking lifecycle)."""
     target_role = None
     try:
@@ -201,6 +201,14 @@ def upsert_booking_party_notification(account_id, booking, title, message, actio
     if target_role:
         payload['target_role'] = target_role
 
+    if payload_extra:
+        try:
+            for k, v in payload_extra.items():
+                if k and k != 'type':
+                    payload[k] = v
+        except Exception:
+            pass
+
     try:
         if booking.request and str(booking.request.request_type or '').lower() == 'broadcast':
             br = getattr(booking.request, 'broadcast_request', None)
@@ -220,7 +228,42 @@ def upsert_booking_party_notification(account_id, booking, title, message, actio
     )
 
 
-def _create_booking_notification(account_id, booking_id, booking_status, message, action=None, booking=None):
+def _int_account_id(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _party_message_for_notify(
+    account_id,
+    base_message,
+    client_message,
+    mechanic_message,
+    client_account_id,
+    mechanic_account_id,
+):
+    """Pick per-recipient copy when client/mechanic overrides are provided."""
+    aid = _int_account_id(account_id)
+    cid = _int_account_id(client_account_id)
+    mid = _int_account_id(mechanic_account_id)
+    if client_message is not None and cid is not None and aid == cid:
+        return client_message
+    if mechanic_message is not None and mid is not None and aid == mid:
+        return mechanic_message
+    return base_message
+
+
+def _create_booking_notification(
+    account_id,
+    booking_id,
+    booking_status,
+    message,
+    action=None,
+    booking=None,
+    title_override=None,
+    payload_extra=None,
+):
     from .models import Booking
 
     if booking is None:
@@ -236,13 +279,14 @@ def _create_booking_notification(account_id, booking_id, booking_status, message
     if not booking:
         return
 
-    title = _notification_title_for_booking_status(booking_status, message)
+    title = title_override or _notification_title_for_booking_status(booking_status, message)
     upsert_booking_party_notification(
         account_id,
         booking,
         title,
         message,
         action=action,
+        payload_extra=payload_extra,
     )
 
 
@@ -267,8 +311,27 @@ def notify_user(account_id, booking_id, booking_status, message):
     )
 
 
-def notify_booking_parties(mechanic_account_id, client_account_id, booking_id, booking_status, message):
-    """Broadcast booking_update to both mechanic and client personal groups."""
+def notify_booking_parties(
+    mechanic_account_id,
+    client_account_id,
+    booking_id,
+    booking_status,
+    message,
+    extra_event_fields=None,
+    client_message=None,
+    mechanic_message=None,
+    client_title=None,
+):
+    """Broadcast booking_update to mechanic, client, and related party groups.
+
+    extra_event_fields: optional dict merged into each WebSocket payload (e.g.
+    event_source='mechanic_accepted_direct'). Same keys (except type) are merged
+    into in-app notification payloads.
+
+    client_message / mechanic_message: optional per-recipient body overrides
+    (WebSocket message + notification message). client_title: optional in-app
+    notification title for the client only.
+    """
     participant_ids = {mechanic_account_id, client_account_id}
 
     channel_layer = get_channel_layer()
@@ -299,27 +362,53 @@ def notify_booking_parties(mechanic_account_id, client_account_id, booking_id, b
 
     participant_ids.add(shop_owner_account_id)
 
+    payload_extra = None
+    if extra_event_fields:
+        try:
+            payload_extra = {k: v for k, v in extra_event_fields.items() if k != "type"}
+        except Exception:
+            payload_extra = None
+
     for account_id in participant_ids:
         if not account_id:
             continue
+        party_message = _party_message_for_notify(
+            account_id,
+            message,
+            client_message,
+            mechanic_message,
+            client_account_id,
+            mechanic_account_id,
+        )
+        title_override = None
+        if client_title and _int_account_id(account_id) == _int_account_id(client_account_id):
+            title_override = client_title
         try:
-            _create_booking_notification(account_id, booking_id, booking_status, message, booking=booking)
+            _create_booking_notification(
+                account_id,
+                booking_id,
+                booking_status,
+                party_message,
+                booking=booking,
+                title_override=title_override,
+                payload_extra=payload_extra,
+            )
         except Exception:
             logger.exception('Failed to create notification for account %s', account_id)
 
-    if channel_layer is None:
-        return
-
-    event = {
-        "type": "booking_update",
-        "booking_id": booking_id,
-        "status": booking_status,
-        "message": message,
-    }
-
-    for account_id in participant_ids:
-        if not account_id:
+        if channel_layer is None:
             continue
+        event = {
+            "type": "booking_update",
+            "booking_id": booking_id,
+            "status": booking_status,
+            "message": party_message,
+        }
+        if extra_event_fields:
+            try:
+                event.update({k: v for k, v in extra_event_fields.items() if k != "type"})
+            except Exception:
+                pass
         async_to_sync(channel_layer.group_send)(f"user_{account_id}", event)
 
 

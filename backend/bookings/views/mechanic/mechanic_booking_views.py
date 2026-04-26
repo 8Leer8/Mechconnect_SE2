@@ -2586,6 +2586,10 @@ def mechanic_accept_direct_request(request, request_id):
         booking.id,
         booking.status,
         "Your request has been accepted",
+        extra_event_fields={"event_source": "mechanic_accepted_direct"},
+        client_message="A mechanic accepted your direct request.",
+        mechanic_message="You accepted this direct request.",
+        client_title="Mechanic accepted your request",
     )
 
     return Response(
