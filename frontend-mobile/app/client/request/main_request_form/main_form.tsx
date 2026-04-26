@@ -50,6 +50,9 @@ interface NearbyProvider {
   rating: number | null;
   specialization: string | null;
   profile_photo: string | null;
+  proximity_latitude?: number | null;
+  proximity_longitude?: number | null;
+  proximity_source?: string | null;
 }
 
 interface NearbyProvidersResponse {
@@ -98,6 +101,23 @@ export default function MainRequestFormScreen() {
   const [feeBreakdown, setFeeBreakdown] = useState<FeeBreakdown | null>(null);
   const nearbyFetchInFlightRef = useRef(false);
   const lastNearbyFetchAtRef = useRef(0);
+
+  const formatLiveLocation = (provider: NearbyProvider) => {
+    const lat = Number(provider.proximity_latitude);
+    const lng = Number(provider.proximity_longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+  };
+
+  const proximitySourceLabel = (source?: string | null) => {
+    const key = String(source || '').toLowerCase();
+    if (key === 'live_gps') return 'Live GPS';
+    if (key === 'recent_offer') return 'Last known location';
+    if (key === 'shop_profile_address') return 'Shop main branch';
+    if (key === 'shop_main_branch') return 'Shop main branch';
+    if (key === 'shop_branch_address') return 'Shop branch address';
+    return 'Location source unknown';
+  };
 
   // ─── Fetch Services (only for Broadcast mode) ─────────────
   useEffect(() => {
@@ -399,7 +419,7 @@ export default function MainRequestFormScreen() {
             <ThemedText style={styles.sectionTitle}>Nearby Providers</ThemedText>
           </View>
           <ThemedText style={styles.nearbySubtitle}>
-            {`Top 3 closest within ${searchRadiusKm} km`}
+            {`Nearby mechanics within ${searchRadiusKm} km + all verified shops`}
           </ThemedText>
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.nearbyScrollContent}>
@@ -451,6 +471,23 @@ export default function MainRequestFormScreen() {
                       />
                     </View>
                     <ThemedText style={styles.nearbyName} numberOfLines={1}>{provider.name}</ThemedText>
+                    {provider.provider_type === 'shop' ? (
+                      <View
+                        style={{
+                          marginLeft: 6,
+                          paddingHorizontal: 6,
+                          paddingVertical: 2,
+                          borderRadius: 999,
+                          backgroundColor: '#FF8C0020',
+                          borderWidth: 1,
+                          borderColor: '#FF8C0040',
+                        }}
+                      >
+                        <ThemedText style={{ fontSize: 10, fontWeight: '600', color: '#FF8C00' }}>
+                          Shop
+                        </ThemedText>
+                      </View>
+                    ) : null}
                   </View>
 
                   <View style={styles.nearbyStatRow}>
@@ -468,6 +505,18 @@ export default function MainRequestFormScreen() {
                   <ThemedText style={styles.nearbyMeta} numberOfLines={1}>
                     {provider.specialization || (provider.provider_type === 'shop' ? 'General automotive services' : 'General mechanic')}
                   </ThemedText>
+                  {formatLiveLocation(provider) ? (
+                    <ThemedText style={styles.nearbyMeta} numberOfLines={1}>
+                      {provider.provider_type === 'shop'
+                        ? `Profile: ${formatLiveLocation(provider)}`
+                        : `Live: ${formatLiveLocation(provider)}`}
+                    </ThemedText>
+                  ) : null}
+                  {provider.proximity_source ? (
+                    <ThemedText style={styles.nearbyMeta} numberOfLines={1}>
+                      {proximitySourceLabel(provider.proximity_source)}
+                    </ThemedText>
+                  ) : null}
                 </TouchableOpacity>
               ))
             )}

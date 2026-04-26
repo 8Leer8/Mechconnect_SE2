@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.db.models import Prefetch
 
-from ..models import Account, Client, FavoriteMechanic, FavoriteShop, Mechanic
+from ..models import Account, AccountBranchLocation, Client, FavoriteMechanic, FavoriteShop, Mechanic
 from ..serializers import MechanicSerializer, MechanicProfileSerializer
 from bookings.models import MechanicLocation, BroadcastOffer
 from services.models import MechanicService, MechanicSpecialty, ServiceAddOn
@@ -297,19 +297,16 @@ def list_nearby_mechanics(request):
             service_map[msvc.mechanic_id].append(msvc.service.name)
 
     all_mechanics_with_distance = []
-    shop_candidates = {}
 
     for mechanic in mechanics:
         if mechanic.status != Mechanic.WorkStatus.AVAILABLE:
             continue
 
+        proximity_source = 'live_gps'
         src_lat = mechanic.live_lat if mechanic.live_lat is not None else mechanic.offer_lat
         src_lng = mechanic.live_lng if mechanic.live_lng is not None else mechanic.offer_lng
-        if src_lat is None or src_lng is None:
-            account_address = getattr(mechanic.account, 'accountaddress', None)
-            if account_address is not None:
-                src_lat = account_address.lat
-                src_lng = account_address.lng
+        if mechanic.live_lat is None or mechanic.live_lng is None:
+            proximity_source = 'recent_offer'
         if src_lat is None or src_lng is None:
             continue
 
@@ -332,20 +329,10 @@ def list_nearby_mechanics(request):
             'rating': round(rating_value, 2) if rating_value > 0 else None,
             'specialization': specialization,
             'profile_photo': get_media_url(mechanic.profile_photo, request) if mechanic.profile_photo else None,
+            'proximity_latitude': round(mech_lat, 6),
+            'proximity_longitude': round(mech_lng, 6),
+            'proximity_source': proximity_source,
         })
-
-        if mechanic.is_working_for_shop and mechanic.shop_id:
-            existing = shop_candidates.get(mechanic.shop_id)
-            if existing is None:
-                shop_candidates[mechanic.shop_id] = {
-                    'shop': mechanic.shop,
-                    'distance_km': distance_km,
-                    'ratings': [rating_value] if rating_value > 0 else [],
-                }
-            else:
-                existing['distance_km'] = min(existing['distance_km'], distance_km)
-                if rating_value > 0:
-                    existing['ratings'].append(rating_value)
 
     applied_radius_km = base_radius_km
     nearby_mechanics = [m for m in all_mechanics_with_distance if m['distance_km'] <= applied_radius_km]
@@ -354,50 +341,107 @@ def list_nearby_mechanics(request):
             applied_radius_km = min(applied_radius_km + expansion_step_km, max_discovery_radius_km)
             nearby_mechanics = [m for m in all_mechanics_with_distance if m['distance_km'] <= applied_radius_km]
 
-    nearby_shops = []
-    if shop_candidates:
-        shop_ids = list(shop_candidates.keys())
-        shop_service_map = {sid: [] for sid in shop_ids}
-        for ss in ShopService.objects.filter(shop_id__in=shop_ids).select_related('service'):
-            if ss.service and ss.service.name not in shop_service_map[ss.shop_id]:
-                shop_service_map[ss.shop_id].append(ss.service.name)
+    # Shops: always located by their MAIN BRANCH address (never live GPS).
+    # Safety filters: only verified shops with KYC-approved owners and active accounts.
+    valid_shops = Shop.objects.select_related(
+        'shop_owner__account__accountaddress',
+    ).filter(
+        is_verified=True,
+        status=Shop.Status.OPEN,
+        shop_owner__verification_status='approved',
+        shop_owner__account__is_active=True,
+    )
+    if account_id:
+        valid_shops = valid_shops.exclude(shop_owner__account_id=account_id)
 
-        valid_shop_ids = set(
-            Shop.objects.filter(
-                id__in=shop_ids,
-                is_verified=True,
-                status=Shop.Status.OPEN,
-                shop_owner__verification_status='approved',
-                shop_owner__account__is_active=True,
-            ).values_list('id', flat=True)
-        )
+    shop_list = list(valid_shops)
+    shop_ids = [s.id for s in shop_list]
+    shop_account_ids = {s.shop_owner.account_id for s in shop_list if s.shop_owner_id}
 
-        for shop_id, info in shop_candidates.items():
-            if shop_id not in valid_shop_ids:
+    shop_service_map = {sid: [] for sid in shop_ids}
+    for ss in ShopService.objects.filter(shop_id__in=shop_ids).select_related('service'):
+        if ss.service and ss.service.name not in shop_service_map[ss.shop_id]:
+            shop_service_map[ss.shop_id].append(ss.service.name)
+
+    # Bulk-fetch branch locations as a fallback for shops whose AccountAddress
+    # has no coords. Prefer the explicit "main" branch, otherwise the most
+    # recently updated shop_owner branch with valid lat/lng.
+    branch_fallback_map = {}
+    if shop_account_ids:
+        for branch in AccountBranchLocation.objects.filter(
+            account_id__in=shop_account_ids,
+            branch_type='shop_owner',
+            lat__isnull=False,
+            lng__isnull=False,
+        ).order_by('-is_main', '-updated_at'):
+            if branch.account_id in branch_fallback_map:
                 continue
-            shop = info['shop']
-            if shop is None:
+            try:
+                branch_fallback_map[branch.account_id] = (
+                    float(branch.lat),
+                    float(branch.lng),
+                    'shop_main_branch' if branch.is_main else 'shop_branch_address',
+                )
+            except (TypeError, ValueError):
                 continue
 
-            ratings = info['ratings']
-            shop_rating = (sum(ratings) / len(ratings)) if ratings else None
-            services = shop_service_map.get(shop_id, [])
-            specialization = ', '.join(services[:2]) if services else None
+    all_shops_with_distance = []
+    for shop in shop_list:
+        owner = getattr(shop, 'shop_owner', None)
+        owner_account = getattr(owner, 'account', None) if owner else None
+        if not owner_account:
+            continue
 
-            if float(info['distance_km']) > applied_radius_km:
-                continue
+        shop_lat = None
+        shop_lng = None
+        proximity_source = 'shop_profile_address'
 
-            nearby_shops.append({
-                'id': shop.id,
-                'provider_type': 'shop',
-                'name': shop.shop_name,
-                'distance_km': round(float(info['distance_km']), 2),
-                'rating': round(float(shop_rating), 2) if shop_rating is not None else None,
-                'specialization': specialization,
-                'profile_photo': get_media_url(shop.service_banner, request) if shop.service_banner else None,
-            })
+        # Priority 1: AccountAddress (canonical "Main Branch" address)
+        account_address = getattr(owner_account, 'accountaddress', None)
+        if account_address and account_address.lat is not None and account_address.lng is not None:
+            try:
+                shop_lat = float(account_address.lat)
+                shop_lng = float(account_address.lng)
+            except (TypeError, ValueError):
+                shop_lat = None
+                shop_lng = None
 
-    providers = sorted(nearby_mechanics + nearby_shops, key=lambda item: item['distance_km'])[:3]
+        # Priority 2: AccountBranchLocation fallback for legacy/migrated shops
+        if shop_lat is None or shop_lng is None:
+            fallback = branch_fallback_map.get(owner_account.id)
+            if fallback:
+                shop_lat, shop_lng, proximity_source = fallback
+
+        # Worst case: no resolvable coordinates anywhere -> we cannot
+        # determine if the shop is "in the area", so skip it.
+        if shop_lat is None or shop_lng is None:
+            continue
+
+        distance_km = haversine_km(selected_lat, selected_lng, shop_lat, shop_lng)
+        services = shop_service_map.get(shop.id, [])
+        specialization = ', '.join(services[:2]) if services else None
+
+        all_shops_with_distance.append({
+            'id': shop.id,
+            'provider_type': 'shop',
+            'name': shop.shop_name,
+            'distance_km': round(float(distance_km), 2),
+            'rating': None,
+            'specialization': specialization,
+            'profile_photo': get_media_url(shop.service_banner, request) if shop.service_banner else None,
+            'proximity_latitude': round(shop_lat, 6),
+            'proximity_longitude': round(shop_lng, 6),
+            'proximity_source': proximity_source,
+        })
+
+    # Shops use the same applied_radius_km (already includes any emergency-mode
+    # expansion done above for mechanics).
+    nearby_shops = [s for s in all_shops_with_distance if s['distance_km'] <= applied_radius_km]
+
+    providers = sorted(
+        nearby_mechanics + nearby_shops,
+        key=lambda item: item.get('distance_km') if item.get('distance_km') is not None else float('inf'),
+    )
 
     return Response(
         {
