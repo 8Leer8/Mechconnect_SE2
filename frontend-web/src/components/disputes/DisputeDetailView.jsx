@@ -4,6 +4,7 @@ import {
   Ban,
   CheckCircle2,
   Gavel,
+  MessageCircle,
   Scale,
   ShieldCheck,
   X,
@@ -13,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { API_BASE_URL } from "@/config/env";
+import { ChatHistoryModal } from "./ChatHistoryModal";
 
 function normalizeStatus(value) {
   return String(value || "active").trim().toLowerCase();
@@ -107,6 +109,7 @@ export function DisputeDetailView({
   isSubmitting = false,
 }) {
   const [preview, setPreview] = useState(null);
+  const [isChatOpen, setIsChatOpen] = useState(false);
 
   const status = normalizeStatus(dispute?.status);
   const isResolved = useMemo(() => status.includes("resolved"), [status]);
@@ -367,9 +370,38 @@ export function DisputeDetailView({
                 ) : null}
               </CardContent>
             </Card>
+
+            {/* Chat History Button */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">Communication History</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Button
+                  variant="outline"
+                  className="justify-start gap-2 border-border bg-card hover:bg-muted"
+                  onClick={() => setIsChatOpen(true)}
+                >
+                  <MessageCircle className="size-4" />
+                  View Chat History
+                </Button>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Review the complete conversation between client and mechanic for this booking.
+                </p>
+              </CardContent>
+            </Card>
           </div>
         </div>
       </div>
+
+      {/* Chat History Modal */}
+      <ChatHistoryModal
+        isOpen={isChatOpen}
+        onClose={() => setIsChatOpen(false)}
+        bookingId={dispute?.booking_id}
+        clientName={dispute?.complainer}
+        mechanicName={dispute?.complaint_against}
+      />
 
       {preview ? (
         <div

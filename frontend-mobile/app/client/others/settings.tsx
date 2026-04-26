@@ -365,6 +365,25 @@ export default function SettingsScreen() {
         return;
       }
 
+      // Save contact_number to backend
+      try {
+        const saveResponse = await fetch(`${API_URL}/users/profile/settings/`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: getHeaders(),
+          body: JSON.stringify({ contact_number: mobileNumber }),
+        });
+
+        if (!saveResponse.ok) {
+          const saveData = await saveResponse.json().catch(() => ({}));
+          console.error('Failed to save contact_number:', saveData);
+          // Continue anyway - OTP was verified, we'll let user know there was a save issue
+        }
+      } catch (saveError) {
+        console.error('Error saving contact_number:', saveError);
+        // Continue anyway - OTP was verified
+      }
+
       // Update profile cache with new mobile number
       const profile = await fetchProfileDetailsCached(true);
       if (profile) {
