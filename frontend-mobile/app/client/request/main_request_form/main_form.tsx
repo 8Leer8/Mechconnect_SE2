@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Animated, Alert, Linking } from 'react-native';
 import { Image } from 'expo-image';
 import { ThemedText } from '@/components/themed-text';
@@ -15,6 +15,8 @@ import { usePricing } from '@/hooks/usePricing';
 import { calculateBroadcastFee, FeeBreakdown } from '@/utils/trafficutils';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
+const NEARBY_REFRESH_INTERVAL_MS = 7000;
+const NEARBY_MIN_FETCH_GAP_MS = 2000;
 
 interface Service {
   id: number;
@@ -94,6 +96,8 @@ export default function MainRequestFormScreen() {
   const [showNearbySection, setShowNearbySection] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [feeBreakdown, setFeeBreakdown] = useState<FeeBreakdown | null>(null);
+  const nearbyFetchInFlightRef = useRef(false);
+  const lastNearbyFetchAtRef = useRef(0);
 
   // ─── Fetch Services (only for Broadcast mode) ─────────────
   useEffect(() => {
@@ -141,7 +145,7 @@ export default function MainRequestFormScreen() {
     }, [selectedLocation, setSelectedLocation])
   );
 
-  useEffect(() => {
+  const fetchNearbyProviders = useCallback(async (options?: { silent?: boolean; force?: boolean }) => {
     if (isCustomMode || latitude === null || longitude === null || !selectedAddress) {
       setNearbyProviders([]);
       setShowNearbySection(false);
@@ -149,57 +153,84 @@ export default function MainRequestFormScreen() {
       return;
     }
 
-    let cancelled = false;
-    const fetchNearbyMechanics = async () => {
-      try {
-        if (!cancelled) {
-          setShowNearbySection(true);
-          setLoadingNearby(true);
-        }
+    const silent = options?.silent === true;
+    const force = options?.force === true;
+    const now = Date.now();
 
-        const query = new URLSearchParams({
-          lat: String(latitude),
-          lng: String(longitude),
-          radius_km: String(searchRadiusKm),
-        });
+    if (!force && now - lastNearbyFetchAtRef.current < NEARBY_MIN_FETCH_GAP_MS) {
+      return;
+    }
 
-        const response = await fetch(`${API_URL}/users/mechanics/nearby/?${query.toString()}`, {
-          method: 'GET',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        });
+    if (nearbyFetchInFlightRef.current) {
+      return;
+    }
 
-        if (!response.ok) {
-          throw new Error('Failed to fetch nearby mechanics');
-        }
+    nearbyFetchInFlightRef.current = true;
+    lastNearbyFetchAtRef.current = now;
 
-        const data = await response.json() as NearbyProvidersResponse;
-        if (!cancelled) {
-          const providers = Array.isArray(data.providers)
-            ? data.providers
-            : Array.isArray(data.mechanics)
-              ? data.mechanics
-              : [];
-          setNearbyProviders(providers);
-        }
-      } catch {
-        if (!cancelled) {
-          // Keep this section silent on API errors per UX requirement.
-          setShowNearbySection(false);
-          setNearbyProviders([]);
-        }
-      } finally {
-        if (!cancelled) {
-          setLoadingNearby(false);
-        }
+    try {
+      if (!silent) {
+        setShowNearbySection(true);
+        setLoadingNearby(true);
       }
-    };
 
-    fetchNearbyMechanics();
-    return () => {
-      cancelled = true;
-    };
+      const query = new URLSearchParams({
+        lat: String(latitude),
+        lng: String(longitude),
+        radius_km: String(searchRadiusKm),
+      });
+
+      const response = await fetch(`${API_URL}/users/mechanics/nearby/?${query.toString()}`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch nearby mechanics');
+      }
+
+      const data = await response.json() as NearbyProvidersResponse;
+      const providers = Array.isArray(data.providers)
+        ? data.providers
+        : Array.isArray(data.mechanics)
+          ? data.mechanics
+          : [];
+      setNearbyProviders(providers);
+      setShowNearbySection(true);
+    } catch {
+      if (!silent) {
+        // Keep this section silent on API errors per UX requirement.
+        setShowNearbySection(false);
+        setNearbyProviders([]);
+      }
+    } finally {
+      if (!silent) {
+        setLoadingNearby(false);
+      }
+      nearbyFetchInFlightRef.current = false;
+    }
   }, [isCustomMode, latitude, longitude, selectedAddress, searchRadiusKm]);
+
+  useEffect(() => {
+    void fetchNearbyProviders({ force: true });
+  }, [fetchNearbyProviders]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (isCustomMode || latitude === null || longitude === null || !selectedAddress) {
+        return;
+      }
+
+      void fetchNearbyProviders({ silent: true, force: true });
+
+      const intervalId = setInterval(() => {
+        void fetchNearbyProviders({ silent: true });
+      }, NEARBY_REFRESH_INTERVAL_MS);
+
+      return () => clearInterval(intervalId);
+    }, [fetchNearbyProviders, isCustomMode, latitude, longitude, selectedAddress])
+  );
 
   // ─── Toggle Custom Mode ────────────────────────────────────
   const handleToggleCustomMode = () => {
