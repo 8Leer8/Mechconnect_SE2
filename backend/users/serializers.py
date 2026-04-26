@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from .models import (
-    Account, AccountAddress, AccountRole, Client, 
-    Mechanic, ShopOwner, Admin, PasswordReset, MechanicReview, AccountBranchLocation
+    Account, AccountAddress, AccountRole, Client,
+    Mechanic, ShopOwner, Admin, ShopEmployee, PasswordReset, MechanicReview, AccountBranchLocation
 )
 from django.contrib.auth.hashers import make_password, check_password
 from django.utils import timezone
@@ -92,6 +92,21 @@ class AdminSerializer(serializers.ModelSerializer):
         fields = ['profile_photo', 'contact_number', 'is_superadmin']
 
 
+class ShopEmployeeSerializer(serializers.ModelSerializer):
+    shop_name = serializers.SerializerMethodField()
+    shop_id = serializers.IntegerField(source='shop.id', read_only=True, allow_null=True)
+
+    class Meta:
+        model = ShopEmployee
+        fields = ['profile_photo', 'shop_id', 'shop_name', 'created_at']
+
+    def get_shop_name(self, obj):
+        """Get shop name if employee is assigned to a shop"""
+        if obj.shop:
+            return obj.shop.shop_name
+        return None
+
+
 class AccountSerializer(serializers.ModelSerializer):
     address = AccountAddressSerializer(source='accountaddress', read_only=True)
     roles = AccountRoleSerializer(source='accountrole_set', many=True, read_only=True)
@@ -125,6 +140,8 @@ class AccountSerializer(serializers.ModelSerializer):
                 return ShopOwnerSerializer(obj.shopowner).data
             elif hasattr(obj, 'admin'):
                 return AdminSerializer(obj.admin).data
+            elif hasattr(obj, 'shopemployee'):
+                return ShopEmployeeSerializer(obj.shopemployee).data
         except:
             pass
         return None
@@ -177,6 +194,8 @@ class ProfileDetailSerializer(serializers.ModelSerializer):
             profiles['mechanic'] = MechanicSerializer(obj.mechanic, context=self.context).data
         if hasattr(obj, 'shopowner'):
             profiles['shop_owner'] = ShopOwnerSerializer(obj.shopowner, context=self.context).data
+        if hasattr(obj, 'shopemployee'):
+            profiles['shop_employee'] = ShopEmployeeSerializer(obj.shopemployee, context=self.context).data
         if hasattr(obj, 'admin'):
             profiles['admin'] = AdminSerializer(obj.admin, context=self.context).data
         return profiles
@@ -207,7 +226,8 @@ class RoleSwitchSerializer(serializers.Serializer):
     role = serializers.ChoiceField(choices=[
         ('client', 'Client'),
         ('mechanic', 'Mechanic'),
-        ('shop_owner', 'Shop Owner')
+        ('shop_owner', 'Shop Owner'),
+        ('shop_employee', 'Shop Employee')
     ])
     
     def validate_role(self, value):

@@ -23,14 +23,18 @@ interface UserRoleData {
   isMechanic: boolean;
   isShopOwner: boolean;
   isClient: boolean;
+  isShopEmployee: boolean;
   mechanicVerificationStatus: VerificationStatus;
   shopOwnerVerificationStatus: VerificationStatus;
   mechanicRejectionNote: string | null;
   shopOwnerRejectionNote: string | null;
   canSwitchMechanic: boolean;
   canSwitchShopOwner: boolean;
+  canSwitchShopEmployee: boolean;
   pendingApprovals: string[];
   availableRoles: { value: string; label: string }[];
+  shopEmployeeShopName: string | null;
+  shopEmployeeShopId: number | null;
 }
 
 type VerificationStatus = 'pending' | 'approved' | 'rejected' | null;
@@ -40,14 +44,18 @@ interface RoleStatusResponse {
   is_mechanic: boolean;
   is_shop_owner: boolean;
   is_client: boolean;
+  is_shop_employee?: boolean;
   mechanic_verification_status?: VerificationStatus;
   shop_owner_verification_status?: VerificationStatus;
   mechanic_rejection_note?: string | null;
   shop_owner_rejection_note?: string | null;
   can_switch_mechanic?: boolean;
   can_switch_shop_owner?: boolean;
+  can_switch_shop_employee?: boolean;
   pending_approvals?: string[];
   registered_roles: string[];
+  shop_employee_shop_name?: string | null;
+  shop_employee_shop_id?: number | null;
 }
 
 interface SwitchRoleResponse {
@@ -56,7 +64,7 @@ interface SwitchRoleResponse {
   [key: string]: unknown;
 }
 
-type RoleValue = 'client' | 'mechanic' | 'shop_owner';
+type RoleValue = 'client' | 'mechanic' | 'shop_owner' | 'shop_employee';
 
 interface RoleVisual {
   label: string;
@@ -68,6 +76,7 @@ const ROLE_VISUALS: Record<RoleValue, RoleVisual> = {
   client: { label: 'Client', icon: 'user', accent: '#5E9CFF' },
   mechanic: { label: 'Mechanic', icon: 'wrench', accent: '#FF8C00' },
   shop_owner: { label: 'Shop Owner', icon: 'building', accent: '#3ECF8E' },
+  shop_employee: { label: 'Shop Employee', icon: 'id-badge', accent: '#9B59B6' },
 };
 const ROLE_STATUS_POLL_MS = 15000;
 
@@ -111,18 +120,23 @@ export default function SwitchRolePage() {
         isMechanic: data.is_mechanic || false,
         isShopOwner: data.is_shop_owner || false,
         isClient: data.is_client || false,
+        isShopEmployee: data.is_shop_employee || false,
         mechanicVerificationStatus: data.mechanic_verification_status || null,
         shopOwnerVerificationStatus: data.shop_owner_verification_status || null,
         mechanicRejectionNote: data.mechanic_rejection_note || null,
         shopOwnerRejectionNote: data.shop_owner_rejection_note || null,
         canSwitchMechanic: Boolean(data.can_switch_mechanic),
         canSwitchShopOwner: Boolean(data.can_switch_shop_owner),
+        canSwitchShopEmployee: Boolean(data.can_switch_shop_employee),
         pendingApprovals: data.pending_approvals || [],
         availableRoles: data.registered_roles.map((role: string) => ({
           value: role,
-          label: role === 'shop_owner' ? 'Shop Owner' : 
+          label: role === 'shop_owner' ? 'Shop Owner' :
+                 role === 'shop_employee' ? 'Shop Employee' :
                  role.charAt(0).toUpperCase() + role.slice(1)
         })) || [],
+        shopEmployeeShopName: data.shop_employee_shop_name || null,
+        shopEmployeeShopId: data.shop_employee_shop_id || null,
       });
     } catch (err) {
       if (!silent) {
@@ -207,6 +221,18 @@ export default function SwitchRolePage() {
     }
 
     openSwitchConfirm('shop_owner');
+  };
+
+  const handleShopEmployeeAction = async () => {
+    if (!roleData) return;
+
+    if (!roleData.isShopEmployee) {
+      // Navigate to shop employee registration page
+      router.push('/(auth)/switchAccount/shopEmployeeRegister' as any);
+      return;
+    }
+
+    openSwitchConfirm('shop_employee');
   };
 
   const openSwitchConfirm = (role: RoleValue) => {
@@ -303,7 +329,7 @@ export default function SwitchRolePage() {
           // Fallback to regular mechanic tabs if error
         }
       }
-      
+
       showNotification({ type: 'success', message: data.message || 'Role switched successfully!' });
       setConfirmVisible(false);
       setPendingRole(null);
@@ -313,6 +339,8 @@ export default function SwitchRolePage() {
         router.replace(mechanicRoute as any);
       } else if (newRole === 'shop_owner') {
         router.replace('/(shopownerTabs)/main/home');
+      } else if (newRole === 'shop_employee') {
+        router.replace('/(shopEmployeeTabs)/main/home' as any);
       } else if (newRole === 'client') {
         router.replace('/(clientTabs)/main/home');
       } else {
@@ -379,6 +407,11 @@ export default function SwitchRolePage() {
 
     if (activeRole === 'shop_owner') {
       router.replace('/(shopownerTabs)/profile');
+      return;
+    }
+
+    if (activeRole === 'shop_employee') {
+      router.replace('/(shopEmployeeTabs)/profile' as any);
       return;
     }
 
@@ -548,41 +581,56 @@ export default function SwitchRolePage() {
             })
           )}
 
-          {/* Shop Owner Role Card - Only show if not currently shop owner */}
-          {!isRoleActive('shop_owner') && (
-            renderRoleCard('shop_owner', {
-              isRegistered: Boolean(roleData?.isShopOwner),
-              onPress: handleShopOwnerAction,
-              subtitle: !roleData?.isShopOwner
-                ? 'Register your shop owner account first'
-                : roleData.shopOwnerVerificationStatus === 'pending'
-                  ? 'Application submitted. Waiting for admin approval'
-                  : roleData.shopOwnerVerificationStatus === 'rejected'
-                    ? 'Application rejected. Tap to view reason'
-                    : 'Approved and ready for business tools',
-              actionText: !roleData?.isShopOwner
-                ? 'Register as Shop Owner'
-                : roleData.shopOwnerVerificationStatus === 'pending'
-                  ? 'Waiting for Admin Approval'
-                  : roleData.shopOwnerVerificationStatus === 'rejected'
-                    ? 'View Reason'
-                    : 'Switch to Shop Owner',
-              badgeLabel: !roleData?.isShopOwner
-                ? 'Setup required'
-                : roleData.shopOwnerVerificationStatus === 'pending'
-                  ? 'Pending Approval'
-                  : roleData.shopOwnerVerificationStatus === 'rejected'
-                    ? 'Rejected'
-                    : 'Verified',
-              badgeColor: !roleData?.isShopOwner
-                ? '#FF8C00'
-                : roleData.shopOwnerVerificationStatus === 'pending'
+          {/* Shop Owner/Employee Role Card - Dynamic based on user role */}
+          {!isRoleActive('shop_owner') && !isRoleActive('shop_employee') && (
+            roleData?.isShopEmployee ? (
+              // Show Shop Employee card if user is a shop employee
+              renderRoleCard('shop_employee', {
+                isRegistered: true,
+                onPress: handleShopEmployeeAction,
+                subtitle: roleData?.shopEmployeeShopName
+                  ? `Employee at ${roleData.shopEmployeeShopName}`
+                  : 'Shop Employee',
+                actionText: 'Switch to Shop Employee',
+                badgeLabel: 'Verified',
+                badgeColor: '#34C759',
+              })
+            ) : (
+              // Show Shop Owner card otherwise
+              renderRoleCard('shop_owner', {
+                isRegistered: Boolean(roleData?.isShopOwner),
+                onPress: handleShopOwnerAction,
+                subtitle: !roleData?.isShopOwner
+                  ? 'Register your shop owner account first'
+                  : roleData.shopOwnerVerificationStatus === 'pending'
+                    ? 'Application submitted. Waiting for admin approval'
+                    : roleData.shopOwnerVerificationStatus === 'rejected'
+                      ? 'Application rejected. Tap to view reason'
+                      : 'Approved and ready for business tools',
+                actionText: !roleData?.isShopOwner
+                  ? 'Register as Shop Owner'
+                  : roleData.shopOwnerVerificationStatus === 'pending'
+                    ? 'Waiting for Admin Approval'
+                    : roleData.shopOwnerVerificationStatus === 'rejected'
+                      ? 'View Reason'
+                      : 'Switch to Shop Owner',
+                badgeLabel: !roleData?.isShopOwner
+                  ? 'Setup required'
+                  : roleData.shopOwnerVerificationStatus === 'pending'
+                    ? 'Pending Approval'
+                    : roleData.shopOwnerVerificationStatus === 'rejected'
+                      ? 'Rejected'
+                      : 'Verified',
+                badgeColor: !roleData?.isShopOwner
                   ? '#FF8C00'
-                  : roleData.shopOwnerVerificationStatus === 'rejected'
-                    ? '#FF3B30'
-                    : '#34C759',
-              disableAction: Boolean(roleData?.isShopOwner && roleData?.shopOwnerVerificationStatus === 'pending'),
-            })
+                  : roleData.shopOwnerVerificationStatus === 'pending'
+                    ? '#FF8C00'
+                    : roleData.shopOwnerVerificationStatus === 'rejected'
+                      ? '#FF3B30'
+                      : '#34C759',
+                disableAction: Boolean(roleData?.isShopOwner && roleData?.shopOwnerVerificationStatus === 'pending'),
+              })
+            )
           )}
         </View>
 
