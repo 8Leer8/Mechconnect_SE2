@@ -1472,9 +1472,8 @@ export default function ClientBookingDetailScreen() {
       summaryPaymentStatus === 'fully_paid' &&
       !!booking.provider &&
       !!booking.mechanic_review?.can_rate;
-    const hasReviewFromBooking = !!booking.mechanic_review?.has_review;
 
-    if (canRateFromBooking && !hasReviewFromBooking && !ratingPromptDismissed) {
+    if (canRateFromBooking && !ratingPromptDismissed) {
       setShowRatingModal(true);
     }
   }, [booking, ratingPromptDismissed]);
@@ -3146,15 +3145,25 @@ export default function ClientBookingDetailScreen() {
               {canRateMechanic ? (
                 <View style={{ marginTop: 12 }}>
                   {hasMechanicReview && existingMechanicReview ? (
-                    <View style={styles.noteBox}>
-                      <ThemedText style={styles.noteLabel}>Your Rating</ThemedText>
-                      <ThemedText style={styles.noteText}>
-                        {Number(existingMechanicReview.rating || 0).toFixed(0)} / 5
-                      </ThemedText>
-                      {existingMechanicReview.comment ? (
-                        <ThemedText style={[styles.noteText, { marginTop: 6 }]}>{existingMechanicReview.comment}</ThemedText>
-                      ) : null}
-                    </View>
+                    <>
+                      <View style={styles.noteBox}>
+                        <ThemedText style={styles.noteLabel}>Your Rating</ThemedText>
+                        <ThemedText style={styles.noteText}>
+                          {Number(existingMechanicReview.rating || 0).toFixed(0)} / 5
+                        </ThemedText>
+                        {existingMechanicReview.comment ? (
+                          <ThemedText style={[styles.noteText, { marginTop: 6 }]}>{existingMechanicReview.comment}</ThemedText>
+                        ) : null}
+                      </View>
+                      <TouchableOpacity
+                        style={[styles.finishLargeButton, { backgroundColor: '#FFD60A', marginTop: 10 }]}
+                        onPress={() => setShowRatingModal(true)}
+                        activeOpacity={0.85}
+                      >
+                        <FontAwesome name="star" size={16} color="#111214" style={{ marginRight: 8 }} />
+                        <ThemedText style={[styles.actionButtonText, { color: '#111214' }]}>Update Rating</ThemedText>
+                      </TouchableOpacity>
+                    </>
                   ) : (
                     <TouchableOpacity
                       style={[styles.finishLargeButton, { backgroundColor: '#FFD60A' }]}
@@ -3621,11 +3630,12 @@ export default function ClientBookingDetailScreen() {
       />
 
       <MechanicRatingModal
-        visible={showRatingModal && canRateMechanic && !hasMechanicReview}
+        visible={showRatingModal && canRateMechanic}
         mechanicName={booking.provider?.name}
         loading={ratingSubmitting}
         initialRating={existingMechanicReview?.rating}
         initialComment={existingMechanicReview?.comment || ''}
+        hasExistingReview={hasMechanicReview}
         onClose={() => {
           setShowRatingModal(false);
           setRatingPromptDismissed(true);
