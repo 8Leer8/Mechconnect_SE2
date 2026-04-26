@@ -26,7 +26,7 @@ from shops.models import Shop
 
 def _get_authenticated_account(request):
     user = getattr(request, 'user', None)
-    if getattr(user, 'is_authenticated', False):
+    if isinstance(user, Account) and getattr(user, 'is_authenticated', False):
         return user
 
     account_id = request.session.get('account_id')
@@ -42,6 +42,18 @@ def _get_authenticated_account(request):
         return None
 
     return account
+
+
+def _normalize_availability_status(raw_value):
+    value = str(raw_value or '').strip().lower()
+
+    if value in {'available', 'online', 'open', '1', 'true', 'yes'}:
+        return 'available'
+
+    if value in {'unavailable', 'offline', 'closed', 'working', '0', 'false', 'no'}:
+        return 'unavailable'
+
+    return None
 
 
 def _broadcast_provider_status_update(provider_role, provider_id, raw_status):
@@ -375,7 +387,7 @@ def update_availability_status(request):
         return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
 
     role = str(request.data.get('role') or request.session.get('active_role') or '').strip().lower()
-    desired_status = str(request.data.get('status') or '').strip().lower()
+    desired_status = _normalize_availability_status(request.data.get('status'))
 
     if desired_status not in {'available', 'unavailable'}:
         return Response(
@@ -388,18 +400,23 @@ def update_availability_status(request):
             return Response({'error': 'Mechanic profile not found'}, status=status.HTTP_404_NOT_FOUND)
 
         mechanic = account.mechanic
+        previous_status = mechanic.status
         mechanic.status = (
             mechanic.WorkStatus.AVAILABLE
             if desired_status == 'available'
             else mechanic.WorkStatus.WORKING
         )
         mechanic.save(update_fields=['status', 'updated_at'])
+        mechanic.refresh_from_db(fields=['status', 'updated_at'])
         _broadcast_provider_status_update('mechanic', mechanic.id, mechanic.status)
 
         return Response(
             {
                 'message': 'Availability updated successfully',
                 'role': 'mechanic',
+                'account_id': account.id,
+                'mechanic_id': mechanic.id,
+                'previous_raw_status': previous_status,
                 'status': desired_status,
                 'raw_status': mechanic.status,
             },
@@ -414,14 +431,19 @@ def update_availability_status(request):
         if not shop:
             return Response({'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
 
+        previous_status = shop.status
         shop.status = Shop.Status.OPEN if desired_status == 'available' else Shop.Status.CLOSED
         shop.save(update_fields=['status', 'updated_at'])
+        shop.refresh_from_db(fields=['status', 'updated_at'])
         _broadcast_provider_status_update('shop', shop.id, shop.status)
 
         return Response(
             {
                 'message': 'Availability updated successfully',
                 'role': 'shop_owner',
+                'account_id': account.id,
+                'shop_id': shop.id,
+                'previous_raw_status': previous_status,
                 'status': desired_status,
                 'raw_status': shop.status,
             },

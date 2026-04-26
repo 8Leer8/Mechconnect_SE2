@@ -267,6 +267,8 @@ def list_nearby_mechanics(request):
     radius_km = min(radius_km, max_discovery_radius_km)
     requested_radius_km = radius_km
     base_radius_km = radius_km
+    account = _get_authenticated_account(request)
+    account_id = account.id if account else None
 
     mechanics = Mechanic.objects.select_related('account').filter(
         verification_status=Mechanic.VerificationStatus.APPROVED,
@@ -277,6 +279,8 @@ def list_nearby_mechanics(request):
         'shop__shop_owner',
         'shop__shop_owner__account',
     ).annotate(**mechanic_location_annotations('account_id', 'pk'))
+    if account_id:
+        mechanics = mechanics.exclude(account_id=account_id)
 
     mechanic_ids = [m.id for m in mechanics]
     specialty_map = {mid: [] for mid in mechanic_ids}
@@ -296,8 +300,16 @@ def list_nearby_mechanics(request):
     shop_candidates = {}
 
     for mechanic in mechanics:
+        if mechanic.status != Mechanic.WorkStatus.AVAILABLE:
+            continue
+
         src_lat = mechanic.live_lat if mechanic.live_lat is not None else mechanic.offer_lat
         src_lng = mechanic.live_lng if mechanic.live_lng is not None else mechanic.offer_lng
+        if src_lat is None or src_lng is None:
+            account_address = getattr(mechanic.account, 'accountaddress', None)
+            if account_address is not None:
+                src_lat = account_address.lat
+                src_lng = account_address.lng
         if src_lat is None or src_lng is None:
             continue
 

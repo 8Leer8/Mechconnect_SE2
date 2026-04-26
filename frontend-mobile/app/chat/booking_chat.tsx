@@ -13,6 +13,17 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL;
 // Hide the default Expo Router header so we only show our custom header
 export const screenOptions = { headerShown: false } as const;
 
+// PII masking utility function
+const maskPII = (text: string): string => {
+  if (!text || typeof text !== 'string') return text;
+  const emailRegex = /[a-zA-Z0-9._%-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+  let masked = text.replace(emailRegex, '****');
+  // Philippine phone: matches 09XX XXXX XXXX, +639XX XXXX XXXX, or any variation with spaces/dashes
+  const phoneRegex = /(?:\+63|0)[0-9\s\-\.()]{9,14}/g;
+  masked = masked.replace(phoneRegex, '****');
+  return masked;
+};
+
 export default function BookingChatScreen() {
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
   const navigation = useNavigation();
@@ -1604,7 +1615,7 @@ export default function BookingChatScreen() {
               </ThemedText>
             </View>
             <View style={[styles.messageBubble, isMe ? styles.messageBubbleMine : styles.messageBubbleOther]}>
-              <ThemedText style={isMe ? styles.messageTextMine : styles.messageTextOther}>{item.content}</ThemedText>
+              <ThemedText style={isMe ? styles.messageTextMine : styles.messageTextOther}>{maskPII(item.content)}</ThemedText>
             </View>
           </View>
 

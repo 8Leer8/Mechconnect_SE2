@@ -135,6 +135,12 @@ def accept_broadcast_request(request, broadcast_id):
             }, status=status.HTTP_403_FORBIDDEN)
         
         mechanic = account.mechanic
+        if mechanic.status != mechanic.WorkStatus.AVAILABLE:
+            return Response({
+                'error': 'Your status is unavailable. Switch to accept bookings.',
+                'reason': 'mechanic_unavailable',
+                'mechanic_status': mechanic.status,
+            }, status=status.HTTP_403_FORBIDDEN)
         
         # Extract location and pricing data from request
         mechanic_latitude = request.data.get('mechanic_latitude')

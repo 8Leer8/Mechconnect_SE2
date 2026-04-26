@@ -82,6 +82,8 @@ interface BroadcastRequest {
   required_tokens?: number;
   my_offer_id?: number | null;
   my_offer_status?: string | null;
+  mechanic_can_accept?: boolean;
+  mechanic_accept_block_reason?: string | null;
 }
 
 type TrafficLevel = 'light' | 'moderate' | 'heavy' | 'severe' | 'unknown';
@@ -237,7 +239,7 @@ export default function MapScreen() {
       return;
     }
 
-    if (lastMessage.action === 'booking_finalized' && messageBroadcastId && messageOfferId && pendingOffer?.offerId === messageOfferId) {
+    if (lastMessage.action === 'booking_finalized' && messageBroadcastId) {
       const acceptedBookingId = extractBookingIdFromPayload(lastMessage);
       setOfferNotice({
         broadcastId: messageBroadcastId,
@@ -249,6 +251,10 @@ export default function MapScreen() {
         delete next[messageBroadcastId];
         return next;
       });
+      setAwaitingClientSelectionBroadcastId((current) => (
+        current === messageBroadcastId ? null : current
+      ));
+      setBroadcasts((current) => current.filter((broadcast) => broadcast.id !== messageBroadcastId));
       closeBroadcastModal();
       fetchBroadcasts(true);
       fetchTokensBalance(true);
@@ -857,6 +863,14 @@ export default function MapScreen() {
 
   const handleAcceptBroadcast = async () => {
     if (!selectedBroadcast || !userLocation) return;
+    if (selectedBroadcast.mechanic_can_accept === false) {
+      showNotification({
+        type: 'warning',
+        title: 'Unavailable',
+        message: 'Your status is unavailable. Switch to accept bookings.',
+      });
+      return;
+    }
 
     setAccepting(true);
     try {
@@ -907,6 +921,14 @@ export default function MapScreen() {
         fetchTokensBalance(true);
         try { eventBus.emit('walletChanged'); } catch { }
       } else {
+        if (data?.reason === 'mechanic_unavailable') {
+          showNotification({
+            type: 'warning',
+            title: 'Unavailable',
+            message: data?.error || 'Your status is unavailable. Switch to accept bookings.',
+          });
+          return;
+        }
         showNotification({ type: 'warning', title: 'Already Taken', message: data.error || 'This broadcast is no longer available. Another mechanic was faster.' });
         closeBroadcastModal(); fetchBroadcasts(true);
       }
@@ -937,6 +959,11 @@ export default function MapScreen() {
   const hasInsufficientTokens = requiredTokensPreview !== null && tokensBalance !== null && tokensBalance < requiredTokensPreview;
   const selectedBroadcastCoordinate = selectedBroadcast ? toValidCoordinate(selectedBroadcast.latitude, selectedBroadcast.longitude) : null;
   const isAwaitingClientSelection = isBroadcastPendingClientSelection(selectedBroadcast);
+  const isSelectedBroadcastBlockedByStatus = selectedBroadcast?.mechanic_can_accept === false;
+  const isMechanicUnavailableForBroadcasts = useMemo(
+    () => broadcasts.some((broadcast) => broadcast.mechanic_can_accept === false),
+    [broadcasts]
+  );
   const activePendingBroadcastId = useMemo(() => {
     if (awaitingClientSelectionBroadcastId !== null) {
       const pendingFromOffers = pendingOffersByBroadcastId[awaitingClientSelectionBroadcastId]?.status === 'pending';
@@ -1150,13 +1177,19 @@ export default function MapScreen() {
             </View>
           ) : (
             <>
+              {isMechanicUnavailableForBroadcasts && (
+                <ThemedText style={{ fontSize: 12, color: '#FFB3A7', marginBottom: 10, lineHeight: 18 }}>
+                  Your status is unavailable. Switch to accept bookings.
+                </ThemedText>
+              )}
               {isOtherBroadcastLocked && (
                 <ThemedText style={{ fontSize: 12, color: '#8E8E93', marginBottom: 10, lineHeight: 18 }}>
                   Other broadcasts are unavailable until you withdraw or the client responds to your pending request.
                 </ThemedText>
               )}
               {filteredBroadcasts.map((broadcast) => {
-                const lockedOut = isOtherBroadcastLocked && broadcast.id !== activePendingBroadcastId;
+                const lockedOutByStatus = isMechanicUnavailableForBroadcasts || broadcast.mechanic_can_accept === false;
+                const lockedOut = lockedOutByStatus || (isOtherBroadcastLocked && broadcast.id !== activePendingBroadcastId);
                 const isCardAwaitingClient = isBroadcastPendingClientSelection(broadcast);
                 return (
                 <TouchableOpacity
@@ -1446,10 +1479,10 @@ export default function MapScreen() {
                 style={[
                   styles.modalAcceptButton,
                   accepting && styles.modalAcceptButtonDisabled,
-                  (hasInsufficientTokens || (!isShopOwnerMap && isAwaitingClientSelection)) ? styles.modalAcceptButtonDisabled : null,
+                  (hasInsufficientTokens || (!isShopOwnerMap && (isAwaitingClientSelection || isSelectedBroadcastBlockedByStatus))) ? styles.modalAcceptButtonDisabled : null,
                 ]}
                 onPress={handleAcceptBroadcast}
-                disabled={accepting || hasInsufficientTokens || (!isShopOwnerMap && isAwaitingClientSelection)}
+                disabled={accepting || hasInsufficientTokens || (!isShopOwnerMap && (isAwaitingClientSelection || isSelectedBroadcastBlockedByStatus))}
               >
                 {accepting ? (
                   <>
@@ -1460,6 +1493,11 @@ export default function MapScreen() {
                   <>
                     <ActivityIndicator color="#fff" />
                     <ThemedText style={styles.modalAcceptText}>Waiting for client approval</ThemedText>
+                  </>
+                ) : isSelectedBroadcastBlockedByStatus ? (
+                  <>
+                    <FontAwesome name="pause-circle" size={18} color="#fff" />
+                    <ThemedText style={styles.modalAcceptText}>Switch to accept bookings</ThemedText>
                   </>
                 ) : (
                   <>
