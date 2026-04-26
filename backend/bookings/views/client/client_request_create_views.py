@@ -265,6 +265,12 @@ def create_mechanic_direct_request(request):
         if not hasattr(provider, 'mechanic'):
             return Response({'error': 'Selected provider is not a mechanic'}, status=status.HTTP_400_BAD_REQUEST)
 
+        if provider.mechanic.status != Mechanic.WorkStatus.AVAILABLE:
+            return Response(
+                {'error': 'Mechanic not available for booking'},
+                status=status.HTTP_409_CONFLICT,
+            )
+
         try:
             mechanic_service = MechanicService.objects.get(
                 mechanic=provider.mechanic,
@@ -352,7 +358,11 @@ def get_mechanics(request):
     Get list of available mechanics with their services.
     """
     try:
-        mechanics = Mechanic.objects.select_related('account').all()
+        mechanics = Mechanic.objects.select_related('account').filter(
+            status=Mechanic.WorkStatus.AVAILABLE,
+            verification_status=Mechanic.VerificationStatus.APPROVED,
+            account__is_active=True,
+        )
 
         mechanics_data = []
         for mechanic in mechanics:

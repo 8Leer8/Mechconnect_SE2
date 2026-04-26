@@ -296,6 +296,9 @@ def list_nearby_mechanics(request):
     shop_candidates = {}
 
     for mechanic in mechanics:
+        if mechanic.status != Mechanic.WorkStatus.AVAILABLE:
+            continue
+
         src_lat = mechanic.live_lat if mechanic.live_lat is not None else mechanic.offer_lat
         src_lng = mechanic.live_lng if mechanic.live_lng is not None else mechanic.offer_lng
         if src_lat is None or src_lng is None:

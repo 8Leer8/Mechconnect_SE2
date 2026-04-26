@@ -31,12 +31,26 @@ class MechanicDirectRequestAddonTests(TestCase):
 		)
 		self.mechanic = Mechanic.objects.create(account=self.mechanic_account, contact_number='09170000002')
 
+		self.unavailable_mechanic_account = Account.objects.create(
+			firstname='Unavailable',
+			lastname='Mechanic',
+			username='mechanic-unavailable',
+			email='mechanic-unavailable@example.com',
+			password='password',
+		)
+		self.unavailable_mechanic = Mechanic.objects.create(
+			account=self.unavailable_mechanic_account,
+			contact_number='09170000003',
+			status=Mechanic.WorkStatus.WORKING,
+		)
+
 		self.service = Service.objects.create(
 			name='Oil Change',
 			description='Basic oil change service',
 			minimum_price=150,
 		)
 		MechanicService.objects.create(mechanic=self.mechanic, service=self.service, price=200)
+		MechanicService.objects.create(mechanic=self.unavailable_mechanic, service=self.service, price=220)
 
 		self.mechanic_addon = ServiceAddOn.objects.create(
 			mechanic=self.mechanic,
@@ -135,3 +149,30 @@ class MechanicDirectRequestAddonTests(TestCase):
 		self.assertEqual(DirectRequest.objects.count(), 1)
 		self.assertEqual(DirectRequestAddOn.objects.count(), 1)
 		self.assertEqual(DirectRequestAddOn.objects.first().service_add_on_id, self.mechanic_addon.id)
+
+	def test_mechanic_direct_request_rejects_unavailable_mechanic(self):
+		session = self.http_client.session
+		session['account_id'] = self.client_account.id
+		session.save()
+
+		response = self.http_client.post(
+			'/api/bookings/direct/mechanic/create/',
+			data=json.dumps({
+				'provider_id': self.unavailable_mechanic_account.id,
+				'service_id': self.service.id,
+				'vehicle_type': 'Car',
+				'vehicle_brand': 'Toyota',
+				'vehicle_model': 'Vios',
+				'service_location': {
+					'street_name': 'Main St',
+					'barangay': 'Barangay 1',
+					'city_municipality': 'Metro City',
+					'latitude': 14.5995,
+					'longitude': 120.9842,
+				},
+			}),
+			content_type='application/json',
+		)
+
+		self.assertEqual(response.status_code, 409)
+		self.assertEqual(DirectRequest.objects.count(), 0)

@@ -488,6 +488,7 @@ export default function MechanicProfileScreen() {
   }
 
   const rating = parseFloat(profile.average_rating);
+  const mechanicAvailable = isMechanicAvailable(profile.status);
 
   return (
     <ThemedView style={styles.container}>
@@ -595,12 +596,19 @@ export default function MechanicProfileScreen() {
             ) : (
               <View style={styles.clientActionsRow}>
                 <TouchableOpacity
-                  style={[styles.directRequestBtn, styles.clientDirectRequestBtn]}
+                  style={[
+                    styles.directRequestBtn,
+                    styles.clientDirectRequestBtn,
+                    !mechanicAvailable && { backgroundColor: '#3A3D40' },
+                  ]}
                   activeOpacity={0.7}
                   onPress={handleDirectRequest}
+                  disabled={!mechanicAvailable}
                 >
-                  <FontAwesome name="paper-plane" size={16} color="#fff" />
-                  <ThemedText style={styles.directRequestText}>Send Direct Request</ThemedText>
+                  <FontAwesome name={mechanicAvailable ? 'paper-plane' : 'ban'} size={16} color="#fff" />
+                  <ThemedText style={styles.directRequestText}>
+                    {mechanicAvailable ? 'Send Direct Request' : 'Mechanic not available for booking'}
+                  </ThemedText>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.favoriteBtn, isFavorited && styles.favoriteBtnActive]}
