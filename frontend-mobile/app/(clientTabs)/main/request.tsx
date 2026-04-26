@@ -12,6 +12,19 @@ import { useWebSocketContext } from '@/context/WebSocketContext';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
+function formatScheduledServiceLine(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 interface CustomRequest {
   id: number;
   provider: { id: number; name: string } | null;
@@ -27,6 +40,7 @@ interface CustomRequest {
     city_municipality: string;
   } | null;
   created_at: string;
+  scheduled_time?: string | null;
   has_booking: boolean;
 }
 
@@ -51,6 +65,7 @@ interface DirectRequest {
     city_municipality: string;
   } | null;
   created_at: string;
+  scheduled_time?: string | null;
   has_booking: boolean;
 }
 
@@ -74,6 +89,7 @@ interface BroadcastRequest {
   created_at: string;
   expires_at: string;
   accepted_at: string | null;
+  scheduled_time?: string | null;
   has_booking: boolean;
 }
 
@@ -92,6 +108,7 @@ interface EmergencyRequest {
   expires_at?: string | null;
   remaining_seconds?: number;
   created_at: string;
+  scheduled_time?: string | null;
   has_booking: boolean;
 }
 
@@ -453,6 +470,8 @@ export default function RequestScreen() {
       }
       if (r.quoted_price) details.push({ icon: 'tag', text: `₱${parseFloat(String(r.quoted_price || '0')).toFixed(2)}` });
       if (r.service_location) details.push({ icon: 'map-marker', text: `${r.service_location.street_name}, ${r.service_location.barangay}, ${r.service_location.city_municipality}` });
+      const schedCustom = formatScheduledServiceLine(r.scheduled_time);
+      if (schedCustom) details.push({ icon: 'clock-o', text: `Service: ${schedCustom}` });
       details.push({ icon: 'calendar', text: new Date(r.created_at).toLocaleDateString() });
 
       return renderRequestCard(
@@ -487,6 +506,8 @@ export default function RequestScreen() {
         details.push({ icon: 'wrench', text: r.provider.name });
       }
       if (r.service_location) details.push({ icon: 'map-marker', text: `${r.service_location.street_name}, ${r.service_location.barangay}, ${r.service_location.city_municipality}` });
+      const schedDirect = formatScheduledServiceLine(r.scheduled_time);
+      if (schedDirect) details.push({ icon: 'clock-o', text: `Service: ${schedDirect}` });
       details.push({ icon: 'calendar', text: new Date(r.created_at).toLocaleDateString() });
 
       return renderRequestCard(
@@ -517,6 +538,8 @@ export default function RequestScreen() {
         details.push({ icon: 'wrench', text: r.provider.name });
       }
       if (r.service_location) details.push({ icon: 'map-marker', text: `${r.service_location.street_name}, ${r.service_location.barangay}, ${r.service_location.city_municipality}` });
+      const schedBc = formatScheduledServiceLine(r.scheduled_time);
+      if (schedBc) details.push({ icon: 'clock-o', text: `Service: ${schedBc}` });
       details.push({ icon: 'calendar', text: new Date(r.created_at).toLocaleDateString() });
 
       const extra = (
@@ -565,6 +588,7 @@ export default function RequestScreen() {
               expiresAt: r.expires_at,
               acceptedAt: r.accepted_at || '',
               hasBooking: r.has_booking.toString(),
+              scheduledTime: r.scheduled_time || '',
             },
           });
         },
@@ -591,6 +615,8 @@ export default function RequestScreen() {
           text: `${r.service_location.street_name}, ${r.service_location.barangay}, ${r.service_location.city_municipality}`,
         });
       }
+      const schedEm = formatScheduledServiceLine(r.scheduled_time);
+      if (schedEm) details.push({ icon: 'clock-o', text: `Service: ${schedEm}` });
       details.push({ icon: 'calendar', text: new Date(r.created_at).toLocaleDateString() });
 
       const showTimer = !r.has_booking && r.status === 'pending' && !!r.expires_at;

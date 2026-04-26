@@ -10,6 +10,7 @@ import { styles } from '@/style/client/bookingDetailsStyles';
 import { SkeletonDetailPage } from '@/components/skeletons/SkeletonLoaders';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import {
@@ -42,6 +43,7 @@ interface BookingDetail {
   dispute_status?: 'none' | 'active' | 'resolved' | string;
   amount_fee: number;
   booked_at: string;
+  booking_date?: string | null;
   updated_at: string;
   completed_at: string | null;
   convenience_fee?: number | null;
@@ -89,6 +91,8 @@ interface BookingDetail {
     after_pictures?: string[];
     is_job_done: boolean;
     is_rescheduled: boolean;
+    proposed_date?: string | null;
+    pre_reschedule_status?: string | null;
     reason: string | null;
     new_time: string | null;
     new_date: string | null;
@@ -265,6 +269,9 @@ export default function ClientBookingDetailScreen() {
   const [showDisputeModal, setShowDisputeModal] = useState(false);
   const [reportingNoShow, setReportingNoShow] = useState(false);
   const [showReportNoShowModal, setShowReportNoShowModal] = useState(false);
+  const [showReschedulePicker, setShowReschedulePicker] = useState(false);
+  const [rescheduleDate, setRescheduleDate] = useState(new Date(Date.now() + 24 * 60 * 60 * 1000));
+  const [rescheduleSubmitting, setRescheduleSubmitting] = useState(false);
   const [disputeReason, setDisputeReason] = useState('');
   const [disputeImage, setDisputeImage] = useState<string | null>(null);
   const [refundMethod, setRefundMethod] = useState<'gcash' | 'maya' | 'voucher'>('gcash');
@@ -1250,6 +1257,19 @@ export default function ClientBookingDetailScreen() {
         if (action === 'payment.completed') {
           setShowSuccess(true);
         }
+        if (action === 'reschedule_declined') {
+          Alert.alert(
+            'Reschedule Declined',
+            'The other party declined the reschedule. Please suggest a better time or stick to the original schedule.',
+            [
+              { text: 'Cancel Request', onPress: () => fetch(`${API_URL}/bookings/bookings/${bid}/reschedule/cancel/`, { method: 'POST', credentials: 'include' }).then(() => fetchBookingDetail(true)) },
+              { text: 'Suggest New Time', onPress: () => setShowReschedulePicker(true) },
+            ]
+          );
+        }
+        if (action === 'reschedule_accepted') {
+          Alert.alert('Reschedule Accepted', `Action buttons will activate on the scheduled date (${formatDate(lastMessage.new_date)}).`);
+        }
         // lightweight refresh
         fetchBookingDetail(true);
         refreshChatQuotationLabels();
@@ -1267,11 +1287,13 @@ export default function ClientBookingDetailScreen() {
   const getStatusLabel = (status: string) => {
     switch (status) {
       case 'accepted': return 'Booked';
+      case 'booked': return 'Booked';
       case 'active': return 'In Progress';
       case 'on_the_way': return 'Mechanic on the Way';
       case 'completed': return 'Completed';
       case 'cancelled': return 'Cancelled';
       case 'pending': return 'Pending';
+      case 'reschedule_proposed': return 'Waiting for Reschedule Response';
       case 'reworked': return 'Reworked';
       case 'disputed': return 'Disputed';
       default: return status.charAt(0).toUpperCase() + status.slice(1);
@@ -1281,12 +1303,14 @@ export default function ClientBookingDetailScreen() {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'accepted': return '#00B8D9';
+      case 'booked': return '#00B8D9';
       case 'active': return '#FF8C00';
       case 'on_the_way': return '#007AFF';
       case 'reworked': return '#FFD60A';
       case 'completed': return '#34C759';
       case 'cancelled': return '#FF3B30';
       case 'pending': return '#8E8E93';
+      case 'reschedule_proposed': return '#FFD60A';
       case 'disputed': return '#AF52DE';
       default: return '#8E8E93';
     }
@@ -1295,11 +1319,13 @@ export default function ClientBookingDetailScreen() {
   const getStatusIcon = (status: string): string => {
     switch (status) {
       case 'accepted': return 'calendar-check-o';
+      case 'booked': return 'calendar-check-o';
       case 'active': return 'play-circle';
       case 'on_the_way': return 'car';
       case 'completed': return 'check-circle';
       case 'cancelled': return 'times-circle';
       case 'pending': return 'clock-o';
+      case 'reschedule_proposed': return 'calendar';
       case 'reworked': return 'refresh';
       case 'disputed': return 'exclamation-circle';
       default: return 'circle';
@@ -1731,6 +1757,36 @@ export default function ClientBookingDetailScreen() {
     'disputed',
   ];
   const canCancelBooking = !cannotCancelStatuses.includes(bookingStatusRaw);
+  const scheduledDateValue = booking.booking_date;
+  const scheduledDateMs = scheduledDateValue ? new Date(scheduledDateValue).getTime() : NaN;
+  const canRescheduleBooking =
+    bookingStatusRaw !== 'reschedule_proposed' &&
+    (!scheduledDateValue || (Number.isFinite(scheduledDateMs) && Date.now() < scheduledDateMs - 60 * 60 * 1000));
+
+  const handleRequestReschedule = async (dateValue = rescheduleDate) => {
+    if (!booking?.id || rescheduleSubmitting) return;
+    try {
+      setRescheduleSubmitting(true);
+      const response = await fetch(`${API_URL}/bookings/bookings/${booking.id}/reschedule/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proposed_date: dateValue.toISOString() }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error((data as any)?.error || 'Unable to request reschedule');
+      }
+      setShowReschedulePicker(false);
+      setBooking((data as any)?.booking || data || booking);
+      Alert.alert('Reschedule Sent', 'Waiting for response.');
+      fetchBookingDetail(true);
+    } catch (err: any) {
+      Alert.alert('Reschedule Error', err?.message || 'Unable to request reschedule');
+    } finally {
+      setRescheduleSubmitting(false);
+    }
+  };
 
   const handleOpenCancelBooking = () => {
     if (!canCancelBooking) {
@@ -2029,9 +2085,47 @@ export default function ClientBookingDetailScreen() {
                 Report Mechanic No-Show
               </ThemedText>
             </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                paddingHorizontal: 14,
+                paddingVertical: 12,
+                borderTopWidth: 1,
+                borderTopColor: '#2A2C2E',
+                opacity: canRescheduleBooking ? 1 : 0.45,
+              }}
+              activeOpacity={0.8}
+              onPress={() => {
+                setShowActionMenu(false);
+                setShowReschedulePicker(true);
+              }}
+              disabled={!canRescheduleBooking}
+            >
+              <FontAwesome name="calendar" size={14} color="#FF8C00" />
+              <ThemedText style={{ color: '#ECEDEE', marginLeft: 10, fontWeight: '600' }}>
+                Reschedule Booking
+              </ThemedText>
+            </TouchableOpacity>
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {showReschedulePicker ? (
+        <DateTimePicker
+          value={rescheduleDate}
+          mode="datetime"
+          minimumDate={new Date(Date.now() + 60 * 60 * 1000)}
+          onChange={(event, selectedDate) => {
+            if (Platform.OS !== 'ios') setShowReschedulePicker(false);
+            if (event.type === 'dismissed') return;
+            const nextDate = selectedDate || rescheduleDate;
+            setRescheduleDate(nextDate);
+            handleRequestReschedule(nextDate);
+          }}
+        />
+      ) : null}
 
       <ReportNoShowModal
         visible={showReportNoShowModal}

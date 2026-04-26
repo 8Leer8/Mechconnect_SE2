@@ -29,6 +29,7 @@ class Request(models.Model):
     vehicle_brand = models.CharField(max_length=80, null=True, blank=True)
     vehicle_model = models.CharField(max_length=120, null=True, blank=True)
     vehicle_description = models.TextField(null=True, blank=True)
+    scheduled_time = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
 class CustomRequest(models.Model):
@@ -95,7 +96,10 @@ class EmergencyRequestPhoto(models.Model):
 
 class Booking(models.Model):
     class Status(models.TextChoices):
+        BOOKED = "booked"
         ACCEPTED = "accepted"         # Mechanic accepted, waiting to start
+        PENDING = "pending"
+        RESCHEDULE_PROPOSED = "reschedule_proposed"
         ON_THE_WAY = "on_the_way"    # Mechanic traveling to client
         AT_LOCATION = "at_location"  # Mechanic arrived at service location
         DIAGNOSING = "diagnosing"    # Mechanic met client; inspection / diagnosis
@@ -157,6 +161,7 @@ class Booking(models.Model):
     help_text="Real traffic surcharge added when mechanic went OTW"
     )
     booked_at = models.DateTimeField(auto_now_add=True)
+    booking_date = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 
@@ -181,6 +186,9 @@ class ActiveBooking(models.Model):
     is_job_done = models.BooleanField(default=False)
     after_picture_service = models.ImageField(upload_to='bookings/after/', null=True, blank=True)
     is_rescheduled = models.BooleanField(default=False)
+    proposed_date = models.DateTimeField(null=True, blank=True)
+    pre_reschedule_status = models.CharField(max_length=20, null=True, blank=True)
+    reschedule_requested_by = models.ForeignKey(Account, on_delete=models.SET_NULL, null=True, blank=True, related_name="reschedule_requests")
     reason = models.TextField(null=True, blank=True)
     new_time = models.DateTimeField(null=True, blank=True)
     new_date = models.DateTimeField(null=True, blank=True)

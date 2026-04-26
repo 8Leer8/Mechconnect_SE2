@@ -9,6 +9,44 @@ import { useWebSocketContext } from '@/context/WebSocketContext';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
+/**
+ * Many "JSON Parse error: Unexpected character: <" bugs happen when the server
+ * returns an HTML error page (502, Django debug page, wrong host) instead of JSON.
+ * This reads the body once and gives a clearer error.
+ */
+async function parseApiJson<T>(response: Response): Promise<T> {
+  const text = await response.text();
+  const trimmed = text.trim();
+  if (trimmed.startsWith('<')) {
+    throw new Error(
+      `Server returned HTML instead of JSON (HTTP ${response.status}). The API may be down, the URL in EXPO_PUBLIC_API_URL may point at the wrong server, or a proxy returned an error page.`
+    );
+  }
+  if (trimmed.length > 0 && !trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+    throw new Error(
+      `Server returned non-JSON (HTTP ${response.status}). Check that the backend is running and the API base URL is correct.`
+    );
+  }
+  try {
+    return JSON.parse(trimmed || '{}') as T;
+  } catch {
+    throw new Error(`Invalid JSON from server (HTTP ${response.status}). Try again in a moment.`);
+  }
+}
+
+function formatScheduledServiceDisplay(iso: string | null | undefined): string {
+  if (!iso) return 'As soon as possible';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return 'As soon as possible';
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 interface BroadcastOffer {
   id: number;
   status: string;
@@ -36,6 +74,7 @@ interface BroadcastPayload {
   concern_picture?: string | null;
   expires_at?: string | null;
   accepted_at?: string | null;
+  scheduled_time?: string | null;
 }
 
 interface BroadcastOffersResponse {
@@ -58,6 +97,7 @@ export default function BroadcastDetailScreen() {
     expiresAt: string;
     acceptedAt: string;
     hasBooking: string;
+    scheduledTime?: string;
   }>();
 
   const { lastMessage } = useWebSocketContext();
@@ -83,12 +123,14 @@ export default function BroadcastDetailScreen() {
   const expiresAt = params.expiresAt || '';
   const acceptedAt = params.acceptedAt || '';
   const hasBooking = params.hasBooking === 'true';
+  const paramScheduledTime = params.scheduledTime || '';
   const liveBroadcast = broadcastData?.broadcast || null;
   const currentStatus = liveBroadcast?.status || status;
   const currentDescription = liveBroadcast?.description || description;
   const currentServices = liveBroadcast?.services || services;
   const currentExpiresAt = liveBroadcast?.expires_at || expiresAt;
   const currentAcceptedAt = liveBroadcast?.accepted_at || acceptedAt;
+  const currentScheduledTime = liveBroadcast?.scheduled_time || paramScheduledTime || null;
   const acceptedOffer = useMemo(
     () => offers.find((offer) => offer.status === 'accepted') || null,
     [offers]
@@ -109,7 +151,7 @@ export default function BroadcastDetailScreen() {
         headers: { 'Content-Type': 'application/json' },
       });
 
-      const data = await response.json() as BroadcastOffersResponse & { error?: string };
+      const data = await parseApiJson<BroadcastOffersResponse & { error?: string }>(response);
       if (!response.ok) {
         throw new Error(data.error || 'Failed to load broadcast offers');
       }
@@ -137,7 +179,7 @@ export default function BroadcastDetailScreen() {
         body: JSON.stringify({ offer_id: offerId }),
       });
 
-      const data = await response.json() as { error?: string; booking_id?: number };
+      const data = await parseApiJson<{ error?: string; booking_id?: number }>(response);
       if (!response.ok) {
         throw new Error(data.error || 'Failed to select mechanic');
       }
@@ -353,7 +395,12 @@ export default function BroadcastDetailScreen() {
         return;
       }
 
-      const payload = await response.json();
+      let payload: unknown;
+      try {
+        payload = await parseApiJson<unknown>(response);
+      } catch {
+        return;
+      }
       const resolvedAddress = buildAddressFromProfile(payload);
       if (resolvedAddress) {
         setMechanicAddressById((prev) => ({ ...prev, [mechanicId]: resolvedAddress }));
@@ -611,6 +658,17 @@ export default function BroadcastDetailScreen() {
               <ThemedText style={styles.bookedText}>Booked</ThemedText>
             </View>
           )}
+        </View>
+
+        {/* Scheduled service time */}
+        <View style={styles.sectionCard}>
+          <View style={styles.sectionHeader}>
+            <View style={[styles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
+              <FontAwesome name="calendar" size={16} color="#FF8C00" />
+            </View>
+            <ThemedText style={styles.sectionTitle}>Scheduled service time</ThemedText>
+          </View>
+          <ThemedText style={styles.descriptionText}>{formatScheduledServiceDisplay(currentScheduledTime)}</ThemedText>
         </View>
 
         {/* Description Section */}

@@ -388,6 +388,7 @@ def admin_list_bookings(request):
                 'traffic_surcharge': booking.traffic_surcharge,
                 'base_fee': base_fee,
                 'booked_at': booking.booked_at,
+                'booking_date': booking.booking_date,
                 'completed_at': booking.completed_at,
                 'request_created_at': request_obj.created_at,
                 'client_id': client_account.id,

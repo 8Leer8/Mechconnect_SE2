@@ -5,6 +5,7 @@ from rest_framework.permissions import AllowAny
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from django.db import transaction
 from datetime import timedelta
 import json
@@ -92,6 +93,17 @@ MIN_SEARCH_RADIUS_KM = 1
 MAX_SEARCH_RADIUS_KM = 50
 
 
+def _parse_optional_schedule(value):
+    if not value:
+        return None
+    parsed = parse_datetime(str(value))
+    if parsed is None:
+        return None
+    if timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+    return parsed
+
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def create_broadcast_request(request):
@@ -126,6 +138,7 @@ def create_broadcast_request(request):
         vehicle_type = str(request.data.get('vehicle_type') or '').strip()
         vehicle_brand = str(request.data.get('vehicle_brand') or '').strip()
         vehicle_model = str(request.data.get('vehicle_model') or '').strip()
+        scheduled_time = _parse_optional_schedule(request.data.get('scheduled_time'))
         
         # Parse JSON fields
         try:
@@ -218,6 +231,7 @@ def create_broadcast_request(request):
             vehicle_type=vehicle_type,
             vehicle_brand=vehicle_brand,
             vehicle_model=vehicle_model,
+            scheduled_time=scheduled_time,
         )
         
         # Create broadcast request with expiration (30 minutes from now)
@@ -436,8 +450,9 @@ def select_mechanic(request, broadcast_id):
 
         booking = Booking.objects.create(
             request=base_request,
-            status=Booking.Status.ACCEPTED,
+            status=Booking.Status.BOOKED,
             amount_fee=total_amount,
+            booking_date=base_request.scheduled_time or timezone.now(),
             distance_km=distance_km,
             convenience_fee=convenience_fee,
             eta_minutes=eta_minutes,

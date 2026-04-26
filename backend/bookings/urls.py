@@ -47,8 +47,14 @@ urlpatterns = [
     path('direct/shop/create/', views.create_shop_direct_request, name='create-shop-direct-request'),
     
     # Client booking endpoints
+    path('<int:booking_id>/reschedule/', views.propose_reschedule, name='propose-reschedule-short'),
+    path('<int:booking_id>/reschedule/respond/', views.respond_reschedule, name='respond-reschedule-short'),
+    path('<int:booking_id>/reschedule/cancel/', views.cancel_reschedule, name='cancel-reschedule-short'),
     path('bookings/', views.list_client_bookings, name='list-client-bookings'),
     path('bookings/<int:booking_id>/', views.get_booking_detail, name='get-booking-detail'),
+    path('bookings/<int:booking_id>/reschedule/', views.propose_reschedule, name='propose-reschedule'),
+    path('bookings/<int:booking_id>/reschedule/respond/', views.respond_reschedule, name='respond-reschedule'),
+    path('bookings/<int:booking_id>/reschedule/cancel/', views.cancel_reschedule, name='cancel-reschedule'),
     path('bookings/<int:booking_id>/cancel/', views.client_cancel_booking, name='client-cancel-booking'),
     path('bookings/<int:booking_id>/mechanic-review/', views.submit_mechanic_review, name='submit-mechanic-review'),
     path('bookings/<int:booking_id>/disputes/create/', views.create_dispute, name='create-dispute'),

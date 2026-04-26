@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useWebSocketContext } from '@/context/WebSocketContext';
-import { View, ScrollView, TouchableOpacity, RefreshControl, Modal, ActivityIndicator } from 'react-native';
+import { View, ScrollView, TouchableOpacity, RefreshControl, Modal, ActivityIndicator, Alert } from 'react-native';
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { FontAwesome } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
@@ -139,6 +139,7 @@ export default function ShopOwnerBookingDetailScreen() {
   const [visibleAfterPhotoCount, setVisibleAfterPhotoCount] = useState(6);
   const [quotationListExpanded, setQuotationListExpanded] = useState(false);
   const [expandedQuoteItems, setExpandedQuoteItems] = useState<Record<string, boolean>>({});
+  const [rescheduleResponding, setRescheduleResponding] = useState<'ACCEPT' | 'DECLINE' | null>(null);
   const assignmentFetchCacheRef = useRef<{ requestId: number | null; fetchedAt: number }>({ requestId: null, fetchedAt: 0 });
   const { showNotification } = useNotification();
   const { lastMessage } = useWebSocketContext();
@@ -241,13 +242,37 @@ export default function ShopOwnerBookingDetailScreen() {
   }, []);
 
   const canManageAssignment = (status: string) =>
-    ['accepted', 'on_the_way', 'at_location', 'diagnosing', 'active', 'paused', 'reworked', 'backjob_pending'].includes(status);
+    ['booked', 'accepted', 'on_the_way', 'at_location', 'diagnosing', 'active', 'paused', 'reworked', 'backjob_pending'].includes(status);
 
   const canEditQuotationForStatus = (status: string) =>
-    ['accepted', 'on_the_way', 'at_location', 'diagnosing', 'active'].includes(status);
+    ['booked', 'accepted', 'on_the_way', 'at_location', 'diagnosing', 'active'].includes(status);
 
   const canShowQuotationForStatus = (status: string) =>
-    ['accepted', 'on_the_way', 'at_location', 'diagnosing', 'active', 'pending_payment'].includes(status);
+    ['booked', 'accepted', 'on_the_way', 'at_location', 'diagnosing', 'active', 'pending_payment'].includes(status);
+
+  const handleRescheduleResponse = async (action: 'ACCEPT' | 'DECLINE') => {
+    if (!booking?.id || rescheduleResponding) return;
+    try {
+      setRescheduleResponding(action);
+      const res = await fetch(`${API_URL}/bookings/bookings/${booking.id}/reschedule/respond/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data as any)?.error || 'Failed to respond to reschedule.');
+      showNotification({
+        type: 'success',
+        message: action === 'ACCEPT' ? 'Reschedule accepted.' : 'Reschedule declined.',
+      });
+      await fetchBookingDetail(true);
+    } catch (e: any) {
+      Alert.alert('Reschedule Error', e?.message || 'Unable to respond to reschedule.');
+    } finally {
+      setRescheduleResponding(null);
+    }
+  };
 
   const openAssignModal = () => {
     if (!booking?.request?.id || !canManageAssignment(booking.status)) return;
@@ -396,7 +421,10 @@ export default function ShopOwnerBookingDetailScreen() {
       if (!bid || !bookingId) return;
       if (bid === Number(bookingId)) {
         const action = (lastMessage.action || lastMessage.type || '').toString().toLowerCase();
-        if (['quotation_accepted', 'quotationaccepted', 'booking_updated', 'booking_update', 'new_chat_message', 'new_chatmessage'].includes(action)) {
+        if (action === 'reschedule_accepted') {
+          Alert.alert('Reschedule Accepted', `Action buttons will activate on the scheduled date (${formatDate(String(message.new_date || ''))}).`);
+        }
+        if (['quotation_accepted', 'quotationaccepted', 'booking_updated', 'booking_update', 'new_chat_message', 'new_chatmessage', 'reschedule_proposed', 'reschedule_accepted', 'reschedule_declined', 'reschedule_cancelled'].includes(action)) {
           fetchBookingDetail();
           fetchQuotation();
         }
@@ -414,6 +442,7 @@ export default function ShopOwnerBookingDetailScreen() {
   const getStatusLabel = (status: string) => {
     switch (status) {
       case 'accepted':
+      case 'booked':
         return 'Booked';
       case 'active':
         return 'On Going';
@@ -437,6 +466,8 @@ export default function ShopOwnerBookingDetailScreen() {
         return 'Cancelled';
       case 'pending':
         return 'Pending';
+      case 'reschedule_proposed':
+        return 'Waiting for Reschedule Response';
       case 'reworked':
         return 'Reworked';
       case 'disputed':
@@ -449,6 +480,7 @@ export default function ShopOwnerBookingDetailScreen() {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'accepted':
+      case 'booked':
         return '#00B8D9';
       case 'active':
         return '#FF8C00';
@@ -474,6 +506,8 @@ export default function ShopOwnerBookingDetailScreen() {
         return '#FF3B30';
       case 'pending':
         return '#8E8E93';
+      case 'reschedule_proposed':
+        return '#FFD60A';
       case 'disputed':
         return '#AF52DE';
       default:
@@ -484,6 +518,7 @@ export default function ShopOwnerBookingDetailScreen() {
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'accepted':
+      case 'booked':
         return 'calendar-check-o';
       case 'active':
         return 'play-circle';
@@ -507,6 +542,8 @@ export default function ShopOwnerBookingDetailScreen() {
         return 'times-circle';
       case 'pending':
         return 'clock-o';
+      case 'reschedule_proposed':
+        return 'calendar';
       case 'reworked':
         return 'refresh';
       case 'disputed':
@@ -1228,6 +1265,50 @@ export default function ShopOwnerBookingDetailScreen() {
             ₱{parseFloat(String(booking.amount_fee || '0')).toFixed(2)}
           </ThemedText>
         </View>
+
+        {booking.status === 'reschedule_proposed' ? (
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#FFD60A15' }]}>
+                <FontAwesome name="calendar" size={16} color="#FFD60A" />
+              </View>
+              <ThemedText style={styles.sectionTitle}>Reschedule Request</ThemedText>
+            </View>
+            <ThemedText style={styles.noteText}>
+              Proposed time: {formatDate((booking.active_details as any)?.proposed_date)}
+            </ThemedText>
+            <View style={[styles.actionRow, { marginTop: 12 }]}>
+              <View style={styles.actionHalf}>
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.cancelButton, rescheduleResponding ? styles.actionButtonDisabled : null]}
+                  onPress={() => handleRescheduleResponse('DECLINE')}
+                  disabled={!!rescheduleResponding}
+                  activeOpacity={0.85}
+                >
+                  {rescheduleResponding === 'DECLINE' ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <ThemedText style={styles.actionButtonText}>Decline</ThemedText>
+                  )}
+                </TouchableOpacity>
+              </View>
+              <View style={styles.actionHalf}>
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.completeButton, rescheduleResponding ? styles.actionButtonDisabled : null]}
+                  onPress={() => handleRescheduleResponse('ACCEPT')}
+                  disabled={!!rescheduleResponding}
+                  activeOpacity={0.85}
+                >
+                  {rescheduleResponding === 'ACCEPT' ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <ThemedText style={styles.actionButtonText}>Accept</ThemedText>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        ) : null}
 
         {/* Chat Section */}
         {canOpenBookingChat(booking) ? (

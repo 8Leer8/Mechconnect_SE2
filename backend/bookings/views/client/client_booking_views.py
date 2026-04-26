@@ -422,7 +422,7 @@ def list_client_bookings(request):
         # Apply status filter if provided
         if status_filter:
             valid_statuses = [
-                'all', 'accepted', 'active', 'on_the_way', 'at_location', 'diagnosing',
+                'all', 'booked', 'accepted', 'active', 'on_the_way', 'at_location', 'diagnosing',
                 'pending_payment', 'completed', 'cancelled', 'reworked', 'backjob_pending', 'disputed',
             ]
             if status_filter.lower() not in valid_statuses:
@@ -436,8 +436,10 @@ def list_client_bookings(request):
             # For 'active' tab, merge in-progress statuses through payment pending
             elif status_filter.lower() == 'active':
                 bookings_queryset = bookings_queryset.filter(status__in=[
-                    'accepted', 'active', 'on_the_way', 'at_location', 'diagnosing', 'pending_payment', 'backjob_pending',
+                    'booked', 'accepted', 'active', 'on_the_way', 'at_location', 'diagnosing', 'pending_payment', 'backjob_pending',
                 ])
+            elif status_filter.lower() == 'accepted':
+                bookings_queryset = bookings_queryset.filter(status__in=['booked', 'accepted'])
             else:
                 bookings_queryset = bookings_queryset.filter(status=status_filter.lower())
 
@@ -1321,6 +1323,7 @@ def _serialize_single_booking(booking, viewer_account=None):
         'traffic_level': traffic_level_value,
         'mechanic_location': mechanic_location_payload,
         'booked_at': booking.booked_at.isoformat(),
+        'booking_date': booking.booking_date.isoformat() if getattr(booking, 'booking_date', None) else None,
         'updated_at': booking.updated_at.isoformat(),
         'completed_at': booking.completed_at.isoformat() if booking.completed_at else None,
         'request': {
@@ -1389,6 +1392,9 @@ def _serialize_single_booking(booking, viewer_account=None):
             'after_pictures': after_photos,
             'is_job_done': active.is_job_done,
             'is_rescheduled': active.is_rescheduled,
+            'proposed_date': active.proposed_date.isoformat() if getattr(active, 'proposed_date', None) else None,
+            'pre_reschedule_status': active.pre_reschedule_status,
+            'reschedule_requested_by': active.reschedule_requested_by_id,
             'reason': active.reason,
             'new_time': active.new_time.isoformat() if active.new_time else None,
             'new_date': active.new_date.isoformat() if active.new_date else None,

@@ -2120,6 +2120,7 @@ def _serialize_mechanic_booking_list(bookings_queryset):
                 "dispute_status": booking.dispute_status,
                 "amount_fee": float(booking.amount_fee),
                 "booked_at": booking.booked_at.isoformat() if booking.booked_at else None,
+                "booking_date": booking.booking_date.isoformat() if getattr(booking, "booking_date", None) else None,
                 "updated_at": booking.updated_at.isoformat() if booking.updated_at else None,
                 "completed_at": booking.completed_at.isoformat() if booking.completed_at else None,
                 "request": {
@@ -2245,7 +2246,7 @@ def list_mechanic_bookings(request):
                 paginated.extend(serialize_booking_list(bookings_slice))
 
             # Include tab counts so frontend doesn't need a separate request
-            accepted_count = bookings_queryset.filter(status="accepted").count()
+            accepted_count = bookings_queryset.filter(status__in=["booked", "accepted"]).count()
             on_the_way_count = bookings_queryset.filter(status="on_the_way").count()
             at_location_count = bookings_queryset.filter(status="at_location").count()
             diagnosing_count = bookings_queryset.filter(status="diagnosing").count()
@@ -2342,6 +2343,7 @@ def list_mechanic_bookings(request):
 
         # Allow filtering by all statuses we expose in the grouped response
         valid_statuses = [
+            "booked",
             "accepted",
             "on_the_way",
             "at_location",
@@ -2365,7 +2367,9 @@ def list_mechanic_bookings(request):
 
         # Treat 'active' as including paused bookings so paused items show up
         # in the mechanic's on-going/active filter.
-        if status_filter.lower() == 'active':
+        if status_filter.lower() == 'accepted':
+            bookings_queryset = bookings_queryset.filter(status__in=['booked', 'accepted'])
+        elif status_filter.lower() == 'active':
             # include bookings that are active/paused OR that have a live backjob requested
             bookings_queryset = bookings_queryset.filter(Q(status__in=['active', 'paused']) | live_backjob_q)
         elif status_filter.lower() == 'reworked':
@@ -2573,8 +2577,9 @@ def mechanic_accept_direct_request(request, request_id):
 
     booking = Booking.objects.create(
         request=req,
-        status=Booking.Status.ACCEPTED,
+        status=Booking.Status.BOOKED,
         amount_fee=total_amount,
+        booking_date=req.scheduled_time or timezone.now(),
     )
     ActiveBooking.objects.create(booking=booking)
 
@@ -2709,7 +2714,12 @@ def mechanic_accept_emergency_request(request, request_id):
     req.provider = account
     req.save(update_fields=["provider"])
 
-    booking = Booking.objects.create(request=req, status=Booking.Status.ACCEPTED, amount_fee=0)
+    booking = Booking.objects.create(
+        request=req,
+        status=Booking.Status.BOOKED,
+        amount_fee=0,
+        booking_date=req.scheduled_time or timezone.now(),
+    )
     ActiveBooking.objects.create(booking=booking)
 
     data = _serialize_single_booking(booking, viewer_account=account)

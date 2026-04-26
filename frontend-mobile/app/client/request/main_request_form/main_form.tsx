@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { View, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Animated, Alert, Linking } from 'react-native';
+import { View, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Animated, Alert, Linking, Platform } from 'react-native';
 import { Image } from 'expo-image';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -85,6 +86,11 @@ export default function MainRequestFormScreen() {
   const [vehicleType, setVehicleType] = useState('');
   const [vehicleBrand, setVehicleBrand] = useState('');
   const [vehicleModel, setVehicleModel] = useState('');
+  const [useCurrentTime, setUseCurrentTime] = useState(true);
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [selectedTime, setSelectedTime] = useState(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(false);
 
   // Location fields (shared by both modes)
   const [selectedAddress, setSelectedAddress] = useState<string>('');
@@ -117,6 +123,34 @@ export default function MainRequestFormScreen() {
     if (key === 'shop_main_branch') return 'Shop main branch';
     if (key === 'shop_branch_address') return 'Shop branch address';
     return 'Location source unknown';
+  };
+
+  const getScheduledDateTime = () => {
+    const scheduledDateTime = new Date(selectedDate);
+    scheduledDateTime.setHours(selectedTime.getHours());
+    scheduledDateTime.setMinutes(selectedTime.getMinutes());
+    scheduledDateTime.setSeconds(0);
+    scheduledDateTime.setMilliseconds(0);
+    return scheduledDateTime;
+  };
+
+  const getScheduledTimePayload = () => {
+    if (useCurrentTime) return new Date().toISOString();
+    return getScheduledDateTime().toISOString();
+  };
+
+  const validateSchedule = () => {
+    if (useCurrentTime) return true;
+    if (getScheduledDateTime().getTime() <= Date.now()) {
+      showNotification({ type: 'error', message: 'Please choose a future date and time' });
+      return false;
+    }
+    return true;
+  };
+
+  const formatScheduledDateTime = () => {
+    if (useCurrentTime) return 'Now';
+    return `${selectedDate.toLocaleDateString()} ${selectedTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
   };
 
   // ─── Fetch Services (only for Broadcast mode) ─────────────
@@ -561,6 +595,9 @@ export default function MainRequestFormScreen() {
       showNotification({ type: 'error', message: 'Please select your vehicle type, brand, and model' });
       return false;
     }
+    if (!validateSchedule()) {
+      return false;
+    }
 
     return true;
   };
@@ -585,6 +622,7 @@ export default function MainRequestFormScreen() {
       formData.append('vehicle_type', vehicleType);
       formData.append('vehicle_brand', vehicleBrand);
       formData.append('vehicle_model', vehicleModel);
+      formData.append('scheduled_time', getScheduledTimePayload());
       formData.append('latitude', latValue.toString());
       formData.append('longitude', lngValue.toString());
       formData.append('service_location', JSON.stringify({
@@ -639,6 +677,9 @@ export default function MainRequestFormScreen() {
       showNotification({ type: 'error', message: 'Please select your vehicle type, brand, and model' });
       return;
     }
+    if (!validateSchedule()) {
+      return;
+    }
 
     setLoading(true);
     try {
@@ -667,6 +708,7 @@ export default function MainRequestFormScreen() {
             vehicle_type: vehicleType,
             vehicle_brand: vehicleBrand,
             vehicle_model: vehicleModel,
+            scheduled_time: getScheduledTimePayload(),
           },
         });
       } else {
@@ -842,6 +884,93 @@ export default function MainRequestFormScreen() {
 
         {/* Location — shown in BOTH modes */}
         {renderLocationSection()}
+
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <FontAwesome name="calendar" size={14} color="#FF8C00" />
+            <ThemedText style={styles.sectionTitle}>Schedule (Optional)</ThemedText>
+          </View>
+
+          <TouchableOpacity
+            style={{
+              borderWidth: 1,
+              borderColor: useCurrentTime ? '#FF8C00' : '#2A2C2E',
+              backgroundColor: useCurrentTime ? '#FF8C0012' : '#1A1C1E',
+              borderRadius: 10,
+              padding: 12,
+              marginBottom: 10,
+            }}
+            onPress={() => setUseCurrentTime(true)}
+            activeOpacity={0.85}
+          >
+            <ThemedText style={{ color: '#ECEDEE', fontWeight: '700' }}>Start Now</ThemedText>
+            <ThemedText style={{ color: '#8E8E93', marginTop: 4, fontSize: 12 }}>
+              Use the current date and time.
+            </ThemedText>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={{
+              borderWidth: 1,
+              borderColor: !useCurrentTime ? '#FF8C00' : '#2A2C2E',
+              backgroundColor: !useCurrentTime ? '#FF8C0012' : '#1A1C1E',
+              borderRadius: 10,
+              padding: 12,
+            }}
+            onPress={() => setUseCurrentTime(false)}
+            activeOpacity={0.85}
+          >
+            <ThemedText style={{ color: '#ECEDEE', fontWeight: '700' }}>Schedule for Later</ThemedText>
+            <ThemedText style={{ color: '#8E8E93', marginTop: 4, fontSize: 12 }}>
+              Selected: {formatScheduledDateTime()}
+            </ThemedText>
+          </TouchableOpacity>
+
+          {!useCurrentTime ? (
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+              <TouchableOpacity
+                style={[styles.imageBtn, { flex: 1 }]}
+                onPress={() => setShowDatePicker(true)}
+                activeOpacity={0.85}
+              >
+                <FontAwesome name="calendar" size={14} color="#FF8C00" />
+                <ThemedText style={styles.imageBtnText}>{selectedDate.toLocaleDateString()}</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.imageBtn, { flex: 1 }]}
+                onPress={() => setShowTimePicker(true)}
+                activeOpacity={0.85}
+              >
+                <FontAwesome name="clock-o" size={14} color="#FF8C00" />
+                <ThemedText style={styles.imageBtnText}>
+                  {selectedTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </ThemedText>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
+          {showDatePicker && (
+            <DateTimePicker
+              value={selectedDate}
+              mode="date"
+              minimumDate={new Date()}
+              onChange={(event, date) => {
+                if (Platform.OS !== 'ios') setShowDatePicker(false);
+                if (event.type === 'set' && date) setSelectedDate(date);
+              }}
+            />
+          )}
+          {showTimePicker && (
+            <DateTimePicker
+              value={selectedTime}
+              mode="time"
+              onChange={(event, date) => {
+                if (Platform.OS !== 'ios') setShowTimePicker(false);
+                if (event.type === 'set' && date) setSelectedTime(date);
+              }}
+            />
+          )}
+        </View>
 
         {/* Image Upload */}
         <View style={styles.section}>

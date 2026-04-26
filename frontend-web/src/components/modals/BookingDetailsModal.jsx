@@ -58,12 +58,16 @@ function statusVariant(status) {
   if (status === "completed") {
     return "default";
   }
+  if (status === "reschedule_proposed") {
+    return "secondary";
+  }
   if (
     status === "active" ||
     status === "on_the_way" ||
     status === "at_location" ||
     status === "diagnosing" ||
-    status === "accepted"
+    status === "accepted" ||
+    status === "booked"
   ) {
     return "secondary";
   }
@@ -76,7 +80,7 @@ function statusVariant(status) {
 function getStatusClass(status) {
   const value = String(status || "").toLowerCase();
 
-  if (value === "accepted") {
+  if (value === "accepted" || value === "booked") {
     return "border-emerald-500/40 bg-emerald-500/15 text-emerald-300";
   }
   if (value === "on_the_way") {
@@ -99,6 +103,9 @@ function getStatusClass(status) {
   }
   if (value === "pending_payment") {
     return "border-orange-500/40 bg-orange-500/15 text-orange-300";
+  }
+  if (value === "reschedule_proposed") {
+    return "border-yellow-500/40 bg-yellow-500/15 text-yellow-300";
   }
   if (value === "completed") {
     return "border-green-500/40 bg-green-500/15 text-green-300";
@@ -254,7 +261,6 @@ function PaymentDetails({ paymentBreakdown, quotationDetails, baseFee, booking, 
   const rawReceipt = receiptInfo || booking?.receipt_info;
   const paymentMethod = rawReceipt?.payment_method;
   const paymentReceived = rawReceipt?.payment_received;
-  const paidAt = rawReceipt?.paid_at;
 
   // Format payment method label
   const formatPaymentMethod = (method) => {
