@@ -141,6 +141,21 @@ class Booking(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 
+    @property
+    def backjob(self):
+        """
+        Replaces the old one-to-one reverse name: prefer an in-progress (non-COMPLETED)
+        backjob round, otherwise the most recent row (stacked backjob history per booking).
+        """
+        if not self.pk:
+            return None
+        if not self.backjobs.exists():
+            return None
+        b = self.backjobs.exclude(status=Booking.Status.COMPLETED).order_by("-id").first()
+        if b is not None:
+            return b
+        return self.backjobs.order_by("-id").first()
+
 class ActiveBooking(models.Model):
     booking = models.OneToOneField(Booking, on_delete=models.CASCADE)
     before_picture_service = models.ImageField(upload_to='bookings/before/', null=True, blank=True)
@@ -368,7 +383,11 @@ class Backjob(models.Model):
     Keeps backjob lifecycle separate from the primary Booking while allowing reuse of
     similar status values and independent metadata (reason, images, requester).
     """
-    booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name='backjob')
+    booking = models.ForeignKey(
+        Booking,
+        on_delete=models.CASCADE,
+        related_name="backjobs",
+    )
     # Reuse Booking.Status choices so backjob states mirror booking states (accepted, on_the_way, active, etc.)
     status = models.CharField(max_length=30, choices=Booking.Status.choices, default=Booking.Status.ACCEPTED)
     requested_by = models.ForeignKey(Account, on_delete=models.SET_NULL, null=True, blank=True, related_name='requested_backjobs')
@@ -407,14 +426,15 @@ class Quotation(models.Model):
 
     def recalculate_totals(self):
         """
-        Keep labor and parts separated so backjob math is consistent.
-        For backjobs:
-        - labor is always discounted to 0
-        - parts remain payable
+        Keep old paid rows out of backjob totals.
+        For backjobs, only new rows for the current backjob are payable.
         """
         labor_total = 0
         parts_total = 0
-        for item in self.items.exclude(status=self.Status.REJECTED):
+        qs = self.items.exclude(status=self.Status.REJECTED)
+        if self.is_backjob:
+            qs = qs.filter(is_backjob_line=True)
+        for item in qs:
             line_total = item.line_total
             if item.line_kind == QuotationItem.LineKind.SERVICE:
                 labor_total += line_total
@@ -423,8 +443,8 @@ class Quotation(models.Model):
 
         self.original_labor_cost = labor_total
         if self.is_backjob:
-            self.backjob_discount = -labor_total
-            self.final_labor_total = 0
+            self.backjob_discount = 0
+            self.final_labor_total = labor_total
         else:
             self.backjob_discount = 0
             self.final_labor_total = labor_total
@@ -464,10 +484,70 @@ class QuotationItem(models.Model):
     previous_unit_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     purchase_receipt_image = models.ImageField(upload_to='bookings/quotation/receipts/', null=True, blank=True)
     receipt_submitted_at = models.DateTimeField(null=True, blank=True)
+    # True for quotation rows added during an active backjob (new work / new charges).
+    # Original completed-job lines stay False so UIs can show "old receipt" vs "new quotation".
+    is_backjob_line = models.BooleanField(default=False)
+    # Which backjob round (stack) this line belongs to; set when is_backjob_line.
+    backjob = models.ForeignKey(
+        "Backjob",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="quotation_items",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     @property
     def line_total(self):
         return self.quantity * self.unit_price
+
+
+class QuotationAmendment(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending"
+        ACCEPTED = "accepted"
+        REJECTED = "rejected"
+
+    quotation = models.ForeignKey(
+        Quotation,
+        on_delete=models.CASCADE,
+        related_name="amendments",
+    )
+    mechanic = models.ForeignKey(Account, on_delete=models.CASCADE)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class AmendmentItem(models.Model):
+    class ActionType(models.TextChoices):
+        ADDED = "added"
+        EDITED = "edited"
+        REMOVED = "removed"
+
+    amendment = models.ForeignKey(
+        QuotationAmendment,
+        on_delete=models.CASCADE,
+        related_name="items",
+    )
+    # Client requirement asks for UUID and nullable.
+    item_id = models.UUIDField(null=True, blank=True)
+    # Internal pointer to the original quotation row to update/delete safely.
+    original_item = models.ForeignKey(
+        QuotationItem,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="amendment_items",
+    )
+    action_type = models.CharField(max_length=20, choices=ActionType.choices)
+    proposed_changes = models.JSONField(default=dict, blank=True)
+    original_snapshot = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
 
 
 class BroadcastRequest(models.Model):

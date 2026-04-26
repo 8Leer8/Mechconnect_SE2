@@ -64,14 +64,22 @@ def send_otp(request):
     # Calculate expiry (5 minutes from now)
     expires_at = timezone.now() + timedelta(minutes=5)
 
-    # Create OTP record in database
+    # Create OTP record in database with account if authenticated
     otp_record = None
     try:
-        otp_record = SMSOTPVerification.objects.create(
-            contact_number=contact_number,
-            otp_code=otp_code,
-            expires_at=expires_at
-        )
+        otp_data = {
+            'contact_number': contact_number,
+            'otp_code': otp_code,
+            'expires_at': expires_at,
+        }
+        # Store account if user is authenticated
+        if request.user and request.user.is_authenticated:
+            otp_data['account'] = request.user
+            logger.info(f"Creating OTP record for account {request.user.id}")
+        else:
+            logger.info(f"Creating OTP record without account (anonymous)")
+
+        otp_record = SMSOTPVerification.objects.create(**otp_data)
 
         # Send SMS via TextBee
         result = send_textbee_otp(contact_number, otp_code)
@@ -123,16 +131,20 @@ def verify_otp(request):
     provided_code = request.data.get('otp_code')
 
     if not contact_number:
+        logger.warning("OTP verify failed: contact_number is missing")
         return Response(
             {'error': 'contact_number is required'},
             status=status.HTTP_400_BAD_REQUEST
         )
 
     if not provided_code:
+        logger.warning("OTP verify failed: otp_code is missing")
         return Response(
             {'error': 'otp_code is required'},
             status=status.HTTP_400_BAD_REQUEST
         )
+
+    logger.info(f"Attempting OTP verify for {contact_number} with code {provided_code}")
 
     # Query database for the latest unverified OTP for this contact number
     # that hasn't expired yet
@@ -142,7 +154,9 @@ def verify_otp(request):
             is_verified=False,
             expires_at__gt=timezone.now()
         ).latest('created_at')
+        logger.info(f"Found OTP record {otp_record.id} for {contact_number}, expected code: {otp_record.otp_code}")
     except SMSOTPVerification.DoesNotExist:
+        logger.warning(f"OTP verify failed: No unverified OTP found for {contact_number} that hasn't expired")
         return Response(
             {'error': 'OTP expired or invalid'},
             status=status.HTTP_400_BAD_REQUEST
@@ -150,6 +164,7 @@ def verify_otp(request):
 
     # Verify the code
     if str(provided_code) != str(otp_record.otp_code):
+        logger.warning(f"OTP verify failed: Code mismatch for {contact_number}. Provided: {provided_code}, Expected: {otp_record.otp_code}")
         return Response(
             {'error': 'Invalid OTP code'},
             status=status.HTTP_400_BAD_REQUEST
@@ -160,19 +175,25 @@ def verify_otp(request):
     otp_record.verified_at = timezone.now()
     otp_record.save()
 
-    # If user is logged in, update their Client profile with the new contact number
-    if request.user and request.user.is_authenticated:
+    # Get account from OTP record (stored when OTP was sent) or request user
+    account = otp_record.account
+    if not account and request.user and request.user.is_authenticated:
+        account = request.user
+
+    # Update Client profile with the new contact number
+    if account:
         try:
             from ..models import Client
-            client = Client.objects.get(account=request.user)
+            client = Client.objects.get(account=account)
             client.contact_number = contact_number
             client.save()
-            logger.info(f"Updated Client profile contact_number to {contact_number} for user {request.user.id}")
+            logger.info(f"Updated Client profile contact_number to {contact_number} for account {account.id}")
         except Client.DoesNotExist:
-            # User doesn't have a Client profile, skip update
-            pass
+            logger.warning(f"Client profile not found for account {account.id}")
         except Exception as e:
-            logger.warning(f"Failed to update Client profile: {str(e)}")
+            logger.error(f"Failed to update Client profile: {str(e)}")
+    else:
+        logger.warning(f"No account found to update contact_number {contact_number}")
 
     logger.info(f"OTP verified successfully for {contact_number}")
 

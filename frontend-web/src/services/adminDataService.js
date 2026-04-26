@@ -60,6 +60,10 @@ export function fetchAdminServices(params = {}) {
   return request(withQuery("/admin/services/list/", params));
 }
 
+export function fetchChatHistory(bookingId) {
+  return request(`/admin/bookings/${bookingId}/chat-history/`);
+}
+
 export function fetchAdminSpecialties(params = {}) {
   return request(withQuery("/admin/services/specialties/list/", params));
 }

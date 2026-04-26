@@ -200,7 +200,6 @@ class Mechanic(models.Model):
         blank=True,
         help_text="GCash or Maya number for receiving payouts",
     )
-    tokens_balance = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     def __str__(self):
@@ -261,7 +260,6 @@ class ShopOwner(models.Model):
         help_text="GCash or Maya number for receiving payouts",
     )
     owns_shop = models.BooleanField(default=False)
-    tokens_balance = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     def __str__(self):
@@ -337,6 +335,7 @@ class EmailVerification(models.Model):
 
 class SMSOTPVerification(models.Model):
     """SMS OTP verification records for audit trail and rate limiting."""
+    account = models.ForeignKey(Account, on_delete=models.CASCADE, null=True, blank=True, related_name='otp_verifications')
     contact_number = models.CharField(max_length=20, db_index=True)
     otp_code = models.CharField(max_length=6)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -355,3 +354,43 @@ class SMSOTPVerification(models.Model):
         from django.utils import timezone
         return timezone.now() > self.expires_at
 
+
+class Wallet(models.Model):
+    """Unified wallet model for storing account balance.
+
+    Each Account has one Wallet. Balance is stored as Decimal for precision.
+    TokenPurchase and TokenTransaction remain as the universal ledger.
+    """
+    account = models.OneToOneField(
+        Account,
+        on_delete=models.CASCADE,
+        related_name='wallet'
+    )
+    balance = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0.00
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Wallet for {self.account.username}: {self.balance}"
+
+class ShopEmployee(models.Model):
+    account = models.OneToOneField(Account, on_delete=models.CASCADE)
+    shop = models.ForeignKey(
+        'shops.Shop', 
+        on_delete=models.CASCADE, 
+        related_name='employees',
+        help_text="The shop this employee works for"
+    )
+    profile_photo = models.ImageField(upload_to='employees/profiles/', null=True, blank=True)    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.account.username} (Employee at {self.shop.name})"

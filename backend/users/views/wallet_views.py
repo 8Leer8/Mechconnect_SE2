@@ -4,8 +4,22 @@ from rest_framework.response import Response
 from rest_framework import status
 from decimal import Decimal, InvalidOperation
 
-from ..models import Account, Mechanic, ShopOwner, TokenPurchase
+from ..models import Account, Mechanic, ShopOwner, TokenPurchase, TokenTransaction, Wallet
 from services.pricing_utils import get_token_pricing
+
+
+def get_account_from_session(request):
+    """Get authenticated account from session.
+    
+    Returns Account instance or None if not authenticated.
+    """
+    account_id = request.session.get('account_id')
+    if not account_id:
+        return None
+    try:
+        return Account.objects.get(id=account_id)
+    except Account.DoesNotExist:
+        return None
 
 
 @api_view(['GET'])
@@ -100,36 +114,35 @@ def mechanic_wallet(request):
     """Return the current mechanic's token balance.
 
     Uses session `account_id` to identify the account and mechanic.
+    Balance is read from the unified Wallet model.
     """
-    account_id = request.session.get('account_id')
-    if not account_id:
+    account = get_account_from_session(request)
+    if not account:
         return Response({'error': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
 
     try:
-        account = Account.objects.get(id=account_id)
-    except Account.DoesNotExist:
-        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
-
-    try:
-        mechanic = Mechanic.objects.get(account=account)
+        Mechanic.objects.get(account=account)
     except Mechanic.DoesNotExist:
         return Response({'error': 'Mechanic profile not found'}, status=status.HTTP_404_NOT_FOUND)
 
-    return Response({'tokens_balance': mechanic.tokens_balance}, status=status.HTTP_200_OK)
+    # Get or create wallet (should exist due to signal, but be defensive)
+    wallet, _ = Wallet.objects.get_or_create(account=account, defaults={'balance': Decimal('0.00')})
+    
+    # Return balance as integer for backward compatibility (tokens are whole units)
+    return Response({'tokens_balance': int(wallet.balance)}, status=status.HTTP_200_OK)
 
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def mechanic_wallet_transactions(request):
     """Return recent mechanic token purchase transactions."""
-    account_id = request.session.get('account_id')
-    if not account_id:
+    account = get_account_from_session(request)
+    if not account:
         return Response({'error': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
 
     try:
-        account = Account.objects.get(id=account_id)
         Mechanic.objects.get(account=account)
-    except (Account.DoesNotExist, Mechanic.DoesNotExist):
+    except Mechanic.DoesNotExist:
         return Response({'error': 'Mechanic not found'}, status=status.HTTP_404_NOT_FOUND)
 
     return Response({'transactions': _token_purchases_for_account(account)}, status=status.HTTP_200_OK)
@@ -138,36 +151,37 @@ def mechanic_wallet_transactions(request):
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def shop_owner_wallet(request):
-    """Return credits balance for the logged-in shop owner."""
-    account_id = request.session.get('account_id')
-    if not account_id:
+    """Return credits balance for the logged-in shop owner.
+    
+    Balance is read from the unified Wallet model.
+    """
+    account = get_account_from_session(request)
+    if not account:
         return Response({'error': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
 
     try:
-        account = Account.objects.get(id=account_id)
-    except Account.DoesNotExist:
-        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
-
-    try:
-        shop_owner = ShopOwner.objects.get(account=account)
+        ShopOwner.objects.get(account=account)
     except ShopOwner.DoesNotExist:
         return Response({'error': 'Shop owner profile not found'}, status=status.HTTP_404_NOT_FOUND)
 
-    return Response({'tokens_balance': shop_owner.tokens_balance}, status=status.HTTP_200_OK)
+    # Get or create wallet (should exist due to signal, but be defensive)
+    wallet, _ = Wallet.objects.get_or_create(account=account, defaults={'balance': Decimal('0.00')})
+    
+    # Return balance as integer for backward compatibility (tokens are whole units)
+    return Response({'tokens_balance': int(wallet.balance)}, status=status.HTTP_200_OK)
 
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def shop_owner_wallet_transactions(request):
     """Return recent shop owner token purchase transactions (same TokenPurchase ledger as mechanics)."""
-    account_id = request.session.get('account_id')
-    if not account_id:
+    account = get_account_from_session(request)
+    if not account:
         return Response({'error': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
 
     try:
-        account = Account.objects.get(id=account_id)
         ShopOwner.objects.get(account=account)
-    except (Account.DoesNotExist, ShopOwner.DoesNotExist):
+    except ShopOwner.DoesNotExist:
         return Response({'error': 'Shop owner not found'}, status=status.HTTP_404_NOT_FOUND)
 
     return Response({'transactions': _token_purchases_for_account(account)}, status=status.HTTP_200_OK)
@@ -179,10 +193,11 @@ def mechanic_wallet_topup(request):
     """Top-up mechanic tokens (development helper).
 
     Expects JSON: { "tokens": 10, "price": 1.99, "payment_method": "gcash"|"maya" }
-    Creates a TokenPurchase record with status 'completed' and increments balance.
+    Creates a TokenPurchase record with status 'completed' and increments wallet balance.
+    Also creates a TokenTransaction ledger entry.
     """
-    account_id = request.session.get('account_id')
-    if not account_id:
+    account = get_account_from_session(request)
+    if not account:
         return Response({'error': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
 
     parsed = _parse_topup_body(request)
@@ -191,11 +206,14 @@ def mechanic_wallet_topup(request):
     tokens, computed_price, base_token_price, raw_method = parsed
 
     try:
-        account = Account.objects.get(id=account_id)
-        mechanic = Mechanic.objects.get(account=account)
-    except (Account.DoesNotExist, Mechanic.DoesNotExist):
+        Mechanic.objects.get(account=account)
+    except Mechanic.DoesNotExist:
         return Response({'error': 'Mechanic not found'}, status=status.HTTP_404_NOT_FOUND)
 
+    # Get or create wallet
+    wallet, _ = Wallet.objects.get_or_create(account=account, defaults={'balance': Decimal('0.00')})
+
+    # Create TokenPurchase record (universal ledger)
     purchase = TokenPurchase.objects.create(
         account=account,
         tokens_amount=tokens,
@@ -204,12 +222,20 @@ def mechanic_wallet_topup(request):
         status='completed',
     )
 
-    mechanic.tokens_balance = mechanic.tokens_balance + tokens
-    mechanic.save(update_fields=['tokens_balance'])
+    # Create TokenTransaction ledger entry (universal ledger)
+    TokenTransaction.objects.create(
+        account=account,
+        tokens=int(tokens),  # Cast Decimal to int for IntegerField
+        reason=f'Top-up via {raw_method}',
+    )
+
+    # Update wallet balance using Decimal for precision
+    wallet.balance = wallet.balance + Decimal(str(tokens))
+    wallet.save(update_fields=['balance'])
 
     return Response(
         {
-            'tokens_balance': mechanic.tokens_balance,
+            'tokens_balance': int(wallet.balance),
             'token_price': float(base_token_price),
             'charged_price': float(computed_price),
             'purchase': {
@@ -228,9 +254,13 @@ def mechanic_wallet_topup(request):
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def shop_owner_wallet_topup(request):
-    """Top-up shop owner credits (same pricing rules as mechanic wallet)."""
-    account_id = request.session.get('account_id')
-    if not account_id:
+    """Top-up shop owner credits (same pricing rules as mechanic wallet).
+    
+    Creates TokenPurchase and TokenTransaction ledger entries,
+    and updates the unified Wallet balance.
+    """
+    account = get_account_from_session(request)
+    if not account:
         return Response({'error': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
 
     parsed = _parse_topup_body(request)
@@ -239,11 +269,14 @@ def shop_owner_wallet_topup(request):
     tokens, computed_price, base_token_price, raw_method = parsed
 
     try:
-        account = Account.objects.get(id=account_id)
-        shop_owner = ShopOwner.objects.get(account=account)
-    except (Account.DoesNotExist, ShopOwner.DoesNotExist):
+        ShopOwner.objects.get(account=account)
+    except ShopOwner.DoesNotExist:
         return Response({'error': 'Shop owner not found'}, status=status.HTTP_404_NOT_FOUND)
 
+    # Get or create wallet
+    wallet, _ = Wallet.objects.get_or_create(account=account, defaults={'balance': Decimal('0.00')})
+
+    # Create TokenPurchase record (universal ledger)
     purchase = TokenPurchase.objects.create(
         account=account,
         tokens_amount=tokens,
@@ -252,12 +285,121 @@ def shop_owner_wallet_topup(request):
         status='completed',
     )
 
-    shop_owner.tokens_balance = shop_owner.tokens_balance + tokens
-    shop_owner.save(update_fields=['tokens_balance'])
+    # Create TokenTransaction ledger entry (universal ledger)
+    TokenTransaction.objects.create(
+        account=account,
+        tokens=int(tokens),  # Cast Decimal to int for IntegerField
+        reason=f'Top-up via {raw_method}',
+    )
+
+    # Update wallet balance using Decimal for precision
+    wallet.balance = wallet.balance + Decimal(str(tokens))
+    wallet.save(update_fields=['balance'])
 
     return Response(
         {
-            'tokens_balance': shop_owner.tokens_balance,
+            'tokens_balance': int(wallet.balance),
+            'token_price': float(base_token_price),
+            'charged_price': float(computed_price),
+            'purchase': {
+                'id': purchase.id,
+                'tokens': purchase.tokens_amount,
+                'price': float(purchase.price),
+                'payment_method': purchase.payment_method,
+                'status': purchase.status,
+                'time': purchase.purchased_at,
+            },
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def client_wallet(request):
+    """Return the current client's token/credit balance.
+
+    Uses session `account_id` to identify the account.
+    Balance is read from the unified Wallet model (shared across roles).
+    """
+    account = get_account_from_session(request)
+    if not account:
+        return Response({'error': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    # Verify the account is a client (or has client role)
+    if not hasattr(account, 'client'):
+        return Response({'error': 'Client profile not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    # Get or create wallet (should exist due to signal, but be defensive)
+    wallet, _ = Wallet.objects.get_or_create(account=account, defaults={'balance': Decimal('0.00')})
+    
+    # Return balance as integer for consistency (tokens are whole units)
+    return Response({'tokens_balance': int(wallet.balance)}, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def client_wallet_transactions(request):
+    """Return recent client token purchase transactions.
+    
+    Uses the same TokenPurchase ledger as mechanics and shop owners.
+    """
+    account = get_account_from_session(request)
+    if not account:
+        return Response({'error': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    if not hasattr(account, 'client'):
+        return Response({'error': 'Client profile not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    return Response({'transactions': _token_purchases_for_account(account)}, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def client_wallet_topup(request):
+    """Top-up client tokens/credits (same pricing rules as mechanic/shop owner wallets).
+    
+    Creates TokenPurchase and TokenTransaction ledger entries,
+    and updates the unified Wallet balance (shared across roles).
+    """
+    account = get_account_from_session(request)
+    if not account:
+        return Response({'error': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    if not hasattr(account, 'client'):
+        return Response({'error': 'Client profile not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    parsed = _parse_topup_body(request)
+    if isinstance(parsed, Response):
+        return parsed
+    tokens, computed_price, base_token_price, raw_method = parsed
+
+    # Get or create wallet (shared across roles)
+    wallet, _ = Wallet.objects.get_or_create(account=account, defaults={'balance': Decimal('0.00')})
+
+    # Create TokenPurchase record (universal ledger)
+    purchase = TokenPurchase.objects.create(
+        account=account,
+        tokens_amount=tokens,
+        price=computed_price,
+        payment_method=raw_method,
+        status='completed',
+    )
+
+    # Create TokenTransaction ledger entry (universal ledger)
+    TokenTransaction.objects.create(
+        account=account,
+        tokens=int(tokens),  # Cast Decimal to int for IntegerField
+        reason=f'Top-up via {raw_method}',
+    )
+
+    # Update wallet balance using Decimal for precision
+    wallet.balance = wallet.balance + Decimal(str(tokens))
+    wallet.save(update_fields=['balance'])
+
+    return Response(
+        {
+            'tokens_balance': int(wallet.balance),
             'token_price': float(base_token_price),
             'charged_price': float(computed_price),
             'purchase': {

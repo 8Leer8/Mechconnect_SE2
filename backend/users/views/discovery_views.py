@@ -124,7 +124,6 @@ def list_mechanics(request):
                 'account_id': mechanic.account.id,
                 'name': f"{mechanic.account.firstname} {mechanic.account.lastname}",
                 'profile_photo': get_media_url(mechanic.profile_photo, request) if mechanic.profile_photo else None,
-                'contact_number': mechanic.contact_number,
                 'average_rating': float(mechanic.average_rating),
                 'status': mechanic.status,
                 'is_working_for_shop': mechanic.is_working_for_shop,

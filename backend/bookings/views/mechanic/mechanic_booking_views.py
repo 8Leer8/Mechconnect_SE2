@@ -14,6 +14,7 @@ import logging
 import traceback
 import requests
 from ...models import (
+    Backjob,
     Booking,
     Request,
     DirectRequest,
@@ -29,12 +30,18 @@ from ...models import (
     ActiveBookingPhoto,
 )
 from ...models import Quotation, QuotationItem
-from ...backjob_utils import booking_has_backjob
+from ...backjob_utils import (
+    booking_has_backjob,
+    backjob_accepted_payable_total,
+    backjob_quotation_has_pending_client_lines,
+)
 from users.models import Account
 from services.models import MechanicService
 from ..client.client_booking_views import _serialize_bookings, _serialize_single_booking
 from ...serializers import QuotationSerializer
 from ...ws_utils import notify_booking_parties, post_quotation_chat_message
+from .payment_views import _sync_booking_payable_total, _get_payment_summary
+from ...services import create_amendment_request
 from chat.models import Conversation, Message
 from chat.serializers import MessageSerializer
 from asgiref.sync import async_to_sync
@@ -286,6 +293,60 @@ def _refresh_on_the_way_metrics(booking, mechanic_lat=None, mechanic_lng=None, s
     }
 
 
+def _broadcast_mechanic_location(booking, loc):
+    """Send the latest mechanic GPS to booking viewers."""
+    try:
+        channel_layer = get_channel_layer()
+        if channel_layer is None:
+            return
+
+        recipient_ids = set()
+        try:
+            if booking.request and booking.request.client and booking.request.client.account_id:
+                recipient_ids.add(booking.request.client.account_id)
+        except Exception:
+            pass
+        try:
+            if (
+                booking.request
+                and booking.request.shop
+                and booking.request.shop.shop_owner
+                and booking.request.shop.shop_owner.account_id
+            ):
+                recipient_ids.add(booking.request.shop.shop_owner.account_id)
+        except Exception:
+            pass
+
+        ws_event = {
+            "type": "booking_update",
+            "action": "mechanic_location_update",
+            "booking_id": booking.id,
+            "status": booking.status,
+            "latitude": float(loc.latitude),
+            "longitude": float(loc.longitude),
+        }
+        for rid in recipient_ids:
+            if rid:
+                async_to_sync(channel_layer.group_send)(f"user_{rid}", ws_event)
+    except Exception:
+        pass
+
+
+def _save_mechanic_location(booking, mechanic_lat, mechanic_lng):
+    if mechanic_lat is None or mechanic_lng is None:
+        return None
+
+    loc, _ = MechanicLocation.objects.update_or_create(
+        booking=booking,
+        defaults={
+            "latitude": Decimal(str(mechanic_lat)).quantize(Decimal('0.000001')),
+            "longitude": Decimal(str(mechanic_lng)).quantize(Decimal('0.000001')),
+        },
+    )
+    _broadcast_mechanic_location(booking, loc)
+    return loc
+
+
 
 # (All imports are already at the top of the file. No need to repeat here.)
 
@@ -316,6 +377,7 @@ def mechanic_start_travel(request, booking_id):
 
     refresh_result = _refresh_on_the_way_metrics(booking, mechanic_lat, mechanic_lng)
     traffic_level = refresh_result["traffic_level"]
+    _save_mechanic_location(booking, mechanic_lat, mechanic_lng)
 
     notify_booking_parties(
         account.id,
@@ -827,7 +889,6 @@ def mechanic_finish_job(request, booking_id):
         )
 
     if booking_has_backjob(booking):
-        backjob_total = Decimal("0.00")
         quotation = getattr(booking, "quotation", None)
         if quotation is not None:
             quotation.is_backjob = True
@@ -840,47 +901,19 @@ def mechanic_finish_job(request, booking_id):
                 "total_amount",
                 "updated_at",
             ])
-            backjob_total = Decimal(str(quotation.total_amount or 0)).quantize(Decimal("0.01"))
 
-        if backjob_total <= Decimal("0.00"):
-            now = timezone.now()
-            complete, created = CompleteBooking.objects.get_or_create(
-                booking=booking,
-                defaults={"total_amount": 0, "notes": "Backjob completed (no payable parts)"},
-            )
-            if not created:
-                complete.total_amount = 0
-                complete.notes = "Backjob completed (no payable parts)"
-                complete.save(update_fields=["total_amount", "notes"])
-
-            booking.status = Booking.Status.COMPLETED
-            booking.payment_status = Booking.PaymentStatus.FULLY_PAID
-            booking.amount_fee = Decimal("0.00")
-            booking.completed_at = now
-            booking.save(update_fields=["status", "payment_status", "amount_fee", "completed_at", "updated_at"])
-
-            try:
-                if hasattr(booking, "activebooking"):
-                    booking.activebooking.is_job_done = True
-                    booking.activebooking.save(update_fields=["is_job_done"])
-            except Exception:
-                pass
-
-            Receipt.objects.filter(booking=booking).delete()
-            PaymentInstallment.objects.filter(booking=booking).delete()
-
-            notify_booking_parties(
-                account.id,
-                booking.request.client.account_id,
-                booking.id,
-                booking.status,
-                "Backjob completed",
-            )
-
+        if backjob_quotation_has_pending_client_lines(booking):
             return Response(
-                {"message": "Backjob completed.", "booking_id": booking.id, "status": booking.status},
-                status=status.HTTP_200_OK,
+                {
+                    "error": "Wait for the client to accept or reject the new quotation lines before finishing the job.",
+                    "code": "quotation_pending_client_approval",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
+
+        backjob_total = (
+            backjob_accepted_payable_total(quotation) if quotation is not None else Decimal("0.00")
+        )
 
         booking.status = Booking.Status.PENDING_PAYMENT
         booking.payment_status = Booking.PaymentStatus.UNPAID
@@ -895,17 +928,26 @@ def mechanic_finish_job(request, booking_id):
             defaults={"amount": booking.amount_fee, "status": PaymentInstallment.Status.PENDING},
         )
 
+        if backjob_total > Decimal("0.00"):
+            client_message = "Backjob finished. Waiting for parts payment."
+            response_message = "Backjob finished. Pending payment for parts only."
+        else:
+            client_message = "Backjob finished. No payment due — mechanic will confirm when the job is closed."
+            response_message = (
+                "Backjob finished. No payment due. Use Complete job as free on the booking screen to close the job."
+            )
+
         notify_booking_parties(
             account.id,
             booking.request.client.account_id,
             booking.id,
             booking.status,
-            "Backjob finished. Waiting for parts payment.",
+            client_message,
         )
 
         return Response(
             {
-                "message": "Backjob finished. Pending payment for parts only.",
+                "message": response_message,
                 "booking_id": booking.id,
                 "status": booking.status,
                 "amount_fee": float(booking.amount_fee),
@@ -1140,6 +1182,12 @@ def mechanic_upload_quotation_item_receipt(request, booking_id, item_id):
     except Booking.DoesNotExist:
         return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
 
+    if booking.status == Booking.Status.COMPLETED:
+        return Response(
+            {"error": "Completed bookings are read-only. Quotation data is frozen."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
     try:
         quotation = booking.quotation
     except Quotation.DoesNotExist:
@@ -1202,7 +1250,7 @@ def mechanic_upload_quotation_item_receipt(request, booking_id, item_id):
         quotation.save(update_fields=["status", "total_amount", "updated_at"])
 
     try:
-        post_quotation_chat_message(account, booking, quotation, action="updated")
+        post_quotation_chat_message(account, booking, quotation, action="updated", request=request)
     except Exception:
         pass
 
@@ -1382,6 +1430,11 @@ def mechanic_booking_quotation(request, booking_id):
 
     # POST: create or update
     if request.method == 'POST':
+        if booking.status == Booking.Status.COMPLETED:
+            return Response(
+                {"error": "Completed bookings are read-only. Quotation data is frozen."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         if is_assistant_mechanic:
             return Response(
                 {
@@ -1397,8 +1450,12 @@ def mechanic_booking_quotation(request, booking_id):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        data = request.data or {}
-        ser = QuotationSerializer(data=data, context={'request': request, 'booking': booking, 'mechanic': account})
+        # Shallow copy so serializer .pop('items') does not mutate DRF request.data (can confuse parsers / retries).
+        raw = request.data or {}
+        try:
+            data = dict(raw)
+        except Exception:
+            data = raw if isinstance(raw, dict) else {}
         original_booking_status = booking.status
         try:
             # If quotation exists, update instead
@@ -1411,7 +1468,7 @@ def mechanic_booking_quotation(request, booking_id):
             if data.get('action') == 'delete' and existing:
                 # post retraction system message (include items before they are removed), then delete
                 try:
-                    post_quotation_chat_message(account, booking, existing, action='retracted')
+                    post_quotation_chat_message(account, booking, existing, action='retracted', request=request)
                     try:
                         notify_booking_parties(account.id, booking.request.client.account_id, booking.id, booking.status, 'Quotation retracted')
                     except Exception:
@@ -1420,174 +1477,60 @@ def mechanic_booking_quotation(request, booking_id):
                 except Exception:
                     pass
                 return Response({'message': 'Quotation deleted'}, status=status.HTTP_200_OK)
+            if existing is None:
+                existing = Quotation.objects.create(
+                    booking=booking,
+                    mechanic=account,
+                    status=Quotation.Status.ACCEPTED,
+                    notes=data.get("notes", ""),
+                    is_final=bool(data.get("is_final", False)),
+                    is_backjob=booking_has_backjob(booking),
+                )
 
-            # Perform quotation save and system chat message in a single DB transaction
+            # Create a single amendment bundle from staged UI rows.
             try:
                 with transaction.atomic():
-                    if existing:
-                        quotation = ser.update(existing, data)
-                        print(f"DEBUG: Quotation {getattr(quotation, 'id', None)} updated. Attempting to create chat message...")
-                        try:
-                            from ...ws_utils import _ensure_conversation_for_booking
-                            from chat.models import Message as ChatMessage
-                            from chat.serializers import MessageSerializer as ChatMessageSerializer
-                            import json
-                            from channels.layers import get_channel_layer
-                            from asgiref.sync import async_to_sync
-
-                            conv = _ensure_conversation_for_booking(booking, account)
-                            if conv:
-                                payload = {
-                                    'type': 'quotation_request',
-                                    'action': 'updated',
-                                    'quotation_id': quotation.id,
-                                    'booking_id': booking.id,
-                                    'status': getattr(quotation, 'status', None),
-                                    'mechanic_id': getattr(account, 'id', None),
-                                    'mechanic_name': f"{getattr(account, 'firstname', '')} {getattr(account, 'lastname', '')}".strip(),
-                                    'notes': getattr(quotation, 'notes', ''),
-                                    'total_amount': float(quotation.total_amount) if getattr(quotation, 'total_amount', None) is not None else None,
-                                    'items': [],
-                                    'created_at': quotation.created_at.isoformat() if getattr(quotation, 'created_at', None) else None,
-                                }
-                                try:
-                                    for it in quotation.items.exclude(status='rejected'):
-                                        payload['items'].append({
-                                            'id': it.id,
-                                            'line_kind': getattr(it, 'line_kind', 'item'),
-                                            'source': getattr(it, 'source', None),
-                                            'service': it.service_id,
-                                            'service_add_on': it.service_add_on_id,
-                                            'description': it.description,
-                                            'quantity': int(it.quantity),
-                                            'unit_price': float(it.unit_price),
-                                            'line_total': float(it.line_total),
-                                            'status': getattr(it, 'status', None),
-                                            'purchase_receipt_image': it.purchase_receipt_image.url if getattr(it, 'purchase_receipt_image', None) else None,
-                                            'receipt_submitted_at': it.receipt_submitted_at.isoformat() if getattr(it, 'receipt_submitted_at', None) else None,
-                                        })
-                                except Exception:
-                                    pass
-
-                                msg = ChatMessage.objects.create(conversation=conv, sender=None, content=json.dumps(payload))
-                                conv.save()
-                                print(f"DEBUG: Chat message created successfully for quotation {quotation.id}")
-
-                                try:
-                                    serializer = ChatMessageSerializer(msg, context={'request': request})
-                                    channel_layer = get_channel_layer()
-                                    payload_ws = {
-                                        'type': 'booking_update',
-                                        'action': 'new_chat_message',
-                                        'conversation_id': conv.id,
-                                        'booking_id': booking.id,
-                                        'message': serializer.data,
-                                    }
-                                    for participant in conv.participants.exclude(id=getattr(account, 'id', None)).all():
-                                        group_name = f'user_{participant.id}'
-                                        async_to_sync(channel_layer.group_send)(group_name, payload_ws)
-                                except Exception as e:
-                                    print(f"DEBUG: Failed to broadcast chat message for quotation {quotation.id}: {e}")
-                        except Exception as e:
-                            print(f"DEBUG: Failed to create chat message for quotation {getattr(quotation, 'id', None)}: {e}")
-                        try:
-                            notify_booking_parties(account.id, booking.request.client.account_id, booking.id, booking.status, 'Quotation updated')
-                        except Exception:
-                            pass
-                    else:
-                        quotation = ser.create(data)
-                        print(f"DEBUG: Quotation {getattr(quotation, 'id', None)} saved. Attempting to create chat message...")
-                        try:
-                            # Ensure conversation exists and create a system message record explicitly
-                            from ...ws_utils import _ensure_conversation_for_booking
-                            from chat.models import Message as ChatMessage
-                            from chat.serializers import MessageSerializer as ChatMessageSerializer
-                            import json
-                            from channels.layers import get_channel_layer
-                            from asgiref.sync import async_to_sync
-
-                            conv = _ensure_conversation_for_booking(booking, account)
-                            if conv:
-                                payload = {
-                                    'type': 'quotation_request',
-                                    'action': 'created',
-                                    'quotation_id': quotation.id,
-                                    'booking_id': booking.id,
-                                    'status': getattr(quotation, 'status', None),
-                                    'mechanic_id': getattr(account, 'id', None),
-                                    'mechanic_name': f"{getattr(account, 'firstname', '')} {getattr(account, 'lastname', '')}".strip(),
-                                    'notes': getattr(quotation, 'notes', ''),
-                                    'total_amount': float(quotation.total_amount) if getattr(quotation, 'total_amount', None) is not None else None,
-                                    'items': [],
-                                    'created_at': quotation.created_at.isoformat() if getattr(quotation, 'created_at', None) else None,
-                                }
-                                try:
-                                    for it in quotation.items.exclude(status='rejected'):
-                                        payload['items'].append({
-                                            'id': it.id,
-                                            'line_kind': getattr(it, 'line_kind', 'item'),
-                                            'source': getattr(it, 'source', None),
-                                            'service': it.service_id,
-                                            'service_add_on': it.service_add_on_id,
-                                            'description': it.description,
-                                            'quantity': int(it.quantity),
-                                            'unit_price': float(it.unit_price),
-                                            'line_total': float(it.line_total),
-                                            'status': getattr(it, 'status', None),
-                                            'purchase_receipt_image': it.purchase_receipt_image.url if getattr(it, 'purchase_receipt_image', None) else None,
-                                            'receipt_submitted_at': it.receipt_submitted_at.isoformat() if getattr(it, 'receipt_submitted_at', None) else None,
-                                        })
-                                except Exception:
-                                    pass
-
-                                msg = ChatMessage.objects.create(conversation=conv, sender=None, content=json.dumps(payload))
-                                conv.save()
-                                print(f"DEBUG: Chat message created successfully for quotation {quotation.id}")
-
-                                # Broadcast to participants except sender
-                                try:
-                                    serializer = ChatMessageSerializer(msg, context={'request': request})
-                                    channel_layer = get_channel_layer()
-                                    payload_ws = {
-                                        'type': 'booking_update',
-                                        'action': 'new_chat_message',
-                                        'conversation_id': conv.id,
-                                        'booking_id': booking.id,
-                                        'message': serializer.data,
-                                    }
-                                    for participant in conv.participants.exclude(id=getattr(account, 'id', None)).all():
-                                        group_name = f'user_{participant.id}'
-                                        async_to_sync(channel_layer.group_send)(group_name, payload_ws)
-                                except Exception as e:
-                                    print(f"DEBUG: Failed to broadcast chat message for quotation {quotation.id}: {e}")
-                        except Exception as e:
-                            print(f"DEBUG: Failed to create chat message for quotation {getattr(quotation, 'id', None)}: {e}")
-                        try:
-                            notify_booking_parties(account.id, booking.request.client.account_id, booking.id, booking.status, 'Quotation created')
-                        except Exception:
-                            pass
+                    if "notes" in data:
+                        existing.notes = data.get("notes")
+                    if "is_final" in data:
+                        existing.is_final = bool(data.get("is_final", existing.is_final))
+                    existing.is_backjob = booking_has_backjob(booking)
+                    existing.save(update_fields=["notes", "is_final", "is_backjob", "updated_at"])
+                    amendment = create_amendment_request(
+                        quotation_id=existing.id,
+                        mechanic_id=account.id,
+                        changes=data.get("items") or [],
+                    )
+                    existing.refresh_from_db()
             except Exception as e:
-                logging.getLogger(__name__).exception('Failed to create/update quotation and post chat message: %s', e)
-                return Response({
-                    'error': 'Failed to save quotation or post chat message',
-                    'details': str(e)
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                logging.getLogger(__name__).exception('Failed to create/update quotation: %s', e)
+                return Response(
+                    {'error': 'Failed to save quotation', 'details': str(e)},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
 
-            # Safeguard: remove stale rejected quotation items only after a non-pending state.
-            # While pending, rejected rows may represent removal proposals awaiting client decision.
             try:
-                if str(getattr(quotation, 'status', '')).lower() != Quotation.Status.PENDING:
-                    deleted_count, _ = QuotationItem.objects.filter(
-                        quotation=quotation,
-                        status=Quotation.Status.REJECTED,
-                    ).delete()
-                    if deleted_count:
-                        try:
-                            fresh_total = sum(float(it.line_total) for it in quotation.items.exclude(status=Quotation.Status.REJECTED))
-                        except Exception:
-                            fresh_total = 0
-                        quotation.total_amount = fresh_total
-                        quotation.save(update_fields=['total_amount', 'updated_at'])
+                post_quotation_chat_message(
+                    account,
+                    booking,
+                    existing,
+                    action='updated',
+                    request=request,
+                    amendment=amendment,
+                )
+            except Exception as e:
+                logging.getLogger(__name__).exception(
+                    'Quotation saved but failed to post quotation chat message: %s', e
+                )
+
+            try:
+                notify_booking_parties(
+                    account.id,
+                    booking.request.client.account_id,
+                    booking.id,
+                    booking.status,
+                    'Quotation amendment request sent',
+                )
             except Exception:
                 pass
 
@@ -1601,7 +1544,17 @@ def mechanic_booking_quotation(request, booking_id):
             except Exception:
                 pass
 
-            return Response(QuotationSerializer(quotation, context={'request': request}).data, status=status.HTTP_200_OK)
+            # Keep Booking.amount_fee aligned with backjob new-line totals (service + item lines).
+            try:
+                if booking_has_backjob(booking):
+                    _sync_booking_payable_total(booking)
+            except Exception:
+                pass
+
+            payload = QuotationSerializer(existing, context={'request': request}).data
+            payload["amendment_id"] = amendment.id
+            payload["status"] = "pending"
+            return Response(payload, status=status.HTTP_200_OK)
         except Exception as e:
             logging.getLogger(__name__).error("Quotation save failed: %s", traceback.format_exc())
             return Response({"error": "Failed to save quotation", "details": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -1777,14 +1730,16 @@ def mechanic_accept_backjob(request, booking_id):
     except Exception:
         return Response({"error": "No backjob found for this booking"}, status=status.HTTP_404_NOT_FOUND)
 
-    # If already accepted or in progress, ensure booking state is updated then return success
-    if backjob.status in [
+    # If already accepted or in progress, still continue below so the chat request
+    # has an accepted system message instead of staying as an actionable request.
+    already_accepted_or_active = backjob.status in [
         Booking.Status.ACCEPTED,
         Booking.Status.ON_THE_WAY,
         Booking.Status.AT_LOCATION,
         Booking.Status.DIAGNOSING,
         Booking.Status.ACTIVE,
-    ]:
+    ]
+    if already_accepted_or_active:
         try:
             booking.status = Booking.Status.ACCEPTED
             booking.amount_fee = Decimal("0.00")
@@ -1802,10 +1757,10 @@ def mechanic_accept_backjob(request, booking_id):
                 pass
         except Exception:
             pass
-        return Response({"message": "Backjob already accepted or in progress (booking ensured booked)", "backjob_id": backjob.id, "status": backjob.status}, status=status.HTTP_200_OK)
 
-    backjob.status = Booking.Status.ACCEPTED
-    backjob.save(update_fields=["status", "updated_at"])
+    if not already_accepted_or_active:
+        backjob.status = Booking.Status.ACCEPTED
+        backjob.save(update_fields=["status", "updated_at"])
 
     # Notify participants via websocket util
     try:
@@ -1875,8 +1830,14 @@ def mechanic_accept_backjob(request, booking_id):
             'message': 'Mechanic accepted the backjob and set it as booked (no cost).',
         }
 
-        # Create a system-style message (no sender) so UI renders it as a system event
-        msg = Message.objects.create(conversation=conv, sender=None, content=json.dumps(payload))
+        existing_msg = Message.objects.filter(
+            Q(content__contains='backjob_accepted') &
+            Q(content__contains=f'"backjob_id": {backjob.id}'),
+            conversation=conv,
+        ).order_by('-id').first()
+
+        # Create a system-style message (no sender) so UI renders it as a system event.
+        msg = existing_msg or Message.objects.create(conversation=conv, sender=None, content=json.dumps(payload))
         conv.save()
         ser = MessageSerializer(msg, context={'request': request})
 
@@ -1944,6 +1905,24 @@ def mechanic_location_view(request, booking_id):
                 "updated_at": loc.updated_at.isoformat(),
             }, status=status.HTTP_200_OK)
         except MechanicLocation.DoesNotExist:
+            accepted_offer = _get_accepted_offer_for_booking(booking)
+            if (
+                accepted_offer
+                and accepted_offer.mechanic_latitude is not None
+                and accepted_offer.mechanic_longitude is not None
+            ):
+                loc = _save_mechanic_location(
+                    booking,
+                    float(accepted_offer.mechanic_latitude),
+                    float(accepted_offer.mechanic_longitude),
+                )
+                if loc is not None:
+                    return Response({
+                        "latitude": float(loc.latitude),
+                        "longitude": float(loc.longitude),
+                        "updated_at": loc.updated_at.isoformat(),
+                    }, status=status.HTTP_200_OK)
+
             return Response({"error": "Mechanic location not available yet"}, status=status.HTTP_404_NOT_FOUND)
 
     # POST — solo jobs use request.provider as the mechanic; shop jobs use RequestAssignment.
@@ -1973,41 +1952,7 @@ def mechanic_location_view(request, booking_id):
                    "longitude": Decimal(str(longitude)).quantize(Decimal('0.000001'))},
     )
 
-    # Push live coordinates to the client (and shop owner) over websocket so the app
-    # does not need to poll GET /mechanic-location/ on a timer.
-    try:
-        channel_layer = get_channel_layer()
-        if channel_layer is not None:
-            recipient_ids = set()
-            try:
-                if booking.request and booking.request.client and booking.request.client.account_id:
-                    recipient_ids.add(booking.request.client.account_id)
-            except Exception:
-                pass
-            try:
-                if (
-                    booking.request
-                    and booking.request.shop
-                    and booking.request.shop.shop_owner
-                    and booking.request.shop.shop_owner.account_id
-                ):
-                    recipient_ids.add(booking.request.shop.shop_owner.account_id)
-            except Exception:
-                pass
-            ws_event = {
-                "type": "booking_update",
-                "action": "mechanic_location_update",
-                "booking_id": booking.id,
-                "status": booking.status,
-                "latitude": float(loc.latitude),
-                "longitude": float(loc.longitude),
-            }
-            for rid in recipient_ids:
-                if not rid:
-                    continue
-                async_to_sync(channel_layer.group_send)(f"user_{rid}", ws_event)
-    except Exception:
-        pass
+    _broadcast_mechanic_location(booking, loc)
 
     return Response({
         "latitude": float(loc.latitude),
@@ -2242,7 +2187,7 @@ def list_mechanic_bookings(request):
             # Only count backjobs that are still requested (not yet accepted)
             backjob_count = Booking.objects.filter(
                 _mechanic_booking_access_q(account),
-                backjob__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
+                backjobs__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
             ).distinct().count()
             pending_count = pending_direct_count + backjob_count
             bookings_count = bookings_queryset.count()
@@ -2259,7 +2204,7 @@ def list_mechanic_bookings(request):
                 # Only include backjob bookings that are pending mechanic acceptance.
                 backjob_qs = Booking.objects.filter(
                     _mechanic_booking_access_q(account),
-                    backjob__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
+                    backjobs__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
                 ).distinct().order_by("-booked_at")
                 backjob_pending = serialize_booking_list(backjob_qs)
                 all_pending = direct_pending + backjob_pending
@@ -2270,7 +2215,7 @@ def list_mechanic_bookings(request):
                 # Need some booking items on this page; exclude backjob bookings already shown
                 booking_start = max(0, start_index - pending_count)
                 booking_end = end_index - pending_count
-                bookings_slice = bookings_queryset.exclude(backjob__isnull=False)[booking_start:booking_end]
+                bookings_slice = bookings_queryset.exclude(backjobs__isnull=False)[booking_start:booking_end]
                 paginated.extend(serialize_booking_list(bookings_slice))
 
             # Include tab counts so frontend doesn't need a separate request
@@ -2283,7 +2228,7 @@ def list_mechanic_bookings(request):
             cancelled_count = bookings_queryset.filter(status="cancelled").count()
             # Include any booking that has a Backjob (requested, accepted, or completed)
             reworked_count = bookings_queryset.filter(
-                Q(status="reworked") | Q(backjob__isnull=False)
+                Q(status="reworked") | Q(backjobs__isnull=False)
             ).count()
             disputed_count = bookings_queryset.filter(dispute_status=Booking.DisputeState.ACTIVE).count()
 
@@ -2322,8 +2267,8 @@ def list_mechanic_bookings(request):
             # Only include backjob bookings that are pending acceptance.
             backjob_qs = Booking.objects.filter(
                 _mechanic_booking_access_q(account),
-                backjob__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
-            ).distinct().order_by("-booked_at")
+            backjobs__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
+        ).distinct().order_by("-booked_at")
             backjob_pending = serialize_booking_list(backjob_qs)
             all_pending = direct_pending + backjob_pending
             total_count = len(all_pending)
@@ -2399,12 +2344,12 @@ def list_mechanic_bookings(request):
         # in the mechanic's on-going/active filter.
         if status_filter.lower() == 'active':
             # include bookings that are active/paused OR that have a backjob requested
-            bookings_queryset = bookings_queryset.filter(Q(status__in=['active', 'paused']) | Q(backjob__isnull=False))
+            bookings_queryset = bookings_queryset.filter(Q(status__in=['active', 'paused']) | Q(backjobs__isnull=False))
         elif status_filter.lower() == 'reworked':
             # Include bookings explicitly marked reworked OR any bookings
             # that have a Backjob (so accepted/completed backjobs also appear)
             bookings_queryset = bookings_queryset.filter(
-                Q(status__in=['reworked', 'backjob_pending']) | Q(backjob__isnull=False)
+                Q(status__in=['reworked', 'backjob_pending']) | Q(backjobs__isnull=False)
             )
         else:
             bookings_queryset = bookings_queryset.filter(status=status_filter.lower())
@@ -2442,13 +2387,13 @@ def list_mechanic_bookings(request):
     completed_count = bookings_queryset.filter(status="completed").count()
     cancelled_count = bookings_queryset.filter(status="cancelled").count()
     reworked_count = bookings_queryset.filter(
-        Q(status="reworked") | Q(backjob__isnull=False)
+        Q(status="reworked") | Q(backjobs__isnull=False)
     ).count()
     disputed_count = bookings_queryset.filter(dispute_status=Booking.DisputeState.ACTIVE).count()
     # Include backjob bookings in the pending count, but only those not yet accepted.
     pending_count = _count_pending_direct_requests(account) + Booking.objects.filter(
         _mechanic_booking_access_q(account),
-        backjob__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
+        backjobs__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
     ).distinct().count()
 
     # Single DB aggregate — much cheaper than fetching all completed records
@@ -2780,16 +2725,38 @@ def mechanic_complete_booking(request, booking_id):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    # Block manual completion while payment is pending/unconfirmed.
-    if booking.status == Booking.Status.PENDING_PAYMENT and not booking_has_backjob(booking):
-        return Response(
-            {
-                "error": "Cannot complete booking. Payment is pending confirmation."
-            },
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+    has_pending_quotation_request = False
+    quotation = getattr(booking, "quotation", None)
+    if quotation is not None:
+        quotation_status = str(quotation.status or "").lower()
+        has_pending_quotation_request = quotation_status == Quotation.Status.PENDING
+        if not has_pending_quotation_request:
+            has_pending_quotation_request = quotation.items.filter(status=Quotation.Status.PENDING).exists()
 
-    if not booking_has_backjob(booking):
+    payment_summary = _get_payment_summary(booking)
+    remaining_balance = Decimal(str(payment_summary.get("remaining_balance", 0) or 0)).quantize(Decimal("0.01"))
+
+    # For normal jobs, allow completion from pending_payment only when no balance remains
+    # and no quotation request is still waiting for client action.
+    if booking.status == Booking.Status.PENDING_PAYMENT and not booking_has_backjob(booking):
+        if remaining_balance > Decimal("0.00"):
+            return Response(
+                {
+                    "error": "Cannot complete booking. Payment is still pending.",
+                    "remaining_balance": float(remaining_balance),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if has_pending_quotation_request:
+            return Response(
+                {
+                    "error": "Cannot complete booking. A quotation request is still pending client action.",
+                    "code": "quotation_pending_client_approval",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    if not booking_has_backjob(booking) and remaining_balance > Decimal("0.00"):
         try:
             receipt = booking.receipt
             if not receipt.payment_received:

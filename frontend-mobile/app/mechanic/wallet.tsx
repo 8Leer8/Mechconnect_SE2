@@ -278,18 +278,31 @@ export default function WalletScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Hero balance */}
-        <View style={styles.heroShell}>
-          <View style={styles.heroCard}>
-            <View style={styles.balanceIconCircle}>
-              <FontAwesome name="database" size={24} color="#FF8C00" />
-            </View>
-            <ThemedText style={styles.balanceLabel}>Credit Balance</ThemedText>
-            <ThemedText style={styles.balanceValue}>{formatCreditsDisplay(balance)}</ThemedText>
-            <ThemedText style={styles.balanceSub}>
-              {shopOwnerCreditsView ? 'Available shop credits' : 'Available credits'}
-            </ThemedText>
+        {/* Balance Card */}
+        <View style={styles.balanceCard}>
+          <View style={styles.balanceIconCircle}>
+            <FontAwesome name="database" size={24} color="#FF8C00" />
           </View>
+          <View style={styles.balanceContent}>
+            <ThemedText style={styles.balanceLabel}>Credit Balance</ThemedText>
+            <View style={styles.balanceValueContainer}>
+              <ThemedText
+                style={(balance ?? 0) >= 1000 ? styles.balanceValueLarge : styles.balanceValue}
+                numberOfLines={1}
+                adjustsFontSizeToFit={true}
+              >
+                {formatCreditsDisplay(balance)}
+              </ThemedText>
+            </View>
+          </View>
+        </View>
+
+        {/* Info note about shared wallet */}
+        <View style={styles.sharedWalletNote}>
+          <FontAwesome name="info-circle" size={12} color="#FF8C00" />
+          <ThemedText style={styles.sharedWalletNoteText}>
+            Shared across all your roles (Client, Mechanic, Shop Owner)
+          </ThemedText>
         </View>
 
         {/* Buy Credits */}
@@ -343,35 +356,39 @@ export default function WalletScreen() {
               <ThemedText style={styles.emptySubtext}>Purchase credits to see your history</ThemedText>
             </View>
           ) : (
-            <View style={styles.txList}>
-              {transactions.map((item) => (
-                <View key={String(item.id)} style={styles.txRow}>
-                  <View style={styles.txIconCircle}>
-                    <FontAwesome name={getMethodMeta(item.payment_method).icon as any} size={14} color={getMethodMeta(item.payment_method).color} />
-                  </View>
-                  <View style={styles.txInfo}>
-                    <ThemedText style={styles.txType}>
-                      Top up • {getMethodMeta(item.payment_method).label}
-                    </ThemedText>
-                    <ThemedText style={styles.txTime}>
-                      {new Date(item.time).toLocaleString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </ThemedText>
-                  </View>
-                  <View style={styles.txRight}>
-                    <ThemedText style={styles.txAmount}>+{item.tokens}</ThemedText>
-                    <View style={[styles.statusBadge, getStatusMeta(item.status).style]}>
-                      <ThemedText style={[styles.statusBadgeText, getStatusMeta(item.status).textStyle]}>
-                        {getStatusMeta(item.status).label}
-                      </ThemedText>
+            <View style={styles.txListContainer}>
+              <ScrollView nestedScrollEnabled={true} showsVerticalScrollIndicator={true}>
+                <View style={styles.txList}>
+                  {transactions.map((item) => (
+                    <View key={String(item.id)} style={styles.txRow}>
+                      <View style={styles.txIconCircle}>
+                        <FontAwesome name={getMethodMeta(item.payment_method).icon as any} size={14} color={getMethodMeta(item.payment_method).color} />
+                      </View>
+                      <View style={styles.txInfo}>
+                        <ThemedText style={styles.txType}>
+                          Top up • {getMethodMeta(item.payment_method).label}
+                        </ThemedText>
+                        <ThemedText style={styles.txTime}>
+                          {new Date(item.time).toLocaleString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </ThemedText>
+                      </View>
+                      <View style={styles.txRight}>
+                        <ThemedText style={styles.txAmount}>+{item.tokens}</ThemedText>
+                        <View style={[styles.statusBadge, getStatusMeta(item.status).style]}>
+                          <ThemedText style={[styles.statusBadgeText, getStatusMeta(item.status).textStyle]}>
+                            {getStatusMeta(item.status).label}
+                          </ThemedText>
+                        </View>
+                      </View>
                     </View>
-                  </View>
+                  ))}
                 </View>
-              ))}
+              </ScrollView>
             </View>
           )}
         </View>

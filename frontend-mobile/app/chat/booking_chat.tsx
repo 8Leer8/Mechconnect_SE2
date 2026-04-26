@@ -6,6 +6,7 @@ import { ThemedText } from '@/components/themed-text';
 import { FontAwesome } from '@expo/vector-icons';
 import { getImageUrl } from '@/lib/imageUtils';
 import { fetchProfileDetailsCached, getCachedAccountId } from '@/lib/profileCache';
+import { shouldMarkAsAdded, runQuotationDiffSelfCheck } from '@/lib/quotationDiff';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -30,7 +31,7 @@ export default function BookingChatScreen() {
   const [showAcceptModal, setShowAcceptModal] = useState(false);
   const [showOptionsModal, setShowOptionsModal] = useState(false);
   const [accepting, setAccepting] = useState(false);
-  const [acceptedLocks, setAcceptedLocks] = useState<number[]>([]);
+  const [acceptedLocks, setAcceptedLocks] = useState<string[]>([]);
   const [quotationActionLoading, setQuotationActionLoading] = useState<'accept' | 'reject' | null>(null);
   const [backjobActionLoading, setBackjobActionLoading] = useState<'accept' | 'decline' | null>(null);
   const [expandedQuoteCards, setExpandedQuoteCards] = useState<Record<string, boolean>>({});
@@ -45,6 +46,11 @@ export default function BookingChatScreen() {
   const [visibleMessageKeys, setVisibleMessageKeys] = useState<Record<string, true>>({});
 
   const getQuotationMessageKey = (m: any) => `${m?.id || 'noid'}_${m?.created_at || 'notime'}`;
+  const getQuoteRequestKey = (payload: any) => {
+    const amendmentId = payload?.amendment_id;
+    if (amendmentId != null && amendmentId !== '') return `amendment:${String(amendmentId)}`;
+    return `quotation:${String(payload?.quotation_id ?? '')}`;
+  };
   const getMessageKey = (m: any, fallbackIndex?: number) => {
     if (m && (m.id || m.created_at)) {
       const idPart = m.id ? String(m.id) : 'noid';
@@ -83,6 +89,49 @@ export default function BookingChatScreen() {
     } catch (e) {
       return null;
     }
+  };
+
+  const mergeResolvedQuotationMessages = (rawMessages: any[]) => {
+    const merged: any[] = [];
+    const requestIndexByKey: Record<string, number> = {};
+
+    (rawMessages || []).forEach((message: any) => {
+      const payload = parseStructuredContent(message?.content);
+      if (!payload || payload.type !== 'quotation_request') {
+        merged.push(message);
+        return;
+      }
+
+      const action = String(payload?.action || '').toLowerCase();
+      const requestKey = getQuoteRequestKey(payload);
+      const isDecisionMessage = action === 'accepted' || action === 'rejected';
+
+      if (isDecisionMessage && requestIndexByKey[requestKey] != null) {
+        const originalIndex = requestIndexByKey[requestKey];
+        const originalMessage = merged[originalIndex];
+        const originalPayload = parseStructuredContent(originalMessage?.content) || {};
+        const nextPayload = {
+          ...originalPayload,
+          status: action,
+          action,
+          total_amount: payload?.total_amount ?? originalPayload?.total_amount,
+        };
+
+        merged[originalIndex] = {
+          ...originalMessage,
+          content: JSON.stringify(nextPayload),
+        };
+        return;
+      }
+
+      const nextIndex = merged.length;
+      merged.push(message);
+      if (!isDecisionMessage && requestKey) {
+        requestIndexByKey[requestKey] = nextIndex;
+      }
+    });
+
+    return merged;
   };
 
   // Fetch profile or stored account id
@@ -247,6 +296,29 @@ export default function BookingChatScreen() {
     if (myChatRole === 'client' || myChatRole === 'assistant_mechanic' || myChatRole === 'shop_owner') return false;
     return Boolean(isAssignedMechanicForBooking || myChatRole === 'lead_mechanic' || myChatRole === 'provider_mechanic');
   }, [canSendMessages, myChatRole, isAssignedMechanicForBooking]);
+
+  const backjobRequestStatus = useMemo(() => {
+    let nextStatus: 'pending' | 'accepted' | 'declined' | null = null;
+    messages.forEach((m: any) => {
+      const p = parseStructuredContent(m.content);
+      if (!p) return;
+      if (p.type === 'backjob_request') nextStatus = 'pending';
+      if (p.type === 'backjob_accepted') nextStatus = 'accepted';
+      if (p.type === 'backjob_declined') nextStatus = 'declined';
+    });
+    return nextStatus;
+  }, [messages]);
+
+  const latestBackjobRequestAt = useMemo(() => {
+    let latest = 0;
+    messages.forEach((m: any) => {
+      const p = parseStructuredContent(m.content);
+      if (!p || p.type !== 'backjob_request') return;
+      const createdMs = Number(new Date(String(m?.created_at || '')).getTime());
+      if (Number.isFinite(createdMs) && createdMs > latest) latest = createdMs;
+    });
+    return latest;
+  }, [messages]);
 
   const canOpenQuotationEditor = useMemo(() => {
     if (!canSendMessages) return false;
@@ -416,7 +488,7 @@ export default function BookingChatScreen() {
             fetched = fetched.map((m: any) => {
               try {
                 const p = typeof m.content === 'string' ? JSON.parse(m.content) : m.content;
-                if (p && p.type === 'quotation_request' && acceptedLocks.includes(p.quotation_id) && p.status !== 'accepted') {
+                if (p && p.type === 'quotation_request' && acceptedLocks.includes(getQuoteRequestKey(p)) && p.status !== 'accepted') {
                   p.status = 'accepted';
                   m.content = JSON.stringify(p);
                 }
@@ -429,7 +501,7 @@ export default function BookingChatScreen() {
               const found = fetched.find((mm: any) => {
                 try {
                   const pp = typeof mm.content === 'string' ? JSON.parse(mm.content) : mm.content;
-                  return pp && pp.type === 'quotation_request' && pp.quotation_id === lockId && pp.status === 'accepted';
+                  return pp && pp.type === 'quotation_request' && getQuoteRequestKey(pp) === lockId && pp.status === 'accepted';
                 } catch (e) { return false; }
               });
               return !found;
@@ -440,7 +512,7 @@ export default function BookingChatScreen() {
           // ignore
         }
 
-        setMessages(fetched || []);
+        setMessages(mergeResolvedQuotationMessages(fetched || []));
       } catch (e) {
         console.warn(e);
       }
@@ -465,6 +537,14 @@ export default function BookingChatScreen() {
         initialScrollTimerRef.current = null;
       }
     };
+  }, []);
+
+  useEffect(() => {
+    if (!__DEV__) return;
+    const failures = runQuotationDiffSelfCheck();
+    if (failures.length > 0) {
+      console.warn('[quotation-diff-self-check] failed cases:', failures);
+    }
   }, []);
 
   const scrollToLatestOnce = () => {
@@ -637,10 +717,13 @@ export default function BookingChatScreen() {
   };
 
   const getPendingQuotationId = () => {
-    for (const m of messages) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
       try {
         const p = typeof m.content === 'string' ? JSON.parse(m.content) : m.content;
-        if (p && p.type === 'quotation_request' && p.status === 'pending') return p.quotation_id;
+        if (p && p.type === 'quotation_request' && p.status === 'pending') {
+          return getQuoteRequestKey(p);
+        }
       } catch (e) {
         // ignore
       }
@@ -655,7 +738,7 @@ export default function BookingChatScreen() {
       const optimisticAccept = (oldMessages: any[]) => oldMessages.map(m => {
         try {
           const p = typeof m.content === 'string' ? JSON.parse(m.content) : m.content;
-          if (p && p.type === 'quotation_request' && (pendingQuotedId == null || p.quotation_id === pendingQuotedId)) {
+          if (p && p.type === 'quotation_request' && (pendingQuotedId == null || getQuoteRequestKey(p) === pendingQuotedId)) {
             p.status = 'accepted';
             m.content = JSON.stringify(p);
           }
@@ -681,12 +764,12 @@ export default function BookingChatScreen() {
         }
 
         const r = await fetch(`${API_URL}/chat/${conversationId}/messages/?mark_read=1`, { method: 'GET', credentials: 'include', headers: { 'Content-Type': 'application/json' } });
-        if (r.ok) { const d = await r.json(); setMessages(d || []); }
+        if (r.ok) { const d = await r.json(); setMessages(mergeResolvedQuotationMessages(d || [])); }
         try { await fetch(`${API_URL}/bookings/bookings/${bookingId}/`, { method: 'GET', credentials: 'include' }); } catch (e) {}
       } catch (e) {
         console.warn(e);
         Alert.alert('Error', 'Unable to accept quotation.');
-        try { const r2 = await fetch(`${API_URL}/chat/${conversationId}/messages/?mark_read=1`, { method: 'GET', credentials: 'include', headers: { 'Content-Type': 'application/json' } }); if (r2.ok) { const d2 = await r2.json(); setMessages(d2 || []); } } catch (_) {}
+        try { const r2 = await fetch(`${API_URL}/chat/${conversationId}/messages/?mark_read=1`, { method: 'GET', credentials: 'include', headers: { 'Content-Type': 'application/json' } }); if (r2.ok) { const d2 = await r2.json(); setMessages(mergeResolvedQuotationMessages(d2 || [])); } } catch (_) {}
       } finally { setQuotationActionLoading(null); }
       return;
     }
@@ -694,7 +777,7 @@ export default function BookingChatScreen() {
     const optimisticUpdate = (oldMessages: any[]) => oldMessages.map(m => {
       try {
         const p = typeof m.content === 'string' ? JSON.parse(m.content) : m.content;
-        if (p && p.type === 'quotation_request' && (pendingQuotedId == null || p.quotation_id === pendingQuotedId)) {
+        if (p && p.type === 'quotation_request' && (pendingQuotedId == null || getQuoteRequestKey(p) === pendingQuotedId)) {
           p.status = 'rejected';
           m.content = JSON.stringify(p);
         }
@@ -720,14 +803,14 @@ export default function BookingChatScreen() {
       }
 
       const r = await fetch(`${API_URL}/chat/${conversationId}/messages/?mark_read=1`, { method: 'GET', credentials: 'include', headers: { 'Content-Type': 'application/json' } });
-      if (r.ok) { const d = await r.json(); setMessages(d || []); }
+      if (r.ok) { const d = await r.json(); setMessages(mergeResolvedQuotationMessages(d || [])); }
       try {
         await fetch(`${API_URL}/bookings/bookings/${bookingId}/`, { method: 'GET', credentials: 'include' });
       } catch (e) {}
     } catch (e) {
       console.warn(e);
       Alert.alert('Error', 'Unable to reject quotation.');
-      try { const r2 = await fetch(`${API_URL}/chat/${conversationId}/messages/?mark_read=1`, { method: 'GET', credentials: 'include', headers: { 'Content-Type': 'application/json' } }); if (r2.ok) { const d2 = await r2.json(); setMessages(d2 || []); } } catch (_) {}
+      try { const r2 = await fetch(`${API_URL}/chat/${conversationId}/messages/?mark_read=1`, { method: 'GET', credentials: 'include', headers: { 'Content-Type': 'application/json' } }); if (r2.ok) { const d2 = await r2.json(); setMessages(mergeResolvedQuotationMessages(d2 || [])); } } catch (_) {}
     } finally { setQuotationActionLoading(null); }
   };
 
@@ -743,8 +826,20 @@ export default function BookingChatScreen() {
         <View style={styles.messageRow}>
           <View style={[styles.systemBubbleContainer, styles.systemBubbleContainerAligned]}>
             <View style={styles.systemBubble}>
-              <ThemedText style={styles.systemTitle}>Backjob Request</ThemedText>
+              <ThemedText style={styles.systemTitle}>
+                {backjobRequestStatus === 'accepted'
+                  ? 'Backjob Accepted'
+                  : backjobRequestStatus === 'declined'
+                    ? 'Backjob Declined'
+                    : 'Backjob Request'}
+              </ThemedText>
               <ThemedText style={styles.systemText}>{parsed.requested_by_name || 'Client'} asked for a backjob</ThemedText>
+              {backjobRequestStatus === 'accepted' ? (
+                <ThemedText style={styles.systemText}>Mechanic accepted this backjob request.</ThemedText>
+              ) : null}
+              {backjobRequestStatus === 'declined' ? (
+                <ThemedText style={styles.systemText}>Mechanic declined this backjob request.</ThemedText>
+              ) : null}
               {parsed.reason ? <ThemedText style={styles.systemText}>{parsed.reason}</ThemedText> : null}
               {shouldLoadImages && Array.isArray(parsed.images) && parsed.images.length > 0 && (
                 <View style={{ marginTop: 8 }}>
@@ -753,7 +848,7 @@ export default function BookingChatScreen() {
                   ))}
                 </View>
               )}
-              {canModerateBackjobRequest ? (
+              {canModerateBackjobRequest && backjobRequestStatus !== 'accepted' && backjobRequestStatus !== 'declined' ? (
                 <View style={styles.actionButtonsRow}>
                   <TouchableOpacity
                     style={[styles.actionBtnBase, styles.actionBtnAccept]}
@@ -793,6 +888,7 @@ export default function BookingChatScreen() {
 
     if (parsed && parsed.type === 'quotation_request') {
       const quoteMessageKey = getQuotationMessageKey(item);
+      const quoteRequestKey = getQuoteRequestKey(parsed);
       const itemList = Array.isArray(parsed.items) ? parsed.items : [];
       const sortQuotationItems = (rawList: any[]) => rawList
         .map((it: any, idx: number) => ({ ...it, __sourceIndex: idx }))
@@ -818,10 +914,25 @@ export default function BookingChatScreen() {
 
       const orderedItemList = sortQuotationItems(itemList);
       const hasPendingItem = itemList.some((it: any) => String(it?.status || '').toLowerCase() === 'pending');
+      const resolvePayloadStatus = (payload: any) => {
+        const actionStatus = String(payload?.action || '').toLowerCase();
+        if (actionStatus === 'accepted') return 'accepted';
+        if (actionStatus === 'rejected') return 'rejected';
+        const direct = String(payload?.status || '').toLowerCase();
+        if (direct) return direct;
+        const payloadItems = Array.isArray(payload?.items) ? payload.items : [];
+        const hasPending = payloadItems.some((it: any) => String(it?.status || '').toLowerCase() === 'pending');
+        return hasPending ? 'pending' : 'accepted';
+      };
       // Prefer explicit quotation status from server. Only infer from items if missing.
-      const resolvedStatus = parsed.status
+      const actionStatus = String(parsed?.action || '').toLowerCase();
+      const resolvedStatus = actionStatus === 'accepted'
+        ? 'accepted'
+        : actionStatus === 'rejected'
+          ? 'rejected'
+          : (parsed.status
         ? String(parsed.status).toLowerCase()
-        : (hasPendingItem ? 'pending' : 'accepted');
+        : (hasPendingItem ? 'pending' : 'accepted'));
       const isPending = resolvedStatus === 'pending';
       const amIMechanic = accountId && parsed.mechanic_id && Number(accountId) === Number(parsed.mechanic_id);
       const isExpanded = expandedQuoteCards[quoteMessageKey] ?? isPending;
@@ -832,35 +943,102 @@ export default function BookingChatScreen() {
         ? styles.quoteStatusPending
         : (resolvedStatus === 'accepted' ? styles.quoteStatusAccepted : styles.quoteStatusRejected);
 
-      // Find previous quotation snapshot (same quotation_id) to infer per-item changes.
+      // Hide stale pending card if a newer resolved card exists for same request key.
+      if (isPending) {
+        const currentIdxForPending = messages.findIndex((m: any) => getQuotationMessageKey(m) === quoteMessageKey);
+        if (currentIdxForPending >= 0) {
+          const hasNewerResolved = messages.slice(currentIdxForPending + 1).some((nm: any) => {
+            try {
+              const np = parseStructuredContent(nm.content) || (typeof nm.content === 'object' ? nm.content : null);
+              if (!np || np.type !== 'quotation_request') return false;
+              if (getQuoteRequestKey(np) !== quoteRequestKey) return false;
+              const nextStatus = resolvePayloadStatus(np);
+              return nextStatus === 'accepted' || nextStatus === 'rejected';
+            } catch (e) {
+              return false;
+            }
+          });
+          if (hasNewerResolved) return null;
+        }
+      }
+
+      // Find previous quotation snapshot. Prefer same amendment bundle key, fallback to quotation id.
       const currentIdx = messages.findIndex((m: any) => getQuotationMessageKey(m) === quoteMessageKey);
       let previousItems: any[] = [];
       if (currentIdx > 0) {
+        let fallbackItems: any[] = [];
         for (let i = currentIdx - 1; i >= 0; i--) {
           try {
             const pm = messages[i];
-            const pp = typeof pm.content === 'string' ? JSON.parse(pm.content) : pm.content;
-            const ppStatus = String(pp?.status || '').toLowerCase();
-            if (pp && pp.type === 'quotation_request' && String(pp.quotation_id) === String(parsed.quotation_id) && ppStatus !== 'rejected') {
-              previousItems = Array.isArray(pp.items) ? pp.items : [];
+            const pp = parseStructuredContent(pm.content) || (typeof pm.content === 'object' ? pm.content : null);
+            const sameBundle = pp && pp.type === 'quotation_request' && getQuoteRequestKey(pp) === quoteRequestKey;
+            const sameQuotationLegacy = pp && pp.type === 'quotation_request' && String(pp.quotation_id) === String(parsed.quotation_id);
+            if (sameBundle || (!parsed?.amendment_id && sameQuotationLegacy)) {
+              let candidateItems = Array.isArray(pp.items) ? pp.items : [];
+              const prevStatus = resolvePayloadStatus(pp);
+              if (prevStatus === 'accepted') {
+                candidateItems = candidateItems.filter((it: any) => {
+                  const ct = String(it?.change_type || '').toLowerCase();
+                  const st = String(it?.status || '').toLowerCase();
+                  if (ct === 'removed' || ct.includes('remove')) return false;
+                  if (st === 'rejected') return false;
+                  return true;
+                });
+              }
+
+              if (!fallbackItems.length) {
+                fallbackItems = candidateItems;
+              }
+
+              // For a NEW pending request, skip older pending/rejected snapshots.
+              // We only want a stable accepted baseline for add/edit/remove diffing.
+              if (resolvedStatus === 'pending') {
+                if (prevStatus === 'pending' || prevStatus === 'rejected') {
+                  continue;
+                }
+                previousItems = candidateItems;
+                break;
+              }
+
+              // For resolved requests, compare against the latest pending request card.
+              // This preserves what was actually requested and avoids matching against
+              // older rejected/accepted history that can mislabel rows as edited.
+              if (resolvedStatus === 'accepted' || resolvedStatus === 'rejected') {
+                if (prevStatus !== 'pending') {
+                  continue;
+                }
+                previousItems = candidateItems;
+                break;
+              }
+
+              previousItems = candidateItems;
               break;
             }
+
+            // Amendment flow baseline:
+            // if this card belongs to an amendment, compare against the latest accepted
+            // snapshot for the same quotation_id (not item names).
+            if (parsed?.amendment_id && sameQuotationLegacy && !sameBundle) {
+              const candidateItems = Array.isArray(pp.items) ? pp.items : [];
+              const prevStatus = resolvePayloadStatus(pp);
+              if (prevStatus === 'accepted') {
+                previousItems = candidateItems;
+                break;
+              }
+              if (!fallbackItems.length && candidateItems.length > 0) {
+                fallbackItems = candidateItems;
+              }
+            }
           } catch (e) {}
+        }
+        if (!previousItems.length && fallbackItems.length) {
+          previousItems = fallbackItems;
         }
       }
 
       const orderedPreviousItems = sortQuotationItems(previousItems);
-      const isActionablePendingLine = (it: any) => {
-        const st = String(it?.status || '').toLowerCase();
-        const ch = String(it?.change_type || '').toLowerCase();
-        return st === 'pending' || st === 'rejected' || ch === 'added' || ch === 'edited' || ch === 'removed';
-      };
-      const visibleOrderedItemList = isPending
-        ? orderedItemList.filter((it: any) => isActionablePendingLine(it))
-        : orderedItemList;
-      const visibleOrderedPreviousItems = isPending
-        ? orderedPreviousItems.filter((it: any) => isActionablePendingLine(it))
-        : orderedPreviousItems;
+      const visibleOrderedItemList = orderedItemList;
+      const visibleOrderedPreviousItems = orderedPreviousItems;
 
       const normalizeText = (v: any) => String(v ?? '').trim().toLowerCase();
       const normalizeNum = (v: any) => Number(v ?? 0);
@@ -889,90 +1067,184 @@ export default function BookingChatScreen() {
         return ratioA >= 0.6 || ratioB >= 0.6;
       };
 
-      // Match current items against previous snapshot using a stable strategy:
-      // 1) same id, 2) same service/add-on identity, 3) exact content, 4) same description.
-      // This avoids false Added/Removed when backend regenerates IDs for edited rows.
-      const usedPrevIndexes = new Set<number>();
-      const matchedRows = visibleOrderedItemList.map((currentIt: any) => {
-        let matchIdx = -1;
+      let matchedRows: any[] = [];
+      let removedItemsFromPrevious: any[] = [];
 
-        if (currentIt?.id != null) {
-          matchIdx = visibleOrderedPreviousItems.findIndex((prevIt: any, prevIdx: number) => (
-            !usedPrevIndexes.has(prevIdx) && prevIt?.id != null && String(prevIt.id) === String(currentIt.id)
-          ));
-        }
+      if (parsed?.amendment_id) {
+        // Strict amendment diff by ID only:
+        // - no original id (or unknown id) => added
+        // - same original id + changed fields => edited
+        // - original id missing in amendment => removed
+        const previousById = new Map<string, any>();
+        visibleOrderedPreviousItems.forEach((it: any) => {
+          if (it?.id != null) previousById.set(String(it.id), it);
+        });
 
-        if (matchIdx < 0) {
-          const currentAssoc = getAssocKey(currentIt);
-          if (currentAssoc) {
-            matchIdx = visibleOrderedPreviousItems.findIndex((prevIt: any, prevIdx: number) => (
-              !usedPrevIndexes.has(prevIdx) && getAssocKey(prevIt) === currentAssoc
-            ));
-          }
-        }
-
-        if (matchIdx < 0) {
-          matchIdx = visibleOrderedPreviousItems.findIndex((prevIt: any, prevIdx: number) => (
-            !usedPrevIndexes.has(prevIdx) &&
-            normalizeText(prevIt?.description) === normalizeText(currentIt?.description) &&
-            normalizeNum(prevIt?.quantity) === normalizeNum(currentIt?.quantity) &&
-            normalizeNum(prevIt?.unit_price) === normalizeNum(currentIt?.unit_price)
-          ));
-        }
-
-        if (matchIdx < 0) {
-          matchIdx = visibleOrderedPreviousItems.findIndex((prevIt: any, prevIdx: number) => (
-            !usedPrevIndexes.has(prevIdx) &&
-            normalizeNum(prevIt?.quantity) === normalizeNum(currentIt?.quantity) &&
-            normalizeNum(prevIt?.unit_price) === normalizeNum(currentIt?.unit_price) &&
-            isLikelyRename(prevIt?.description, currentIt?.description)
-          ));
-        }
-
-        if (matchIdx < 0) {
-          const currAssoc = getAssocKey(currentIt);
-          const currIndex = Number(currentIt?.__sourceIndex);
-          if (!currAssoc && Number.isFinite(currIndex)) {
-            matchIdx = visibleOrderedPreviousItems.findIndex((prevIt: any, prevIdx: number) => (
-              !usedPrevIndexes.has(prevIdx) &&
-              !getAssocKey(prevIt) &&
-              Number(prevIt?.__sourceIndex) === currIndex
-            ));
-          }
-        }
-
-        if (matchIdx < 0) {
-          matchIdx = visibleOrderedPreviousItems.findIndex((prevIt: any, prevIdx: number) => (
-            !usedPrevIndexes.has(prevIdx) &&
-            normalizeText(prevIt?.description) === normalizeText(currentIt?.description)
-          ));
-        }
-
-        const previousIt = matchIdx >= 0 ? visibleOrderedPreviousItems[matchIdx] : null;
-        if (matchIdx >= 0) usedPrevIndexes.add(matchIdx);
-
-        const isAdded = !previousIt;
-        const isEdited = !!previousIt && (
-          normalizeText(previousIt?.description) !== normalizeText(currentIt?.description) ||
-          normalizeNum(previousIt?.quantity) !== normalizeNum(currentIt?.quantity) ||
-          normalizeNum(previousIt?.unit_price) !== normalizeNum(currentIt?.unit_price)
+        const hasChanged = (prevIt: any, curIt: any) => (
+          normalizeText(prevIt?.description) !== normalizeText(curIt?.description) ||
+          normalizeNum(prevIt?.quantity) !== normalizeNum(curIt?.quantity) ||
+          normalizeNum(prevIt?.unit_price) !== normalizeNum(curIt?.unit_price) ||
+          normalizeText(prevIt?.line_kind) !== normalizeText(curIt?.line_kind) ||
+          normalizeText(prevIt?.source) !== normalizeText(curIt?.source) ||
+          normalizeNum(prevIt?.service) !== normalizeNum(curIt?.service) ||
+          normalizeNum(prevIt?.service_add_on) !== normalizeNum(curIt?.service_add_on)
         );
 
-        return { currentIt, previousIt, isAdded, isEdited };
-      });
+        matchedRows = visibleOrderedItemList.map((currentIt: any) => {
+          const declaredChangeType = String(currentIt?.change_type || '').toLowerCase();
+          const idKey = currentIt?.id != null ? String(currentIt.id) : null;
+          const previousIt = idKey ? (previousById.get(idKey) || null) : null;
 
-      const removedItems = visibleOrderedPreviousItems.filter((_: any, prevIdx: number) => !usedPrevIndexes.has(prevIdx));
+          if (declaredChangeType === 'removed') {
+            return { currentIt, previousIt, isAdded: false, isEdited: false, isRemoved: true };
+          }
+
+          if (declaredChangeType === 'added') {
+            return { currentIt, previousIt: null, isAdded: true, isEdited: false, isRemoved: false };
+          }
+
+          if (declaredChangeType === 'edited' || declaredChangeType === 'updated' || declaredChangeType === 'modify') {
+            return { currentIt, previousIt, isAdded: false, isEdited: true, isRemoved: false };
+          }
+
+          if (!idKey || !previousIt) {
+            return { currentIt, previousIt: null, isAdded: true, isEdited: false, isRemoved: false };
+          }
+          const edited = hasChanged(previousIt, currentIt);
+          return { currentIt, previousIt, isAdded: false, isEdited: edited, isRemoved: false };
+        });
+
+        removedItemsFromPrevious = [];
+      } else {
+        // Legacy quotation diff mode.
+        const usedPrevIndexes = new Set<number>();
+        matchedRows = visibleOrderedItemList.map((currentIt: any) => {
+          const declaredChangeType = String(currentIt?.change_type || '').toLowerCase();
+          const currentStatus = String(currentIt?.status || '').toLowerCase();
+          const explicitRemoved = declaredChangeType === 'removed';
+
+          if (explicitRemoved) {
+            return { currentIt, previousIt: null, isAdded: false, isEdited: false, isRemoved: true };
+          }
+
+          if (declaredChangeType === 'added') {
+            const currentChangeType = declaredChangeType;
+            const isAdded = currentStatus === 'pending' || currentStatus === 'rejected' || currentChangeType === 'added';
+            return { currentIt, previousIt: null, isAdded, isEdited: false, isRemoved: false };
+          }
+
+          let matchIdx = -1;
+
+          if (currentIt?.id != null) {
+            matchIdx = visibleOrderedPreviousItems.findIndex((prevIt: any, prevIdx: number) => (
+              !usedPrevIndexes.has(prevIdx) && prevIt?.id != null && String(prevIt.id) === String(currentIt.id)
+            ));
+          }
+
+          if (matchIdx < 0) {
+            const currentAssoc = getAssocKey(currentIt);
+            if (currentAssoc) {
+              matchIdx = visibleOrderedPreviousItems.findIndex((prevIt: any, prevIdx: number) => (
+                !usedPrevIndexes.has(prevIdx) && getAssocKey(prevIt) === currentAssoc
+              ));
+            }
+          }
+
+          if (matchIdx < 0) {
+            matchIdx = visibleOrderedPreviousItems.findIndex((prevIt: any, prevIdx: number) => (
+              !usedPrevIndexes.has(prevIdx) &&
+              normalizeText(prevIt?.description) === normalizeText(currentIt?.description) &&
+              normalizeNum(prevIt?.quantity) === normalizeNum(currentIt?.quantity) &&
+              normalizeNum(prevIt?.unit_price) === normalizeNum(currentIt?.unit_price)
+            ));
+          }
+
+          if (matchIdx < 0) {
+            matchIdx = visibleOrderedPreviousItems.findIndex((prevIt: any, prevIdx: number) => (
+              !usedPrevIndexes.has(prevIdx) &&
+              normalizeNum(prevIt?.quantity) === normalizeNum(currentIt?.quantity) &&
+              normalizeNum(prevIt?.unit_price) === normalizeNum(currentIt?.unit_price) &&
+              isLikelyRename(prevIt?.description, currentIt?.description)
+            ));
+          }
+
+          if (matchIdx < 0) {
+            const currAssoc = getAssocKey(currentIt);
+            const currIndex = Number(currentIt?.__sourceIndex);
+            if (!currAssoc && Number.isFinite(currIndex)) {
+              matchIdx = visibleOrderedPreviousItems.findIndex((prevIt: any, prevIdx: number) => (
+                !usedPrevIndexes.has(prevIdx) &&
+                !getAssocKey(prevIt) &&
+                Number(prevIt?.__sourceIndex) === currIndex
+              ));
+            }
+          }
+
+          let previousIt = matchIdx >= 0 ? visibleOrderedPreviousItems[matchIdx] : null;
+          if (matchIdx >= 0) usedPrevIndexes.add(matchIdx);
+
+          if (!previousIt && (
+            currentIt?.previous_description != null ||
+            currentIt?.previous_quantity != null ||
+            currentIt?.previous_unit_price != null
+          )) {
+            const prevQty = Number(currentIt?.previous_quantity ?? currentIt?.quantity ?? 1) || 1;
+            const prevUnit = Number(currentIt?.previous_unit_price ?? 0) || 0;
+            previousIt = {
+              description: currentIt?.previous_description,
+              quantity: prevQty,
+              unit_price: prevUnit,
+              line_total: prevQty * prevUnit,
+            };
+          }
+
+          const currentChangeType = declaredChangeType;
+          const isAdded = shouldMarkAsAdded(
+            { ...currentIt, status: currentStatus, change_type: currentChangeType },
+            previousIt
+          );
+          const isEdited = (currentChangeType === 'edited' || currentChangeType === 'update' || currentChangeType === 'modify') || (!!previousIt && (
+            normalizeText(previousIt?.description) !== normalizeText(currentIt?.description) ||
+            normalizeNum(previousIt?.quantity) !== normalizeNum(currentIt?.quantity) ||
+            normalizeNum(previousIt?.unit_price) !== normalizeNum(currentIt?.unit_price)
+          ));
+
+          return { currentIt, previousIt, isAdded, isEdited, isRemoved: false };
+        });
+
+        removedItemsFromPrevious = visibleOrderedPreviousItems.filter((_: any, prevIdx: number) => !usedPrevIndexes.has(prevIdx));
+      }
+
       const visibleTotalAmount = Number(parsed.total_amount) || 0;
-      const isBackjobQuote = Boolean(parsed.is_backjob);
-      const pendingChargeTotal = Math.max(0, matchedRows.reduce((sum: number, row: any) => {
+      const messageCreatedMs = Number(new Date(String(item?.created_at || '')).getTime());
+      const wasSentAfterBackjobRequest =
+        Number.isFinite(messageCreatedMs) &&
+        latestBackjobRequestAt > 0 &&
+        messageCreatedMs >= latestBackjobRequestAt;
+      const isBackjobQuote = Boolean(parsed.is_backjob) || wasSentAfterBackjobRequest;
+      const isPendingBackjobQuote = isPending && isBackjobQuote;
+      const isAddedBackjobRow = (row: any) => {
+        const changeType = String(row?.currentIt?.change_type || '').toLowerCase();
+        return Boolean(row?.currentIt?.is_backjob_new_line) || row?.isAdded || changeType === 'added';
+      };
+      const rowsForDisplay = isPendingBackjobQuote
+        ? matchedRows.filter((row: any) => !row?.isRemoved && isAddedBackjobRow(row))
+        : matchedRows;
+      const removedRowsFromCurrent = matchedRows.filter((row: any) => Boolean(row?.isRemoved));
+      const removedItems = isPendingBackjobQuote
+        ? []
+        : [...removedRowsFromCurrent.map((row: any) => row.currentIt), ...removedItemsFromPrevious];
+      const pendingChargeTotal = Math.max(0, rowsForDisplay.reduce((sum: number, row: any) => {
+        if (row?.isRemoved) return sum;
         const currentLine = Number(row?.currentIt?.line_total) || 0;
         const previousLine = Number(row?.previousIt?.line_total) || 0;
         if (row?.isAdded) return sum + currentLine;
+        if (isPendingBackjobQuote && Boolean(row?.currentIt?.is_backjob_new_line)) return sum + currentLine;
         if (row?.isEdited) return sum + (currentLine - previousLine);
         return sum;
       }, 0) - removedItems.reduce((sum: number, it: any) => sum + (Number(it?.line_total) || 0), 0));
       const displayTotalAmount = isPending && isBackjobQuote ? pendingChargeTotal : visibleTotalAmount;
-      const shouldHideLegacyEmptyPendingCard = isPending && visibleOrderedItemList.length === 0 && removedItems.length === 0;
+      const shouldHideLegacyEmptyPendingCard = isPending && rowsForDisplay.length === 0 && removedItems.length === 0;
       if (shouldHideLegacyEmptyPendingCard) {
         return null;
       }
@@ -995,18 +1267,33 @@ export default function BookingChatScreen() {
                 {isExpanded ? (
                   <>
                     <View style={{ height: 1, backgroundColor: '#2f3338', marginVertical: 8 }} />
-                    {isPending ? (
+                    {isPending && isBackjobQuote ? (
                       <ThemedText style={{ color: '#8E8E93', fontSize: 11, marginBottom: 8 }}>
-                        {isBackjobQuote ? 'Backjob: only new changes will be charged' : 'Requested changes only'}
+                        Backjob: only new changes will be charged
                       </ThemedText>
                     ) : null}
-                    {matchedRows.map(({ currentIt: it, previousIt: prevIt, isAdded, isEdited }: any, idx: number) => {
+                    {rowsForDisplay
+                      .filter((row: any) => !row?.isRemoved)
+                      .map(({ currentIt: it, previousIt: prevIt, isAdded, isEdited }: any, idx: number) => {
+                      const previousQuantity = Number(it?.previous_quantity ?? it?.quantity ?? 1) || 1;
+                      const previousUnitPrice = Number(it?.previous_unit_price ?? 0) || 0;
+                      const storedPrevious = (
+                        it?.previous_description != null ||
+                        it?.previous_quantity != null ||
+                        it?.previous_unit_price != null
+                      )
+                        ? {
+                            description: it?.previous_description,
+                            line_total: previousQuantity * previousUnitPrice,
+                          }
+                        : null;
+                      const previousDisplay = prevIt || storedPrevious;
                       return (
                         <View key={idx}>
                           {!isAdded && isEdited ? (
                             <View style={styles.quoteGhostRow}>
-                              <ThemedText style={styles.quoteGhostLabel}>{prevIt?.description || `Item ${idx + 1}`}</ThemedText>
-                              <ThemedText style={styles.quoteGhostValue}>₱{(Number(prevIt?.line_total) || 0).toFixed(2)}</ThemedText>
+                              <ThemedText style={styles.quoteGhostLabel}>{previousDisplay?.description || `Item ${idx + 1}`}</ThemedText>
+                              <ThemedText style={styles.quoteGhostValue}>₱{(Number(previousDisplay?.line_total) || 0).toFixed(2)}</ThemedText>
                             </View>
                           ) : null}
 
@@ -1042,10 +1329,6 @@ export default function BookingChatScreen() {
                     <View style={{ height: 1, backgroundColor: '#2f3338', marginVertical: 8 }} />
                     {isPending && isBackjobQuote ? (
                       <>
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                          <ThemedText style={styles.quoteGhostLabel}>Previous quotation total</ThemedText>
-                          <ThemedText style={styles.quoteGhostValue}>₱{visibleTotalAmount.toFixed(2)}</ThemedText>
-                        </View>
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                           <ThemedText style={styles.quoteTotalLabel}>Pending additional charge</ThemedText>
                           <ThemedText style={styles.quoteTotalValue}>₱{displayTotalAmount.toFixed(2)}</ThemedText>

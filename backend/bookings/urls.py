@@ -8,6 +8,7 @@ from .views.admin import (
     admin_resolve_dispute,
     admin_list_bookings,
     admin_list_requests,
+    admin_booking_chat_history,
 )
 
 urlpatterns = [
@@ -25,6 +26,11 @@ urlpatterns = [
     # Broadcast request endpoints (mechanic side)
     path('broadcasts/active/', views.get_active_broadcasts, name='get-active-broadcasts'),
     path('broadcasts/<int:broadcast_id>/accept/', views.accept_broadcast_request, name='accept-broadcast-request'),
+    path('broadcasts/<int:broadcast_id>/withdraw/', views.withdraw_broadcast_offer, name='withdraw-broadcast-offer'),
+
+    # Broadcast request endpoints (client selection side)
+    path('broadcasts/<int:broadcast_id>/offers/', views.get_broadcast_offers, name='get-broadcast-offers'),
+    path('broadcasts/<int:broadcast_id>/select-mechanic/', views.select_mechanic, name='select-mechanic'),
     
     # Broadcast request endpoints (client side)
     path('requests/<int:request_id>/broadcast/resend/', views.resend_broadcast_request, name='resend-broadcast-request'),
@@ -56,6 +62,7 @@ urlpatterns = [
     path('payments/redirect/success/', payment_views.payment_redirect_success, name='payments-redirect-success'),
     path('payments/redirect/failed/', payment_views.payment_redirect_failed, name='payments-redirect-failed'),
     path('payments/webhook/', payment_views.paymongo_webhook, name='payments-webhook'),
+    path('payments/pay-with-credits/', payment_views.pay_with_credits, name='pay-with-credits'),
     path('bookings/<int:booking_id>/quotation/accept/', views.client_accept_quotation, name='client-accept-quotation'),
     path('bookings/<int:booking_id>/quotation/reject/', views.client_reject_quotation, name='client-reject-quotation'),
     path('bookings/<int:booking_id>/report-no-show/', views.ReportNoShowView.as_view(), name='report-no-show'),
@@ -119,4 +126,5 @@ admin_urlpatterns = [
     path('disputes/<int:dispute_id>/resolve/', admin_resolve_dispute, name='admin-resolve-dispute'),
     path('list/', admin_list_bookings, name='admin-list-bookings'),
     path('requests/', admin_list_requests, name='admin-list-requests'),
+    path('<int:booking_id>/chat-history/', admin_booking_chat_history, name='admin-booking-chat-history'),
 ]

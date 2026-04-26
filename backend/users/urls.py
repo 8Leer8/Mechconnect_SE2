@@ -44,6 +44,7 @@ urlpatterns = [
     # Profile page endpoints
     path('profile/details/', views.get_profile_details, name='get_profile_details'),
     path('profile/settings/', views.update_profile_settings, name='update_profile_settings'),
+    path('profile/availability/', views.update_availability_status, name='update_availability_status'),
     path('profile/branches/', views.profile_branches, name='profile_branches'),
     path('profile/branches/<int:branch_id>/', views.profile_branch_detail, name='profile_branch_detail'),
     path('profile/branches/<int:branch_id>/set-main/', views.set_main_branch, name='set_main_branch'),
@@ -81,17 +82,24 @@ urlpatterns = [
     path('mechanic/wallet/transactions/', views.mechanic_wallet_transactions, name='mechanic_wallet_transactions'),
     path('mechanic/wallet/topup/', views.mechanic_wallet_topup, name='mechanic_wallet_topup'),
     path('mechanic/wallet/token-pricing/', views.get_token_pricing_view, name='mechanic-wallet-token-pricing'),
+    # Client wallet endpoints (shared wallet across roles)
+    path('client/wallet/', views.client_wallet, name='client_wallet'),
+    path('client/wallet/transactions/', views.client_wallet_transactions, name='client_wallet_transactions'),
+    path('client/wallet/topup/', views.client_wallet_topup, name='client_wallet_topup'),
+    path('client/wallet/token-pricing/', views.get_token_pricing_view, name='client-wallet-token-pricing'),
     # Token purchase PayMongo payment flow (Mechanic)
     path('wallet/initiate-payment/', initiate_token_purchase, name='initiate_token_purchase'),
     path('wallet/webhook/', token_purchase_webhook, name='token_purchase_webhook'),
-    path('wallet/redirect/success/', token_redirect_success, name='token_redirect_success'),
-    path('wallet/redirect/failed/', token_redirect_failed, name='token_redirect_failed'),
     path('wallet/purchase/<int:purchase_id>/status/', check_purchase_status, name='check_purchase_status'),
     # Token purchase PayMongo payment flow (Shop Owner) - uses same views
     path('shop-owner/wallet/initiate-payment/', initiate_token_purchase, name='shop_owner_initiate_token_purchase'),
     path('shop-owner/wallet/purchase/<int:purchase_id>/status/', check_purchase_status, name='shop_owner_check_purchase_status'),
-    path('shop-owner/redirect/success/', token_redirect_success, name='shop_owner_token_redirect_success'),
-    path('shop-owner/redirect/failed/', token_redirect_failed, name='shop_owner_token_redirect_failed'),
+    # Token purchase PayMongo payment flow (Client) - uses same views
+    path('client/wallet/initiate-payment/', initiate_token_purchase, name='client_initiate_token_purchase'),
+    path('client/wallet/purchase/<int:purchase_id>/status/', check_purchase_status, name='client_check_purchase_status'),
+    # Unified redirect endpoints for PayMongo callbacks (all user types)
+    path('tokens/payment/redirect/success/', token_redirect_success, name='token_redirect_success'),
+    path('tokens/payment/redirect/failed/', token_redirect_failed, name='token_redirect_failed'),
 ]
 
 #Admin Urls

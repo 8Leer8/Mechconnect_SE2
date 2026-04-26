@@ -174,7 +174,7 @@ def get_account_deactivation_blockers(account):
                     'message': 'Shop owners cannot deactivate while they have active bookings.',
                 })
 
-        pending_wallet_balance = int(getattr(shop_owner, 'tokens_balance', 0) or 0) if shop_owner else 0
+        pending_wallet_balance = int(shop_owner.account.wallet.balance) if shop_owner and hasattr(shop_owner, 'account') and shop_owner.account.wallet else 0
         if pending_wallet_balance > 0:
             blockers.append({
                 'role': 'shop_owner',

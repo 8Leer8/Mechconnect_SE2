@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { StyleSheet, View, ScrollView, RefreshControl, Dimensions, TouchableOpacity, Image } from 'react-native';
+import { StyleSheet, View, ScrollView, RefreshControl, Dimensions, TouchableOpacity, Image, Switch } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -10,6 +10,8 @@ import { useFocusEffect } from '@react-navigation/native';
 import { getImageUrl } from '@/lib/imageUtils';
 import { fetchProfileDetailsCached } from '@/lib/profileCache';
 import NotificationBell from '@/components/notifications/NotificationBell';
+import { useNotification } from '@/hooks/useNotification';
+import { router } from 'expo-router';
 
 const { width } = Dimensions.get('window');
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -34,11 +36,13 @@ const getGreeting = () => {
 };
 
 export default function ShopOwnerHome() {
+  const { showNotification } = useNotification();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [shopBannerUrl, setShopBannerUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [statusUpdating, setStatusUpdating] = useState(false);
   const { lastMessage } = useWebSocketContext();
 
   const fetchDashboardData = useCallback(async () => {
@@ -101,6 +105,42 @@ export default function ShopOwnerHome() {
     setRefreshing(true);
     fetchDashboardData();
   };
+
+  const updateShopAvailability = useCallback(async (isAvailable: boolean) => {
+    if (!dashboardData || statusUpdating) return;
+
+    const nextPublicStatus: 'available' | 'unavailable' = isAvailable ? 'available' : 'unavailable';
+    const nextRawStatus = isAvailable ? 'open' : 'closed';
+    const previousRawStatus = dashboardData.shop_status;
+
+    setStatusUpdating(true);
+    setDashboardData((prev) => (prev ? { ...prev, shop_status: nextRawStatus } : prev));
+
+    try {
+      const response = await fetch(`${API_URL}/users/profile/availability/`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: 'shop_owner', status: nextPublicStatus }),
+      });
+      const data = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to update availability');
+      }
+      showNotification({
+        type: 'success',
+        message: nextPublicStatus === 'available' ? 'Shop is now visible in discovery.' : 'Shop is now hidden from discovery.',
+      });
+    } catch (error) {
+      setDashboardData((prev) => (prev ? { ...prev, shop_status: previousRawStatus } : prev));
+      showNotification({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Failed to update availability',
+      });
+    } finally {
+      setStatusUpdating(false);
+    }
+  }, [dashboardData, showNotification, statusUpdating]);
 
   const handleNotificationPress = () => {
     console.log('Notification pressed');
@@ -190,6 +230,13 @@ export default function ShopOwnerHome() {
                     {dashboardData.shop_status === 'open' ? 'Open' : 'Closed'}
                   </ThemedText>
                 </View>
+                <Switch
+                  value={dashboardData.shop_status === 'open'}
+                  onValueChange={(value) => { void updateShopAvailability(value); }}
+                  disabled={statusUpdating}
+                  trackColor={{ false: '#3A3C3E', true: '#34C759' }}
+                  thumbColor="#fff"
+                />
               </View>
           </View>
 
@@ -218,6 +265,29 @@ export default function ShopOwnerHome() {
           showAddButton
           addHref="/shopowner/wallet"
         />
+
+        {/* Shop Management */}
+        <View style={styles.summarySection}>
+          <ThemedText style={styles.sectionTitle}>Shop Management</ThemedText>
+          <TouchableOpacity
+            style={styles.managementActionCard}
+            activeOpacity={0.8}
+            onPress={() => router.push('/shopowner/others/edit-profile')}
+          >
+            <View style={styles.managementActionLeft}>
+              <View style={styles.managementActionIcon}>
+                <FontAwesome name="sitemap" size={16} color="#FF8C00" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <ThemedText style={styles.managementActionTitle}>Manage Branches</ThemedText>
+                <ThemedText style={styles.managementActionSubtitle}>
+                  Add branches, set main branch, and update branch labels.
+                </ThemedText>
+              </View>
+            </View>
+            <FontAwesome name="chevron-right" size={14} color="#8E8E93" />
+          </TouchableOpacity>
+        </View>
 
         {/* Stats Grid - 2x2 */}
         <View style={styles.statsSection}>
@@ -359,6 +429,7 @@ export default function ShopOwnerHome() {
             </View>
           </View>
         </View>
+
       </ScrollView>
     </ThemedView>
   );
@@ -691,5 +762,41 @@ const styles = StyleSheet.create({
   divider: {
     height: 1,
     backgroundColor: '#2A2A2A',
+  },
+  managementActionCard: {
+    backgroundColor: '#151515',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#252525',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  managementActionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  managementActionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: '#FF8C0020',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  managementActionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  managementActionSubtitle: {
+    fontSize: 12,
+    color: '#8E8E93',
+    marginTop: 2,
+    lineHeight: 17,
   },
 });

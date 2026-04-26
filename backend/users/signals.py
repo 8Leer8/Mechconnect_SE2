@@ -3,13 +3,14 @@ Signal handlers for the users app.
 
 These signals automatically update cached values when related data changes:
 - Updates Mechanic.average_rating when reviews are created, updated, or deleted
+- Auto-creates Wallet when Account is created
 """
 
 from decimal import Decimal
 from django.db.models import Avg
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
-from .models import MechanicReview, Mechanic
+from .models import MechanicReview, Mechanic, Account, Wallet
 
 
 def update_mechanic_average_rating(mechanic):
@@ -52,3 +53,18 @@ def mechanic_review_deleted(sender, instance, **kwargs):
     Why signals? Automatically maintains data consistency when reviews are removed.
     """
     update_mechanic_average_rating(instance.mechanic)
+
+
+@receiver(post_save, sender=Account)
+def create_wallet_for_account(sender, instance, created, **kwargs):
+    """
+    Signal handler: Automatically creates a Wallet when a new Account is created.
+    
+    This ensures every account has a wallet for storing token/credit balance.
+    Uses get_or_create to prevent duplicate wallets if signal fires multiple times.
+    """
+    if created:
+        Wallet.objects.get_or_create(
+            account=instance,
+            defaults={'balance': Decimal('0.00')}
+        )

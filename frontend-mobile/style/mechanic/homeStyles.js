@@ -88,6 +88,26 @@ export const styles = StyleSheet.create({
   quickStatValue: { fontSize: 18, fontWeight: 'bold', color: '#fff' },
   quickStatLabel: { fontSize: 11, color: '#8E8E93', marginTop: 2 },
   quickStatDivider: { width: 1, backgroundColor: '#333', marginVertical: 6 },
+  availabilityRow: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#22242780',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  availabilityTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  availabilitySubtitle: {
+    marginTop: 2,
+    fontSize: 12,
+    color: '#8E8E93',
+  },
 
   /* ── Scroll ── */
   scrollView: { flex: 1 },

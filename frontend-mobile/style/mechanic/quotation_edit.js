@@ -81,6 +81,7 @@ export const styles = StyleSheet.create({
     borderColor: '#333333',
     padding: 12,
     marginBottom: 12,
+    position: 'relative',
   },
   itemSelectableRow: {
     flexDirection: 'row',
@@ -105,6 +106,20 @@ export const styles = StyleSheet.create({
     borderColor: '#2F6B48',
     backgroundColor: '#1E2A23',
   },
+  quickRemoveOverlayButton: {
+    width: 20,
+    height: 20,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#5A2C2C',
+    backgroundColor: '#2C2121',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    zIndex: 4,
+  },
   acceptedItemCard: {
     backgroundColor: '#202224',
     borderColor: '#3F4348',
@@ -126,6 +141,22 @@ export const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 12,
   },
+  accordionIconWrap: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  itemAccordionLeftBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  itemAccordionHeaderWithQuickRemove: {
+    paddingRight: 18,
+  },
   itemAccordionBody: {
     marginTop: 10,
     borderTopWidth: 1,
@@ -134,14 +165,22 @@ export const styles = StyleSheet.create({
   },
   itemAccordionTitle: {
     color: '#F3F3F3',
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
+    flexShrink: 1,
   },
   itemAccordionTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
+    gap: 6,
+    minWidth: 0,
+  },
+  itemAccordionBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+    marginTop: 4,
   },
   itemAccordionMeta: {
     marginTop: 4,
@@ -151,6 +190,7 @@ export const styles = StyleSheet.create({
   itemAccordionRight: {
     alignItems: 'flex-end',
     gap: 6,
+    flexShrink: 0,
   },
   itemAccordionTotal: {
     color: '#FFB357',
@@ -520,6 +560,10 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 12,
+  },
+  saveButtonDisabled: {
+    backgroundColor: '#555555',
+    opacity: 0.7,
   },
   saveButtonText: {
     color: '#FFFFFF',

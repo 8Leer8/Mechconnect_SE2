@@ -9,7 +9,7 @@ from services.models import Service, ServiceAddOn
 from users.models import Account, Client
 from shops.models import Shop
 from MainBackend.storage_utils import get_media_url
-from .backjob_utils import booking_has_backjob
+from .backjob_utils import booking_has_backjob, booking_has_live_backjob
 
 
 class ServiceLocationSerializer(serializers.ModelSerializer):
@@ -411,6 +411,8 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
     add_ons = serializers.SerializerMethodField()
     concern_picture = serializers.SerializerMethodField()
     required_tokens = serializers.SerializerMethodField()
+    my_offer_id = serializers.SerializerMethodField()
+    my_offer_status = serializers.SerializerMethodField()
     search_radius_km = serializers.FloatField(read_only=True)
     radius_km = serializers.SerializerMethodField()
     latitude = serializers.FloatField()
@@ -426,7 +428,8 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
             'vehicle_type', 'vehicle_brand', 'vehicle_model',
             'services', 'add_ons', 'search_radius_km', 'radius_km',
             'created_at', 'expires_at', 'accepted_at',
-            'status', 'concern_picture', 'required_tokens'
+            'status', 'concern_picture', 'required_tokens',
+            'my_offer_id', 'my_offer_status',
         ]
     
     def get_concern_picture(self, obj):
@@ -463,14 +466,95 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
         except Exception:
             return 0
 
+    def _get_current_mechanic_offer(self, obj):
+        request = self.context.get('request')
+        if not request:
+            return None
+
+        account_id = getattr(request, 'session', {}).get('account_id') if hasattr(request, 'session') else None
+        if not account_id:
+            return None
+
+        try:
+            account = Account.objects.get(id=account_id)
+        except Account.DoesNotExist:
+            return None
+
+        if not hasattr(account, 'mechanic'):
+            return None
+
+        return BroadcastOffer.objects.filter(
+            broadcast_request=obj,
+            mechanic=account.mechanic,
+        ).order_by('-created_at', '-id').first()
+
+    def get_my_offer_id(self, obj):
+        offer = self._get_current_mechanic_offer(obj)
+        return offer.id if offer else None
+
+    def get_my_offer_status(self, obj):
+        offer = self._get_current_mechanic_offer(obj)
+        return offer.status if offer else None
+
 
 class BroadcastOfferSerializer(serializers.ModelSerializer):
     """Serializer for broadcast offers"""
     mechanic = AccountBasicSerializer(source='mechanic.account', read_only=True)
+    mechanic_rating = serializers.SerializerMethodField()
+    distance_km = serializers.SerializerMethodField()
+    estimated_price = serializers.SerializerMethodField()
+    convenience_fee = serializers.SerializerMethodField()
+    estimated_eta_minutes = serializers.SerializerMethodField()
     
     class Meta:
         model = BroadcastOffer
-        fields = ['id', 'broadcast_request', 'mechanic', 'status', 'created_at', 'responded_at']
+        fields = [
+            'id',
+            'broadcast_request',
+            'mechanic',
+            'mechanic_rating',
+            'status',
+            'distance_km',
+            'estimated_price',
+            'convenience_fee',
+            'estimated_eta_minutes',
+            'created_at',
+            'responded_at',
+        ]
+
+    def get_mechanic_rating(self, obj):
+        try:
+            rating = getattr(obj.mechanic, 'average_rating', None)
+            if rating is None:
+                return None
+            rating_value = float(rating)
+            return round(rating_value, 2) if rating_value > 0 else None
+        except Exception:
+            return None
+
+    def get_distance_km(self, obj):
+        try:
+            return float(obj.distance_km) if obj.distance_km is not None else None
+        except Exception:
+            return None
+
+    def get_estimated_price(self, obj):
+        try:
+            return float(obj.estimated_price) if obj.estimated_price is not None else None
+        except Exception:
+            return None
+
+    def get_convenience_fee(self, obj):
+        try:
+            return float(obj.convenience_fee) if obj.convenience_fee is not None else None
+        except Exception:
+            return None
+
+    def get_estimated_eta_minutes(self, obj):
+        try:
+            return int(obj.estimated_eta_minutes) if obj.estimated_eta_minutes is not None else None
+        except Exception:
+            return None
 
 
 from . import models as booking_models
@@ -480,6 +564,7 @@ class QuotationItemSerializer(serializers.ModelSerializer):
     id = serializers.IntegerField(required=False)
     line_total = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
+    is_backjob_new_line = serializers.SerializerMethodField()
 
     class Meta:
         model = booking_models.QuotationItem
@@ -500,6 +585,9 @@ class QuotationItemSerializer(serializers.ModelSerializer):
             'previous_description',
             'previous_quantity',
             'previous_unit_price',
+            'is_backjob_new_line',
+            'created_at',
+            'updated_at',
         ]
 
     def get_line_total(self, obj):
@@ -516,6 +604,9 @@ class QuotationItemSerializer(serializers.ModelSerializer):
             return obj.quotation.status if hasattr(obj, 'quotation') and obj.quotation is not None else None
         except Exception:
             return None
+
+    def get_is_backjob_new_line(self, obj):
+        return bool(getattr(obj, 'is_backjob_line', False))
 
 
 def _quotation_line_shape(raw, existing_item=None):
@@ -615,6 +706,7 @@ class QuotationSerializer(serializers.Serializer):
         })
         quotation.is_backjob = booking_has_backjob(booking)
         requested_service_ids = get_requested_service_ids(booking)
+        new_row_is_backjob = booking_has_live_backjob(booking)
         # If quotation is newly created, create provided items; if it already exists, append/update items without deleting existing ones
         total = 0
         existing_items = {it.id: it for it in QuotationItem.objects.filter(quotation=quotation)}
@@ -666,6 +758,7 @@ class QuotationSerializer(serializers.Serializer):
                     unit_price=it.get('unit_price', 0),
                     status=default_status,
                     change_type='added' if default_status == Quotation.Status.PENDING else None,
+                    is_backjob_line=new_row_is_backjob,
                 )
             try:
                 total += float(qitem.line_total)
@@ -706,6 +799,8 @@ class QuotationSerializer(serializers.Serializer):
 
         requested_service_ids = get_requested_service_ids(instance.booking)
         instance.is_backjob = booking_has_backjob(instance.booking)
+        is_backjob_flow = bool(instance.is_backjob)
+        new_row_is_backjob = booking_has_live_backjob(instance.booking)
         items_data = validated_data.pop('items', []) if isinstance(validated_data, dict) else []
 
         # load existing items mapping
@@ -724,6 +819,11 @@ class QuotationSerializer(serializers.Serializer):
             if item_id and item_id in existing_items:
                 qitem = existing_items[item_id]
                 existing_status = str(qitem.status or '').lower()
+                # In backjob flow, accepted rows belong to the old completed work.
+                # Keep them locked as reference-only and never mutate them.
+                if is_backjob_flow and existing_status == Quotation.Status.ACCEPTED:
+                    incoming_ids.add(item_id)
+                    continue
                 existing_desc = qitem.description or ''
                 existing_qty = int(qitem.quantity or 0)
                 existing_price = float(qitem.unit_price or 0)
@@ -835,6 +935,7 @@ class QuotationSerializer(serializers.Serializer):
                     unit_price=raw.get('unit_price', 0),
                     status=default_status,
                     change_type='added' if default_status == Quotation.Status.PENDING else None,
+                    is_backjob_line=new_row_is_backjob,
                 )
                 # if payload included a status explicitly, set it
                 if 'status' in raw and raw.get('status') is not None:
@@ -857,15 +958,19 @@ class QuotationSerializer(serializers.Serializer):
                 to_delete = []
                 for mid in missing_ids:
                     ex = existing_items.get(mid)
+                    ex_status = str(getattr(ex, 'status', '') or '').lower()
+                    # Keep accepted old rows untouched for backjob reference history.
+                    if is_backjob_flow and ex_status == Quotation.Status.ACCEPTED:
+                        continue
                     if (
                         ex
                         and str(getattr(ex, 'line_kind', '') or '') == QuotationItem.LineKind.SERVICE
                         and getattr(ex, 'service_id', None) in requested_service_ids
-                        and str(getattr(ex, 'status', '') or '').lower() == Quotation.Status.ACCEPTED
+                        and ex_status == Quotation.Status.ACCEPTED
                     ):
                         # Keep baseline booked service rows stable across later edits.
                         continue
-                    if str(getattr(ex, 'status', '') or '').lower() == Quotation.Status.ACCEPTED:
+                    if ex_status == Quotation.Status.ACCEPTED:
                         to_mark_removed.append(mid)
                     else:
                         to_delete.append(mid)

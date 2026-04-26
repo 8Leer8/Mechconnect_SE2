@@ -9,6 +9,7 @@ import { LineChart, BarChart } from 'react-native-chart-kit';
 import EmergencyModal from '@/components/EmergencyModal';
 import { SkeletonClientHome } from '@/components/skeletons/SkeletonLoaders';
 import NotificationBell from '@/components/notifications/NotificationBell';
+import WalletButton from '@/components/wallet/WalletButton';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import { getImageUrl } from '@/lib/imageUtils';
 import { fetchProfileDetailsCached } from '@/lib/profileCache';
@@ -209,8 +210,15 @@ export default function HomeScreen() {
         if (n) setClientName(n);
         const clientProfile = p?.current_role_profile?.client;
         setProfilePhotoUrl(clientProfile?.profile_photo || clientProfile?.profile_photo_url || null);
-        // Check if user has verified mobile number
-        const contactNumber = p?.contact_number || '';
+        // Check if user has verified mobile number (nested inside current_role_profile)
+        const roleProfiles = p?.current_role_profile || {};
+        let contactNumber = '';
+        for (const role of Object.values(roleProfiles)) {
+          if (role && typeof role === 'object' && (role as any).contact_number) {
+            contactNumber = (role as any).contact_number;
+            break;
+          }
+        }
         setHasMobileNumber(!!contactNumber && contactNumber.length > 0);
       }
     } catch (err: any) {
@@ -257,7 +265,6 @@ export default function HomeScreen() {
           city: '',
           barangay: '',
           radiusKm: 5,
-          radius_km: 5,
         });
       }
     }
@@ -345,7 +352,10 @@ export default function HomeScreen() {
               <ThemedText style={styles.clientName}>{clientName || 'Client'}</ThemedText>
             </View>
           </View>
-          <NotificationBell />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <WalletButton />
+            <NotificationBell />
+          </View>
         </View>
         
       </View>

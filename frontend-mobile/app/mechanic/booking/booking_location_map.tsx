@@ -60,6 +60,12 @@ type BookingDetail = {
     navigation_allowed?: boolean;
   } | null;
   service_location?: ServiceLocation | null;
+  mechanic_location?: {
+    latitude?: number | string | null;
+    longitude?: number | string | null;
+    lat?: number | string | null;
+    lng?: number | string | null;
+  } | null;
   convenience_fee?: number | string | null;
   distance_km?: number | string | null;
   traffic_level?: string | null;
@@ -273,17 +279,24 @@ function parseMechanicLocationPayload(payload: any): Coordinates | null {
   return toValidCoordinate(latCandidate, lngCandidate);
 }
 
+function parseMechanicLocationFromBooking(bookingData: BookingDetail | null | undefined): Coordinates | null {
+  if (!bookingData) return null;
+  return parseMechanicLocationPayload(bookingData.mechanic_location);
+}
+
 export default function BookingLocationMapScreen() {
   const params = useLocalSearchParams<{ bookingId?: string; role?: Role }>();
   const bookingId = String(params.bookingId || '');
   const role: Role = params.role === 'client' ? 'client' : 'mechanic';
 
   const mapRef = useRef<MapView>(null);
+  const centerOnMeInFlightRef = useRef(false);
   const watcherRef = useRef<Location.LocationSubscription | null>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const updateIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const staleCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastRouteRefreshAtRef = useRef(0);
+  const routeRequestIdRef = useRef(0);
   const didInitialFitRef = useRef(false);
   /** Only auto fit-to-bounds once when both markers exist; refitting every GPS tick zooms Android map. */
   const didFitBothMarkersRef = useRef(false);
@@ -302,10 +315,12 @@ export default function BookingLocationMapScreen() {
   const [clientCoords, setClientCoords] = useState<Coordinates | null>(null);
   const [mechanicCoords, setMechanicCoords] = useState<Coordinates | null>(null);
   const [routeCoords, setRouteCoords] = useState<Coordinates[]>([]);
+  const routeCoordsRef = useRef<Coordinates[]>([]);
 
   const [distanceKm, setDistanceKm] = useState<number | null>(null);
   const [etaMinutes, setEtaMinutes] = useState<number | null>(null);
   const [routeEstimated, setRouteEstimated] = useState(false);
+  const routeEstimatedRef = useRef(false);
 
   const [traffic, setTraffic] = useState<TrafficData | null>(null);
   const [trafficEstimatedNote, setTrafficEstimatedNote] = useState(false);
@@ -333,6 +348,7 @@ export default function BookingLocationMapScreen() {
   const [routeAccordionOpen, setRouteAccordionOpen] = useState(false);
   /** Device GPS speed (km/h) while mechanic is tracking; not the same as TomTom road-segment flow speed. */
   const [gpsSpeedKmh, setGpsSpeedKmh] = useState<number | null>(null);
+  const [locatingMe, setLocatingMe] = useState(false);
 
   const headerTitle = bookingStatusIsLiveTracking(status) ? 'Live Tracking' : 'Route to Client';
   const isOnTheWay = bookingStatusIsLiveTracking(status);
@@ -345,6 +361,14 @@ export default function BookingLocationMapScreen() {
   useEffect(() => {
     mechanicCoordsRef.current = mechanicCoords;
   }, [mechanicCoords]);
+
+  useEffect(() => {
+    routeCoordsRef.current = routeCoords;
+  }, [routeCoords]);
+
+  useEffect(() => {
+    routeEstimatedRef.current = routeEstimated;
+  }, [routeEstimated]);
 
   useEffect(() => {
     lastMechanicUpdateAtRef.current = lastMechanicUpdateAt;
@@ -435,41 +459,6 @@ export default function BookingLocationMapScreen() {
     const data = await response.json();
     return (data?.booking || data) as BookingDetail;
   }, [bookingId, role]);
-
-  const geocodeClientAddress = useCallback(async (loc: ServiceLocation): Promise<Coordinates | null> => {
-    const address = [
-      loc.street_name,
-      loc.subdivision_village,
-      loc.barangay,
-      loc.city_municipality,
-    ]
-      .filter(Boolean)
-      .join(', ');
-
-    if (!address.trim()) return null;
-
-    const query = encodeURIComponent(`${address}, Philippines`);
-    const url = `https://nominatim.openstreetmap.org/search?q=${query}&format=json&limit=1&countrycodes=ph`;
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'MechConnect/1.0',
-      },
-    });
-
-    if (!response.ok) throw new Error('Unable to geocode client address');
-
-    const results = await response.json();
-    if (!Array.isArray(results) || results.length === 0) return null;
-
-    const latitude = toNumber(results[0]?.lat);
-    const longitude = toNumber(results[0]?.lon);
-
-    if (latitude === null || longitude === null || latitude === 0 || longitude === 0) return null;
-
-    return { latitude, longitude };
-  }, []);
 
   const resolveClientCoordinates = useCallback(async (bookingData: BookingDetail | null | undefined): Promise<Coordinates | null> => {
     if (!bookingData) return null;
@@ -566,7 +555,7 @@ export default function BookingLocationMapScreen() {
     }
 
     return null;
-  }, [geocodeClientAddress]);
+  }, []);
 
   const fetchMechanicCoordinatesForClient = useCallback(async (): Promise<Coordinates | null> => {
     if (!API_URL || !bookingId) return null;
@@ -582,6 +571,31 @@ export default function BookingLocationMapScreen() {
     const payload = await response.json();
     return parseMechanicLocationPayload(payload);
   }, [bookingId]);
+
+  const refreshBookingForClientTracking = useCallback(async (): Promise<Coordinates | null> => {
+    const bookingData = await fetchBooking();
+    const bookingStatus = String(bookingData?.status || '');
+    const nextClientCoords = await resolveClientCoordinates(bookingData);
+    const nextMechanicCoords = parseMechanicLocationFromBooking(bookingData);
+
+    setBooking(bookingData);
+    setStatus(bookingStatus);
+    if (nextClientCoords) setClientCoords(nextClientCoords);
+    if (nextMechanicCoords) {
+      setMechanicCoords(nextMechanicCoords);
+      setWaitingForMechanic(false);
+      setLastMechanicUpdateAt(Date.now());
+      setShowSignalLost(false);
+
+      if (nextClientCoords && bookingStatusIsLiveTracking(bookingStatus)) {
+        refreshRouteAndTraffic(nextMechanicCoords, nextClientCoords, bookingStatus).catch(() => {
+          // Keep existing route if a recalculation fails.
+        });
+      }
+    }
+
+    return nextMechanicCoords;
+  }, [fetchBooking, refreshRouteAndTraffic, resolveClientCoordinates]);
 
   const resolveMechanicCoordinates = useCallback(async (currentStatus: string): Promise<Coordinates | null> => {
     if (role === 'mechanic') {
@@ -623,25 +637,8 @@ export default function BookingLocationMapScreen() {
     return null;
   }, [fetchMechanicCoordinatesForClient, openTrackingPermissionModal, role]);
 
-  const calculateRoute = useCallback(async (from: Coordinates, to: Coordinates) => {
-    if (!ORS_KEY) throw new Error('Missing ORS key');
-
-    const response = await fetch('https://api.openrouteservice.org/v2/directions/driving-car/geojson', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: ORS_KEY,
-      },
-      body: JSON.stringify({
-        coordinates: [
-          [from.longitude, from.latitude],
-          [to.longitude, to.latitude],
-        ],
-      }),
-    });
-
+  const parseRouteResponse = useCallback(async (response: Response) => {
     if (!response.ok) throw new Error('Failed to fetch route from ORS');
-
     const data = await response.json();
     const feature = data?.features?.[0];
     const segment = feature?.properties?.segments?.[0];
@@ -666,6 +663,37 @@ export default function BookingLocationMapScreen() {
       etaMinutes: Math.round(Number(segment.duration || 0) / 60),
     };
   }, []);
+
+  const calculateRoute = useCallback(async (from: Coordinates, to: Coordinates) => {
+    if (!ORS_KEY) throw new Error('Missing ORS key');
+
+    const queryUrl =
+      `https://api.openrouteservice.org/v2/directions/driving-car` +
+      `?api_key=${encodeURIComponent(ORS_KEY)}` +
+      `&start=${from.longitude},${from.latitude}` +
+      `&end=${to.longitude},${to.latitude}`;
+
+    try {
+      return await parseRouteResponse(await fetch(queryUrl));
+    } catch {
+      const response = await fetch('https://api.openrouteservice.org/v2/directions/driving-car/geojson', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: ORS_KEY,
+        },
+        body: JSON.stringify({
+          coordinates: [
+            [from.longitude, from.latitude],
+            [to.longitude, to.latitude],
+          ],
+          radiuses: [1000, 1000],
+        }),
+      });
+
+      return parseRouteResponse(response);
+    }
+  }, [parseRouteResponse]);
 
   const calculateTraffic = useCallback(async (from: Coordinates, to: Coordinates): Promise<TrafficData> => {
     if (!TOMTOM_KEY) throw new Error('Missing TomTom key');
@@ -697,11 +725,15 @@ export default function BookingLocationMapScreen() {
   }, []);
 
   const refreshRouteAndTraffic = useCallback(async (from: Coordinates, to: Coordinates, currentStatus: string) => {
+    const routeRequestId = routeRequestIdRef.current + 1;
+    routeRequestIdRef.current = routeRequestId;
     let nextDistance: number | null = null;
     let nextEta: number | null = null;
+    const isLatestRouteRequest = () => routeRequestId === routeRequestIdRef.current;
 
     try {
       const routeResult = await calculateRoute(from, to);
+      if (!isLatestRouteRequest()) return null;
       setRouteCoords(routeResult.points);
       setDistanceKm(routeResult.distanceKm);
       setEtaMinutes(routeResult.etaMinutes);
@@ -711,11 +743,14 @@ export default function BookingLocationMapScreen() {
     } catch {
       const fallbackDistance = haversineDistanceKm(from, to);
       const fallbackEta = Math.max(1, Math.round((fallbackDistance / 25) * 60));
+      const previousRoute = routeCoordsRef.current;
+      const hasLastGoodRoadRoute = previousRoute.length >= 2 && !routeEstimatedRef.current;
 
-      setRouteCoords([]);
+      if (!isLatestRouteRequest()) return null;
+      setRouteCoords(hasLastGoodRoadRoute ? previousRoute : [from, to]);
       setDistanceKm(fallbackDistance);
       setEtaMinutes(fallbackEta);
-      setRouteEstimated(true);
+      setRouteEstimated(!hasLastGoodRoadRoute);
 
       nextDistance = fallbackDistance;
       nextEta = fallbackEta;
@@ -724,10 +759,12 @@ export default function BookingLocationMapScreen() {
     if (bookingStatusIsLiveTracking(currentStatus)) {
       try {
         const trafficData = await calculateTraffic(from, to);
+        if (!isLatestRouteRequest()) return null;
         setTraffic(trafficData);
         setTrafficEstimatedNote(false);
       } catch {
         const fallback = timeBasedTrafficFallback(trafficMultipliersRef.current);
+        if (!isLatestRouteRequest()) return null;
         setTraffic(fallback);
         setTrafficEstimatedNote(true);
       }
@@ -779,7 +816,10 @@ export default function BookingLocationMapScreen() {
 
       setClientCoords(resolvedClientCoords);
 
-      const resolvedMechanicCoords = await resolveMechanicCoordinates(bookingStatus);
+      const resolvedMechanicCoords =
+        role === 'client'
+          ? (parseMechanicLocationFromBooking(bookingData) || await resolveMechanicCoordinates(bookingStatus))
+          : await resolveMechanicCoordinates(bookingStatus);
       setMechanicCoords(resolvedMechanicCoords);
 
       if (resolvedMechanicCoords) {
@@ -833,7 +873,7 @@ export default function BookingLocationMapScreen() {
     } finally {
       setScreenLoading(false);
     }
-  }, [cleanupLiveResources, fetchBooking, refreshRouteAndTraffic, resolveClientCoordinates, resolveMechanicCoordinates]);
+  }, [cleanupLiveResources, fetchBooking, refreshRouteAndTraffic, resolveClientCoordinates, resolveMechanicCoordinates, role]);
 
   const postMechanicBookingAction = useCallback(
     async (endpoint: string, body: Record<string, unknown> = {}) => {
@@ -853,6 +893,53 @@ export default function BookingLocationMapScreen() {
     },
     [bookingId]
   );
+
+  const handleCenterOnMyLocation = useCallback(async () => {
+    if (role !== 'mechanic') return;
+    if (centerOnMeInFlightRef.current) return;
+    centerOnMeInFlightRef.current = true;
+    setLocatingMe(true);
+    try {
+      const permission = await ensureForegroundLocationAccess();
+      if (!permission.granted) {
+        Alert.alert('Location', 'Allow location access to center the map on your position.');
+        return;
+      }
+
+      let target: Coordinates | null = null;
+      try {
+        const pos = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.High,
+        });
+        target = toValidCoordinate(pos.coords.latitude, pos.coords.longitude);
+      } catch {
+        target = null;
+      }
+
+      if (!target) {
+        target = mechanicCoordsRef.current;
+      }
+
+      if (!target || !isValidCoordinate(target.latitude, target.longitude)) {
+        Alert.alert('Location', 'Could not get your current position. Try again.');
+        return;
+      }
+
+      setMechanicCoords(target);
+      mapRef.current?.animateToRegion(
+        {
+          latitude: target.latitude,
+          longitude: target.longitude,
+          latitudeDelta: 0.012,
+          longitudeDelta: 0.012,
+        },
+        500
+      );
+    } finally {
+      centerOnMeInFlightRef.current = false;
+      setLocatingMe(false);
+    }
+  }, [role]);
 
   const openNavToClient = useCallback(() => {
     const c = clientCoordsRef.current;
@@ -1009,6 +1096,16 @@ export default function BookingLocationMapScreen() {
           );
 
           watcherRef.current = watcher;
+
+          const current = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.High,
+          });
+          const immediateCoords = toValidCoordinate(current.coords.latitude, current.coords.longitude);
+          if (immediateCoords && isMounted) {
+            setMechanicCoords(immediateCoords);
+            setLastMechanicUpdateAt(Date.now());
+            pushLocationToBackend(immediateCoords);
+          }
         } catch {
           // Keep existing coordinates if watcher setup fails.
         }
@@ -1036,7 +1133,41 @@ export default function BookingLocationMapScreen() {
       };
     }
 
-    // Client follows mechanic via websocket (mechanic_location_update), not HTTP polling.
+    // Client follows mechanic via websocket first, with HTTP polling fallback.
+
+    let isMounted = true;
+
+    const pullMechanicLocation = async () => {
+      try {
+        let coords: Coordinates | null = null;
+        try {
+          coords = await fetchMechanicCoordinatesForClient();
+        } catch {
+          coords = null;
+        }
+        if (!coords) {
+          coords = await refreshBookingForClientTracking();
+        }
+        if (!isMounted || !coords) return;
+        setMechanicCoords(coords);
+        setWaitingForMechanic(false);
+        setLastMechanicUpdateAt(Date.now());
+        setShowSignalLost(false);
+
+        const to = clientCoordsRef.current;
+        if (!to || !bookingStatusIsLiveTracking(statusRef.current)) return;
+        refreshRouteAndTraffic(coords, to, statusRef.current).catch(() => {
+          // Keep last polyline if routing fails.
+        });
+      } catch {
+        // Keep waiting banner visible while mechanic has not shared GPS.
+      }
+    };
+
+    pullMechanicLocation();
+    pollIntervalRef.current = setInterval(() => {
+      pullMechanicLocation();
+    }, 3000);
 
     staleCheckIntervalRef.current = setInterval(() => {
       const last = lastMechanicUpdateAtRef.current;
@@ -1047,8 +1178,11 @@ export default function BookingLocationMapScreen() {
       setShowSignalLost(Date.now() - last > 30000);
     }, 5000);
 
-    return () => cleanupLiveResources();
-  }, [cleanupLiveResources, clientCoords, fetchMechanicCoordinatesForClient, isOnTheWay, openTrackingPermissionModal, refreshRouteAndTraffic, role, status]);
+    return () => {
+      isMounted = false;
+      cleanupLiveResources();
+    };
+  }, [bookingId, cleanupLiveResources, clientCoords, fetchMechanicCoordinatesForClient, isOnTheWay, openTrackingPermissionModal, refreshBookingForClientTracking, refreshRouteAndTraffic, role, status]);
 
   // Client: mechanic GPS from websocket (backend broadcasts after each POST /mechanic-location/).
   useEffect(() => {
@@ -1219,9 +1353,12 @@ export default function BookingLocationMapScreen() {
     );
   }
 
-  const routeColor = isOnTheWay ? (traffic?.color || '#FF8C00') : '#FF8C00';
+  const routeColor = routeEstimated ? '#64748B' : '#007AFF';
+  const routeDashPattern = routeEstimated ? [10, 8] : undefined;
   const distanceLabel = distanceKm !== null ? `${distanceKm.toFixed(1)} km` : '--';
   const etaLabel = etaMinutes !== null ? `~${etaMinutes} mins` : '--';
+  const clientCalloutTitle = role === 'client' ? 'You' : 'Client';
+  const mechanicCalloutTitle = role === 'mechanic' ? 'You' : 'Mechanic';
   const safeMechanicCoords = mechanicCoords && isValidCoordinate(mechanicCoords.latitude, mechanicCoords.longitude)
     ? mechanicCoords
     : null;
@@ -1259,15 +1396,26 @@ export default function BookingLocationMapScreen() {
           )}
 
           {routeCoords.length >= 2 && (
-            <Polyline
-              coordinates={routeCoords}
-              strokeWidth={5}
-              strokeColor={routeColor}
-              geodesic
-              lineCap="round"
-              lineJoin="round"
-              zIndex={1}
-            />
+            <>
+              <Polyline
+                coordinates={routeCoords}
+                strokeWidth={8}
+                strokeColor="rgba(255,255,255,0.9)"
+                lineCap="round"
+                lineJoin="round"
+                lineDashPattern={routeDashPattern}
+                zIndex={1}
+              />
+              <Polyline
+                coordinates={routeCoords}
+                strokeWidth={4}
+                strokeColor={routeColor}
+                lineCap="round"
+                lineJoin="round"
+                lineDashPattern={routeDashPattern}
+                zIndex={2}
+              />
+            </>
           )}
 
           {/* Client service location — always a clear pin (custom view works better than pinColor on iOS). */}
@@ -1275,20 +1423,18 @@ export default function BookingLocationMapScreen() {
             <Marker
               identifier="client-service-location"
               coordinate={safeClientCoords}
-              anchor={{ x: 0.5, y: 1 }}
+              anchor={{ x: 0.5, y: 0.5 }}
               zIndex={2}
-              tracksViewChanges={false}
             >
-              <View style={styles.markerColumn} pointerEvents="box-none">
-                <View style={styles.clientPinBadge}>
-                  <ThemedText style={styles.clientPinBadgeText}>CLIENT</ThemedText>
-                </View>
-                <FontAwesome name="map-marker" size={40} color="#FF3B30" style={styles.markerIconShadow} />
+              <View style={[styles.preciseMarkerDot, styles.clientMarkerDot]} pointerEvents="box-none">
+                <View style={[styles.preciseMarkerCore, styles.clientMarkerCore]} />
               </View>
               <Callout tooltip>
                 <View style={styles.calloutBox}>
-                  <ThemedText style={styles.calloutTitle}>Client location</ThemedText>
-                  <ThemedText style={styles.calloutSub}>Service / drop-off pin</ThemedText>
+                  <ThemedText style={styles.calloutTitle}>{clientCalloutTitle}</ThemedText>
+                  <ThemedText style={styles.calloutSub}>
+                    {role === 'client' ? 'Your service location' : 'Client service location'}
+                  </ThemedText>
                 </View>
               </Callout>
             </Marker>
@@ -1298,25 +1444,50 @@ export default function BookingLocationMapScreen() {
             <Marker
               identifier="mechanic-position"
               coordinate={safeMechanicCoords}
-              anchor={{ x: 0.5, y: 1 }}
+              anchor={{ x: 0.5, y: 0.5 }}
               zIndex={3}
-              tracksViewChanges={false}
             >
-              <View style={styles.markerColumn} pointerEvents="box-none">
-                <View style={styles.mechanicPinBadge}>
-                  <ThemedText style={styles.mechanicPinBadgeText}>YOU</ThemedText>
-                </View>
-                <FontAwesome name="map-marker" size={40} color="#FF8C00" style={styles.markerIconShadow} />
+              <View style={[styles.preciseMarkerDot, styles.mechanicMarkerDot]} pointerEvents="box-none">
+                <View style={[styles.preciseMarkerCore, styles.mechanicMarkerCore]} />
               </View>
               <Callout tooltip>
                 <View style={styles.calloutBox}>
-                  <ThemedText style={styles.calloutTitle}>Your position</ThemedText>
-                  <ThemedText style={styles.calloutSub}>Updates while you are traveling</ThemedText>
+                  <ThemedText style={styles.calloutTitle}>{mechanicCalloutTitle}</ThemedText>
+                  <ThemedText style={styles.calloutSub}>
+                    {role === 'mechanic' ? 'Your current location' : 'Mechanic live location'}
+                  </ThemedText>
                 </View>
               </Callout>
             </Marker>
           ) : null}
         </MapView>
+
+        <View style={styles.legendChip} pointerEvents="none">
+          <View style={styles.legendRow}>
+            <View style={[styles.legendDot, { backgroundColor: '#FF8C00' }]} />
+            <ThemedText style={styles.legendText}>{role === 'mechanic' ? 'You' : 'Mechanic'}</ThemedText>
+          </View>
+          <View style={styles.legendDivider} />
+          <View style={styles.legendRow}>
+            <View style={[styles.legendDot, { backgroundColor: '#FF3B30' }]} />
+            <ThemedText style={styles.legendText}>{role === 'client' ? 'You' : 'Client'}</ThemedText>
+          </View>
+        </View>
+
+        {role === 'mechanic' ? (
+          <TouchableOpacity
+            style={styles.locateMeButton}
+            onPress={handleCenterOnMyLocation}
+            activeOpacity={0.8}
+            disabled={locatingMe}
+          >
+            {locatingMe ? (
+              <ActivityIndicator size="small" color="#FF8C00" />
+            ) : (
+              <FontAwesome name="location-arrow" size={20} color="#FF8C00" />
+            )}
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       <View
@@ -1529,9 +1700,61 @@ const styles = StyleSheet.create({
   },
   mapWrap: {
     flex: 1,
+    position: 'relative',
+  },
+  legendChip: {
+    position: 'absolute',
+    top: 12,
+    left: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(20,21,23,0.92)',
+    borderWidth: 1,
+    borderColor: '#2F3235',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    zIndex: 10,
+    elevation: 4,
+  },
+  legendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  legendDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 4.5,
+  },
+  legendText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#F4F4F5',
+  },
+  legendDivider: {
+    width: 1,
+    height: 14,
+    marginHorizontal: 10,
+    backgroundColor: '#3A3D40',
   },
   map: {
     flex: 1,
+  },
+  locateMeButton: {
+    position: 'absolute',
+    right: 14,
+    top: 14,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: '#1A1C1E',
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+    elevation: 4,
   },
   loadingContainer: {
     flex: 1,
@@ -1696,41 +1919,37 @@ const styles = StyleSheet.create({
   mtBtnDisabled: {
     opacity: 0.55,
   },
-  markerColumn: {
+  preciseMarkerDot: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 3,
     alignItems: 'center',
-  },
-  clientPinBadge: {
-    marginBottom: -8,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    backgroundColor: '#FF3B30',
-  },
-  clientPinBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#fff',
-    letterSpacing: 0.5,
-  },
-  mechanicPinBadge: {
-    marginBottom: -8,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    backgroundColor: '#FF8C00',
-  },
-  mechanicPinBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#111',
-    letterSpacing: 0.5,
-  },
-  markerIconShadow: {
+    justifyContent: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.35,
-    shadowRadius: 2,
+    shadowOpacity: 0.28,
+    shadowRadius: 4,
     elevation: 4,
+  },
+  preciseMarkerCore: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  clientMarkerDot: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#FF3B30',
+  },
+  clientMarkerCore: {
+    backgroundColor: '#FF3B30',
+  },
+  mechanicMarkerDot: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#FF8C00',
+  },
+  mechanicMarkerCore: {
+    backgroundColor: '#FF8C00',
   },
   calloutBox: {
     padding: 10,

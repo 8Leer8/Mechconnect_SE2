@@ -138,7 +138,6 @@ export default function RecommendProviderScreen() {
             {ai_recommendations.map((rec, i) => (
               <View key={i} style={styles.specialtyChip}>
                 <ThemedText style={styles.specialtyName}>{rec.specialty}</ThemedText>
-                <ThemedText style={styles.specialtyConfidence}>{rec.confidence}%</ThemedText>
               </View>
             ))}
           </View>

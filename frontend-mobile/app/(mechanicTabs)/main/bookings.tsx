@@ -8,6 +8,7 @@ import { useThemeColor } from '@/hooks/use-theme-color';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/mechanic/bookingsStyles';
 import WalletBadge from '@/components/wallet-badge';
+import NotificationBell from '@/components/notifications/NotificationBell';
 import { SkeletonBookingList } from '@/components/skeletons/SkeletonLoaders';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 
@@ -62,8 +63,8 @@ interface Booking {
   };
 }
 
-// Tabs: All, Pending, Booked, On Going, Completed, Cancelled, Reworked, Disputed
-type TabType = 'all' | 'pending' | 'booked' | 'on_going' | 'completed' | 'cancelled' | 'reworked' | 'disputed';
+// Tabs: All, Booked, On Going, Pending, Completed, Cancelled, Reworked, Disputed
+type TabType = 'all' | 'booked' | 'on_going' | 'pending' | 'completed' | 'cancelled' | 'reworked' | 'disputed';
 const TAB_LABELS: Record<TabType, string> = {
   all: 'All',
   pending: 'Pending',
@@ -416,7 +417,7 @@ export default function BookingsScreen() {
       contentContainerStyle={styles.tabScrollContent}
       style={styles.tabContainer}
     >
-      {(['all', 'pending', 'booked', 'on_going', 'completed', 'cancelled', 'reworked', 'disputed'] as TabType[]).map(
+      {(['all', 'booked', 'on_going', 'pending', 'completed', 'cancelled', 'reworked', 'disputed'] as TabType[]).map(
         (tab) => {
           const isActive = activeTab === tab;
           const count = counts[tab] || 0;
@@ -489,9 +490,7 @@ export default function BookingsScreen() {
           </ThemedText>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <TouchableOpacity style={styles.refreshButton} onPress={onRefresh}>
-            <FontAwesome name="refresh" size={18} color="#FF8C00" />
-          </TouchableOpacity>
+          <NotificationBell />
           <WalletBadge onPress={() => router.push('/mechanic/wallet')} />
         </View>
       </View>

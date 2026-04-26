@@ -2,7 +2,7 @@ from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 import logging
 
-from notification.models import Notification
+from notification.upsert import upsert_notification
 from users.models import Account
 
 
@@ -51,23 +51,188 @@ def _resolve_target_role(account_id):
     return None
 
 
-def _create_booking_notification(account_id, booking_id, booking_status, message, action=None):
+def _service_line_from_request(req):
+    from .models import DirectRequest
+
+    service_line = ''
+    try:
+        rtype = str(req.request_type or '').lower()
+        if rtype == 'broadcast':
+            br = getattr(req, 'broadcast_request', None)
+            if br:
+                service_line = (br.description or 'Broadcast').strip()[:80]
+        elif rtype == 'direct':
+            dr = DirectRequest.objects.select_related('service').filter(request=req).first()
+            if dr and dr.service:
+                service_line = dr.service.name
+        elif rtype == 'custom':
+            cr = getattr(req, 'customrequest', None)
+            if cr:
+                service_line = (cr.description or 'Custom request').strip()[:80]
+        elif rtype == 'emergency':
+            er = getattr(req, 'emergencyrequest', None)
+            if er and er.description:
+                service_line = er.description.strip()[:80]
+            else:
+                service_line = 'Emergency'
+    except Exception:
+        service_line = ''
+
+    if not service_line:
+        service_line = str(req.request_type or 'service').replace('_', ' ').title()
+    return service_line
+
+
+def _enrich_thread_body(receiver_account_id, base_message, *, booking=None, request=None):
+    """Shared header: Request/Booking #, service label, counterparty, then status line."""
+    from .models import Request
+
+    if booking is not None:
+        req = booking.request
+        if not req:
+            return base_message
+        header = f'Booking #{booking.id} · {_service_line_from_request(req)}'
+    elif request is not None:
+        if isinstance(request, int):
+            req = Request.objects.select_related('client__account', 'provider').filter(id=request).first()
+        else:
+            req = request
+        if not req:
+            return base_message
+        header = f'Request #{req.id} · {_service_line_from_request(req)}'
+    else:
+        return base_message
+
+    client_nm = ''
+    mech_nm = ''
+    try:
+        if req.client and req.client.account:
+            client_nm = f'{req.client.account.firstname} {req.client.account.lastname}'.strip()
+    except Exception:
+        pass
+    try:
+        if req.provider:
+            mech_nm = f'{req.provider.firstname} {req.provider.lastname}'.strip()
+    except Exception:
+        pass
+
+    try:
+        receiver_aid = int(receiver_account_id)
+    except (TypeError, ValueError):
+        receiver_aid = None
+
+    client_aid = int(req.client.account_id) if getattr(req, 'client', None) else None
+    prov_aid = int(req.provider_id) if getattr(req, 'provider_id', None) else None
+
+    party_line = ''
+    if receiver_aid and client_aid and receiver_aid == client_aid:
+        party_line = f'Mechanic: {mech_nm}' if mech_nm else ''
+    elif receiver_aid and prov_aid and receiver_aid == prov_aid:
+        party_line = f'Client: {client_nm}' if client_nm else ''
+    else:
+        parts = [p for p in [client_nm, mech_nm] if p]
+        party_line = ' · '.join(parts)
+
+    lines = [header]
+    if party_line:
+        lines.append(party_line)
+    lines.append(base_message)
+    return '\n'.join(lines)
+
+
+def _enrich_booking_notification_body(booking_id, receiver_account_id, base_message):
+    from .models import Booking
+
+    booking = (
+        Booking.objects.select_related(
+            'request__client__account',
+            'request__provider',
+        )
+        .filter(id=booking_id)
+        .first()
+    )
+    if not booking:
+        return base_message
+    return _enrich_thread_body(receiver_account_id, base_message, booking=booking)
+
+
+def _enrich_request_thread_body(request_id, receiver_account_id, base_message):
+    return _enrich_thread_body(receiver_account_id, base_message, request=request_id)
+
+
+def upsert_request_thread_notification(account_id, request_id, title, message, payload, mark_unread=True):
+    """One row per (receiver, request) for pre-booking updates (e.g. broadcast offers)."""
+    body = _enrich_request_thread_body(request_id, account_id, message)
+    upsert_notification(
+        receiver_id=account_id,
+        correlation_key=f'request:{request_id}',
+        title=title,
+        message=body,
+        payload=payload,
+        mark_unread=mark_unread,
+    )
+
+
+def upsert_booking_party_notification(account_id, booking, title, message, action=None):
+    """Single in-app row per service request per receiver (broadcast → booking lifecycle)."""
+    target_role = None
+    try:
+        req = booking.request
+        if req:
+            if getattr(req, 'provider_id', None) and int(req.provider_id) == int(account_id):
+                target_role = 'mechanic'
+            elif getattr(req, 'client', None) and getattr(req.client, 'account_id', None) and int(req.client.account_id) == int(account_id):
+                target_role = 'client'
+            elif getattr(req, 'shop', None) and getattr(req.shop, 'shop_owner', None) and getattr(req.shop.shop_owner, 'account_id', None) and int(req.shop.shop_owner.account_id) == int(account_id):
+                target_role = 'shopowner'
+    except Exception:
+        target_role = None
+
+    if not target_role:
+        target_role = _resolve_target_role(account_id)
     payload = {
-        'booking_id': booking_id,
-        'status': booking_status,
+        'booking_id': booking.id,
+        'request_id': booking.request_id,
+        'status': booking.status,
     }
     if action:
         payload['action'] = action
-
-    target_role = _resolve_target_role(account_id)
     if target_role:
         payload['target_role'] = target_role
 
-    Notification.objects.create(
+    try:
+        if booking.request and str(booking.request.request_type or '').lower() == 'broadcast':
+            br = getattr(booking.request, 'broadcast_request', None)
+            if br:
+                payload['broadcast_id'] = br.id
+    except Exception:
+        pass
+
+    body = _enrich_booking_notification_body(booking.id, account_id, message)
+    upsert_notification(
         receiver_id=account_id,
-        title=_notification_title_for_booking_status(booking_status, message),
-        message=message,
+        correlation_key=f'request:{booking.request_id}',
+        title=title,
+        message=body,
         payload=payload,
+        mark_unread=True,
+    )
+
+
+def _create_booking_notification(account_id, booking_id, booking_status, message, action=None):
+    from .models import Booking
+
+    booking = Booking.objects.filter(id=booking_id).first()
+    if not booking:
+        return
+
+    title = _notification_title_for_booking_status(booking_status, message)
+    upsert_booking_party_notification(
+        account_id,
+        booking,
+        title,
+        message,
+        action=action,
     )
 
 
@@ -174,7 +339,7 @@ def _ensure_conversation_for_booking(booking, account):
     return conv
 
 
-def post_quotation_chat_message(account, booking, quotation, action='created'):
+def post_quotation_chat_message(account, booking, quotation, action='created', request=None, amendment=None):
     """Post a structured quotation system message into the booking conversation and broadcast it.
     action can be: 'created', 'updated', 'retracted', 'accepted', 'rejected'
     """
@@ -189,37 +354,93 @@ def post_quotation_chat_message(account, booking, quotation, action='created'):
 
     items = []
     try:
-        for it in quotation.items.all():
-            items.append({
-                'id': it.id,
-                'line_kind': getattr(it, 'line_kind', 'item'),
-                'source': getattr(it, 'source', None),
-                'service': it.service_id,
-                'service_add_on': it.service_add_on_id,
-                'description': it.description,
-                'quantity': int(it.quantity),
-                'unit_price': float(it.unit_price),
-                'line_total': float(it.line_total),
-                'purchase_receipt_image': it.purchase_receipt_image.url if getattr(it, 'purchase_receipt_image', None) else None,
-                'receipt_submitted_at': it.receipt_submitted_at.isoformat() if getattr(it, 'receipt_submitted_at', None) else None,
-            })
+        # For pending amendment requests (action=updated), show the staged delta rows.
+        # For resolved actions (accepted/rejected), always show the current quotation rows
+        # so old removed deltas do not leak into future diff baselines.
+        use_amendment_rows = amendment is not None and action == "updated"
+        if use_amendment_rows:
+            for change in amendment.items.all().order_by("id"):
+                proposed = change.proposed_changes or {}
+                original = change.original_snapshot or {}
+                stable_original_id = change.original_item_id
+                if stable_original_id is None:
+                    try:
+                        stable_original_id = int(original.get("id"))
+                    except Exception:
+                        stable_original_id = None
+                row = {
+                    "id": stable_original_id,
+                    "line_kind": proposed.get("line_kind") or original.get("line_kind") or "item",
+                    "source": proposed.get("source") if proposed.get("source") is not None else original.get("source"),
+                    "service": proposed.get("service") if proposed.get("service") is not None else original.get("service"),
+                    "service_add_on": proposed.get("service_add_on") if proposed.get("service_add_on") is not None else original.get("service_add_on"),
+                    "description": proposed.get("description") if proposed.get("description") is not None else original.get("description"),
+                    "quantity": int(proposed.get("quantity") if proposed.get("quantity") is not None else (original.get("quantity") or 1)),
+                    "unit_price": float(proposed.get("unit_price") if proposed.get("unit_price") is not None else (original.get("unit_price") or 0)),
+                    "status": "pending" if action == "updated" else getattr(amendment, "status", None),
+                    "change_type": change.action_type,
+                    "previous_description": original.get("description"),
+                    "previous_quantity": original.get("quantity"),
+                    "previous_unit_price": original.get("unit_price"),
+                    "is_backjob_new_line": bool(getattr(quotation, "is_backjob", False) and change.action_type == "added"),
+                }
+                row["line_total"] = float(row["quantity"]) * float(row["unit_price"])
+                items.append(row)
+        else:
+            for it in quotation.items.all():
+                items.append({
+                    'id': it.id,
+                    'line_kind': getattr(it, 'line_kind', 'item'),
+                    'source': getattr(it, 'source', None),
+                    'service': it.service_id,
+                    'service_add_on': it.service_add_on_id,
+                    'description': it.description,
+                    'quantity': int(it.quantity),
+                    'unit_price': float(it.unit_price),
+                    'line_total': float(it.line_total),
+                    'status': getattr(it, 'status', None),
+                    'change_type': getattr(it, 'change_type', None),
+                    'previous_description': getattr(it, 'previous_description', None),
+                    'previous_quantity': getattr(it, 'previous_quantity', None),
+                    'previous_unit_price': float(it.previous_unit_price) if getattr(it, 'previous_unit_price', None) is not None else None,
+                    'is_backjob_new_line': bool(getattr(it, 'is_backjob_line', False)),
+                    'created_at': it.created_at.isoformat() if getattr(it, 'created_at', None) else None,
+                    'updated_at': it.updated_at.isoformat() if getattr(it, 'updated_at', None) else None,
+                    'purchase_receipt_image': it.purchase_receipt_image.url if getattr(it, 'purchase_receipt_image', None) else None,
+                    'receipt_submitted_at': it.receipt_submitted_at.isoformat() if getattr(it, 'receipt_submitted_at', None) else None,
+                })
     except Exception:
         items = []
+
+    # Prefer amendment lifecycle for bundled flows; quotation instance may be stale
+    # in-memory right after request creation.
+    request_status = (
+        getattr(amendment, "status", None)
+        if amendment is not None
+        else getattr(quotation, 'status', None)
+    )
+    if action == 'accepted':
+        request_status = 'accepted'
+    elif action == 'rejected':
+        request_status = 'rejected'
+    elif action == 'retracted':
+        request_status = 'retracted'
 
     payload = {
         'type': 'quotation_request',
         'action': action,
         'quotation_id': quotation.id if quotation else None,
+        'amendment_id': amendment.id if amendment is not None else None,
         'booking_id': booking.id,
-        'status': getattr(quotation, 'status', None),
+        'status': request_status,
         'mechanic_id': getattr(account, 'id', None),
         'mechanic_name': f"{getattr(account, 'firstname', '')} {getattr(account, 'lastname', '')}".strip(),
         'notes': getattr(quotation, 'notes', ''),
+        'is_backjob': bool(getattr(quotation, 'is_backjob', False)),
         'total_amount': float(quotation.total_amount) if quotation else None,
         'items': items,
         'created_at': quotation.created_at.isoformat() if quotation and getattr(quotation, 'created_at', None) else None,
     }
-
     if action == 'retracted':
         payload['message'] = 'Mechanic retracted this request.'
 
@@ -228,7 +449,7 @@ def post_quotation_chat_message(account, booking, quotation, action='created'):
     # in the structured payload so UIs can display who initiated it.
     msg = Message.objects.create(conversation=conv, sender=None, content=json.dumps(payload))
     conv.save()
-    serializer = MessageSerializer(msg, context={'request': None})
+    serializer = MessageSerializer(msg, context={'request': request})
 
     # broadcast to participants except sender
     # broadcast to participants except the original mechanic (we still

@@ -483,6 +483,12 @@ export const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#FF8C0030',
   },
+  navigateButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
   navigateIconCircle: {
     width: 42,
     height: 42,
@@ -606,10 +612,15 @@ export const styles = StyleSheet.create({
   },
   quoteHeaderLeft: {
     flex: 1,
+    minWidth: 0,
     marginRight: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: 6,
+  },
+  quoteItemTitle: {
+    width: '100%',
+    flexShrink: 1,
   },
   quotationAccordionRight: {
     flexDirection: 'row',

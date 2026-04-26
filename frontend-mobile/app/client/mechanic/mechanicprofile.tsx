@@ -113,12 +113,16 @@ export default function MechanicProfileScreen() {
   const router = useRouter();
   const pathname = usePathname();
   const { showNotification } = useNotification();
-  const { mechanicId, id, distance_km, source, member_active } = useLocalSearchParams<{
+  const { mechanicId, id, distance_km, source, member_active, fromBroadcast, broadcastId, offerId, returnParams } = useLocalSearchParams<{
     mechanicId?: string;
     id?: string;
     distance_km?: string;
     source?: string;
     member_active?: string;
+    fromBroadcast?: string;
+    broadcastId?: string;
+    offerId?: string;
+    returnParams?: string;
   }>();
   const resolvedMechanicId = mechanicId || id;
   const isMountedRef = useRef(true);
@@ -130,6 +134,7 @@ export default function MechanicProfileScreen() {
   const [isFavorited, setIsFavorited] = useState(false);
   const [memberActive, setMemberActive] = useState<boolean>(member_active !== 'false');
   const [actionLoading, setActionLoading] = useState<'toggle' | 'remove' | null>(null);
+  const [acceptingBroadcastOffer, setAcceptingBroadcastOffer] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -189,16 +194,43 @@ export default function MechanicProfileScreen() {
     return stars;
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status?.toLowerCase()) {
-      case 'active': return '#34C759';
-      case 'busy': return '#FF8C00';
-      case 'offline': return '#8E8E93';
-      default: return '#8E8E93';
+  const isMechanicAvailable = (status: string) => String(status || '').toLowerCase() === 'available';
+
+  const getStatusColor = (status: string) => (isMechanicAvailable(status) ? '#34C759' : '#FF3B30');
+
+  const getStatusLabel = (status: string) => (isMechanicAvailable(status) ? 'Available' : 'Unavailable');
+
+  const navigateBackToBroadcastDetails = () => {
+    let parsedParams: Record<string, string> = {};
+    if (typeof returnParams === 'string' && returnParams.trim().length > 0) {
+      try {
+        const candidate = JSON.parse(returnParams) as Record<string, unknown>;
+        parsedParams = Object.entries(candidate).reduce((acc, [key, value]) => {
+          if (typeof value === 'string' && value.length > 0) {
+            acc[key] = value;
+          }
+          return acc;
+        }, {} as Record<string, string>);
+      } catch {
+        parsedParams = {};
+      }
     }
+
+    const fallbackId = typeof broadcastId === 'string' ? broadcastId : '';
+    router.replace({
+      pathname: '/client/request/broadcast/broadcastdetail',
+      params: {
+        ...parsedParams,
+        id: parsedParams.id || fallbackId,
+      },
+    });
   };
 
   const handleBack = () => {
+    if (fromBroadcast === 'true') {
+      navigateBackToBroadcastDetails();
+      return;
+    }
     if (router.canGoBack()) {
       router.back();
       return;
@@ -208,6 +240,43 @@ export default function MechanicProfileScreen() {
 
   const showDirectRequest = !pathname.includes('/_direct-request');
   const isShopOwnerView = source === 'shop_owner';
+
+  const handleAcceptMechanicFromBroadcast = async () => {
+    if (acceptingBroadcastOffer || fromBroadcast !== 'true' || !broadcastId || !offerId) return;
+
+    setAcceptingBroadcastOffer(true);
+    try {
+      const response = await fetch(`${API_URL}/bookings/broadcasts/${broadcastId}/select-mechanic/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ offer_id: Number(offerId) }),
+      });
+
+      const data = await response.json().catch(() => ({})) as { error?: string; booking_id?: number };
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to select mechanic');
+      }
+
+      const bookingId = Number(data.booking_id ?? 0);
+      if (bookingId > 0) {
+        router.replace({
+          pathname: '/client/booking/booking_details',
+          params: { bookingId: String(bookingId) },
+        });
+        return;
+      }
+
+      throw new Error('Booking was created but no booking ID was returned');
+    } catch (error) {
+      showNotification({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Failed to select mechanic',
+      });
+    } finally {
+      setAcceptingBroadcastOffer(false);
+    }
+  };
 
   const handleDirectRequest = () => {
     const providerAccountId = profile?.account_id || profile?.id;
@@ -474,7 +543,7 @@ export default function MechanicProfileScreen() {
           <View style={[styles.statusBadge, { backgroundColor: getStatusColor(profile.status) + '20' }]}>
             <View style={[styles.statusDot, { backgroundColor: getStatusColor(profile.status) }]} />
             <ThemedText style={[styles.statusLabel, { color: getStatusColor(profile.status) }]}>
-              {profile.status.charAt(0).toUpperCase() + profile.status.slice(1)}
+              {getStatusLabel(profile.status)}
             </ThemedText>
           </View>
 
@@ -551,6 +620,47 @@ export default function MechanicProfileScreen() {
               </View>
             )
           )}
+
+          {fromBroadcast === 'true' && (
+            <View style={{ width: '100%', marginTop: 12, gap: 10 }}>
+              <TouchableOpacity
+                style={{
+                  width: '100%',
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: '#FF8C00',
+                  paddingVertical: 12,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                activeOpacity={0.7}
+                onPress={navigateBackToBroadcastDetails}
+              >
+                <ThemedText style={{ color: '#FFB45E', fontSize: 13, fontWeight: '700' }}>Go back to details</ThemedText>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={{
+                  width: '100%',
+                  borderRadius: 12,
+                  backgroundColor: acceptingBroadcastOffer ? '#FF8C00AA' : '#FF8C00',
+                  paddingVertical: 12,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexDirection: 'row',
+                  gap: 8,
+                }}
+                activeOpacity={0.7}
+                onPress={handleAcceptMechanicFromBroadcast}
+                disabled={acceptingBroadcastOffer || !broadcastId || !offerId}
+              >
+                <FontAwesome name="check" size={14} color="#fff" />
+                <ThemedText style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>
+                  {acceptingBroadcastOffer ? 'Accepting...' : 'Accept Mechanic'}
+                </ThemedText>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
 
         {/* Info Section */}
@@ -581,14 +691,6 @@ export default function MechanicProfileScreen() {
                 <ThemedText style={styles.infoText}>{formatDistanceLabel(distance_km)}</ThemedText>
               </View>
             ) : null}
-            {profile.contact_number && (
-              <View style={styles.infoRow}>
-                <View style={styles.infoIconCircle}>
-                  <FontAwesome name="phone" size={14} color="#FF8C00" />
-                </View>
-                <ThemedText style={styles.infoText}>{profile.contact_number}</ThemedText>
-              </View>
-            )}
             {profile.is_part_of_shop && profile.shop_name && (
               <View style={styles.infoRow}>
                 <View style={styles.infoIconCircle}>

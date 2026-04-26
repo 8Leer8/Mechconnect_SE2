@@ -147,15 +147,15 @@ export default function PaymentMethodModal({
 
           <TouchableOpacity
             style={styles.optionCard}
-            onPress={() => onPaymentInitiated('ewallet')}
+            onPress={() => onPaymentInitiated('credits')}
             disabled={loadingMethod !== null}
             activeOpacity={0.85}
           >
             <View style={styles.optionHeader}>
-              <FontAwesome name="mobile" size={18} color="#FF8C00" />
-              <ThemedText style={styles.optionTitle}>E-Wallet</ThemedText>
+              <FontAwesome name="database" size={18} color="#FF8C00" />
+              <ThemedText style={styles.optionTitle}>Credits</ThemedText>
             </View>
-            <ThemedText style={styles.optionDescription}>GCash or Maya</ThemedText>
+            <ThemedText style={styles.optionDescription}>Pay using your credits (1:1 ratio)</ThemedText>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.cancelButton} onPress={onClose}>
