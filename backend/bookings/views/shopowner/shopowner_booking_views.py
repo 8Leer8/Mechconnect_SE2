@@ -36,6 +36,7 @@ from ...backjob_utils import booking_has_backjob
 from ...services import create_amendment_request
 from users.models import Account, TokenTransaction
 from services.models import ShopService
+from shops.models import Shop
 from services.pricing_utils import (
     get_distance_fee,
     get_traffic_surcharge,
@@ -78,6 +79,25 @@ def _get_owned_shop(account):
         return account.shopowner.shop
     except Exception:
         return None
+
+
+def _reject_if_shop_unavailable(shop):
+    """Same rule as discovery: only OPEN shops may take new inbound work."""
+    if shop is None:
+        return Response(
+            {"error": "Shop not found for this shop owner"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if shop.status != Shop.Status.OPEN:
+        return Response(
+            {
+                "error": "Your shop is unavailable. Switch to accept bookings.",
+                "reason": "shop_unavailable",
+                "shop_status": shop.status,
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return None
 
 
 def _serialize_cash_remittance(remittance):
@@ -394,11 +414,20 @@ def list_shopowner_emergency_requests(request):
         .order_by("-created_at")
     )
 
+    shop = _get_owned_shop(account)
+    shopowner_can_accept = True
+    accept_disabled_reason = None
+    if shop and shop.status != Shop.Status.OPEN:
+        shopowner_can_accept = False
+        accept_disabled_reason = "shop_unavailable"
+
     serialized_data = RequestSerializer(emergency_requests, many=True, context={"request": request}).data
     return Response(
         {
             "emergency_requests": serialized_data,
             "count": len(serialized_data),
+            "shopowner_can_accept": shopowner_can_accept,
+            "accept_disabled_reason": accept_disabled_reason,
         },
         status=status.HTTP_200_OK,
     )
@@ -413,6 +442,11 @@ def shopowner_accept_emergency_request(request, request_id):
     account, err = _get_shopowner_account(request)
     if err:
         return err
+
+    shop = _get_owned_shop(account)
+    closed_err = _reject_if_shop_unavailable(shop)
+    if closed_err:
+        return closed_err
 
     try:
         req = Request.objects.get(id=request_id, request_type="emergency")
@@ -540,6 +574,10 @@ def shopowner_accept_broadcast_request(request, broadcast_id):
         shop = account.shopowner.shop
     except Exception:
         return Response({"error": "Shop not found for this shop owner"}, status=status.HTTP_400_BAD_REQUEST)
+
+    closed_err = _reject_if_shop_unavailable(shop)
+    if closed_err:
+        return closed_err
 
     distance_km = _to_float_or_none(request.data.get("distance_km"))
     eta_minutes = _to_int_or_none(request.data.get("estimated_eta_minutes"))
@@ -685,6 +723,11 @@ def shopowner_accept_direct_request(request, request_id):
     if err:
         return err
 
+    shop_for_gate = _get_owned_shop(account)
+    closed_err = _reject_if_shop_unavailable(shop_for_gate)
+    if closed_err:
+        return closed_err
+
     req = _get_shopowner_request(request_id, "direct", account)
     if req is None:
         return Response(
@@ -808,6 +851,11 @@ def shopowner_accept_custom_request(request, request_id):
     account, err = _get_shopowner_account(request)
     if err:
         return err
+
+    shop_for_gate = _get_owned_shop(account)
+    closed_err = _reject_if_shop_unavailable(shop_for_gate)
+    if closed_err:
+        return closed_err
 
     req = _get_shopowner_request(request_id, "custom", account)
     if req is None:

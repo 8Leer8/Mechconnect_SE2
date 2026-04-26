@@ -685,6 +685,11 @@ export default function ShopOwnerJobsScreen() {
             type: 'info',
             message: 'This request was already processed and is no longer pending.',
           });
+        } else if (data?.reason === 'shop_unavailable') {
+          showNotification({
+            type: 'warning',
+            message: data?.error || 'Your shop is unavailable. Switch to accept bookings.',
+          });
         } else {
           showNotification({ type: 'error', message: data.error || 'Failed to accept request' });
         }

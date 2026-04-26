@@ -84,6 +84,8 @@ interface BroadcastRequest {
   my_offer_status?: string | null;
   mechanic_can_accept?: boolean;
   mechanic_accept_block_reason?: string | null;
+  shopowner_can_accept?: boolean;
+  shopowner_accept_block_reason?: string | null;
 }
 
 type TrafficLevel = 'light' | 'moderate' | 'heavy' | 'severe' | 'unknown';
@@ -863,7 +865,10 @@ export default function MapScreen() {
 
   const handleAcceptBroadcast = async () => {
     if (!selectedBroadcast || !userLocation) return;
-    if (selectedBroadcast.mechanic_can_accept === false) {
+    const blockedByAvailability = isShopOwnerMap
+      ? selectedBroadcast.shopowner_can_accept === false
+      : selectedBroadcast.mechanic_can_accept === false;
+    if (blockedByAvailability) {
       showNotification({
         type: 'warning',
         title: 'Unavailable',
@@ -921,7 +926,7 @@ export default function MapScreen() {
         fetchTokensBalance(true);
         try { eventBus.emit('walletChanged'); } catch { }
       } else {
-        if (data?.reason === 'mechanic_unavailable') {
+        if (data?.reason === 'mechanic_unavailable' || data?.reason === 'shop_unavailable') {
           showNotification({
             type: 'warning',
             title: 'Unavailable',
@@ -959,10 +964,17 @@ export default function MapScreen() {
   const hasInsufficientTokens = requiredTokensPreview !== null && tokensBalance !== null && tokensBalance < requiredTokensPreview;
   const selectedBroadcastCoordinate = selectedBroadcast ? toValidCoordinate(selectedBroadcast.latitude, selectedBroadcast.longitude) : null;
   const isAwaitingClientSelection = isBroadcastPendingClientSelection(selectedBroadcast);
-  const isSelectedBroadcastBlockedByStatus = selectedBroadcast?.mechanic_can_accept === false;
-  const isMechanicUnavailableForBroadcasts = useMemo(
-    () => broadcasts.some((broadcast) => broadcast.mechanic_can_accept === false),
-    [broadcasts]
+  const isSelectedBroadcastBlockedByStatus = isShopOwnerMap
+    ? selectedBroadcast?.shopowner_can_accept === false
+    : selectedBroadcast?.mechanic_can_accept === false;
+  const isProviderUnavailableForBroadcasts = useMemo(
+    () =>
+      broadcasts.some((broadcast) =>
+        isShopOwnerMap
+          ? broadcast.shopowner_can_accept === false
+          : broadcast.mechanic_can_accept === false
+      ),
+    [broadcasts, isShopOwnerMap]
   );
   const activePendingBroadcastId = useMemo(() => {
     if (awaitingClientSelectionBroadcastId !== null) {
@@ -1177,7 +1189,7 @@ export default function MapScreen() {
             </View>
           ) : (
             <>
-              {isMechanicUnavailableForBroadcasts && (
+              {isProviderUnavailableForBroadcasts && (
                 <ThemedText style={{ fontSize: 12, color: '#FFB3A7', marginBottom: 10, lineHeight: 18 }}>
                   Your status is unavailable. Switch to accept bookings.
                 </ThemedText>
@@ -1188,7 +1200,9 @@ export default function MapScreen() {
                 </ThemedText>
               )}
               {filteredBroadcasts.map((broadcast) => {
-                const lockedOutByStatus = isMechanicUnavailableForBroadcasts || broadcast.mechanic_can_accept === false;
+                const lockedOutByStatus =
+                  isProviderUnavailableForBroadcasts ||
+                  (isShopOwnerMap ? broadcast.shopowner_can_accept === false : broadcast.mechanic_can_accept === false);
                 const lockedOut = lockedOutByStatus || (isOtherBroadcastLocked && broadcast.id !== activePendingBroadcastId);
                 const isCardAwaitingClient = isBroadcastPendingClientSelection(broadcast);
                 return (
@@ -1479,10 +1493,10 @@ export default function MapScreen() {
                 style={[
                   styles.modalAcceptButton,
                   accepting && styles.modalAcceptButtonDisabled,
-                  (hasInsufficientTokens || (!isShopOwnerMap && (isAwaitingClientSelection || isSelectedBroadcastBlockedByStatus))) ? styles.modalAcceptButtonDisabled : null,
+                  (hasInsufficientTokens || (!isShopOwnerMap && isAwaitingClientSelection) || isSelectedBroadcastBlockedByStatus) ? styles.modalAcceptButtonDisabled : null,
                 ]}
                 onPress={handleAcceptBroadcast}
-                disabled={accepting || hasInsufficientTokens || (!isShopOwnerMap && (isAwaitingClientSelection || isSelectedBroadcastBlockedByStatus))}
+                disabled={accepting || hasInsufficientTokens || (!isShopOwnerMap && isAwaitingClientSelection) || isSelectedBroadcastBlockedByStatus}
               >
                 {accepting ? (
                   <>

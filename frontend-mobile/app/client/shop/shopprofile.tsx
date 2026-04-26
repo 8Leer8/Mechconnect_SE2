@@ -230,6 +230,15 @@ export default function ShopProfileScreen() {
   const handleDirectRequest = () => {
     if (!profile) return;
 
+    if (String(profile.status || '').toLowerCase() !== 'open') {
+      showNotification({
+        type: 'warning',
+        title: 'Shop unavailable',
+        message: 'This shop is closed. You can request service when the shop is open in discovery.',
+      });
+      return;
+    }
+
     const profileShopId = resolvedShopId || String(profile.id);
 
     console.log('Passing shop address to direct request:', {
@@ -359,6 +368,7 @@ export default function ShopProfileScreen() {
   }
 
   const rating = profile.average_rating;
+  const shopIsOpenForRequests = String(profile.status || '').toLowerCase() === 'open';
 
   return (
     <ThemedView style={styles.container}>
@@ -447,14 +457,27 @@ export default function ShopProfileScreen() {
 
           {/* Direct Request Button */}
           {showDirectRequest && (
-            <TouchableOpacity
-              style={styles.directRequestBtn}
-              activeOpacity={0.7}
-              onPress={handleDirectRequest}
-            >
-              <FontAwesome name="paper-plane" size={16} color="#fff" />
-              <ThemedText style={styles.directRequestText}>Request Service from Shop</ThemedText>
-            </TouchableOpacity>
+            <>
+              <TouchableOpacity
+                style={[
+                  styles.directRequestBtn,
+                  !shopIsOpenForRequests && { opacity: 0.5, backgroundColor: '#3A3C3E' },
+                ]}
+                activeOpacity={shopIsOpenForRequests ? 0.7 : 1}
+                onPress={handleDirectRequest}
+                disabled={!shopIsOpenForRequests}
+              >
+                <FontAwesome name="paper-plane" size={16} color="#fff" />
+                <ThemedText style={styles.directRequestText}>
+                  {shopIsOpenForRequests ? 'Request Service from Shop' : 'Shop closed — unavailable'}
+                </ThemedText>
+              </TouchableOpacity>
+              {!shopIsOpenForRequests && (
+                <ThemedText style={{ fontSize: 12, color: '#8E8E93', textAlign: 'center', marginTop: 8, paddingHorizontal: 8 }}>
+                  This shop is hidden or closed. Open discovery availability to request service.
+                </ThemedText>
+              )}
+            </>
           )}
 
           <TouchableOpacity

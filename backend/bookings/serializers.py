@@ -414,6 +414,8 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
     my_offer_status = serializers.SerializerMethodField()
     mechanic_can_accept = serializers.SerializerMethodField()
     mechanic_accept_block_reason = serializers.SerializerMethodField()
+    shopowner_can_accept = serializers.SerializerMethodField()
+    shopowner_accept_block_reason = serializers.SerializerMethodField()
     search_radius_km = serializers.FloatField(read_only=True)
     radius_km = serializers.SerializerMethodField()
     latitude = serializers.FloatField()
@@ -430,7 +432,9 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
             'services', 'add_ons', 'search_radius_km', 'radius_km',
             'created_at', 'expires_at', 'accepted_at',
             'status', 'concern_picture', 'required_tokens',
-            'my_offer_id', 'my_offer_status', 'mechanic_can_accept', 'mechanic_accept_block_reason',
+            'my_offer_id', 'my_offer_status',
+            'mechanic_can_accept', 'mechanic_accept_block_reason',
+            'shopowner_can_accept', 'shopowner_accept_block_reason',
         ]
     
     def get_concern_picture(self, obj):
@@ -536,6 +540,38 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
             return None
         if mechanic.status != mechanic.WorkStatus.AVAILABLE:
             return 'mechanic_unavailable'
+        return None
+
+    def _get_owned_shop_for_session(self):
+        request = self.context.get('request')
+        if not request:
+            return None
+        account_id = getattr(request, 'session', {}).get('account_id') if hasattr(request, 'session') else None
+        if not account_id:
+            return None
+        try:
+            account = Account.objects.select_related('shopowner').get(id=account_id)
+        except Account.DoesNotExist:
+            return None
+        if not hasattr(account, 'shopowner'):
+            return None
+        try:
+            return account.shopowner.shop
+        except Exception:
+            return None
+
+    def get_shopowner_can_accept(self, obj):
+        shop = self._get_owned_shop_for_session()
+        if shop is None:
+            return True
+        return shop.status == Shop.Status.OPEN
+
+    def get_shopowner_accept_block_reason(self, obj):
+        shop = self._get_owned_shop_for_session()
+        if shop is None:
+            return None
+        if shop.status != Shop.Status.OPEN:
+            return 'shop_unavailable'
         return None
 
 

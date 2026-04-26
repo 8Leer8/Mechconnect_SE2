@@ -614,6 +614,15 @@ def create_shop_direct_request(request):
         except Service.DoesNotExist:
             return Response({'error': 'Service not found'}, status=status.HTTP_404_NOT_FOUND)
 
+        if shop.status != Shop.Status.OPEN:
+            return Response(
+                {
+                    'error': 'Shop is unavailable for direct requests. The shop is hidden from discovery.',
+                    'reason': 'shop_unavailable',
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
         provider = shop.shop_owner.account
         if provider_id and str(provider.id) != str(provider_id):
             return Response({'error': 'Provider does not match selected shop'}, status=status.HTTP_400_BAD_REQUEST)
