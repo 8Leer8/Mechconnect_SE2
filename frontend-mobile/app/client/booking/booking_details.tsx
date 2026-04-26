@@ -43,6 +43,17 @@ interface BookingDetail {
     id: number;
     type: string;
     created_at: string;
+    assigned_mechanics?: Array<{
+      id: number;
+      role: 'lead' | 'assistant' | string;
+      mechanic: {
+        id: number;
+        firstname?: string;
+        lastname?: string;
+        username?: string;
+      };
+      assigned_at?: string;
+    }>;
   };
   provider?: {
     id: number;
@@ -1788,6 +1799,72 @@ export default function ClientBookingDetailScreen() {
             </View>
           </TouchableOpacity>
         )}
+
+        {/* Assigned Team (Shop bookings) */}
+        {booking.shop && Array.isArray(booking.request?.assigned_mechanics) && booking.request.assigned_mechanics.length > 0 ? (
+          (() => {
+            const assignedTeam = booking.request.assigned_mechanics || [];
+            const leadCount = assignedTeam.filter((m) => String(m.role).toLowerCase() === 'lead').length;
+            const assistCount = assignedTeam.filter((m) => String(m.role).toLowerCase() === 'assistant').length;
+            const displayName = (m: any) => {
+              const first = String(m?.mechanic?.firstname || '').trim();
+              const last = String(m?.mechanic?.lastname || '').trim();
+              const full = `${first} ${last}`.trim();
+              return full || String(m?.mechanic?.username || 'Mechanic');
+            };
+            const roleLabel = (role: any) => {
+              const r = String(role || '').toLowerCase();
+              if (r === 'lead') return 'Lead Mechanic';
+              if (r === 'assistant') return 'Assisting Mechanic';
+              return String(role || 'Assigned');
+            };
+            const roleBg = (role: any) => (String(role || '').toLowerCase() === 'lead' ? '#FF950030' : '#34C75930');
+            return (
+              <View style={styles.sectionCard}>
+                <View style={styles.sectionHeader}>
+                  <View style={[styles.sectionIcon, { backgroundColor: '#34C75915' }]}>
+                    <FontAwesome name="users" size={16} color="#34C759" />
+                  </View>
+                  <ThemedText style={styles.sectionTitle}>Assigned Team</ThemedText>
+                  <View style={{ flexDirection: 'row', gap: 6, marginLeft: 'auto' }}>
+                    {leadCount > 0 ? (
+                      <View style={{ backgroundColor: '#FF950030', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 }}>
+                        <ThemedText style={{ fontSize: 11, fontWeight: '800', color: '#fff' }}>Lead {leadCount}</ThemedText>
+                      </View>
+                    ) : null}
+                    {assistCount > 0 ? (
+                      <View style={{ backgroundColor: '#34C75930', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 }}>
+                        <ThemedText style={{ fontSize: 11, fontWeight: '800', color: '#fff' }}>Assist {assistCount}</ThemedText>
+                      </View>
+                    ) : null}
+                  </View>
+                </View>
+                <View style={{ gap: 8, marginTop: 8 }}>
+                  {assignedTeam.map((m) => (
+                    <View
+                      key={m.id}
+                      style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
+                    >
+                      <ThemedText style={{ color: '#ddd' }}>{displayName(m)}</ThemedText>
+                      <View
+                        style={{
+                          backgroundColor: roleBg(m.role),
+                          paddingHorizontal: 8,
+                          paddingVertical: 3,
+                          borderRadius: 8,
+                        }}
+                      >
+                        <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#fff' }}>
+                          {roleLabel(m.role)}
+                        </ThemedText>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            );
+          })()
+        ) : null}
 
         {/* Location Section */}
         {/* removed raw JSON debug block */}
