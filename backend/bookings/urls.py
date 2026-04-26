@@ -49,6 +49,7 @@ urlpatterns = [
     # Client booking endpoints
     path('bookings/', views.list_client_bookings, name='list-client-bookings'),
     path('bookings/<int:booking_id>/', views.get_booking_detail, name='get-booking-detail'),
+    path('bookings/<int:booking_id>/cancel/', views.client_cancel_booking, name='client-cancel-booking'),
     path('bookings/<int:booking_id>/mechanic-review/', views.submit_mechanic_review, name='submit-mechanic-review'),
     path('bookings/<int:booking_id>/disputes/create/', views.create_dispute, name='create-dispute'),
     path('bookings/<int:booking_id>/disputes/resolve/', views.resolve_dispute, name='resolve-dispute'),

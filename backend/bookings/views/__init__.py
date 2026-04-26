@@ -41,6 +41,7 @@ __all__ = [
     # Client booking views
     'list_client_bookings',
     'get_booking_detail',
+    'client_cancel_booking',
     
     # Direct request views (client-side)
     'get_mechanics',

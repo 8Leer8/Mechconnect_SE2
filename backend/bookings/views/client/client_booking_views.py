@@ -38,6 +38,7 @@ def _notification_title_for_action(action):
         'booking.dispute_refund_verified': 'Refund Verified',
         'booking.dispute_resolved_voucher': 'Dispute Resolved',
         'booking.dispute_refund_details_submitted': 'Refund Details Submitted',
+        'client_cancelled': 'Booking Cancelled',
         'cancelled_no_show': 'Booking Cancelled',
     }
 
@@ -51,7 +52,7 @@ def _notification_title_for_action(action):
     return 'Notification'
 
 
-def _broadcast_booking_action(booking, action, message):
+def _broadcast_booking_action(booking, action, message, payload_extra=None):
     """Broadcast booking websocket action to all involved account groups."""
     try:
         from channels.layers import get_channel_layer
@@ -77,6 +78,12 @@ def _broadcast_booking_action(booking, action, message):
                 participant_ids.add(booking.request.shop.shop_owner.account_id)
         except Exception:
             pass
+        try:
+            for assignment in RequestAssignment.objects.filter(request=booking.request).select_related('mechanic'):
+                if assignment.mechanic_id:
+                    participant_ids.add(assignment.mechanic_id)
+        except Exception:
+            pass
 
         payload = {
             'type': 'booking_update',
@@ -86,6 +93,8 @@ def _broadcast_booking_action(booking, action, message):
             'dispute_status': booking.dispute_status,
             'message': message,
         }
+        if payload_extra:
+            payload.update(payload_extra)
 
         notification_title = _notification_title_for_action(action)
 
@@ -97,6 +106,7 @@ def _broadcast_booking_action(booking, action, message):
                     notification_title,
                     message,
                     action=action,
+                    payload_extra=payload_extra,
                 )
             except Exception:
                 logger.exception('Failed to upsert notification for account %s', account_id)
@@ -579,6 +589,97 @@ def get_booking_detail(request, booking_id):
         return Response({
             'error': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def client_cancel_booking(request, booking_id):
+    """Let a client cancel only while the booking is still accepted/booked."""
+    account_id = request.session.get('account_id')
+    if not account_id:
+        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    reason = str(request.data.get('reason', '')).strip()
+    if not reason:
+        return Response({'error': 'Please provide a cancellation reason.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        account = Account.objects.get(id=account_id)
+        if not hasattr(account, 'client'):
+            return Response({'error': 'Only clients can cancel their booking'}, status=status.HTTP_403_FORBIDDEN)
+
+        with transaction.atomic():
+            booking = Booking.objects.select_for_update().select_related(
+                'request',
+                'request__client',
+                'request__client__account',
+            ).get(id=booking_id, request__client=account.client)
+
+            if booking.status == Booking.Status.CANCELLED:
+                return Response({'error': 'Booking is already cancelled.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            booking_status = str(booking.status or '').strip().lower()
+            cannot_cancel_statuses = [
+                Booking.Status.ON_THE_WAY,
+                Booking.Status.AT_LOCATION,
+                Booking.Status.DIAGNOSING,
+                Booking.Status.ACTIVE,
+                Booking.Status.PAUSED,
+                Booking.Status.FINISHED,
+                Booking.Status.PENDING_PAYMENT,
+                Booking.Status.COMPLETED,
+                Booking.Status.CANCELLED,
+                Booking.Status.REWORKED,
+                Booking.Status.DISPUTED,
+            ]
+            if booking_status in cannot_cancel_statuses:
+                return Response(
+                    {'error': 'You can only cancel while the booking is booked and the mechanic is not on the way.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            booking.status = Booking.Status.CANCELLED
+            booking.save(update_fields=['status', 'updated_at'])
+
+            CancelBooking.objects.update_or_create(
+                booking=booking,
+                defaults={
+                    'cancelled_by': account,
+                    'reason': reason,
+                },
+            )
+
+        client_name = f"{account.firstname} {account.lastname}".strip() or account.username or 'Client'
+        message = f"{client_name} cancelled the booking. Reason: {reason}"
+        _broadcast_booking_action(
+            booking,
+            'client_cancelled',
+            message,
+            payload_extra={
+                'cancellation_reason': reason,
+                'cancelled_by_name': client_name,
+            },
+        )
+
+        booking.refresh_from_db()
+        return Response(
+            {
+                'message': 'Booking cancelled.',
+                'booking': _serialize_single_booking(booking, viewer_account=account),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    except Account.DoesNotExist:
+        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Booking.DoesNotExist:
+        return Response(
+            {'error': 'Booking not found or you do not have permission to cancel it'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    except Exception as e:
+        logger.exception('Client cancel booking failed for booking %s', booking_id)
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['POST'])

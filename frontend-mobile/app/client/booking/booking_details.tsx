@@ -258,6 +258,10 @@ export default function ClientBookingDetailScreen() {
   const [ratingSubmitting, setRatingSubmitting] = useState(false);
   const [ratingPromptDismissed, setRatingPromptDismissed] = useState(false);
   const [showActionMenu, setShowActionMenu] = useState(false);
+  const [showCancelBookingModal, setShowCancelBookingModal] = useState(false);
+  const [showCancelSuccessModal, setShowCancelSuccessModal] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelSubmitting, setCancelSubmitting] = useState(false);
   const [showDisputeModal, setShowDisputeModal] = useState(false);
   const [reportingNoShow, setReportingNoShow] = useState(false);
   const [showReportNoShowModal, setShowReportNoShowModal] = useState(false);
@@ -1712,6 +1716,63 @@ export default function ClientBookingDetailScreen() {
   const isNoShowEligible =
     (booking.status === 'accepted' || booking.status === 'on_the_way') &&
     !reportingNoShow;
+  const bookingStatusRaw = String(booking.status || '').trim().toLowerCase();
+  const cannotCancelStatuses = [
+    'on_the_way',
+    'at_location',
+    'diagnosing',
+    'active',
+    'paused',
+    'finished',
+    'pending_payment',
+    'completed',
+    'cancelled',
+    'reworked',
+    'disputed',
+  ];
+  const canCancelBooking = !cannotCancelStatuses.includes(bookingStatusRaw);
+
+  const handleOpenCancelBooking = () => {
+    if (!canCancelBooking) {
+      Alert.alert('Cancel unavailable', 'You can only cancel while the booking is booked and the mechanic is not on the way.');
+      return;
+    }
+    setCancelReason('');
+    setShowCancelBookingModal(true);
+  };
+
+  const handleCancelBooking = async () => {
+    const reason = cancelReason.trim();
+    if (!reason) {
+      Alert.alert('Missing reason', 'Please tell us why you are cancelling.');
+      return;
+    }
+
+    try {
+      setCancelSubmitting(true);
+      const response = await fetch(`${API_URL}/bookings/bookings/${booking.id}/cancel/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error((data as any)?.error || 'Unable to cancel booking');
+      }
+
+      setShowCancelBookingModal(false);
+      setCancelReason('');
+      setBooking((data as any)?.booking || booking);
+      setShowCancelSuccessModal(true);
+      fetchBookingDetail(true);
+    } catch (err: any) {
+      Alert.alert('Cancel Error', err?.message || 'Unable to cancel booking');
+    } finally {
+      setCancelSubmitting(false);
+    }
+  };
 
   const handleOpenDisputeForm = () => {
     setShowActionMenu(false);
@@ -1978,6 +2039,122 @@ export default function ClientBookingDetailScreen() {
         onCancel={() => setShowReportNoShowModal(false)}
         onConfirm={handleConfirmReportNoShow}
       />
+
+      <Modal
+        visible={showCancelSuccessModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCancelSuccessModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 22 }}>
+            <View
+              style={{
+                backgroundColor: '#1A1C1E',
+                borderRadius: 18,
+                borderWidth: 1,
+                borderColor: '#2A2C2E',
+                padding: 20,
+              }}
+            >
+              <View
+                style={{
+                  width: 56,
+                  height: 56,
+                  borderRadius: 28,
+                  backgroundColor: '#FF3B3018',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  alignSelf: 'center',
+                  marginBottom: 14,
+                }}
+              >
+                <FontAwesome name="times-circle" size={28} color="#FF5A52" />
+              </View>
+
+              <ThemedText style={{ color: '#ECEDEE', fontSize: 18, fontWeight: '800', textAlign: 'center' }}>
+                Booking Cancelled
+              </ThemedText>
+              <ThemedText style={{ color: '#A6ABB2', fontSize: 14, lineHeight: 20, textAlign: 'center', marginTop: 8 }}>
+                Your booking has been cancelled. The provider has been notified.
+              </ThemedText>
+
+              <TouchableOpacity
+                style={[styles.sendBtn, { marginTop: 18, backgroundColor: '#FF3B30' }]}
+                onPress={() => setShowCancelSuccessModal(false)}
+                activeOpacity={0.85}
+              >
+                <ThemedText style={styles.sendBtnText}>OK</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={showCancelBookingModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          if (!cancelSubmitting) setShowCancelBookingModal(false);
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, justifyContent: 'flex-end' }}>
+            <View style={styles.modalBox}>
+              <View style={styles.modalHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <FontAwesome name="times-circle" size={18} color="#FF3B30" />
+                  <ThemedText style={styles.modalTitle}>Cancel Booking</ThemedText>
+                </View>
+                <TouchableOpacity onPress={() => setShowCancelBookingModal(false)} disabled={cancelSubmitting}>
+                  <FontAwesome name="times" size={20} color="#8E8E93" />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.modalContent}>
+                <ThemedText style={{ color: '#8E8E93', marginBottom: 8 }}>
+                  Please give a reason. This is allowed only while the booking is still booked and the mechanic is not on the way.
+                </ThemedText>
+                <TextInput
+                  style={styles.textArea}
+                  placeholder="Reason for cancellation..."
+                  placeholderTextColor="#6C6C70"
+                  multiline
+                  numberOfLines={4}
+                  value={cancelReason}
+                  onChangeText={setCancelReason}
+                  editable={!cancelSubmitting}
+                />
+
+                <View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
+                  <TouchableOpacity
+                    style={[styles.cancelBtn, { flex: 1 }]}
+                    onPress={() => setShowCancelBookingModal(false)}
+                    disabled={cancelSubmitting}
+                  >
+                    <ThemedText style={styles.cancelBtnText}>Keep Booking</ThemedText>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.sendBtn, { flex: 1, backgroundColor: '#FF3B30' }, cancelSubmitting ? { opacity: 0.7 } : null]}
+                    onPress={handleCancelBooking}
+                    disabled={cancelSubmitting}
+                  >
+                    {cancelSubmitting ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <>
+                        <FontAwesome name="times" size={14} color="#fff" />
+                        <ThemedText style={styles.sendBtnText}>Cancel Booking</ThemedText>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
 
       <Modal visible={showDisputeModal} transparent animationType="slide" onRequestClose={() => setShowDisputeModal(false)}>
         <View style={styles.modalOverlay}>
@@ -3378,6 +3555,24 @@ export default function ClientBookingDetailScreen() {
 
       {showPaymentCTA && (
         <View style={styles.actionButtonsContainer}>
+          {canCancelBooking ? (
+            <TouchableOpacity
+              style={[
+                styles.finishLargeButton,
+                {
+                  backgroundColor: '#FF3B3018',
+                  borderWidth: 1,
+                  borderColor: '#FF3B3060',
+                  marginBottom: 10,
+                },
+              ]}
+              onPress={handleOpenCancelBooking}
+              activeOpacity={0.85}
+            >
+              <FontAwesome name="times-circle" size={16} color="#FF5A52" style={{ marginRight: 8 }} />
+              <ThemedText style={[styles.actionButtonText, { color: '#FF5A52' }]}>Cancel Booking</ThemedText>
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity
             style={[
               styles.finishLargeButton,

@@ -15,8 +15,9 @@ export default function MechanicTabLayout() {
   const [mechanicGlobalModal, setMechanicGlobalModal] = React.useState<{
     visible: boolean;
     title: string;
+    body?: string;
     bookingId: number | null;
-    mode: 'accepted' | 'rejected' | 'info';
+    mode: 'accepted' | 'rejected' | 'info' | 'cancelled';
   }>({
     visible: false,
     title: 'Client has accepted your request',
@@ -53,7 +54,10 @@ export default function MechanicTabLayout() {
     const isOfferRejected =
       actionText === 'offer_rejected'
       || (lastMessage.type === 'notification_update' && actionText === 'offer_rejected');
-    if (!isBroadcastFinalize && !isOfferRejected && !isQuotationUpdate && !isMechanicAcceptedDirect) return;
+    const isClientCancelled =
+      lastMessage.type === 'booking_update' &&
+      actionText === 'client_cancelled';
+    if (!isBroadcastFinalize && !isOfferRejected && !isQuotationUpdate && !isMechanicAcceptedDirect && !isClientCancelled) return;
 
     const messageTimestamp = Number(lastMessage._timestamp || 0) || null;
     if (!messageTimestamp) return;
@@ -65,6 +69,19 @@ export default function MechanicTabLayout() {
     const bookingId = Number((lastMessage as any).booking_id ?? (lastMessage as any).bookingId ?? 0) || null;
     const safeBookingId =
       bookingId != null && Number.isFinite(bookingId) && bookingId > 0 ? bookingId : null;
+
+    if (isClientCancelled) {
+      const reason = String((lastMessage as any).cancellation_reason || '').trim();
+      lastModalBookingIdRef.current = safeBookingId;
+      setMechanicGlobalModal({
+        visible: true,
+        title: 'Client cancelled this booking',
+        body: reason ? `Reason: ${reason}` : 'The client cancelled before you started travel.',
+        bookingId,
+        mode: 'cancelled',
+      });
+      return;
+    }
 
     if (isMechanicAcceptedDirect) {
       lastModalBookingIdRef.current = safeBookingId;
@@ -123,21 +140,28 @@ export default function MechanicTabLayout() {
   }, [router]);
 
   const modalBodyCopy =
-    mechanicGlobalModal.mode === 'rejected'
+    mechanicGlobalModal.body ||
+    (mechanicGlobalModal.mode === 'cancelled'
+      ? 'The booking was cancelled before travel started.'
+      : mechanicGlobalModal.mode === 'rejected'
       ? 'You can return to your map or bookings when you are ready.'
       : mechanicGlobalModal.mode === 'info'
         ? 'Check your bookings for the latest on this quotation.'
-        : 'Open the booking to view details and next steps.';
+        : 'Open the booking to view details and next steps.');
 
   const modalFeatherIcon =
-    mechanicGlobalModal.mode === 'rejected'
+    mechanicGlobalModal.mode === 'cancelled'
+      ? 'x-circle'
+      : mechanicGlobalModal.mode === 'rejected'
       ? 'alert-circle'
       : mechanicGlobalModal.mode === 'info'
         ? 'info'
         : 'check-circle';
 
   const modalIconColor =
-    mechanicGlobalModal.mode === 'rejected'
+    mechanicGlobalModal.mode === 'cancelled'
+      ? '#FF3B30'
+      : mechanicGlobalModal.mode === 'rejected'
       ? '#FF9500'
       : mechanicGlobalModal.mode === 'info'
         ? '#0A84FF'
@@ -248,7 +272,7 @@ export default function MechanicTabLayout() {
                 marginBottom: 12,
               }}
             >
-              <Feather name={modalFeatherIcon as 'check-circle' | 'alert-circle' | 'info'} size={26} color={modalIconColor} />
+              <Feather name={modalFeatherIcon as 'check-circle' | 'alert-circle' | 'info' | 'x-circle'} size={26} color={modalIconColor} />
             </View>
 
             <ThemedText
