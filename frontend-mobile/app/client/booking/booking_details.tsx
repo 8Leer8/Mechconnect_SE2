@@ -127,7 +127,17 @@ interface BookingDetail {
     images?: string[];
     requested_by?: { id: number; name: string } | null;
     created_at?: string | null;
+    updated_at?: string | null;
   } | null;
+  backjob_history?: Array<{
+    id: number;
+    status: string;
+    reason?: string | null;
+    images?: string[];
+    requested_by?: { id: number; name: string } | null;
+    created_at?: string | null;
+    updated_at?: string | null;
+  }>;
   payment_summary?: {
     payment_status?: string;
     total_paid?: number;
@@ -286,6 +296,10 @@ export default function ClientBookingDetailScreen() {
   const isBackjobBookingData = (candidate: any) => {
     if (!candidate) return false;
     const statusRaw = String(candidate?.status || '').toLowerCase();
+    if (statusRaw === 'completed') return false;
+
+    const backjobStatusRaw = String(candidate?.backjob?.status || '').toLowerCase();
+    if (backjobStatusRaw === 'completed') return false;
     return Boolean(
       bookingHasBackjob(candidate) ||
       candidate?.has_backjob ||
@@ -807,12 +821,21 @@ export default function ClientBookingDetailScreen() {
 
   const getBackjobPendingSnapshotTotal = () => {
     const items = Array.isArray(pendingQuoteSnapshot?.items) ? pendingQuoteSnapshot.items : [];
+    const currentBackjobId = Number((booking as any)?.backjob?.id || 0);
+    const backjobCreatedAtMs = Number(new Date(String((booking as any)?.backjob?.created_at || '')).getTime());
+    const hasBackjobCreatedAt = Number.isFinite(backjobCreatedAtMs) && backjobCreatedAtMs > 0;
+    const isCurrentBackjobLine = (line: any) => {
+      const lineBackjobId = Number(line?.backjob_id || 0);
+      if (currentBackjobId > 0 && lineBackjobId > 0) return lineBackjobId === currentBackjobId;
+      const lineMs = Number(new Date(String(line?.created_at || '')).getTime());
+      return Boolean(line?.is_backjob_new_line) && hasBackjobCreatedAt && Number.isFinite(lineMs) && lineMs >= backjobCreatedAtMs;
+    };
     return items.reduce((sum: number, it: any) => {
       const statusRaw = String(it?.status || it?.quotation_status || it?.state || '').toLowerCase();
       if (statusRaw === 'rejected') return sum;
       const changeLabel = getExplicitChangeLabel(it);
       const shouldCount =
-        Boolean(it?.is_backjob_new_line) ||
+        isCurrentBackjobLine(it) ||
         changeLabel === 'Added';
       if (!shouldCount) return sum;
 
@@ -846,6 +869,7 @@ export default function ClientBookingDetailScreen() {
       if (rowStatus === 'rejected') removedRows.push(row);
     });
 
+    const currentBackjobId = Number((booking as any)?.backjob?.id || 0);
     const backjobCreatedAtMs = Number(new Date(String((booking as any)?.backjob?.created_at || '')).getTime());
     const hasBackjobCreatedAt = Number.isFinite(backjobCreatedAtMs) && backjobCreatedAtMs > 0;
     const isLineCreatedAfterBackjob = (line: any) => {
@@ -853,9 +877,13 @@ export default function ClientBookingDetailScreen() {
       if (!Number.isFinite(lineMs) || lineMs <= 0 || !hasBackjobCreatedAt) return false;
       return lineMs >= backjobCreatedAtMs;
     };
+    const isCurrentBackjobLine = (line: any) => {
+      const lineBackjobId = Number(line?.backjob_id || 0);
+      if (currentBackjobId > 0 && lineBackjobId > 0) return lineBackjobId === currentBackjobId;
+      return Boolean(line?.is_backjob_new_line) && isLineCreatedAfterBackjob(line);
+    };
     const shouldIncludeItemInBackjobQuoteAmountTotals = (line: any) => {
-      if (Boolean(line?.is_backjob_new_line)) return true;
-      if (isLineCreatedAfterBackjob(line)) return true;
+      if (isCurrentBackjobLine(line)) return true;
       const explicitLbl = getExplicitChangeLabel(line);
       const inferredLbl = inferChangeLabel(line, acceptedByAssoc, acceptedRows, removedRows);
       const chatLbl = getQuoteSnapshotKeys(line).map((k) => chatChangeLabelByKey[k]).find(Boolean) || null;
@@ -878,7 +906,7 @@ export default function ClientBookingDetailScreen() {
         bookingInBackjobPaymentPhase(booking) &&
         rowStatus === 'pending' &&
         !changeLabel &&
-        (Boolean(it?.is_backjob_new_line) || isLineCreatedAfterBackjob(it))
+        isCurrentBackjobLine(it)
       ) {
         changeLabel = 'Added';
       }
@@ -915,6 +943,7 @@ export default function ClientBookingDetailScreen() {
       if (rowStatus === 'rejected') removedRows.push(row);
     });
 
+    const currentBackjobId = Number((booking as any)?.backjob?.id || 0);
     const backjobCreatedAtMs = Number(new Date(String((booking as any)?.backjob?.created_at || '')).getTime());
     const hasBackjobCreatedAt = Number.isFinite(backjobCreatedAtMs) && backjobCreatedAtMs > 0;
     const isLineCreatedAfterBackjob = (line: any) => {
@@ -922,9 +951,13 @@ export default function ClientBookingDetailScreen() {
       if (!Number.isFinite(lineMs) || lineMs <= 0 || !hasBackjobCreatedAt) return false;
       return lineMs >= backjobCreatedAtMs;
     };
+    const isCurrentBackjobLine = (line: any) => {
+      const lineBackjobId = Number(line?.backjob_id || 0);
+      if (currentBackjobId > 0 && lineBackjobId > 0) return lineBackjobId === currentBackjobId;
+      return Boolean(line?.is_backjob_new_line) && isLineCreatedAfterBackjob(line);
+    };
     const shouldIncludeItemInBackjobQuoteAmountTotals = (line: any) => {
-      if (Boolean(line?.is_backjob_new_line)) return true;
-      if (isLineCreatedAfterBackjob(line)) return true;
+      if (isCurrentBackjobLine(line)) return true;
       const explicitLbl = getExplicitChangeLabel(line);
       const inferredLbl = inferChangeLabel(line, acceptedByAssoc, acceptedRows, removedRows);
       const chatLbl = getQuoteSnapshotKeys(line).map((k) => chatChangeLabelByKey[k]).find(Boolean) || null;
@@ -947,7 +980,7 @@ export default function ClientBookingDetailScreen() {
         bookingInBackjobPaymentPhase(booking) &&
         rowStatus === 'accepted' &&
         !changeLabel &&
-        (Boolean(it?.is_backjob_new_line) || isLineCreatedAfterBackjob(it))
+        isCurrentBackjobLine(it)
       ) {
         changeLabel = 'Added';
       }
@@ -1357,7 +1390,11 @@ export default function ClientBookingDetailScreen() {
   };
 
   const openChatWithMechanic = () => {
-    if (!booking || !canOpenBookingChat(booking)) return;
+    if (!booking) return;
+    if (!canOpenBookingChat(booking)) {
+      Alert.alert('Backjob satisfied', 'This backjob is already done, so the booking chat is closed again.');
+      return;
+    }
     router.push({ pathname: '/chat/booking_chat', params: { bookingId: String(booking.id) } });
     setBackjobModalVisible(false);
   };
@@ -1462,6 +1499,10 @@ export default function ClientBookingDetailScreen() {
   const summaryPaymentStatus = String(paymentSummary.payment_status || 'unpaid').toLowerCase();
   const isAcceptedBackjob = bookingHasAcceptedBackjob(booking);
   const backjobPaymentPhase = bookingInBackjobPaymentPhase(booking);
+  const backjobTimelineRows = Array.isArray(booking.backjob_history)
+    ? booking.backjob_history
+    : (booking.backjob ? [booking.backjob] : []);
+  const currentBackjobId = Number((booking as any)?.backjob?.id || 0);
   const backjobCreatedAtMs = Number(new Date(String((booking as any)?.backjob?.created_at || '')).getTime());
   const hasBackjobCreatedAt = Number.isFinite(backjobCreatedAtMs) && backjobCreatedAtMs > 0;
   const isLineCreatedAfterBackjob = (it: any) => {
@@ -1469,8 +1510,13 @@ export default function ClientBookingDetailScreen() {
     if (!Number.isFinite(lineMs) || lineMs <= 0 || !hasBackjobCreatedAt) return false;
     return lineMs >= backjobCreatedAtMs;
   };
+  const isCurrentBackjobLine = (it: any) => {
+    const lineBackjobId = Number(it?.backjob_id || 0);
+    if (currentBackjobId > 0 && lineBackjobId > 0) return lineBackjobId === currentBackjobId;
+    return Boolean(it?.is_backjob_new_line) && isLineCreatedAfterBackjob(it);
+  };
   const isBackjobChargeableQuotationLine = (it: any) => {
-    if (Boolean(it?.is_backjob_new_line)) return true;
+    if (isCurrentBackjobLine(it)) return true;
     const acceptedByAssoc: Record<string, any> = {};
     const acceptedRows: any[] = [];
     const removedRows: any[] = [];
@@ -2091,7 +2137,7 @@ export default function ClientBookingDetailScreen() {
         }
       >
         {/* Backjob Banner */}
-        {booking.has_backjob && booking.backjob && (
+        {booking.status !== 'completed' && bookingHasBackjob(booking) && booking.backjob && (
           <View style={styles.backjobBanner}>
             <FontAwesome name="wrench" size={14} color="#fff" />
             <ThemedText style={styles.backjobText}>
@@ -2572,7 +2618,7 @@ export default function ClientBookingDetailScreen() {
                       const desc = it?.description || it?.name || (it.service && `Service #${it.service}`) || 'Item';
                       const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
                       const qty = Number(it?.quantity ?? 1) || 1;
-                      const isChargeableBackjobLine = Boolean(it?.is_backjob_new_line) || isLineCreatedAfterBackjob(it) || rawChangeLabel === 'Added';
+                      const isChargeableBackjobLine = isCurrentBackjobLine(it) || rawChangeLabel === 'Added';
                       const shouldGhostQuotationLine = isAcceptedBackjob && !isChargeableBackjobLine;
                       const isRemoved = changeLabel === 'Removed';
                       const lineKind = String(it?.line_kind || '').toLowerCase();
@@ -2768,6 +2814,38 @@ export default function ClientBookingDetailScreen() {
                 <View style={styles.timelineLine} />
               </>
             )}
+
+            {backjobTimelineRows.map((item, index) => {
+              const isDone = String(item?.status || '').toLowerCase() === 'completed';
+              return (
+                <React.Fragment key={`backjob-${item?.id || index}`}>
+                  {item?.created_at ? (
+                    <>
+                      <View style={styles.timelineItem}>
+                        <View style={[styles.timelineDot, { backgroundColor: '#FF8C00' }]} />
+                        <View style={styles.timelineContent}>
+                          <ThemedText style={styles.timelineLabel}>Backjob {index + 1} Started</ThemedText>
+                          <ThemedText style={styles.timelineDate}>{formatDate(item.created_at)}</ThemedText>
+                        </View>
+                      </View>
+                      <View style={styles.timelineLine} />
+                    </>
+                  ) : null}
+                  {isDone && item?.updated_at ? (
+                    <>
+                      <View style={styles.timelineItem}>
+                        <View style={[styles.timelineDot, { backgroundColor: '#34C759' }]} />
+                        <View style={styles.timelineContent}>
+                          <ThemedText style={styles.timelineLabel}>Backjob {index + 1} Ended</ThemedText>
+                          <ThemedText style={styles.timelineDate}>{formatDate(item.updated_at)}</ThemedText>
+                        </View>
+                      </View>
+                      <View style={styles.timelineLine} />
+                    </>
+                  ) : null}
+                </React.Fragment>
+              );
+            })}
 
             {booking.completed_at && (
               <View style={styles.timelineItem}>
@@ -2982,20 +3060,6 @@ export default function ClientBookingDetailScreen() {
           </View>
         )}
 
-        {/* Request Backjob button (placed under Timeline) */}
-        {booking.status === 'completed' && String(booking?.backjob?.status || '').toLowerCase() !== 'accepted' && (
-          <View style={{ paddingHorizontal: 16, marginTop: 12 }}>
-            <TouchableOpacity
-              style={[styles.navigateButton, { flexDirection: 'row', justifyContent: 'center' }]}
-              onPress={() => setBackjobModalVisible(true)}
-              activeOpacity={0.85}
-            >
-              <FontAwesome name="wrench" size={16} color="#FF8C00" />
-              <ThemedText style={{ color: '#FF8C00', fontWeight: '700', marginLeft: 10 }}>Request Backjob</ThemedText>
-            </TouchableOpacity>
-          </View>
-        )}
-
         {/* Completion Details */}
         {booking.status === 'completed' && booking.completion_details && (
           <View style={styles.sectionCard}>
@@ -3058,6 +3122,20 @@ export default function ClientBookingDetailScreen() {
               ) : null}
               
             </View>
+          </View>
+        )}
+
+        {/* Request Backjob button */}
+        {booking.status === 'completed' && (
+          <View style={{ paddingHorizontal: 16, marginTop: 12 }}>
+            <TouchableOpacity
+              style={[styles.navigateButton, { flexDirection: 'row', justifyContent: 'center' }]}
+              onPress={() => setBackjobModalVisible(true)}
+              activeOpacity={0.85}
+            >
+              <FontAwesome name="wrench" size={16} color="#FF8C00" />
+              <ThemedText style={{ color: '#FF8C00', fontWeight: '700', marginLeft: 10 }}>Request Backjob</ThemedText>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -3174,6 +3252,7 @@ export default function ClientBookingDetailScreen() {
                       onPress={async () => {
                         if (backjobSubmitting) return;
                         setBackjobSubmitting(true);
+                        let requestSent = false;
                         // submit backjob then open chat
                         try {
                           const form = new FormData();
@@ -3190,18 +3269,23 @@ export default function ClientBookingDetailScreen() {
                             const token = await AsyncStorage.getItem('auth_token');
                             if (token) headers['Authorization'] = `Bearer ${token}`;
                           } catch (e) {}
-                          await fetch(`${API_URL}/chat/booking/${booking?.id}/backjob/`, {
+                          const response = await fetch(`${API_URL}/chat/booking/${booking?.id}/backjob/`, {
                             method: 'POST',
                             headers,
                             credentials: 'include',
                             body: form as any,
                           });
+                          requestSent = response.ok;
                         } catch (e) {
                           // ignore UI-only errors for now
                         } finally {
                           setBackjobSubmitting(false);
                           setBackjobModalVisible(false);
-                          openChatWithMechanic();
+                          if (requestSent && booking?.id) {
+                            router.push({ pathname: '/chat/booking_chat', params: { bookingId: String(booking.id) } });
+                          } else {
+                            Alert.alert('Error', 'Unable to request a backjob right now.');
+                          }
                         }
                       }}
                     >

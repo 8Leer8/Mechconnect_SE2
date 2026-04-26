@@ -433,7 +433,23 @@ class Quotation(models.Model):
         parts_total = 0
         qs = self.items.exclude(status=self.Status.REJECTED)
         if self.is_backjob:
-            qs = qs.filter(is_backjob_line=True)
+            try:
+                from .backjob_utils import get_booking_backjob
+                current_backjob = get_booking_backjob(self.booking)
+            except Exception:
+                current_backjob = None
+
+            if current_backjob is None:
+                qs = qs.none()
+            else:
+                qs = qs.filter(
+                    models.Q(backjob=current_backjob)
+                    | models.Q(
+                        backjob__isnull=True,
+                        is_backjob_line=True,
+                        created_at__gte=current_backjob.created_at,
+                    )
+                )
         for item in qs:
             line_total = item.line_total
             if item.line_kind == QuotationItem.LineKind.SERVICE:

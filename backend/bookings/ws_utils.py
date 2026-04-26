@@ -4,6 +4,7 @@ import logging
 
 from notification.upsert import upsert_notification
 from users.models import Account
+from .backjob_utils import get_booking_backjob
 
 
 logger = logging.getLogger(__name__)
@@ -354,6 +355,24 @@ def post_quotation_chat_message(account, booking, quotation, action='created', r
 
     items = []
     try:
+        current_backjob = get_booking_backjob(booking) if getattr(quotation, "is_backjob", False) else None
+        current_backjob_created_at = getattr(current_backjob, "created_at", None)
+
+        def is_current_backjob_item(item):
+            if not getattr(quotation, "is_backjob", False):
+                return True
+            if current_backjob is None:
+                return False
+            if getattr(item, "backjob_id", None):
+                return item.backjob_id == current_backjob.id
+            item_created_at = getattr(item, "created_at", None)
+            return bool(
+                getattr(item, "is_backjob_line", False)
+                and current_backjob_created_at is not None
+                and item_created_at is not None
+                and item_created_at >= current_backjob_created_at
+            )
+
         # For pending amendment requests (action=updated), show the staged delta rows.
         # For resolved actions (accepted/rejected), always show the current quotation rows
         # so old removed deltas do not leak into future diff baselines.
@@ -383,11 +402,14 @@ def post_quotation_chat_message(account, booking, quotation, action='created', r
                     "previous_quantity": original.get("quantity"),
                     "previous_unit_price": original.get("unit_price"),
                     "is_backjob_new_line": bool(getattr(quotation, "is_backjob", False) and change.action_type == "added"),
+                    "backjob_id": current_backjob.id if getattr(quotation, "is_backjob", False) and current_backjob is not None and change.action_type == "added" else original.get("backjob_id"),
                 }
                 row["line_total"] = float(row["quantity"]) * float(row["unit_price"])
                 items.append(row)
         else:
             for it in quotation.items.all():
+                if not is_current_backjob_item(it):
+                    continue
                 items.append({
                     'id': it.id,
                     'line_kind': getattr(it, 'line_kind', 'item'),
@@ -404,6 +426,7 @@ def post_quotation_chat_message(account, booking, quotation, action='created', r
                     'previous_quantity': getattr(it, 'previous_quantity', None),
                     'previous_unit_price': float(it.previous_unit_price) if getattr(it, 'previous_unit_price', None) is not None else None,
                     'is_backjob_new_line': bool(getattr(it, 'is_backjob_line', False)),
+                    'backjob_id': getattr(it, 'backjob_id', None),
                     'created_at': it.created_at.isoformat() if getattr(it, 'created_at', None) else None,
                     'updated_at': it.updated_at.isoformat() if getattr(it, 'updated_at', None) else None,
                     'purchase_receipt_image': it.purchase_receipt_image.url if getattr(it, 'purchase_receipt_image', None) else None,
@@ -437,6 +460,7 @@ def post_quotation_chat_message(account, booking, quotation, action='created', r
         'mechanic_name': f"{getattr(account, 'firstname', '')} {getattr(account, 'lastname', '')}".strip(),
         'notes': getattr(quotation, 'notes', ''),
         'is_backjob': bool(getattr(quotation, 'is_backjob', False)),
+        'backjob_id': current_backjob.id if current_backjob is not None else None,
         'total_amount': float(quotation.total_amount) if quotation else None,
         'items': items,
         'created_at': quotation.created_at.isoformat() if quotation and getattr(quotation, 'created_at', None) else None,

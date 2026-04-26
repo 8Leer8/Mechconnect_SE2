@@ -50,6 +50,7 @@ type QuotationItem = {
   created_at?: string;
   updated_at?: string;
   is_backjob_new_line?: boolean;
+  backjob_id?: number | null;
   status?: string;
   change_type?: 'added' | 'edited' | 'removed' | null;
   line_kind: 'service' | 'item';
@@ -109,6 +110,7 @@ export default function QuotationEdit() {
   const [bookedServices, setBookedServices] = useState<BookedServiceInfo[]>([]);
   const [initialSaveSignature, setInitialSaveSignature] = useState<string | null>(null);
   const [isAcceptedBackjob, setIsAcceptedBackjob] = useState(false);
+  const [currentBackjob, setCurrentBackjob] = useState<any | null>(null);
   const [isBookingCompleted, setIsBookingCompleted] = useState(false);
   const [bookingContextLoaded, setBookingContextLoaded] = useState(false);
   const isReadOnly = isBookingCompleted;
@@ -257,6 +259,7 @@ export default function QuotationEdit() {
     data: any,
     acceptedBackjob: boolean,
     extracted: BookedServiceInfo[],
+    activeBackjob?: any,
   ): { mappedItems: QuotationItem[]; serverHasQuotation: boolean } => {
     const safe = data ?? {};
     const savedQuotationId = Number(safe.id);
@@ -276,6 +279,7 @@ export default function QuotationEdit() {
         created_at: it.created_at,
         updated_at: it.updated_at,
         is_backjob_new_line: Boolean(it.is_backjob_new_line),
+        backjob_id: it.backjob_id ?? null,
         status: it.status,
         change_type: null,
         description: it.description || '',
@@ -289,10 +293,19 @@ export default function QuotationEdit() {
       };
     });
 
+    const currentBackjobId = Number(activeBackjob?.id || 0);
+    const backjobCreatedAtMs = Number(new Date(String(activeBackjob?.created_at || '')).getTime());
+    const hasBackjobCreatedAt = Number.isFinite(backjobCreatedAtMs) && backjobCreatedAtMs > 0;
+    const isCurrentBackjobItem = (it: QuotationItem) => {
+      const itemBackjobId = Number(it.backjob_id || 0);
+      if (currentBackjobId > 0 && itemBackjobId > 0) return itemBackjobId === currentBackjobId;
+      const itemMs = Number(new Date(String(it.created_at || '')).getTime());
+      return Boolean(it.is_backjob_new_line) && hasBackjobCreatedAt && Number.isFinite(itemMs) && itemMs >= backjobCreatedAtMs;
+    };
     const isOldPaidBackjobReference = (it: QuotationItem) =>
       acceptedBackjob &&
       String(it.status || '').toLowerCase() === 'accepted' &&
-      !it.is_backjob_new_line;
+      !isCurrentBackjobItem(it);
     const mappedItemsFiltered = acceptedBackjob
       ? mappedItemsRaw.filter((it: QuotationItem) => !isOldPaidBackjobReference(it))
       : mappedItemsRaw;
@@ -348,6 +361,7 @@ export default function QuotationEdit() {
       setLoading(true);
       setBookingContextLoaded(false);
       setIsAcceptedBackjob(false);
+      setCurrentBackjob(null);
       setItems([]);
       setInitialSaveSignature(null);
       setHasQuotationOnServer(null);
@@ -380,6 +394,7 @@ export default function QuotationEdit() {
           setIsBookingCompleted(String(booking?.status || '').toLowerCase() === 'completed');
           acceptedBackjob = String(booking?.backjob?.status || '').toLowerCase() === 'accepted';
           setIsAcceptedBackjob(acceptedBackjob);
+          setCurrentBackjob(booking?.backjob || null);
           extracted = extractBookedServices(booking);
           setBookedServices(extracted);
           setBookedServiceIds(extracted.map((s) => s.id));
@@ -413,6 +428,7 @@ export default function QuotationEdit() {
               { id: bq.id, items: bq.items, status: bq.status },
               acceptedBackjob,
               extracted,
+              bookingPayload?.backjob,
             );
             setHasQuotationOnServer(fromBooking.serverHasQuotation);
             setItems(fromBooking.mappedItems);
@@ -436,7 +452,7 @@ export default function QuotationEdit() {
               });
             }
           } else if (!cancelled) {
-            const fromExtracted = buildMappedItemsFromApiData({}, acceptedBackjob, extracted);
+            const fromExtracted = buildMappedItemsFromApiData({}, acceptedBackjob, extracted, bookingPayload?.backjob);
             if (fromExtracted.mappedItems.length > 0) {
               setHasQuotationOnServer(fromExtracted.serverHasQuotation);
               setItems(fromExtracted.mappedItems);
@@ -468,7 +484,7 @@ export default function QuotationEdit() {
 
         const data = await quotationRes.json();
         if (cancelled) return;
-        let { mappedItems, serverHasQuotation } = buildMappedItemsFromApiData(data, acceptedBackjob, extracted);
+        let { mappedItems, serverHasQuotation } = buildMappedItemsFromApiData(data, acceptedBackjob, extracted, bookingPayload?.backjob);
         const bq = bookingPayload?.quotation;
         if (
           mappedItems.length === 0 &&
@@ -480,6 +496,7 @@ export default function QuotationEdit() {
             { id: bq.id ?? data?.id, items: bq.items, status: bq.status ?? data?.status },
             acceptedBackjob,
             extracted,
+            bookingPayload?.backjob,
           );
           if (fromBooking.mappedItems.length > 0) {
             mappedItems = fromBooking.mappedItems;
@@ -860,7 +877,7 @@ export default function QuotationEdit() {
         );
       }
       console.log(LOG, 'quotation POST ok', { bookingId, quotationId: savedId, itemCount: payload.items.length });
-      const fromServer = buildMappedItemsFromApiData(body, isAcceptedBackjob, bookedServices);
+      const fromServer = buildMappedItemsFromApiData(body, isAcceptedBackjob, bookedServices, currentBackjob);
       setHasQuotationOnServer(fromServer.serverHasQuotation);
       setItems(fromServer.mappedItems);
       const postSaveMap: Record<string, QuotationItem> = {};

@@ -138,7 +138,17 @@ interface BookingDetail {
     images?: string[];
     requested_by?: { id: number; name: string } | null;
     created_at?: string | null;
+    updated_at?: string | null;
   } | null;
+  backjob_history?: Array<{
+    id: number;
+    status: string;
+    reason?: string | null;
+    images?: string[];
+    requested_by?: { id: number; name: string } | null;
+    created_at?: string | null;
+    updated_at?: string | null;
+  }>;
   payment_summary?: {
     payment_status?: string;
     total_paid?: number;
@@ -809,12 +819,21 @@ export default function BookingDetailScreen() {
 
   const getBackjobPendingSnapshotTotal = () => {
     const items = Array.isArray(pendingQuoteSnapshot?.items) ? pendingQuoteSnapshot.items : [];
+    const currentBackjobId = Number((booking as any)?.backjob?.id || 0);
+    const backjobCreatedAtMs = Number(new Date(String((booking as any)?.backjob?.created_at || '')).getTime());
+    const hasBackjobCreatedAt = Number.isFinite(backjobCreatedAtMs) && backjobCreatedAtMs > 0;
+    const isCurrentBackjobLine = (line: any) => {
+      const lineBackjobId = Number(line?.backjob_id || 0);
+      if (currentBackjobId > 0 && lineBackjobId > 0) return lineBackjobId === currentBackjobId;
+      const lineMs = Number(new Date(String(line?.created_at || '')).getTime());
+      return Boolean(line?.is_backjob_new_line) && hasBackjobCreatedAt && Number.isFinite(lineMs) && lineMs >= backjobCreatedAtMs;
+    };
     return items.reduce((sum: number, it: any) => {
       const statusRaw = String(it?.status || it?.quotation_status || it?.state || '').toLowerCase();
       if (statusRaw === 'rejected') return sum;
       const changeLabel = getExplicitChangeLabel(it);
       const shouldCount =
-        Boolean(it?.is_backjob_new_line) ||
+        isCurrentBackjobLine(it) ||
         changeLabel === 'Added';
       if (!shouldCount) return sum;
 
@@ -2006,6 +2025,7 @@ export default function BookingDetailScreen() {
     if (rowStatus === 'rejected') removedRows.push(row);
   });
 
+  const currentBackjobId = Number((booking as any)?.backjob?.id || 0);
   const backjobCreatedAtMs = Number(new Date(String((booking as any)?.backjob?.created_at || '')).getTime());
   const hasBackjobCreatedAt = Number.isFinite(backjobCreatedAtMs) && backjobCreatedAtMs > 0;
   const isLineCreatedAfterBackjob = (it: any) => {
@@ -2013,9 +2033,13 @@ export default function BookingDetailScreen() {
     if (!Number.isFinite(lineMs) || lineMs <= 0 || !hasBackjobCreatedAt) return false;
     return lineMs >= backjobCreatedAtMs;
   };
+  const isCurrentBackjobLine = (it: any) => {
+    const lineBackjobId = Number(it?.backjob_id || 0);
+    if (currentBackjobId > 0 && lineBackjobId > 0) return lineBackjobId === currentBackjobId;
+    return Boolean(it?.is_backjob_new_line) && isLineCreatedAfterBackjob(it);
+  };
   const shouldIncludeItemInBackjobQuoteAmountTotals = (it: any) => {
-    if (Boolean(it?.is_backjob_new_line)) return true;
-    if (isLineCreatedAfterBackjob(it)) return true;
+    if (isCurrentBackjobLine(it)) return true;
     const explicit = getExplicitChangeLabel(it);
     const inferred = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
     const chat = getQuoteSnapshotKeys(it).map((k) => chatChangeLabelByKey[k]).find(Boolean) || null;
@@ -2038,7 +2062,7 @@ export default function BookingDetailScreen() {
     if (
       bookingInBackjobPaymentPhase(booking) &&
       !changeLabel &&
-      (Boolean(it?.is_backjob_new_line) || isLineCreatedAfterBackjob(it))
+      isCurrentBackjobLine(it)
     ) {
       changeLabel = 'Added';
     }
@@ -2071,7 +2095,7 @@ export default function BookingDetailScreen() {
     if (
       bookingInBackjobPaymentPhase(booking) &&
       !changeLabel &&
-      (Boolean(it?.is_backjob_new_line) || isLineCreatedAfterBackjob(it))
+      isCurrentBackjobLine(it)
     ) {
       changeLabel = 'Added';
     }
@@ -2101,7 +2125,7 @@ export default function BookingDetailScreen() {
     const key = getQuoteItemKey(it, idx);
     const isExpanded = expandedQuoteItems[key] ?? false;
     const assocKey = getAssocKey(it);
-    const isChargeableBackjobLine = Boolean(it?.is_backjob_new_line) || isLineCreatedAfterBackjob(it) || rawChangeLabel === 'Added';
+    const isChargeableBackjobLine = isCurrentBackjobLine(it) || rawChangeLabel === 'Added';
     const shouldGhostQuotationLine = isAcceptedBackjob && !isChargeableBackjobLine;
     if (shouldGhostQuotationLine) return null;
     const beforeItem = it?.previous_description || it?.previous_quantity != null || it?.previous_unit_price != null
@@ -2213,8 +2237,11 @@ export default function BookingDetailScreen() {
   const hasBackjob = bookingHasBackjob(booking);
   const isAcceptedBackjob = bookingHasAcceptedBackjob(booking);
   const backjobPaymentPhase = bookingInBackjobPaymentPhase(booking);
+  const backjobTimelineRows = Array.isArray(booking.backjob_history)
+    ? booking.backjob_history
+    : (booking.backjob ? [booking.backjob] : []);
   const isBackjobChargeableQuotationLine = (it: any) => {
-    if (Boolean(it?.is_backjob_new_line)) return true;
+    if (isCurrentBackjobLine(it)) return true;
     const inferredChangeLabel = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
     const chatDerivedChangeLabel = getQuoteSnapshotKeys(it).map((k) => chatChangeLabelByKey[k]).find(Boolean) || null;
     const rawChangeLabel = chatDerivedChangeLabel || inferredChangeLabel || null;
@@ -2540,7 +2567,7 @@ export default function BookingDetailScreen() {
                 bookingInBackjobPaymentPhase(booking) &&
                 sortedQuotationItems.some((it: any) => {
                   const st = String(it?.status || '').toLowerCase();
-                  return Boolean(it?.is_backjob_new_line) && st === 'pending';
+                  return isCurrentBackjobLine(it) && st === 'pending';
                 }) && (
                   <View style={[styles.noteBox, { marginBottom: 10 }]}>
                     <ThemedText style={styles.noteText}>
@@ -2844,7 +2871,7 @@ export default function BookingDetailScreen() {
         }
       >
         {/* Backjob Banner */}
-        {booking?.has_backjob && booking.backjob && (
+        {booking.status !== 'completed' && hasBackjob && booking.backjob && (
           <View style={styles.backjobBanner}>
             <FontAwesome name="wrench" size={14} color="#fff" />
             <ThemedText style={styles.backjobText}>
@@ -3347,6 +3374,38 @@ export default function BookingDetailScreen() {
                 <View style={styles.timelineLine} />
               </>
             )}
+
+            {backjobTimelineRows.map((item, index) => {
+              const isDone = String(item?.status || '').toLowerCase() === 'completed';
+              return (
+                <React.Fragment key={`backjob-${item?.id || index}`}>
+                  {item?.created_at ? (
+                    <>
+                      <View style={styles.timelineItem}>
+                        <View style={[styles.timelineDot, { backgroundColor: '#FF8C00' }]} />
+                        <View style={styles.timelineContent}>
+                          <ThemedText style={styles.timelineLabel}>Backjob {index + 1} Started</ThemedText>
+                          <ThemedText style={styles.timelineDate}>{formatDate(item.created_at)}</ThemedText>
+                        </View>
+                      </View>
+                      <View style={styles.timelineLine} />
+                    </>
+                  ) : null}
+                  {isDone && item?.updated_at ? (
+                    <>
+                      <View style={styles.timelineItem}>
+                        <View style={[styles.timelineDot, { backgroundColor: '#34C759' }]} />
+                        <View style={styles.timelineContent}>
+                          <ThemedText style={styles.timelineLabel}>Backjob {index + 1} Ended</ThemedText>
+                          <ThemedText style={styles.timelineDate}>{formatDate(item.updated_at)}</ThemedText>
+                        </View>
+                      </View>
+                      <View style={styles.timelineLine} />
+                    </>
+                  ) : null}
+                </React.Fragment>
+              );
+            })}
 
             {booking.completed_at && (
               <View style={styles.timelineItem}>

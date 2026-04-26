@@ -34,6 +34,7 @@ from ...backjob_utils import (
     booking_has_backjob,
     backjob_accepted_payable_total,
     backjob_quotation_has_pending_client_lines,
+    get_booking_backjob,
 )
 from users.models import Account
 from services.models import MechanicService
@@ -2179,6 +2180,20 @@ def list_mechanic_bookings(request):
             return _serialize_mechanic_booking_list(rows_queryset)
         return _serialize_bookings(rows_queryset, viewer_account=account)
 
+    live_backjob_statuses = [
+        Booking.Status.BACKJOB_PENDING,
+        Booking.Status.REWORKED,
+        Booking.Status.ACCEPTED,
+        Booking.Status.ON_THE_WAY,
+        Booking.Status.AT_LOCATION,
+        Booking.Status.DIAGNOSING,
+        Booking.Status.ACTIVE,
+        Booking.Status.PAUSED,
+        Booking.Status.FINISHED,
+        Booking.Status.PENDING_PAYMENT,
+    ]
+    live_backjob_q = ~Q(status=Booking.Status.COMPLETED) & Q(backjobs__status__in=live_backjob_statuses)
+
     if status_filter:
         # "all" status: paginate across every booking + pending requests
         if status_filter.lower() == "all":
@@ -2215,7 +2230,7 @@ def list_mechanic_bookings(request):
                 # Need some booking items on this page; exclude backjob bookings already shown
                 booking_start = max(0, start_index - pending_count)
                 booking_end = end_index - pending_count
-                bookings_slice = bookings_queryset.exclude(backjobs__isnull=False)[booking_start:booking_end]
+                bookings_slice = bookings_queryset.exclude(live_backjob_q)[booking_start:booking_end]
                 paginated.extend(serialize_booking_list(bookings_slice))
 
             # Include tab counts so frontend doesn't need a separate request
@@ -2226,9 +2241,9 @@ def list_mechanic_bookings(request):
             active_count = bookings_queryset.filter(status__in=["active", "paused"]).count()
             completed_count = bookings_queryset.filter(status="completed").count()
             cancelled_count = bookings_queryset.filter(status="cancelled").count()
-            # Include any booking that has a Backjob (requested, accepted, or completed)
+            # Include only live backjobs; completed rounds behave like normal completed jobs again.
             reworked_count = bookings_queryset.filter(
-                Q(status="reworked") | Q(backjobs__isnull=False)
+                Q(status="reworked") | live_backjob_q
             ).count()
             disputed_count = bookings_queryset.filter(dispute_status=Booking.DisputeState.ACTIVE).count()
 
@@ -2343,13 +2358,12 @@ def list_mechanic_bookings(request):
         # Treat 'active' as including paused bookings so paused items show up
         # in the mechanic's on-going/active filter.
         if status_filter.lower() == 'active':
-            # include bookings that are active/paused OR that have a backjob requested
-            bookings_queryset = bookings_queryset.filter(Q(status__in=['active', 'paused']) | Q(backjobs__isnull=False))
+            # include bookings that are active/paused OR that have a live backjob requested
+            bookings_queryset = bookings_queryset.filter(Q(status__in=['active', 'paused']) | live_backjob_q)
         elif status_filter.lower() == 'reworked':
-            # Include bookings explicitly marked reworked OR any bookings
-            # that have a Backjob (so accepted/completed backjobs also appear)
+            # Include bookings explicitly marked reworked OR any live backjob round.
             bookings_queryset = bookings_queryset.filter(
-                Q(status__in=['reworked', 'backjob_pending']) | Q(backjobs__isnull=False)
+                Q(status__in=['reworked', 'backjob_pending']) | live_backjob_q
             )
         else:
             bookings_queryset = bookings_queryset.filter(status=status_filter.lower())
@@ -2387,7 +2401,7 @@ def list_mechanic_bookings(request):
     completed_count = bookings_queryset.filter(status="completed").count()
     cancelled_count = bookings_queryset.filter(status="cancelled").count()
     reworked_count = bookings_queryset.filter(
-        Q(status="reworked") | Q(backjobs__isnull=False)
+        Q(status="reworked") | live_backjob_q
     ).count()
     disputed_count = bookings_queryset.filter(dispute_status=Booking.DisputeState.ACTIVE).count()
     # Include backjob bookings in the pending count, but only those not yet accepted.
@@ -2733,12 +2747,15 @@ def mechanic_complete_booking(request, booking_id):
         if not has_pending_quotation_request:
             has_pending_quotation_request = quotation.items.filter(status=Quotation.Status.PENDING).exists()
 
+    active_backjob = get_booking_backjob(booking)
+    is_backjob_completion = active_backjob is not None
+
     payment_summary = _get_payment_summary(booking)
     remaining_balance = Decimal(str(payment_summary.get("remaining_balance", 0) or 0)).quantize(Decimal("0.01"))
 
     # For normal jobs, allow completion from pending_payment only when no balance remains
     # and no quotation request is still waiting for client action.
-    if booking.status == Booking.Status.PENDING_PAYMENT and not booking_has_backjob(booking):
+    if booking.status == Booking.Status.PENDING_PAYMENT and not is_backjob_completion:
         if remaining_balance > Decimal("0.00"):
             return Response(
                 {
@@ -2756,7 +2773,7 @@ def mechanic_complete_booking(request, booking_id):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-    if not booking_has_backjob(booking) and remaining_balance > Decimal("0.00"):
+    if not is_backjob_completion and remaining_balance > Decimal("0.00"):
         try:
             receipt = booking.receipt
             if not receipt.payment_received:
@@ -2772,7 +2789,7 @@ def mechanic_complete_booking(request, booking_id):
     total_amount = request.data.get("total_amount")
     notes = request.data.get("notes", "")
 
-    if booking_has_backjob(booking):
+    if is_backjob_completion:
         total_amount = 0.0
         notes = notes or "Backjob completed"
     elif total_amount is not None:
@@ -2800,11 +2817,13 @@ def mechanic_complete_booking(request, booking_id):
     booking.status = Booking.Status.COMPLETED
     booking.amount_fee = total_amount
     booking.completed_at = now
-    if booking_has_backjob(booking):
+    if is_backjob_completion:
         booking.payment_status = Booking.PaymentStatus.FULLY_PAID
         booking.save(update_fields=["status", "amount_fee", "completed_at", "updated_at", "payment_status"])
         Receipt.objects.filter(booking=booking).delete()
         PaymentInstallment.objects.filter(booking=booking).delete()
+        active_backjob.status = Booking.Status.COMPLETED
+        active_backjob.save(update_fields=["status", "updated_at"])
     else:
         booking.save(update_fields=["status", "amount_fee", "completed_at", "updated_at"])
 
@@ -2813,7 +2832,7 @@ def mechanic_complete_booking(request, booking_id):
         booking.activebooking.save(update_fields=["is_job_done"])
 
     data = _serialize_single_booking(booking, viewer_account=account)
-    completion_message = "Backjob completed" if booking_has_backjob(booking) else "Your booking has been completed"
+    completion_message = "Backjob completed" if is_backjob_completion else "Your booking has been completed"
 
     notify_booking_parties(
         account.id,
