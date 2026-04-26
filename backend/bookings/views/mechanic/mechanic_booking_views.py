@@ -2662,6 +2662,17 @@ def mechanic_accept_emergency_request(request, request_id):
     if lock_err:
         return lock_err
 
+    mechanic = account.mechanic
+    if mechanic.status != mechanic.WorkStatus.AVAILABLE:
+        return Response(
+            {
+                "error": "Your status is unavailable. Switch to Available to accept emergency requests.",
+                "reason": "mechanic_unavailable",
+                "mechanic_status": mechanic.status,
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
+
     try:
         req = Request.objects.get(id=request_id, request_type="emergency")
     except Request.DoesNotExist:

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View,
   ScrollView,
@@ -19,7 +19,7 @@ import { SkeletonMechanicHome } from '@/components/skeletons/SkeletonLoaders';
 import NotificationBell from '@/components/notifications/NotificationBell';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import { getImageUrl } from '@/lib/imageUtils';
-import { fetchProfileDetailsCached } from '@/lib/profileCache';
+import { clearProfileDetailsCache, fetchProfileDetailsCached } from '@/lib/profileCache';
 import { useNotification } from '@/hooks/useNotification';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -107,12 +107,14 @@ export default function HomeScreen() {
   const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null);
   const [availabilityStatus, setAvailabilityStatus] = useState<'available' | 'unavailable'>('available');
   const [availabilityUpdating, setAvailabilityUpdating] = useState(false);
+  const availabilitySyncVersionRef = useRef(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const { lastMessage } = useWebSocketContext();
 
   const fetchSections = useCallback(async () => {
+    const fetchVersion = availabilitySyncVersionRef.current;
     try {
       setError(null);
 
@@ -166,7 +168,9 @@ export default function HomeScreen() {
         const mechanicProfile = p?.current_role_profile?.mechanic;
         setProfilePhotoUrl(mechanicProfile?.profile_photo || mechanicProfile?.profile_photo_url || null);
         const currentStatus = String(mechanicProfile?.status || '').toLowerCase();
-        setAvailabilityStatus(currentStatus === 'available' ? 'available' : 'unavailable');
+        if (fetchVersion === availabilitySyncVersionRef.current) {
+          setAvailabilityStatus(currentStatus === 'available' ? 'available' : 'unavailable');
+        }
       }
     } catch (err: any) {
       setError(err.message || 'Failed to load dashboard');
@@ -195,6 +199,7 @@ export default function HomeScreen() {
 
   const updateAvailability = useCallback(async (isAvailable: boolean) => {
     if (availabilityUpdating) return;
+    availabilitySyncVersionRef.current += 1;
     const nextStatus: 'available' | 'unavailable' = isAvailable ? 'available' : 'unavailable';
     const previousStatus = availabilityStatus;
     setAvailabilityStatus(nextStatus);
@@ -208,10 +213,18 @@ export default function HomeScreen() {
         body: JSON.stringify({ role: 'mechanic', status: nextStatus }),
       });
 
-      const data = await response.json().catch(() => ({})) as { error?: string };
+      const data = await response.json().catch(() => ({})) as { error?: string; status?: string };
       if (!response.ok) {
         throw new Error(data.error || 'Failed to update availability');
       }
+
+      const confirmedStatus = String(data.status || nextStatus).toLowerCase();
+      setAvailabilityStatus(confirmedStatus === 'available' ? 'available' : 'unavailable');
+
+      // Keep profile cache in sync so subsequent dashboard refreshes don't re-apply stale status.
+      await clearProfileDetailsCache();
+      await fetchProfileDetailsCached(true);
+
       showNotification({
         type: 'success',
         message: nextStatus === 'available' ? 'You are now visible in discovery.' : 'You are now hidden from discovery.',
