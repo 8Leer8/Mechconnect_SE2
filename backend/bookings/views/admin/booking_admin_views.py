@@ -5,7 +5,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import status
 
-from ...models import Request, Booking, DisputeBooking, BroadcastRequest, BroadcastOffer
+from ...models import Request, Booking, DisputeBooking, BroadcastRequest, BroadcastOffer, ActiveBooking
 from users.permissions import IsAdmin
 from users.models import Account
 
@@ -74,6 +74,18 @@ def admin_list_disputes(request):
 
     results = []
     for dispute in queryset:
+        # Get before/after pictures from ActiveBooking
+        before_picture = None
+        after_picture = None
+        try:
+            active_booking = ActiveBooking.objects.get(booking=dispute.booking)
+            if active_booking.before_picture_service:
+                before_picture = active_booking.before_picture_service.url
+            if active_booking.after_picture_service:
+                after_picture = active_booking.after_picture_service.url
+        except ActiveBooking.DoesNotExist:
+            pass
+
         results.append(
             {
                 'id': dispute.id,
@@ -89,6 +101,8 @@ def admin_list_disputes(request):
                 'amount_refunded': dispute.amount_refunded,
                 'created_at': dispute.created_at,
                 'resolved_at': dispute.resolved_at,
+                'before_picture': before_picture,
+                'after_picture': after_picture,
             }
         )
 

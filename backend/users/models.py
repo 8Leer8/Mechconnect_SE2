@@ -335,6 +335,7 @@ class EmailVerification(models.Model):
 
 class SMSOTPVerification(models.Model):
     """SMS OTP verification records for audit trail and rate limiting."""
+    account = models.ForeignKey(Account, on_delete=models.CASCADE, null=True, blank=True, related_name='otp_verifications')
     contact_number = models.CharField(max_length=20, db_index=True)
     otp_code = models.CharField(max_length=6)
     created_at = models.DateTimeField(auto_now_add=True)

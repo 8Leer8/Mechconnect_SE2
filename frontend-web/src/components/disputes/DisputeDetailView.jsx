@@ -4,6 +4,7 @@ import {
   Ban,
   CheckCircle2,
   Gavel,
+  Image as ImageIcon,
   MessageCircle,
   Scale,
   ShieldCheck,
@@ -324,6 +325,49 @@ export function DisputeDetailView({
                   ) : null}
                 </CardContent>
               </Card>
+
+              {/* Service Photos - Before/After Side by Side */}
+              {(dispute.before_picture || dispute.after_picture) && (
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <ImageIcon className="size-4 text-emerald-400" />
+                      Service Photos
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-2 gap-6">
+                      {/* Before Service */}
+                      {dispute.before_picture && (
+                        <div className="space-y-2">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-amber-300/80">
+                            Before
+                          </p>
+                          <EvidenceImage
+                            label="Before Service"
+                            imageUrl={dispute.before_picture}
+                            onPreview={(url, label) => setPreview({ url, label })}
+                          />
+                        </div>
+                      )}
+
+                      {/* After Service */}
+                      {dispute.after_picture && (
+                        <div className="space-y-2">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-300/80">
+                            After
+                          </p>
+                          <EvidenceImage
+                            label="After Service"
+                            imageUrl={dispute.after_picture}
+                            onPreview={(url, label) => setPreview({ url, label })}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
             </div>
 
             <Card>
