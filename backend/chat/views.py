@@ -337,6 +337,18 @@ def request_backjob(request, booking_id):
         # don't block message creation if backjob record fails
         pass
 
+    # For shop jobs, the shop owner decides whether to accept a backjob.
+    # Assigned shop mechanics should not see the pending request until the owner accepts it.
+    try:
+        if booking.request.shop_id:
+            assigned_ids = list(
+                RequestAssignment.objects.filter(request=booking.request).values_list("mechanic_id", flat=True)
+            )
+            if assigned_ids:
+                conv.participants.remove(*Account.objects.filter(id__in=assigned_ids))
+    except Exception:
+        pass
+
     # broadcast to participants groups (except sender)
     try:
         channel_layer = get_channel_layer()

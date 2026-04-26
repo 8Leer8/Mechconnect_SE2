@@ -1,6 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useWebSocketContext } from '@/context/WebSocketContext';
-export const screenOptions = { headerShown: false } as const;
 import { View, ScrollView, TouchableOpacity, RefreshControl, Modal, ActivityIndicator } from 'react-native';
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { FontAwesome } from '@expo/vector-icons';
@@ -13,6 +12,10 @@ import { canOpenBookingChat } from '@/lib/bookingAccess';
 import { fetchBookingChatPreview } from '@/lib/bookingChatPreview';
 import { useNotification } from '@/hooks/useNotification';
 import { coerceBarangayForDisplay } from '@/lib/locationAddress';
+import { sortQuotationItemsForDisplay } from '@/lib/quotationOrdering';
+import { runDedupedRequest } from '@/lib/requestDedupe';
+
+export const screenOptions = { headerShown: false } as const;
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -73,6 +76,31 @@ interface BookingDetail {
     reason: string;
     cancelled_at: string;
   };
+  has_backjob?: boolean;
+  backjob?: {
+    id: number;
+    status: string;
+    reason?: string | null;
+    images?: string[];
+    created_at?: string | null;
+    updated_at?: string | null;
+  } | null;
+  backjob_history?: any[];
+  payment_split?: {
+    total_amount: number;
+    mechanic_percentage: number;
+    shop_owner_percentage: number;
+    mechanic_amount: number;
+    shop_owner_amount: number;
+    mechanic_count: number;
+    per_mechanic_amount: number;
+  };
+  payment_summary?: {
+    payment_status?: string;
+    total_amount?: number;
+    total_paid?: number;
+    remaining_balance?: number;
+  };
 }
 
 interface ShopMechanic {
@@ -98,6 +126,8 @@ export default function ShopOwnerBookingDetailScreen() {
   const [error, setError] = useState<string | null>(null);
   const [timer, setTimer] = useState(0);
   const [quotation, setQuotation] = useState<any | null>(null);
+  const [pendingQuoteSnapshot, setPendingQuoteSnapshot] = useState<any | null>(null);
+  const [chatChangeLabelByKey, setChatChangeLabelByKey] = useState<Record<string, 'Added' | 'Edited' | 'Removed'>>({});
   const [assignModalVisible, setAssignModalVisible] = useState(false);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [shopMechanics, setShopMechanics] = useState<ShopMechanic[]>([]);
@@ -107,6 +137,9 @@ export default function ShopOwnerBookingDetailScreen() {
   const [viewerPhotoUri, setViewerPhotoUri] = useState<string | null>(null);
   const [visibleBeforePhotoCount, setVisibleBeforePhotoCount] = useState(6);
   const [visibleAfterPhotoCount, setVisibleAfterPhotoCount] = useState(6);
+  const [quotationListExpanded, setQuotationListExpanded] = useState(false);
+  const [expandedQuoteItems, setExpandedQuoteItems] = useState<Record<string, boolean>>({});
+  const assignmentFetchCacheRef = useRef<{ requestId: number | null; fetchedAt: number }>({ requestId: null, fetchedAt: 0 });
   const { showNotification } = useNotification();
   const { lastMessage } = useWebSocketContext();
 
@@ -138,8 +171,15 @@ export default function ShopOwnerBookingDetailScreen() {
       if (!res.ok) throw new Error(data?.error || 'Failed to fetch booking details');
       const bookingData = data.booking || (data as unknown as BookingDetail);
       setBooking(bookingData);
-      if (bookingData?.request?.id) {
-        loadAssignmentData(bookingData.request.id);
+      if (Array.isArray(bookingData?.request?.assigned_mechanics)) {
+        setAssignments(
+          bookingData.request.assigned_mechanics.map((a) => ({
+            id: a.id,
+            role: a.role,
+            assigned_at: a.assigned_at || '',
+            mechanic: a.mechanic,
+          }))
+        );
       }
 
       // Initialize elapsed timer immediately for active status (view-only)
@@ -169,7 +209,11 @@ export default function ShopOwnerBookingDetailScreen() {
     setChatPreview(res.lastPreview);
   }, [bookingId]);
 
-  const loadAssignmentData = useCallback(async (requestId: number) => {
+  const loadAssignmentData = useCallback(async (requestId: number, force = false) => {
+    const cached = assignmentFetchCacheRef.current;
+    if (!force && cached.requestId === requestId && Date.now() - cached.fetchedAt < 15000) {
+      return;
+    }
     try {
       const [mechRes, assignRes] = await Promise.all([
         fetch(`${API_URL}/shops/mechanics/`, {
@@ -190,13 +234,34 @@ export default function ShopOwnerBookingDetailScreen() {
         const ad = (await assignRes.json()) as Assignment[];
         setAssignments(Array.isArray(ad) ? ad : []);
       }
+      assignmentFetchCacheRef.current = { requestId, fetchedAt: Date.now() };
     } catch {
       setAssignments([]);
     }
   }, []);
 
   const canManageAssignment = (status: string) =>
-    ['accepted', 'on_the_way', 'at_location', 'diagnosing', 'active', 'paused', 'reworked'].includes(status);
+    ['accepted', 'on_the_way', 'at_location', 'diagnosing', 'active', 'paused', 'reworked', 'backjob_pending'].includes(status);
+
+  const canEditQuotationForStatus = (status: string) =>
+    ['accepted', 'on_the_way', 'at_location', 'diagnosing', 'active'].includes(status);
+
+  const canShowQuotationForStatus = (status: string) =>
+    ['accepted', 'on_the_way', 'at_location', 'diagnosing', 'active', 'pending_payment'].includes(status);
+
+  const openAssignModal = () => {
+    if (!booking?.request?.id || !canManageAssignment(booking.status)) return;
+    loadAssignmentData(booking.request.id);
+    setAssignModalVisible(true);
+  };
+
+  const openQuotationEditor = () => {
+    if (!booking?.id || !canEditQuotationForStatus(booking.status)) return;
+    router.push({
+      pathname: '/mechanic/booking/quotation_edit',
+      params: { bookingId: String(booking.id), source: 'shopowner' },
+    });
+  };
 
   const handleAssignMechanic = async (accountId: number, role: 'lead' | 'assistant') => {
     if (!booking?.request?.id) return;
@@ -223,7 +288,7 @@ export default function ShopOwnerBookingDetailScreen() {
         showNotification({ type: 'error', message: data?.error || 'Failed to assign mechanic.' });
         return;
       }
-      await loadAssignmentData(booking.request.id);
+      await loadAssignmentData(booking.request.id, true);
       await fetchBookingDetail(true);
       showNotification({ type: 'success', message: 'Mechanic assigned.' });
     } finally {
@@ -252,9 +317,46 @@ export default function ShopOwnerBookingDetailScreen() {
         showNotification({ type: 'error', message: data?.error || 'Failed to remove assignment.' });
         return;
       }
-      await loadAssignmentData(booking.request.id);
+      await loadAssignmentData(booking.request.id, true);
       await fetchBookingDetail(true);
       showNotification({ type: 'success', message: 'Assignment removed.' });
+    } finally {
+      setAssignLoading(false);
+    }
+  };
+
+  const handleUpdateAssignmentRole = async (assignmentId: number, role: 'lead' | 'assistant') => {
+    if (!booking?.request?.id) return;
+    const target = assignments.find((a) => a.id === assignmentId);
+    if (!target || target.role === role) return;
+
+    if (target.role === 'lead' && role === 'assistant') {
+      const leadCount = assignments.filter((a) => a.role === 'lead').length;
+      if (leadCount <= 1) {
+        showNotification({ type: 'error', message: 'At least one lead must remain assigned.' });
+        return;
+      }
+    }
+
+    setAssignLoading(true);
+    try {
+      const res = await fetch(
+        `${API_URL}/bookings/requests/${booking.request.id}/assignments/${assignmentId}/role/`,
+        {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role }),
+        }
+      );
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        showNotification({ type: 'error', message: data?.error || 'Failed to update role.' });
+        return;
+      }
+      await loadAssignmentData(booking.request.id, true);
+      await fetchBookingDetail(true);
+      showNotification({ type: 'success', message: 'Assignment role updated.' });
     } finally {
       setAssignLoading(false);
     }
@@ -274,11 +376,12 @@ export default function ShopOwnerBookingDetailScreen() {
 
   useEffect(() => {
     if (!bookingId) return;
+    if (hasLivePendingQuoteRequest) return;
     const id = setInterval(() => {
       fetchBookingDetail(true);
     }, 20000);
     return () => clearInterval(id);
-  }, [bookingId, fetchBookingDetail]);
+  }, [bookingId, fetchBookingDetail, hasLivePendingQuoteRequest]);
 
   useEffect(() => {
     if (bookingId) fetchQuotation();
@@ -326,6 +429,8 @@ export default function ShopOwnerBookingDetailScreen() {
         return 'Finished';
       case 'pending_payment':
         return 'Pending Payment';
+      case 'backjob_pending':
+        return 'Backjob Pending';
       case 'completed':
         return 'Completed';
       case 'cancelled':
@@ -358,6 +463,8 @@ export default function ShopOwnerBookingDetailScreen() {
       case 'finished':
         return '#34C759';
       case 'pending_payment':
+        return '#FFD60A';
+      case 'backjob_pending':
         return '#FFD60A';
       case 'reworked':
         return '#FFD60A';
@@ -392,6 +499,8 @@ export default function ShopOwnerBookingDetailScreen() {
         return 'check-circle';
       case 'pending_payment':
         return 'money';
+      case 'backjob_pending':
+        return 'refresh';
       case 'completed':
         return 'check-circle';
       case 'cancelled':
@@ -468,11 +577,81 @@ export default function ShopOwnerBookingDetailScreen() {
   };
 
   const getDisplayQuotation = () => {
-    // Prefer server-saved quotation if available
-    if (quotation && (quotation.items || []).length > 0) return quotation;
+    const getRowAssocKey = (it: any) => {
+      const serviceId = Number(it?.service);
+      const addOnId = Number(it?.service_add_on);
+      if (Number.isFinite(serviceId) && serviceId > 0) return `service:${serviceId}`;
+      if (Number.isFinite(addOnId) && addOnId > 0) return `addon:${addOnId}`;
+      return null;
+    };
+    const applyPendingSnapshotOverlay = (baseRows: any[]) => {
+      const snapshotItems = Array.isArray(pendingQuoteSnapshot?.items) ? pendingQuoteSnapshot.items : [];
+      if (!snapshotItems.length) return baseRows;
+
+      const mergedRows = [...baseRows];
+      const normalizeOverlayText = (value: any) => String(value ?? '').trim().toLowerCase();
+      snapshotItems.forEach((snap: any) => {
+        const snapId = snap?.id != null ? String(snap.id) : null;
+        const snapAssoc = getRowAssocKey(snap);
+        const snapDesc = normalizeOverlayText(snap?.description || snap?.name);
+        const idx = mergedRows.findIndex((row: any) => {
+          if (snapId && row?.id != null && String(row.id) === snapId) return true;
+          const rowAssoc = getRowAssocKey(row);
+          if (snapAssoc && rowAssoc && snapAssoc === rowAssoc) return true;
+          const rowDesc = normalizeOverlayText(row?.description || row?.name);
+          if (snapDesc && rowDesc && snapDesc === rowDesc) return true;
+          return false;
+        });
+        if (idx >= 0) {
+          mergedRows[idx] = {
+            ...mergedRows[idx],
+            ...snap,
+            status: 'pending',
+            change_type: snap.change_type || snap.change || snap.modification_type || mergedRows[idx]?.change_type || null,
+          };
+          return;
+        }
+        mergedRows.push({
+          ...snap,
+          status: 'pending',
+          change_type: snap.change_type || snap.change || snap.modification_type || null,
+        });
+      });
+      return mergedRows;
+    };
+
+    // Prefer server-saved quotation if available.
+    if (quotation && (quotation.items || []).length > 0) {
+      const quoteItems = quotation.items || [];
+      const hasServerPendingAmendment = Boolean(
+        quotation?.amendment_id ||
+        quoteItems.some((it: any) =>
+          String(it?.status || '').toLowerCase() === 'pending' &&
+          String(it?.change_type || '').trim()
+        )
+      );
+      const overlayedItems = hasServerPendingAmendment ? quoteItems : applyPendingSnapshotOverlay(quoteItems);
+      const mergedTotal = overlayedItems.reduce((sum: number, it: any) => {
+        const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
+        const qty = Number(it?.quantity ?? 1) || 1;
+        return sum + (price * qty);
+      }, 0);
+      return {
+        ...quotation,
+        status: pendingQuoteSnapshot?.status || quotation?.status,
+        items: overlayedItems,
+        total_amount: Math.max(Number(pendingQuoteSnapshot?.total_amount || 0), Number(quotation?.total_amount || 0), mergedTotal),
+      };
+    }
+    if (pendingQuoteSnapshot && Array.isArray(pendingQuoteSnapshot.items) && pendingQuoteSnapshot.items.length > 0) {
+      return pendingQuoteSnapshot;
+    }
     if (!booking) return null;
     const details = (booking.request as any)?.request_details || null;
     if (!details) return null;
+
+    const hasBackjob = Boolean(booking.has_backjob || booking.backjob || booking.status === 'backjob_pending' || booking.status === 'reworked');
+    if (hasBackjob) return null;
 
     const items: any[] = [];
     if (details.service) {
@@ -504,7 +683,178 @@ export default function ShopOwnerBookingDetailScreen() {
   };
 
   const displayQuotation = getDisplayQuotation();
-  const isQuotationPending = Boolean((quotation && quotation.status === 'pending') || (displayQuotation && displayQuotation.status === 'pending'));
+  const hasLivePendingQuoteRequest = Boolean(
+    pendingQuoteSnapshot && String(pendingQuoteSnapshot?.status || '').toLowerCase() === 'pending'
+  );
+  const isQuotationPending = hasLivePendingQuoteRequest || Boolean((quotation && quotation.status === 'pending') || (displayQuotation && displayQuotation.status === 'pending'));
+  const getItemStatus = (it: any, parentQuotation: any) => {
+    if (!it) return 'accepted';
+    return it.status || it.quotation_status || it.state || (parentQuotation && parentQuotation.status) || 'accepted';
+  };
+  const serviceItemIds = React.useMemo(() => {
+    const details = (booking?.request as any)?.request_details || null;
+    const ids = new Set<number>();
+    const single = Number(details?.service?.id);
+    if (Number.isFinite(single) && single > 0) ids.add(single);
+    const list = Array.isArray(details?.services) ? details.services : [];
+    list.forEach((svc: any) => {
+      const parsed = Number(svc?.id);
+      if (Number.isFinite(parsed) && parsed > 0) ids.add(parsed);
+    });
+    return ids;
+  }, [booking]);
+  const bookedServiceNames = React.useMemo(() => {
+    const details = (booking?.request as any)?.request_details || null;
+    const names: string[] = [];
+    if (details?.service?.name) names.push(String(details.service.name));
+    const list = Array.isArray(details?.services) ? details.services : [];
+    list.forEach((svc: any) => {
+      if (svc?.name) names.push(String(svc.name));
+    });
+    return names;
+  }, [booking]);
+  const sortedQuotationItems = React.useMemo(() => {
+    const items = (displayQuotation && Array.isArray(displayQuotation.items)) ? displayQuotation.items : [];
+    return sortQuotationItemsForDisplay(items, serviceItemIds);
+  }, [displayQuotation, serviceItemIds]);
+  const visibleQuotationItems = React.useMemo(() => {
+    return sortedQuotationItems.filter((it: any) => {
+      const raw = String(it?.change_type || it?.change || it?.modification_type || '').toLowerCase();
+      if (!(raw.includes('remove') || raw.includes('delete'))) return true;
+      const serviceId = Number(it?.service);
+      if (Number.isFinite(serviceId) && serviceItemIds.has(serviceId)) return false;
+      if (String(it?.line_kind || '').toLowerCase() === 'service') return false;
+
+      const desc = String(it?.description || it?.name || '').trim().toLowerCase();
+      if (!desc) return true;
+      const matchesBookedService = bookedServiceNames.some((name) => {
+        const bookedName = String(name || '').trim().toLowerCase();
+        if (!bookedName) return false;
+        if (bookedName === desc || bookedName.includes(desc) || desc.includes(bookedName)) return true;
+        const bookedTokens = new Set(bookedName.split(/\s+/).filter(Boolean));
+        const descTokens = desc.split(/\s+/).filter(Boolean);
+        if (!bookedTokens.size || !descTokens.length) return false;
+        const overlap = descTokens.filter((token) => bookedTokens.has(token)).length;
+        return overlap / Math.max(bookedTokens.size, descTokens.length) >= 0.6;
+      });
+      return !matchesBookedService;
+    });
+  }, [sortedQuotationItems, serviceItemIds, bookedServiceNames]);
+  const getQuoteItemKey = (it: any, idx: number) => String(it?.id ?? `quote-${idx}`);
+  const toggleQuoteItem = (key: string) => {
+    setExpandedQuoteItems(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+  const quotationEstimatedTotal = React.useMemo(() => {
+    if (!visibleQuotationItems.length) return 0;
+    const acceptedTotal = visibleQuotationItems.reduce((sum: number, it: any) => {
+      const status = String(getItemStatus(it, quotation) || '').toLowerCase();
+      if (status !== 'accepted') return sum;
+      const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
+      const qty = Number(it?.quantity ?? 1) || 1;
+      return sum + (price * qty);
+    }, 0);
+    if (acceptedTotal > 0) return acceptedTotal;
+
+    const savedTotal = Number(displayQuotation?.total_amount || quotation?.total_amount || 0);
+    if (Number.isFinite(savedTotal) && savedTotal > 0) return savedTotal;
+
+    return visibleQuotationItems.reduce((sum: number, it: any) => {
+      const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
+      const qty = Number(it?.quantity ?? 1) || 1;
+      return sum + (price * qty);
+    }, 0);
+  }, [visibleQuotationItems, quotation]);
+  const amountFeeTotal = Math.max(0, Number(booking?.amount_fee || 0));
+  const convenienceFeeTotal = Math.max(0, amountFeeTotal - quotationEstimatedTotal);
+  const visibleQuotationSubtotal = visibleQuotationItems.reduce((sum: number, it: any) => {
+    const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
+    const qty = Number(it?.quantity ?? 1) || 1;
+    return sum + (price * qty);
+  }, 0);
+  const pendingRequestedTotalValue = isQuotationPending
+    ? Math.max(0, Number(pendingQuoteSnapshot?.total_amount ?? displayQuotation?.pending_total_amount ?? 0))
+    : null;
+  const pendingQuotationTotalValue = isQuotationPending
+    ? Number(pendingQuoteSnapshot?.pending_quotation_total ?? displayQuotation?.pending_quotation_total)
+    : NaN;
+  const effectiveConvenienceFee = pendingRequestedTotalValue != null && Number.isFinite(pendingQuotationTotalValue)
+    ? Math.max(0, pendingRequestedTotalValue - Math.max(0, pendingQuotationTotalValue))
+    : convenienceFeeTotal;
+  const computedQuotationEstimate = pendingRequestedTotalValue != null
+    ? Number.isFinite(pendingQuotationTotalValue)
+      ? Math.max(0, pendingQuotationTotalValue)
+      : Math.max(0, pendingRequestedTotalValue - effectiveConvenienceFee)
+    : quotationEstimatedTotal;
+  const effectiveQuotationEstimate = computedQuotationEstimate > 0
+    ? computedQuotationEstimate
+    : (booking?.has_backjob || booking?.backjob)
+      ? computedQuotationEstimate
+      : visibleQuotationSubtotal;
+  const effectiveTotalFee = pendingRequestedTotalValue ?? (effectiveConvenienceFee + effectiveQuotationEstimate);
+  const paymentSplit = booking?.payment_split;
+  const paymentSummary = booking?.payment_summary || {};
+  const paymentTotalAmount = Math.max(0, Number(paymentSummary.total_amount ?? booking?.amount_fee ?? effectiveTotalFee ?? 0));
+  const totalPaid = Math.max(0, Number(paymentSummary.total_paid || 0));
+  const remainingBalance = Math.max(0, Number(paymentSummary.remaining_balance ?? (paymentTotalAmount - totalPaid)));
+  const paymentStatus = String(paymentSummary.payment_status || '').toLowerCase() || (
+    paymentTotalAmount > 0 && totalPaid >= paymentTotalAmount
+      ? 'fully_paid'
+      : totalPaid > 0
+        ? 'partially_paid'
+        : 'unpaid'
+  );
+  const paymentProgressPct = paymentTotalAmount > 0
+    ? Math.min(100, Math.max(0, (totalPaid / paymentTotalAmount) * 100))
+    : 0;
+
+  const getPaymentStatusColor = (status: string) => {
+    switch (status) {
+      case 'fully_paid':
+      case 'paid':
+        return '#34C759';
+      case 'partially_paid':
+      case 'partial':
+        return '#FFD60A';
+      default:
+        return '#8E8E93';
+    }
+  };
+
+  const getPaymentStatusLabel = (status: string) => {
+    switch (status) {
+      case 'fully_paid':
+      case 'paid':
+        return 'Fully Paid';
+      case 'partially_paid':
+      case 'partial':
+        return 'Partially Paid';
+      default:
+        return 'Unpaid';
+    }
+  };
+
+  const renderPaymentSplit = () => {
+    if (!paymentSplit || Number(paymentSplit.shop_owner_percentage || 0) <= 0) return null;
+    return (
+      <View style={{ marginTop: 12, padding: 12, borderRadius: 12, backgroundColor: '#151515', borderWidth: 1, borderColor: '#2A2C2E', gap: 8 }}>
+        <ThemedText style={{ color: '#ECEDEE', fontWeight: '800', marginBottom: 2 }}>Payment Split</ThemedText>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+          <ThemedText style={{ color: '#A0A0A0' }}>Mechanics receive ({paymentSplit.mechanic_percentage.toFixed(0)}%)</ThemedText>
+          <ThemedText style={{ color: '#34C759', fontWeight: '800' }}>₱{Number(paymentSplit.mechanic_amount || 0).toFixed(2)}</ThemedText>
+        </View>
+        {paymentSplit.mechanic_count > 1 ? (
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <ThemedText style={{ color: '#8E8E93' }}>Each mechanic estimate</ThemedText>
+            <ThemedText style={{ color: '#C7C7CC', fontWeight: '700' }}>₱{Number(paymentSplit.per_mechanic_amount || 0).toFixed(2)}</ThemedText>
+          </View>
+        ) : null}
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+          <ThemedText style={{ color: '#A0A0A0' }}>Shop owner receives ({paymentSplit.shop_owner_percentage.toFixed(0)}%)</ThemedText>
+          <ThemedText style={{ color: '#FF8C00', fontWeight: '800' }}>₱{Number(paymentSplit.shop_owner_amount || 0).toFixed(2)}</ThemedText>
+        </View>
+      </View>
+    );
+  };
 
   const normalizeText = (v: any) => String(v ?? '').trim().toLowerCase();
   const normalizeNum = (v: any) => Number(v ?? 0);
@@ -514,6 +864,19 @@ export default function ShopOwnerBookingDetailScreen() {
     if (Number.isFinite(serviceId) && serviceId > 0) return `service:${serviceId}`;
     if (Number.isFinite(addOnId) && addOnId > 0) return `addon:${addOnId}`;
     return null;
+  };
+
+  const getQuoteSnapshotKeys = (it: any): string[] => {
+    const keys: string[] = [];
+    const id = it?.id;
+    if (id != null) keys.push(`id:${id}`);
+    const assoc = getAssocKey(it);
+    if (assoc) keys.push(assoc);
+    const desc = normalizeText(it?.description);
+    const qty = normalizeNum(it?.quantity);
+    const price = normalizeNum(it?.unit_price ?? it?.price);
+    if (desc) keys.push(`desc:${desc}|q:${qty}|p:${price}`);
+    return keys;
   };
 
   const getExplicitChangeLabel = (it: any): 'Added' | 'Edited' | 'Removed' | null => {
@@ -574,6 +937,116 @@ export default function ShopOwnerBookingDetailScreen() {
 
     return 'Edited';
   };
+
+  const refreshChatQuotationLabels = useCallback(async () => {
+    if (!bookingId) return;
+    return runDedupedRequest(`shopowner-chat-quote-labels:${bookingId}`, 1500, async () => {
+    try {
+      const convRes = await fetch(`${API_URL}/chat/booking/${bookingId}/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (!convRes.ok) return;
+      const conv = await convRes.json();
+      const convId = Number(conv?.id || 0);
+      if (!Number.isFinite(convId) || convId <= 0) return;
+
+      const msgRes = await fetch(`${API_URL}/chat/${convId}/messages/`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!msgRes.ok) return;
+      const rows = await msgRes.json();
+      if (!Array.isArray(rows) || !rows.length) return;
+
+      const parsePayload = (raw: any): any | null => {
+        if (typeof raw !== 'string') return raw && typeof raw === 'object' ? raw : null;
+        try {
+          const first = JSON.parse(raw);
+          if (first && typeof first === 'object') return first;
+          if (typeof first === 'string' && first.trim().startsWith('{')) {
+            const second = JSON.parse(first.trim());
+            return second && typeof second === 'object' ? second : null;
+          }
+        } catch {
+          return null;
+        }
+        return null;
+      };
+
+      const quoteMessages = rows
+        .map((m: any) => ({ ...m, __payload: parsePayload(m?.content) }))
+        .filter((m: any) => m.__payload && m.__payload.type === 'quotation_request')
+        .sort((a: any, b: any) => {
+          const ta = Number(new Date(String(a?.created_at || '')).getTime()) || 0;
+          const tb = Number(new Date(String(b?.created_at || '')).getTime()) || 0;
+          if (tb !== ta) return tb - ta;
+          return Number(b?.id || 0) - Number(a?.id || 0);
+        });
+
+      const latestQuoteMsg = quoteMessages[0];
+      if (!latestQuoteMsg) {
+        setPendingQuoteSnapshot(null);
+        setChatChangeLabelByKey({});
+        return;
+      }
+
+      const payload = latestQuoteMsg.__payload;
+      if (String(payload?.status || '').toLowerCase() !== 'pending') {
+        setPendingQuoteSnapshot(null);
+        setChatChangeLabelByKey({});
+        return;
+      }
+
+      setPendingQuoteSnapshot(payload);
+      const nextMap: Record<string, 'Added' | 'Edited' | 'Removed'> = {};
+      const items = Array.isArray(payload?.items) ? payload.items : [];
+      items.forEach((it: any) => {
+        const label = getExplicitChangeLabel(it) || inferChangeLabel(it, {}, [], []);
+        if (!label) return;
+        getQuoteSnapshotKeys(it).forEach((key) => {
+          nextMap[key] = label;
+        });
+      });
+      setChatChangeLabelByKey(nextMap);
+    } catch {
+      // ignore chat refresh failures
+    }
+    });
+  }, [bookingId]);
+
+  useEffect(() => {
+    if (!bookingId) return;
+    refreshChatQuotationLabels();
+  }, [bookingId, refreshChatQuotationLabels]);
+
+  useEffect(() => {
+    if (!hasLivePendingQuoteRequest) return;
+    const id = setInterval(() => {
+      fetchBookingDetail(true);
+      fetchQuotation();
+      refreshChatQuotationLabels();
+    }, 4000);
+    return () => clearInterval(id);
+  }, [hasLivePendingQuoteRequest, fetchBookingDetail, refreshChatQuotationLabels]);
+
+  useEffect(() => {
+    try {
+      if (!lastMessage) return;
+      const message = lastMessage as unknown as Record<string, unknown>;
+      const bid = Number(message.booking_id ?? message.bookingId ?? message.booking);
+      if (!bid || !bookingId || bid !== Number(bookingId)) return;
+      const action = (lastMessage.action || lastMessage.type || '').toString().toLowerCase();
+      if (['quotation_accepted', 'quotationaccepted', 'booking_updated', 'booking_update', 'new_chat_message', 'new_chatmessage'].includes(action)) {
+        refreshChatQuotationLabels();
+      }
+    } catch {
+      // ignore
+    }
+  }, [lastMessage, bookingId, refreshChatQuotationLabels]);
 
   const fetchQuotation = async () => {
     if (!bookingId) return;
@@ -792,7 +1265,7 @@ export default function ShopOwnerBookingDetailScreen() {
             </View>
             <ThemedText style={styles.sectionTitle}>Assigned Team</ThemedText>
             {assignedTeam.length > 0 ? (
-              <View style={{ flexDirection: 'row', gap: 6, marginLeft: 'auto' }}>
+              <View style={{ flexDirection: 'row', gap: 6, marginLeft: 'auto', alignItems: 'center' }}>
                 {leadCount > 0 ? (
                   <View style={{ backgroundColor: '#FF950030', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 }}>
                     <ThemedText style={{ fontSize: 11, fontWeight: '800', color: '#fff' }}>
@@ -807,7 +1280,24 @@ export default function ShopOwnerBookingDetailScreen() {
                     </ThemedText>
                   </View>
                 ) : null}
+                {canManageAssignment(booking.status) ? (
+                  <TouchableOpacity
+                    onPress={openAssignModal}
+                    style={{ backgroundColor: '#FF9500', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999 }}
+                    activeOpacity={0.85}
+                  >
+                    <ThemedText style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>Edit</ThemedText>
+                  </TouchableOpacity>
+                ) : null}
               </View>
+            ) : canManageAssignment(booking.status) ? (
+              <TouchableOpacity
+                onPress={openAssignModal}
+                style={{ backgroundColor: '#FF9500', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, marginLeft: 'auto' }}
+                activeOpacity={0.85}
+              >
+                <ThemedText style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>Assign</ThemedText>
+              </TouchableOpacity>
             ) : null}
           </View>
           {assignedTeam.length === 0 ? (
@@ -1035,27 +1525,65 @@ export default function ShopOwnerBookingDetailScreen() {
           </View>
         </View>
 
-        {/* Quotation (read-only) */}
-        {(booking.status === 'accepted' ||
-          booking.status === 'on_the_way' ||
-          booking.status === 'at_location' ||
-          booking.status === 'diagnosing' ||
-          booking.status === 'active') && (
-          <View style={[styles.sectionCard]}>
+        {/* Pricing & Quotation */}
+        {canShowQuotationForStatus(booking.status) && (
+          <View style={[styles.sectionCard, isQuotationPending ? { borderColor: '#F2B15C66' } : null]}>
             <View style={styles.sectionHeader}>
-              <View style={[styles.sectionIcon, { backgroundColor: '#007AFF15' }]}>
-                <FontAwesome name="file-text-o" size={16} color="#007AFF" />
+              <View style={[styles.sectionIcon, { backgroundColor: '#FF8C0015' }]}>
+                <FontAwesome name="calculator" size={16} color="#FF8C00" />
               </View>
-              <ThemedText style={styles.sectionTitle}>Quotation</ThemedText>
+              <ThemedText style={styles.sectionTitle}>Pricing & Quotation</ThemedText>
             </View>
+            {booking.status === 'pending_payment' ? (
+              <View style={{ marginTop: 4, marginBottom: 10, padding: 12, borderRadius: 12, backgroundColor: '#151515', borderWidth: 1, borderColor: '#2A2C2E' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+                  <View style={[styles.sectionIcon, { backgroundColor: '#34C75915' }]}>
+                    <FontAwesome name="shield" size={16} color="#34C759" />
+                  </View>
+                  <ThemedText style={styles.sectionTitle}>Payment Secured</ThemedText>
+                  <View style={{ marginLeft: 10, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, backgroundColor: getPaymentStatusColor(paymentStatus) + '22', borderWidth: 1, borderColor: getPaymentStatusColor(paymentStatus) + '66' }}>
+                    <ThemedText style={{ color: getPaymentStatusColor(paymentStatus), fontSize: 11, fontWeight: '800' }}>
+                      {getPaymentStatusLabel(paymentStatus)}
+                    </ThemedText>
+                  </View>
+                </View>
+                <View style={styles.paymentSummaryGrid}>
+                  <View style={styles.paymentSummaryTile}>
+                    <ThemedText style={styles.paymentSummaryLabel}>Total</ThemedText>
+                    <ThemedText style={styles.paymentSummaryValue}>₱{paymentTotalAmount.toFixed(2)}</ThemedText>
+                  </View>
+                  <View style={styles.paymentSummaryTile}>
+                    <ThemedText style={styles.paymentSummaryLabel}>Paid</ThemedText>
+                    <ThemedText style={[styles.paymentSummaryValue, { color: '#34C759' }]}>₱{totalPaid.toFixed(2)}</ThemedText>
+                  </View>
+                  <View style={styles.paymentSummaryTile}>
+                    <ThemedText style={styles.paymentSummaryLabel}>Remaining</ThemedText>
+                    <ThemedText style={[styles.paymentSummaryValue, { color: remainingBalance > 0 ? '#FFD60A' : '#34C759' }]}>₱{remainingBalance.toFixed(2)}</ThemedText>
+                  </View>
+                </View>
+                <View style={styles.progressBarContainer}>
+                  <View style={[styles.progressBarFill, { width: `${paymentProgressPct}%` }]} />
+                </View>
+                <ThemedText style={styles.progressText}>{Math.round(paymentProgressPct)}% Paid</ThemedText>
+                <ThemedText style={[styles.noteText, { marginTop: 6 }]}>
+                  Payment split below is based on the final payable amount for this shop booking.
+                </ThemedText>
+              </View>
+            ) : null}
+            {hasLivePendingQuoteRequest ? (
+              <View style={{ marginTop: 4, marginBottom: 8, padding: 8, borderRadius: 8, backgroundColor: '#F2B15C1F', borderWidth: 1, borderColor: '#F2B15C55', flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <FontAwesome name="clock-o" size={12} color="#C89B55" />
+                <ThemedText style={{ color: '#C89B55', fontSize: 12 }}>Pending changes are waiting for client approval.</ThemedText>
+              </View>
+            ) : null}
 
-            {displayQuotation && (displayQuotation.items || []).length > 0 ? (
+            {displayQuotation && visibleQuotationItems.length > 0 ? (
               <View style={{ paddingVertical: 8 }}>
                 {(() => {
                   const acceptedByAssoc: Record<string, any> = {};
                   const acceptedRows: any[] = [];
                   const removedRows: any[] = [];
-                  (displayQuotation.items || []).forEach((row: any) => {
+                  visibleQuotationItems.forEach((row: any) => {
                     const rowStatus = String(row?.status || displayQuotation?.status || quotation?.status || '').toLowerCase();
                     const key = getAssocKey(row);
                     if (rowStatus === 'accepted' && key && !acceptedByAssoc[key]) {
@@ -1065,21 +1593,27 @@ export default function ShopOwnerBookingDetailScreen() {
                     if (rowStatus === 'rejected') removedRows.push(row);
                   });
 
-                  const quotationAcceptedTotal = (displayQuotation && Array.isArray(displayQuotation.items)) ? (displayQuotation.items || []).reduce((sum: number, it: any) => {
-                    const itemStatus = it?.status || displayQuotation?.status || quotation?.status;
-                    if (String(itemStatus).toLowerCase() === 'accepted') {
-                      return sum + ((Number(it.unit_price) || 0) * (Number(it.quantity) || 1));
-                    }
-                    return sum;
-                  }, 0) : 0;
                   const renderQuotationRow = (it: any, idx: number) => {
-                    const itemStatus = it?.status || displayQuotation?.status || quotation?.status;
+                    const itemStatus = it && (it.status || it.quotation_status || it.state)
+                      ? (it.status || it.quotation_status || it.state)
+                      : (quotation && quotation.status) || 'pending';
                     const isPending = String(itemStatus).toLowerCase() === 'pending';
                     const isRejected = String(itemStatus).toLowerCase() === 'rejected';
                     const explicit = getExplicitChangeLabel(it);
                     const inferred = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
-                    const changeLabel = explicit || inferred || (String(itemStatus).toLowerCase() === 'pending' ? 'Edited' : null);
+                    const chatDerived = getQuoteSnapshotKeys(it).map((key) => chatChangeLabelByKey[key]).find(Boolean) || null;
+                    const rawChangeLabelUnfiltered = explicit || chatDerived || inferred || null;
+                    const serviceId = Number(it?.service);
+                    const isBookedServiceItem = Number.isFinite(serviceId) && serviceItemIds.has(serviceId);
+                    const rawChangeLabel = isBookedServiceItem && rawChangeLabelUnfiltered === 'Removed' ? null : rawChangeLabelUnfiltered;
+                    const changeLabel = (isPending || isRejected) ? rawChangeLabel : null;
+                    const isRemoved = changeLabel === 'Removed';
                     const assocKey = getAssocKey(it);
+                    const desc = it?.description || it?.name || (it.service ? `Service #${it.service}` : null) || 'Item';
+                    const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
+                    const qty = Number(it?.quantity ?? 1) || 1;
+                    const key = getQuoteItemKey(it, idx);
+                    const isExpanded = expandedQuoteItems[key] ?? false;
                     const beforeItem = it?.previous_description || it?.previous_quantity != null || it?.previous_unit_price != null
                       ? {
                           description: it?.previous_description,
@@ -1092,59 +1626,141 @@ export default function ShopOwnerBookingDetailScreen() {
                     const beforeQty = Number(beforeItem?.quantity ?? 1) || 1;
                     const beforeUnitPrice = Number(beforeItem?.unit_price ?? 0) || 0;
                     const beforeLineTotal = beforeUnitPrice * beforeQty;
+                    const getChangePillStyle = (label: string | null) => {
+                      if (label === 'Added') return { pill: { backgroundColor: '#8CE99A', borderColor: '#5FBF72' }, text: { color: '#1D3A24' } };
+                      if (label === 'Edited') return { pill: { backgroundColor: '#FFD49A', borderColor: '#DCA85F' }, text: { color: '#5A3D0A' } };
+                      if (label === 'Removed') return { pill: { backgroundColor: '#FFB4B0', borderColor: '#C97673' }, text: { color: '#631B21' } };
+                      return { pill: {}, text: {} };
+                    };
+                    const pillStyle = getChangePillStyle(changeLabel);
 
                     return (
-                      <View key={idx} style={{ paddingVertical: 6, opacity: isRejected ? 0.72 : 1 }}>
-                        {changeLabel === 'Edited' && beforeItem ? (
-                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 3 }}>
-                            <ThemedText style={{ flex: 1, textDecorationLine: 'line-through', color: '#8E8E93' }}>
-                              {beforeDescription || (it.service ? `Service #${it.service}` : null) || 'Item'}
-                            </ThemedText>
-                            <ThemedText style={{ textDecorationLine: 'line-through', color: '#8E8E93' }}>₱{beforeLineTotal.toFixed(2)}</ThemedText>
+                      <View key={key} style={[styles.quotationAccordionRow, isRemoved ? styles.removedItem : (changeLabel ? styles.pendingItem : styles.acceptedItem), isExpanded ? styles.quotationAccordionRowExpanded : null]}>
+                        <TouchableOpacity style={styles.quotationAccordionHeader} onPress={() => toggleQuoteItem(key)} activeOpacity={0.8}>
+                          <View style={styles.quoteHeaderLeft}>
+                            <ThemedText style={[styles.receiptItem, isRemoved ? styles.removedItemText : null]} numberOfLines={2}>{desc}</ThemedText>
+                            {changeLabel ? (
+                              <View style={[styles.pendingPill, pillStyle.pill]}>
+                                <ThemedText style={[styles.pendingPillText, pillStyle.text]}>{changeLabel}</ThemedText>
+                              </View>
+                            ) : null}
+                          </View>
+                          <View style={styles.quotationAccordionRight}>
+                            <ThemedText style={[styles.receiptAmount, isRemoved ? styles.removedItemAmount : null]}>₱{(price * qty).toFixed(2)}</ThemedText>
+                            <FontAwesome name={isExpanded ? 'chevron-up' : 'chevron-down'} size={12} color="#9CA3AF" />
+                          </View>
+                        </TouchableOpacity>
+
+                        {isExpanded ? (
+                          <View style={styles.quotationAccordionBody}>
+                            <View style={styles.quotationDetailTopRow}>
+                              <ThemedText style={styles.quotationDetailStatusText}>{changeLabel || 'Accepted'}</ThemedText>
+                            </View>
+                            {changeLabel ? (
+                              <View style={styles.receiptRow}>
+                                <ThemedText style={styles.quotationDetailLabel}>Change</ThemedText>
+                                <ThemedText style={styles.quotationDetailValue}>{changeLabel}</ThemedText>
+                              </View>
+                            ) : null}
+                            {changeLabel === 'Edited' && beforeItem ? (
+                              <>
+                                <View style={styles.receiptRow}>
+                                  <ThemedText style={styles.quotationDetailLabel}>Before</ThemedText>
+                                  <ThemedText style={[styles.quotationDetailValue, { textDecorationLine: 'line-through', color: '#8E8E93' }]}>
+                                    {beforeDescription || (it.service ? `Service #${it.service}` : null) || 'Item'}
+                                  </ThemedText>
+                                </View>
+                                <View style={styles.receiptRow}>
+                                  <ThemedText style={styles.quotationDetailLabel}>Before Price</ThemedText>
+                                  <ThemedText style={[styles.quotationDetailValue, { textDecorationLine: 'line-through', color: '#8E8E93' }]}>₱{beforeLineTotal.toFixed(2)}</ThemedText>
+                                </View>
+                                <View style={styles.receiptRow}>
+                                  <ThemedText style={styles.quotationDetailLabel}>Now</ThemedText>
+                                  <ThemedText style={styles.quotationDetailValue}>{desc}</ThemedText>
+                                </View>
+                              </>
+                            ) : null}
+                            <View style={styles.receiptRow}>
+                              <ThemedText style={styles.quotationDetailLabel}>Unit Price</ThemedText>
+                              <ThemedText style={styles.quotationDetailValue}>₱{price.toFixed(2)}</ThemedText>
+                            </View>
+                            <View style={styles.receiptRow}>
+                              <ThemedText style={styles.quotationDetailLabel}>Quantity</ThemedText>
+                              <ThemedText style={styles.quotationDetailValue}>{qty}</ThemedText>
+                            </View>
                           </View>
                         ) : null}
-
-                        {changeLabel === 'Edited' && beforeItem ? (
-                          <View style={{ flexDirection: 'row', alignItems: 'center', paddingBottom: 3 }}>
-                            <FontAwesome name="long-arrow-down" size={12} color="#8E8E93" />
-                            <ThemedText style={{ marginLeft: 6, color: '#8E8E93', fontSize: 11, fontStyle: 'italic' }}>Updated to</ThemedText>
-                          </View>
-                        ) : null}
-
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <ThemedText style={{ flex: 1 }}>{it.description || (it.service ? `Service #${it.service}` : null) || 'Item'}</ThemedText>
-                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                            <ThemedText>₱{((it.unit_price || 0) * (it.quantity || 1)).toFixed(2)}</ThemedText>
-                            {changeLabel === 'Added' ? <ThemedText style={{ marginLeft: 8, color: '#1D3A24', fontWeight: '700', backgroundColor: '#8CE99A', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 }}>Added</ThemedText> : null}
-                            {changeLabel === 'Edited' ? <ThemedText style={{ marginLeft: 8, color: '#5A3D0A', fontWeight: '700', backgroundColor: '#FFD49A', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 }}>Edited</ThemedText> : null}
-                            {changeLabel === 'Removed' ? <ThemedText style={{ marginLeft: 8, color: '#631B21', fontWeight: '700', backgroundColor: '#FFB4B0', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 }}>Removed</ThemedText> : null}
-                          </View>
-                        </View>
                       </View>
                     );
                   };
 
                   return (
                     <>
-                      {(displayQuotation.items || []).map(renderQuotationRow)}
+                      <TouchableOpacity
+                        style={[styles.quotationListAccordionHeader, quotationListExpanded ? styles.quotationListAccordionHeaderExpanded : null]}
+                        onPress={() => setQuotationListExpanded(prev => !prev)}
+                        activeOpacity={0.8}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          <FontAwesome name="list" size={12} color="#A6ABB2" />
+                          <ThemedText style={styles.quotationListAccordionTitle}>
+                            Quotation Items ({visibleQuotationItems.length})
+                          </ThemedText>
+                        </View>
+                        <FontAwesome name={quotationListExpanded ? 'chevron-up' : 'chevron-down'} size={12} color="#A6ABB2" />
+                      </TouchableOpacity>
+                      {quotationListExpanded ? visibleQuotationItems.map(renderQuotationRow) : null}
 
-                      <View style={{ height: 1, backgroundColor: '#eee', marginVertical: 8 }} />
-
+                      <View style={{ height: 1, backgroundColor: '#2A2C2E', marginVertical: 8 }} />
                       <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                        <ThemedText style={{ fontWeight: '600' }}>Estimated Total</ThemedText>
-                        <ThemedText style={{ fontWeight: '600' }}>₱{parseFloat(String(quotationAcceptedTotal || 0)).toFixed(2)}</ThemedText>
+                        <ThemedText style={{ color: '#ECEDEE', fontWeight: '700' }}>
+                          Convenience Fee Total
+                        </ThemedText>
+                        <ThemedText style={{ color: '#ECEDEE', fontWeight: '800' }}>₱{effectiveConvenienceFee.toFixed(2)}</ThemedText>
                       </View>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
+                        <ThemedText style={{ color: '#ECEDEE', fontWeight: '700' }}>
+                          Quotation Estimated Total
+                        </ThemedText>
+                        <ThemedText style={{ color: '#ECEDEE', fontWeight: '800' }}>₱{effectiveQuotationEstimate.toFixed(2)}</ThemedText>
+                      </View>
+                      {pendingRequestedTotalValue != null ? (
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
+                          <ThemedText style={{ color: '#ECEDEE', fontWeight: '700' }}>Pending Requested Total</ThemedText>
+                          <ThemedText style={{ color: '#F2B15C', fontWeight: '800' }}>₱{pendingRequestedTotalValue.toFixed(2)}</ThemedText>
+                        </View>
+                      ) : null}
+
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
+                        <ThemedText style={{ color: '#ECEDEE', fontWeight: '700' }}>
+                          Total Fee
+                        </ThemedText>
+                        <ThemedText style={{ color: '#ECEDEE', fontWeight: '800' }}>₱{effectiveTotalFee.toFixed(2)}</ThemedText>
+                      </View>
+                      {renderPaymentSplit()}
                     </>
                   );
                 })()}
               </View>
             ) : (
               <View style={{ paddingVertical: 8 }}>
-                <ThemedText style={{ marginBottom: 8, color: '#666' }}>
+                <ThemedText style={{ marginBottom: 8, color: '#8E8E93' }}>
                   No quotation available.
                 </ThemedText>
               </View>
             )}
+            {canEditQuotationForStatus(booking.status) ? (
+              <TouchableOpacity
+                style={[styles.finishLargeButton, { marginTop: 10, backgroundColor: '#34C759' }]}
+                onPress={openQuotationEditor}
+                activeOpacity={0.85}
+              >
+                <FontAwesome name={quotation ? 'pencil' : 'plus'} size={14} color="#fff" />
+                <ThemedText style={[styles.actionButtonText, { color: '#fff' }]}>
+                  {quotation ? 'Edit Quotation' : 'Create Quotation'}
+                </ThemedText>
+              </TouchableOpacity>
+            ) : null}
           </View>
         )}
 
@@ -1357,20 +1973,24 @@ export default function ShopOwnerBookingDetailScreen() {
                       </View>
 
                       <View style={styles.receiptRow}>
-                        <ThemedText style={styles.receiptYouLabel}>You receive</ThemedText>
+                        <ThemedText style={styles.receiptYouLabel}>Shop owner receives</ThemedText>
                         <ThemedText style={styles.receiptYouValue}>
                           ₱
-                          {parseFloat(String(displayQuotation.total_amount || 0)).toFixed(2)}
+                          {Number(paymentSplit?.shop_owner_amount ?? displayQuotation.total_amount ?? 0).toFixed(2)}
                         </ThemedText>
                       </View>
+                      {renderPaymentSplit()}
                     </>
                   ) : (
-                    <View style={styles.completionRow}>
-                      <ThemedText style={styles.completionLabel}>Total Amount</ThemedText>
-                      <ThemedText style={styles.completionAmount}>
-                        ₱{(booking.completion_details.total_amount ?? 0).toFixed(2)}
-                      </ThemedText>
-                    </View>
+                    <>
+                      <View style={styles.completionRow}>
+                        <ThemedText style={styles.completionLabel}>Total Amount</ThemedText>
+                        <ThemedText style={styles.completionAmount}>
+                          ₱{(booking.completion_details.total_amount ?? 0).toFixed(2)}
+                        </ThemedText>
+                      </View>
+                      {renderPaymentSplit()}
+                    </>
                   )}
                 </View>
 
@@ -1482,7 +2102,7 @@ export default function ShopOwnerBookingDetailScreen() {
           >
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               <View>
-                <ThemedText style={{ fontSize: 18, fontWeight: '700' }}>Assign Mechanics</ThemedText>
+                <ThemedText style={{ color: '#ECEDEE', fontSize: 18, fontWeight: '700' }}>Assign Mechanics</ThemedText>
                 <ThemedText style={{ color: '#8E8E93', fontSize: 12, marginTop: 2 }}>
                   {availableMechanics.length} available mechanic{availableMechanics.length === 1 ? '' : 's'}
                 </ThemedText>
@@ -1522,36 +2142,74 @@ export default function ShopOwnerBookingDetailScreen() {
                       paddingVertical: 10,
                       paddingHorizontal: 12,
                       marginBottom: 8,
-                      flexDirection: 'row',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
                     }}
                   >
-                    <View style={{ flex: 1, paddingRight: 10 }}>
-                      <ThemedText numberOfLines={1} style={{ fontSize: 14, fontWeight: '600' }}>
-                        {a.mechanic.firstname} {a.mechanic.lastname}
-                      </ThemedText>
-                      <ThemedText style={{ color: '#888', fontSize: 12 }}>
-                        {a.role === 'lead' ? 'Lead Mechanic' : 'Assisting Mechanic'}
-                      </ThemedText>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <View style={{ flex: 1, paddingRight: 10 }}>
+                        <ThemedText numberOfLines={1} style={{ color: '#ECEDEE', fontSize: 14, fontWeight: '600' }}>
+                          {a.mechanic.firstname} {a.mechanic.lastname}
+                        </ThemedText>
+                        <ThemedText style={{ color: '#888', fontSize: 12 }}>
+                          {a.role === 'lead' ? 'Lead Mechanic' : 'Assisting Mechanic'}
+                        </ThemedText>
+                      </View>
+                      {assignLoading ? (
+                        <ActivityIndicator size="small" color="#FF9500" />
+                      ) : (
+                        <TouchableOpacity
+                          style={{
+                            width: 34,
+                            height: 34,
+                            borderRadius: 17,
+                            backgroundColor: '#FF3B301A',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                          onPress={() => handleUnassign(a.id)}
+                        >
+                          <FontAwesome name="minus" size={14} color="#FF6B63" />
+                        </TouchableOpacity>
+                      )}
                     </View>
-                    {assignLoading ? (
-                      <ActivityIndicator size="small" color="#FF9500" />
-                    ) : (
-                      <TouchableOpacity
-                        style={{
-                          width: 34,
-                          height: 34,
-                          borderRadius: 17,
-                          backgroundColor: '#FF3B301A',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}
-                        onPress={() => handleUnassign(a.id)}
-                      >
-                        <FontAwesome name="minus" size={14} color="#FF6B63" />
-                      </TouchableOpacity>
-                    )}
+
+                    {!assignLoading ? (
+                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+                        <TouchableOpacity
+                          style={{
+                            flex: 1,
+                            backgroundColor: a.role === 'lead' ? '#FF9500' : '#111214',
+                            borderWidth: 1,
+                            borderColor: '#FF9500',
+                            paddingVertical: 8,
+                            borderRadius: 8,
+                            alignItems: 'center',
+                          }}
+                          onPress={() => handleUpdateAssignmentRole(a.id, 'lead')}
+                          disabled={a.role === 'lead'}
+                        >
+                          <ThemedText style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>
+                            Make Lead
+                          </ThemedText>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={{
+                            flex: 1,
+                            backgroundColor: a.role === 'assistant' ? '#34C759' : '#111214',
+                            borderWidth: 1,
+                            borderColor: '#34C759',
+                            paddingVertical: 8,
+                            borderRadius: 8,
+                            alignItems: 'center',
+                          }}
+                          onPress={() => handleUpdateAssignmentRole(a.id, 'assistant')}
+                          disabled={a.role === 'assistant'}
+                        >
+                          <ThemedText style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>
+                            Make Assist
+                          </ThemedText>
+                        </TouchableOpacity>
+                      </View>
+                    ) : null}
                   </View>
                 ))
               )}
@@ -1586,7 +2244,7 @@ export default function ShopOwnerBookingDetailScreen() {
                       marginBottom: 10,
                     }}
                   >
-                    <ThemedText numberOfLines={2} style={{ fontSize: 14, fontWeight: '600', marginBottom: 10 }}>
+                    <ThemedText numberOfLines={2} style={{ color: '#ECEDEE', fontSize: 14, fontWeight: '600', marginBottom: 10 }}>
                       {m.firstname} {m.lastname}
                     </ThemedText>
                     {assigningId === m.account_id ? (

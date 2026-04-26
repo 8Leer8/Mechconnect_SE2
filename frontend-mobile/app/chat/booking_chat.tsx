@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
-import { View, FlatList, TextInput, TouchableOpacity, ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform, Alert, StatusBar, Image, Modal, ActionSheetIOS } from 'react-native';
+import { View, FlatList, TextInput, TouchableOpacity, ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform, Alert, StatusBar, Image, Modal, ActionSheetIOS, AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, router, useNavigation } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
@@ -38,6 +38,11 @@ export default function BookingChatScreen() {
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const pollRef = useRef<any>(null);
+  const accessPollRef = useRef<any>(null);
+  const pollBackoffRef = useRef(0);
+  const fetchInFlightRef = useRef(false);
+  const lastFetchedCountRef = useRef(0);
+  const appStateRef = useRef(AppState.currentState);
   const [accountId, setAccountId] = useState<number | null>(null);
   const [showAcceptModal, setShowAcceptModal] = useState(false);
   const [showOptionsModal, setShowOptionsModal] = useState(false);
@@ -315,7 +320,8 @@ export default function BookingChatScreen() {
 
   const canModerateBackjobRequest = useMemo(() => {
     if (!canSendMessages) return false;
-    if (myChatRole === 'client' || myChatRole === 'assistant_mechanic' || myChatRole === 'shop_owner') return false;
+    if (myChatRole === 'client' || myChatRole === 'assistant_mechanic') return false;
+    if (myChatRole === 'shop_owner') return true;
     return Boolean(isAssignedMechanicForBooking || myChatRole === 'lead_mechanic' || myChatRole === 'provider_mechanic');
   }, [canSendMessages, myChatRole, isAssignedMechanicForBooking]);
 
@@ -405,7 +411,10 @@ export default function BookingChatScreen() {
         if (token) headers['Authorization'] = `Bearer ${token}`;
       } catch (e) {}
 
-      const res = await fetch(`${API_URL}/bookings/mechanic/bookings/${bookingId}/accept-backjob/`, {
+      const acceptPath = myChatRole === 'shop_owner'
+        ? `${API_URL}/bookings/shopowner/bookings/${bookingId}/accept-backjob/`
+        : `${API_URL}/bookings/mechanic/bookings/${bookingId}/accept-backjob/`;
+      const res = await fetch(acceptPath, {
         method: 'POST',
         credentials: 'include',
         headers,
@@ -455,7 +464,9 @@ export default function BookingChatScreen() {
 
       const payload = {
         type: 'backjob_declined',
-        message: 'Backjob request declined by mechanic.',
+        message: myChatRole === 'shop_owner'
+          ? 'Backjob request declined by shop owner.'
+          : 'Backjob request declined by mechanic.',
       };
 
       const res = await fetch(`${API_URL}/chat/${conversationId}/messages/`, {
@@ -484,16 +495,44 @@ export default function BookingChatScreen() {
   useEffect(() => {
     if (!conversationId) return;
     let mounted = true;
-    let accessPoll: any = null;
 
-    const fetchMessages = async () => {
+    const stopPolling = () => {
+      if (pollRef.current) {
+        clearTimeout(pollRef.current);
+        pollRef.current = null;
+      }
+      if (accessPollRef.current) {
+        clearInterval(accessPollRef.current);
+        accessPollRef.current = null;
+      }
+    };
+
+    const scheduleNextPoll = (ms: number) => {
+      if (!mounted) return;
+      if (pollRef.current) clearTimeout(pollRef.current);
+      pollRef.current = setTimeout(() => {
+        fetchMessages();
+      }, ms);
+    };
+
+    const fetchMessages = async (opts?: { markRead?: boolean; immediate?: boolean }) => {
+      if (fetchInFlightRef.current) return;
+      if (appStateRef.current !== 'active') {
+        scheduleNextPoll(15000);
+        return;
+      }
+
+      fetchInFlightRef.current = true;
       try {
         const headers: any = { 'Content-Type': 'application/json' };
         try {
           const token = await AsyncStorage.getItem('auth_token');
           if (token) headers['Authorization'] = `Bearer ${token}`;
         } catch (e) {}
-        const resUrl = `${API_URL}/chat/${conversationId}/messages/?mark_read=1`;
+        const shouldMarkRead = Boolean(opts?.markRead);
+        const resUrl = shouldMarkRead
+          ? `${API_URL}/chat/${conversationId}/messages/?mark_read=1`
+          : `${API_URL}/chat/${conversationId}/messages/`;
         const r = await fetch(resUrl, {
           method: 'GET',
           credentials: 'include',
@@ -534,21 +573,52 @@ export default function BookingChatScreen() {
           // ignore
         }
 
-        setMessages(mergeResolvedQuotationMessages(fetched || []));
+        const next = mergeResolvedQuotationMessages(fetched || []);
+        const nextLen = Array.isArray(next) ? next.length : 0;
+        const prevLen = lastFetchedCountRef.current;
+        if (nextLen === prevLen) {
+          pollBackoffRef.current = Math.min(3, pollBackoffRef.current + 1);
+        } else {
+          pollBackoffRef.current = 0;
+        }
+        lastFetchedCountRef.current = nextLen;
+        setMessages(next);
       } catch (e) {
         console.warn(e);
+      } finally {
+        fetchInFlightRef.current = false;
+        if (!mounted) return;
+        if (opts?.immediate) return;
+        const idleStep = pollBackoffRef.current;
+        const nextMs = idleStep <= 0 ? 3500 : idleStep === 1 ? 5000 : idleStep === 2 ? 7000 : 9000;
+        scheduleNextPoll(nextMs);
       }
     };
 
     refreshConversationAccess();
-    fetchMessages();
-    // Lower polling rate to reduce backend pressure and repeated media serialization.
-    pollRef.current = setInterval(fetchMessages, 8000);
-    accessPoll = setInterval(refreshConversationAccess, 30000);
+    fetchMessages({ markRead: true });
+    accessPollRef.current = setInterval(refreshConversationAccess, 30000);
+
+    const appStateSub = AppState.addEventListener('change', (nextState) => {
+      const wasActive = appStateRef.current === 'active';
+      appStateRef.current = nextState;
+      if (!wasActive && nextState === 'active') {
+        pollBackoffRef.current = 0;
+        refreshConversationAccess();
+        if (!accessPollRef.current) {
+          accessPollRef.current = setInterval(refreshConversationAccess, 30000);
+        }
+        fetchMessages({ markRead: true, immediate: true });
+        scheduleNextPoll(3500);
+      } else if (nextState !== 'active') {
+        stopPolling();
+      }
+    });
+
     return () => {
       mounted = false;
-      if (pollRef.current) clearInterval(pollRef.current);
-      if (accessPoll) clearInterval(accessPoll);
+      appStateSub.remove();
+      stopPolling();
     };
   }, [conversationId, accountId, acceptedLocks]);
 
@@ -857,7 +927,7 @@ export default function BookingChatScreen() {
               </ThemedText>
               <ThemedText style={styles.systemText}>{parsed.requested_by_name || 'Client'} asked for a backjob</ThemedText>
               {backjobRequestStatus === 'accepted' ? (
-                <ThemedText style={styles.systemText}>Mechanic accepted this backjob request.</ThemedText>
+                <ThemedText style={styles.systemText}>The provider accepted this backjob request.</ThemedText>
               ) : null}
               {backjobRequestStatus === 'declined' ? (
                 <ThemedText style={styles.systemText}>Mechanic declined this backjob request.</ThemedText>
@@ -965,22 +1035,23 @@ export default function BookingChatScreen() {
         ? styles.quoteStatusPending
         : (resolvedStatus === 'accepted' ? styles.quoteStatusAccepted : styles.quoteStatusRejected);
 
-      // Hide stale pending card if a newer resolved card exists for same request key.
+      // Hide stale pending card if a newer quotation card exists for the same quotation.
+      // Shop owner and lead mechanic can revise the same pending amendment, creating a new amendment id.
       if (isPending) {
         const currentIdxForPending = messages.findIndex((m: any) => getQuotationMessageKey(m) === quoteMessageKey);
         if (currentIdxForPending >= 0) {
-          const hasNewerResolved = messages.slice(currentIdxForPending + 1).some((nm: any) => {
+          const hasNewerSameQuotation = messages.slice(currentIdxForPending + 1).some((nm: any) => {
             try {
               const np = parseStructuredContent(nm.content) || (typeof nm.content === 'object' ? nm.content : null);
               if (!np || np.type !== 'quotation_request') return false;
-              if (getQuoteRequestKey(np) !== quoteRequestKey) return false;
-              const nextStatus = resolvePayloadStatus(np);
-              return nextStatus === 'accepted' || nextStatus === 'rejected';
+              const sameRequest = getQuoteRequestKey(np) === quoteRequestKey;
+              const sameQuotation = String(np?.quotation_id ?? '') === String(parsed?.quotation_id ?? '');
+              return sameRequest || sameQuotation;
             } catch (e) {
               return false;
             }
           });
-          if (hasNewerResolved) return null;
+          if (hasNewerSameQuotation) return null;
         }
       }
 
@@ -1088,6 +1159,25 @@ export default function BookingChatScreen() {
         const ratioB = overlap / bTokens.size;
         return ratioA >= 0.6 || ratioB >= 0.6;
       };
+      const bookedServiceCandidates = visibleOrderedPreviousItems.filter((it: any) => (
+        String(it?.line_kind || '').toLowerCase() === 'service' ||
+        Number(it?.service || 0) > 0
+      ));
+      const isBookedServiceRemovalRow = (line: any, previousLine?: any | null) => {
+        const changeType = String(line?.change_type || '').toLowerCase();
+        if (changeType !== 'removed') return false;
+
+        const lineKind = String(line?.line_kind || previousLine?.line_kind || '').toLowerCase();
+        const serviceId = Number(line?.service || previousLine?.service || 0);
+        if (lineKind === 'service' || serviceId > 0) return true;
+
+        const desc = normalizeText(line?.description);
+        if (!desc) return false;
+        return bookedServiceCandidates.some((svc: any) => {
+          const svcDesc = normalizeText(svc?.description);
+          return Boolean(svcDesc && (svcDesc === desc || svcDesc.includes(desc) || desc.includes(svcDesc)));
+        });
+      };
 
       let matchedRows: any[] = [];
       let removedItemsFromPrevious: any[] = [];
@@ -1102,11 +1192,16 @@ export default function BookingChatScreen() {
           if (it?.id != null) previousById.set(String(it.id), it);
         });
 
+        const normalizeLineKind = (lineKind: any, serviceId: any) => {
+          const kind = normalizeText(lineKind) || 'item';
+          if (kind === 'service' && !(Number(serviceId || 0) > 0)) return 'item';
+          return kind === 'service' || kind === 'item' ? kind : 'item';
+        };
         const hasChanged = (prevIt: any, curIt: any) => (
           normalizeText(prevIt?.description) !== normalizeText(curIt?.description) ||
           normalizeNum(prevIt?.quantity) !== normalizeNum(curIt?.quantity) ||
           normalizeNum(prevIt?.unit_price) !== normalizeNum(curIt?.unit_price) ||
-          normalizeText(prevIt?.line_kind) !== normalizeText(curIt?.line_kind) ||
+          normalizeLineKind(prevIt?.line_kind, prevIt?.service) !== normalizeLineKind(curIt?.line_kind, curIt?.service) ||
           normalizeText(prevIt?.source) !== normalizeText(curIt?.source) ||
           normalizeNum(prevIt?.service) !== normalizeNum(curIt?.service) ||
           normalizeNum(prevIt?.service_add_on) !== normalizeNum(curIt?.service_add_on)
@@ -1118,7 +1213,7 @@ export default function BookingChatScreen() {
           const previousIt = idKey ? (previousById.get(idKey) || null) : null;
 
           if (declaredChangeType === 'removed') {
-            return { currentIt, previousIt, isAdded: false, isEdited: false, isRemoved: true };
+            return { currentIt, previousIt, isAdded: false, isEdited: false, isRemoved: !isBookedServiceRemovalRow(currentIt, previousIt) };
           }
 
           if (declaredChangeType === 'added') {
@@ -1126,7 +1221,24 @@ export default function BookingChatScreen() {
           }
 
           if (declaredChangeType === 'edited' || declaredChangeType === 'updated' || declaredChangeType === 'modify') {
-            return { currentIt, previousIt, isAdded: false, isEdited: true, isRemoved: false };
+            const storedPrevious = (
+              currentIt?.previous_description != null ||
+              currentIt?.previous_quantity != null ||
+              currentIt?.previous_unit_price != null
+            )
+              ? {
+                  description: currentIt?.previous_description ?? currentIt?.description,
+                  quantity: currentIt?.previous_quantity ?? currentIt?.quantity,
+                  unit_price: currentIt?.previous_unit_price ?? currentIt?.unit_price,
+                  line_kind: currentIt?.line_kind,
+                  source: currentIt?.source,
+                  service: currentIt?.service,
+                  service_add_on: currentIt?.service_add_on,
+                }
+              : null;
+            const compareAgainst = previousIt || storedPrevious;
+            const edited = compareAgainst ? hasChanged(compareAgainst, currentIt) : true;
+            return { currentIt, previousIt: compareAgainst, isAdded: false, isEdited: edited, isRemoved: false };
           }
 
           if (!idKey || !previousIt) {
@@ -1146,7 +1258,7 @@ export default function BookingChatScreen() {
           const explicitRemoved = declaredChangeType === 'removed';
 
           if (explicitRemoved) {
-            return { currentIt, previousIt: null, isAdded: false, isEdited: false, isRemoved: true };
+            return { currentIt, previousIt: null, isAdded: false, isEdited: false, isRemoved: !isBookedServiceRemovalRow(currentIt, null) };
           }
 
           if (declaredChangeType === 'added') {
@@ -1276,10 +1388,15 @@ export default function BookingChatScreen() {
           return isPendingBackjobQuote ? isAddedBackjobRow(row) : true;
         })
         : matchedRows;
-      const removedRowsFromCurrent = matchedRows.filter((row: any) => Boolean(row?.isRemoved));
+      const removedRowsFromCurrent = matchedRows.filter((row: any) => (
+        Boolean(row?.isRemoved) && !isBookedServiceRemovalRow(row?.currentIt, row?.previousIt)
+      ));
       const removedItems = isBackjobQuote
         ? []
-        : [...removedRowsFromCurrent.map((row: any) => row.currentIt), ...removedItemsFromPrevious];
+        : [
+            ...removedRowsFromCurrent.map((row: any) => row.currentIt),
+            ...removedItemsFromPrevious.filter((it: any) => !isBookedServiceRemovalRow({ ...it, change_type: 'removed' }, it)),
+          ];
       const pendingChargeTotal = Math.max(0, rowsForDisplay.reduce((sum: number, row: any) => {
         if (row?.isRemoved) return sum;
         const currentLine = Number(row?.currentIt?.line_total) || 0;
@@ -1433,7 +1550,7 @@ export default function BookingChatScreen() {
             <View style={[styles.systemBubbleContainer, styles.systemBubbleContainerAligned]}>
               <View style={styles.systemBubble}>
                 <ThemedText style={styles.systemTitle}>Backjob Accepted</ThemedText>
-                <ThemedText style={styles.systemText}>{parsed.mechanic_name || 'Mechanic'} accepted the backjob</ThemedText>
+                <ThemedText style={styles.systemText}>{parsed.mechanic_name || 'Provider'} accepted the backjob</ThemedText>
                 {parsed.message ? <ThemedText style={styles.systemText}>{parsed.message}</ThemedText> : null}
                 <ThemedText style={styles.messageTime}>{new Date(item.created_at).toLocaleTimeString()}</ThemedText>
               </View>

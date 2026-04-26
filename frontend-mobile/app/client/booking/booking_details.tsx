@@ -31,6 +31,8 @@ import {
 } from '@/lib/bookingAccess';
 import { coerceBarangayForDisplay } from '@/lib/locationAddress';
 import { sortQuotationItemsForDisplay } from '@/lib/quotationOrdering';
+import { runDedupedRequest } from '@/lib/requestDedupe';
+import { fetchPricingConfig as fetchPricingConfigCached } from '@/hooks/usePricing';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -319,15 +321,9 @@ export default function ClientBookingDetailScreen() {
 
   useEffect(() => {
     let isMounted = true;
-    const fetchPricingConfig = async () => {
+    const loadPricingConfig = async () => {
       try {
-        const response = await fetch(`${API_URL}/pricing/config/`, {
-          method: 'GET',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        });
-        if (!response.ok) return;
-        const data = await response.json() as Partial<PricingConfig>;
+        const data = await fetchPricingConfigCached() as Partial<PricingConfig>;
         if (!isMounted) return;
         const toConfigNumber = (value: unknown) => {
           const parsed = Number(value);
@@ -349,7 +345,7 @@ export default function ClientBookingDetailScreen() {
       }
     };
 
-    fetchPricingConfig();
+    loadPricingConfig();
     return () => {
       isMounted = false;
     };
@@ -436,7 +432,14 @@ export default function ClientBookingDetailScreen() {
         const exists = mergedItems.some((it: any) => Number(it?.service) === sid && String(it?.status || '').toLowerCase() !== 'rejected');
         if (!exists) mergedItems.push(svcRow);
       });
-      const overlayedItems = applyPendingSnapshotOverlay(mergedItems);
+      const hasServerPendingAmendment = Boolean(
+        saved?.amendment_id ||
+        mergedItems.some((it: any) =>
+          String(it?.status || '').toLowerCase() === 'pending' &&
+          String(it?.change_type || '').trim()
+        )
+      );
+      const overlayedItems = hasServerPendingAmendment ? mergedItems : applyPendingSnapshotOverlay(mergedItems);
       const mergedTotal = overlayedItems.reduce((sum: number, it: any) => {
         const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
         const qty = Number(it?.quantity ?? 1) || 1;
@@ -444,7 +447,7 @@ export default function ClientBookingDetailScreen() {
       }, 0);
       return {
         ...saved,
-        status: pendingQuoteSnapshot?.status || saved?.status,
+        status: hasServerPendingAmendment ? saved?.status : (pendingQuoteSnapshot?.status || saved?.status),
         items: overlayedItems,
         total_amount: Math.max(Number(pendingQuoteSnapshot?.total_amount || 0), Number(saved?.total_amount || 0), mergedTotal),
       };
@@ -570,11 +573,42 @@ export default function ClientBookingDetailScreen() {
     });
     return ids;
   }, [booking]);
+  const bookedServiceNames = useMemo(() => {
+    const details = (booking as any)?.request?.request_details;
+    const names: string[] = [];
+    if (details?.service?.name) names.push(String(details.service.name));
+    const list = Array.isArray(details?.services) ? details.services : [];
+    list.forEach((svc: any) => {
+      if (svc?.name) names.push(String(svc.name));
+    });
+    return names;
+  }, [booking]);
 
   const sortedQuotationItems = useMemo(() => {
     const items = (displayQuotation && Array.isArray(displayQuotation.items)) ? displayQuotation.items : [];
     return sortQuotationItemsForDisplay(items, serviceItemIds, chatChangeLabelByKey);
   }, [displayQuotation, serviceItemIds, chatChangeLabelByKey]);
+
+  const isFalseBookedServiceRemoval = (it: any) => {
+    const raw = String(it?.change_type || it?.change || it?.modification_type || '').toLowerCase();
+    if (!(raw.includes('remove') || raw.includes('delete'))) return false;
+    const serviceId = Number(it?.service);
+    if (Number.isFinite(serviceId) && serviceItemIds.has(serviceId)) return true;
+    if (String(it?.line_kind || '').toLowerCase() === 'service') return true;
+
+    const desc = String(it?.description || it?.name || '').trim().toLowerCase();
+    if (!desc) return false;
+    return bookedServiceNames.some((name) => {
+      const bookedName = String(name || '').trim().toLowerCase();
+      if (!bookedName) return false;
+      if (bookedName === desc || bookedName.includes(desc) || desc.includes(bookedName)) return true;
+      const bookedTokens = new Set(bookedName.split(/\s+/).filter(Boolean));
+      const descTokens = desc.split(/\s+/).filter(Boolean);
+      if (!bookedTokens.size || !descTokens.length) return false;
+      const overlap = descTokens.filter((token) => bookedTokens.has(token)).length;
+      return overlap / Math.max(bookedTokens.size, descTokens.length) >= 0.6;
+    });
+  };
 
   const getAssocKey = (it: any) => {
     const serviceId = Number(it?.service);
@@ -655,6 +689,7 @@ export default function ClientBookingDetailScreen() {
 
   const refreshChatQuotationLabels = useCallback(async () => {
     if (!bookingId) return;
+    return runDedupedRequest(`client-chat-quote-labels:${bookingId}`, 1500, async () => {
     try {
       const convRes = await fetch(`${API_URL}/chat/booking/${bookingId}/`, {
         method: 'POST',
@@ -667,7 +702,7 @@ export default function ClientBookingDetailScreen() {
       const convId = Number(conv?.id || 0);
       if (!Number.isFinite(convId) || convId <= 0) return;
 
-      const msgRes = await fetch(`${API_URL}/chat/${convId}/messages/?mark_read=1`, {
+      const msgRes = await fetch(`${API_URL}/chat/${convId}/messages/`, {
         method: 'GET',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -803,6 +838,7 @@ export default function ClientBookingDetailScreen() {
     } catch {
       // ignore
     }
+    });
   }, [bookingId]);
 
   // Quotation estimated total: sum only accepted items
@@ -846,14 +882,20 @@ export default function ClientBookingDetailScreen() {
   };
 
   const pendingRequestedQuotationTotal = useMemo(() => {
-    if (!hasLivePendingQuoteRequest) return null;
+    const hasPendingQuotationPayload =
+      hasLivePendingQuoteRequest ||
+      String(displayQuotation?.status || (booking as any)?.quotation?.status || '').toLowerCase() === 'pending';
+    if (!hasPendingQuotationPayload) return null;
     if (bookingInBackjobPaymentPhase(booking) || isBackjobBookingData(booking)) {
       return getBackjobPendingSnapshotTotal();
     }
-    const pendingTotal = Number((pendingQuoteSnapshot as any)?.total_amount);
+    const pendingTotal = Number(
+      (pendingQuoteSnapshot as any)?.total_amount ??
+      (displayQuotation as any)?.pending_total_amount
+    );
     if (!Number.isFinite(pendingTotal) || pendingTotal < 0) return null;
     return pendingTotal;
-  }, [hasLivePendingQuoteRequest, pendingQuoteSnapshot, booking]);
+  }, [hasLivePendingQuoteRequest, pendingQuoteSnapshot, displayQuotation, booking]);
 
   const quotationPendingDeltaTotal = useMemo(() => {
     if (!sortedQuotationItems.length) return 0;
@@ -1172,22 +1214,23 @@ export default function ClientBookingDetailScreen() {
     try { navigation.getParent && navigation.getParent()?.getParent && navigation.getParent()?.getParent()?.setOptions && navigation.getParent()?.getParent()?.setOptions({ headerShown: false }); } catch (e) {}
     fetchBookingDetail();
     refreshChatQuotationLabels();
+    if (hasLivePendingQuoteRequest) return;
     // Poll every 10 seconds so client sees mechanic status changes in real time
     const interval = setInterval(() => {
       fetchBookingDetail(true);
       refreshChatQuotationLabels();
     }, 10000);
     return () => clearInterval(interval);
-  }, [fetchBookingDetail, refreshChatQuotationLabels]);
+  }, [fetchBookingDetail, hasLivePendingQuoteRequest, refreshChatQuotationLabels]);
 
-  // Faster temporary sync while a quotation request is pending,
-  // so UI reflects accept/reject almost immediately.
+  // Faster temporary sync while a quotation request is pending.
+  // 4 seconds keeps UI responsive without overloading chat API.
   useEffect(() => {
     if (!hasLivePendingQuoteRequest) return;
     const quickInterval = setInterval(() => {
       fetchBookingDetail(true);
       refreshChatQuotationLabels();
-    }, 2000);
+    }, 4000);
     return () => clearInterval(quickInterval);
   }, [hasLivePendingQuoteRequest, fetchBookingDetail, refreshChatQuotationLabels]);
 
@@ -1534,11 +1577,12 @@ export default function ClientBookingDetailScreen() {
     if (isLineCreatedAfterBackjob(it)) return true;
     return rawChangeLabel === 'Added';
   };
+  const nonBookedRemovalQuotationItems = sortedQuotationItems.filter((it: any) => !isFalseBookedServiceRemoval(it));
   const visibleQuotationItems = isAcceptedBackjob
-    ? sortedQuotationItems.filter((it: any) => isBackjobChargeableQuotationLine(it))
-    : sortedQuotationItems;
+    ? nonBookedRemovalQuotationItems.filter((it: any) => isBackjobChargeableQuotationLine(it))
+    : nonBookedRemovalQuotationItems;
   const oldQuotationItems = isAcceptedBackjob
-    ? sortedQuotationItems.filter((it: any) => !isBackjobChargeableQuotationLine(it))
+    ? nonBookedRemovalQuotationItems.filter((it: any) => !isBackjobChargeableQuotationLine(it))
     : [];
   const oldReceiptSubtotal = oldQuotationItems.reduce((sum: number, it: any) => {
     const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
@@ -1628,6 +1672,10 @@ export default function ClientBookingDetailScreen() {
   const paymentProgressPct = totalAmount > 0
     ? Math.min(100, Math.max(0, (totalPaid / totalAmount) * 100))
     : 0;
+  const assignedTeam = Array.isArray(booking.request?.assigned_mechanics)
+    ? booking.request.assigned_mechanics
+    : [];
+  const isShopBooking = Boolean(booking.shop || assignedTeam.length > 0);
 
   const handleSubmitMechanicRating = async (payload: { rating: number; comment: string }) => {
     if (!booking?.id) return;
@@ -2172,7 +2220,7 @@ export default function ClientBookingDetailScreen() {
         </View>
 
         {/* Provider Information */}
-        {booking.provider && (
+        {!isShopBooking && booking.provider && (
           <TouchableOpacity 
             style={styles.sectionCard}
             onPress={() => router.push({
@@ -2217,11 +2265,13 @@ export default function ClientBookingDetailScreen() {
               <View style={[styles.sectionIcon, { backgroundColor: '#007AFF15' }]}> 
                 <FontAwesome name="comments" size={16} color="#007AFF" />
               </View>
-              <ThemedText style={styles.sectionTitle}>Chat with Mechanic</ThemedText>
+              <ThemedText style={styles.sectionTitle}>{isShopBooking ? 'Chat with Shop' : 'Chat with Mechanic'}</ThemedText>
               <FontAwesome name="chevron-right" size={16} color="#8E8E93" style={{ marginLeft: 'auto' }} />
             </View>
             <View style={{ paddingVertical: 8 }}>
-              <ThemedText style={{ color: '#666' }}>Open the booking chat to message the mechanic.</ThemedText>
+              <ThemedText style={{ color: '#666' }}>
+                {isShopBooking ? 'Open the booking chat to message the shop.' : 'Open the booking chat to message the mechanic.'}
+              </ThemedText>
             </View>
           </TouchableOpacity>
         ) : null}
@@ -2268,9 +2318,8 @@ export default function ClientBookingDetailScreen() {
         )}
 
         {/* Assigned Team (Shop bookings) */}
-        {booking.shop && Array.isArray(booking.request?.assigned_mechanics) && booking.request.assigned_mechanics.length > 0 ? (
+        {isShopBooking ? (
           (() => {
-            const assignedTeam = booking.request.assigned_mechanics || [];
             const leadCount = assignedTeam.filter((m) => String(m.role).toLowerCase() === 'lead').length;
             const assistCount = assignedTeam.filter((m) => String(m.role).toLowerCase() === 'assistant').length;
             const displayName = (m: any) => {
@@ -2294,6 +2343,9 @@ export default function ClientBookingDetailScreen() {
                   </View>
                   <ThemedText style={styles.sectionTitle}>Assigned Team</ThemedText>
                   <View style={{ flexDirection: 'row', gap: 6, marginLeft: 'auto' }}>
+                    <View style={{ backgroundColor: '#8E8E9330', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 }}>
+                      <ThemedText style={{ fontSize: 11, fontWeight: '800', color: '#fff' }}>Read Only</ThemedText>
+                    </View>
                     {leadCount > 0 ? (
                       <View style={{ backgroundColor: '#FF950030', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 }}>
                         <ThemedText style={{ fontSize: 11, fontWeight: '800', color: '#fff' }}>Lead {leadCount}</ThemedText>
@@ -2306,28 +2358,34 @@ export default function ClientBookingDetailScreen() {
                     ) : null}
                   </View>
                 </View>
-                <View style={{ gap: 8, marginTop: 8 }}>
-                  {assignedTeam.map((m) => (
-                    <View
-                      key={m.id}
-                      style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
-                    >
-                      <ThemedText style={{ color: '#ddd' }}>{displayName(m)}</ThemedText>
+                {assignedTeam.length === 0 ? (
+                  <ThemedText style={{ color: '#888', marginTop: 6 }}>
+                    No mechanics assigned yet. The shop owner will assign the team.
+                  </ThemedText>
+                ) : (
+                  <View style={{ gap: 8, marginTop: 8 }}>
+                    {assignedTeam.map((m) => (
                       <View
-                        style={{
-                          backgroundColor: roleBg(m.role),
-                          paddingHorizontal: 8,
-                          paddingVertical: 3,
-                          borderRadius: 8,
-                        }}
+                        key={m.id}
+                        style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
                       >
-                        <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#fff' }}>
-                          {roleLabel(m.role)}
-                        </ThemedText>
+                        <ThemedText style={{ color: '#ddd' }}>{displayName(m)}</ThemedText>
+                        <View
+                          style={{
+                            backgroundColor: roleBg(m.role),
+                            paddingHorizontal: 8,
+                            paddingVertical: 3,
+                            borderRadius: 8,
+                          }}
+                        >
+                          <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#fff' }}>
+                            {roleLabel(m.role)}
+                          </ThemedText>
+                        </View>
                       </View>
-                    </View>
-                  ))}
-                </View>
+                    ))}
+                  </View>
+                )}
               </View>
             );
           })()
@@ -2608,13 +2666,15 @@ export default function ClientBookingDetailScreen() {
                       const itemStatus = it && (it.status || it.quotation_status || it.state) ? (it.status || it.quotation_status || it.state) : ((booking as any)?.quotation && (booking as any).quotation.status) || 'pending';
                       const statusRaw = String(itemStatus || '').toLowerCase();
                       const isPending = statusRaw === 'pending';
-                      const quotationStatusRaw = String(((booking as any)?.quotation && (booking as any).quotation.status) || '').toLowerCase();
-                      const isPendingQuotationRequest = quotationStatusRaw === 'pending';
+                      const isRejected = statusRaw === 'rejected';
                       const explicitChangeLabel = getExplicitChangeLabel(it);
                       const inferredChangeLabel = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
                       const chatDerivedChangeLabel = getQuoteSnapshotKeys(it).map((k) => chatChangeLabelByKey[k]).find(Boolean) || null;
-                      const rawChangeLabel = explicitChangeLabel || chatDerivedChangeLabel || inferredChangeLabel || null;
-                      const changeLabel = (isPending || isPendingQuotationRequest) ? rawChangeLabel : null;
+                      const rawChangeLabelUnfiltered = explicitChangeLabel || chatDerivedChangeLabel || inferredChangeLabel || null;
+                      const serviceId = Number(it?.service);
+                      const isBookedServiceItem = Number.isFinite(serviceId) && serviceItemIds.has(serviceId);
+                      const rawChangeLabel = isBookedServiceItem && rawChangeLabelUnfiltered === 'Removed' ? null : rawChangeLabelUnfiltered;
+                      const changeLabel = (isPending || isRejected) ? rawChangeLabel : null;
                       const desc = it?.description || it?.name || (it.service && `Service #${it.service}`) || 'Item';
                       const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
                       const qty = Number(it?.quantity ?? 1) || 1;

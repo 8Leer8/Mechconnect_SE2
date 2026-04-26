@@ -8,6 +8,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { ensureForegroundLocationAccess } from '@/lib/locationPermission';
 import { useWebSocketContext } from '@/context/WebSocketContext';
+import { fetchPricingConfig } from '@/hooks/usePricing';
 
 export const screenOptions = { headerShown: false } as const;
 
@@ -300,6 +301,8 @@ export default function BookingLocationMapScreen() {
   const didInitialFitRef = useRef(false);
   /** Only auto fit-to-bounds once when both markers exist; refitting every GPS tick zooms Android map. */
   const didFitBothMarkersRef = useRef(false);
+  const lastLocationPushAtRef = useRef(0);
+  const lastPushedMechanicCoordsRef = useRef<Coordinates | null>(null);
 
   const clientCoordsRef = useRef<Coordinates | null>(null);
   const mechanicCoordsRef = useRef<Coordinates | null>(null);
@@ -378,13 +381,7 @@ export default function BookingLocationMapScreen() {
     let isMounted = true;
     const fetchTrafficMultipliers = async () => {
       try {
-        const response = await fetch(`${API_URL}/pricing/config/`, {
-          method: 'GET',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        });
-        if (!response.ok) return;
-        const data = await response.json() as Partial<TrafficMultiplierConfig>;
+        const data = await fetchPricingConfig() as Partial<TrafficMultiplierConfig>;
         if (!isMounted) return;
         setTrafficMultipliers({
           traffic_low_multiplier: Number(data.traffic_low_multiplier ?? DEFAULT_TRAFFIC_MULTIPLIERS.traffic_low_multiplier),
@@ -1036,8 +1033,18 @@ export default function BookingLocationMapScreen() {
     if (role === 'mechanic') {
       let isMounted = true;
 
-      const pushLocationToBackend = (coords: Coordinates) => {
+      const pushLocationToBackend = (coords: Coordinates, forceRefresh = false) => {
         if (!API_URL || !bookingId) return;
+        const now = Date.now();
+        const lastCoords = lastPushedMechanicCoordsRef.current;
+        const movedEnough = !lastCoords || haversineDistanceKm(lastCoords, coords) >= 0.01;
+        const waitedEnough = now - lastLocationPushAtRef.current >= 8000;
+
+        if (!forceRefresh && (!movedEnough || !waitedEnough)) return;
+        if (forceRefresh && !movedEnough && now - lastLocationPushAtRef.current < 15000) return;
+
+        lastLocationPushAtRef.current = now;
+        lastPushedMechanicCoordsRef.current = coords;
         fetch(`${API_URL}/bookings/${bookingId}/mechanic-location/`, {
           method: 'POST',
           credentials: 'include',
@@ -1065,8 +1072,8 @@ export default function BookingLocationMapScreen() {
           const watcher = await Location.watchPositionAsync(
             {
               accuracy: Location.Accuracy.High,
-              timeInterval: 3000,
-              distanceInterval: 5,
+              timeInterval: 5000,
+              distanceInterval: 10,
             },
             (location) => {
               if (!isMounted) return;
@@ -1086,7 +1093,7 @@ export default function BookingLocationMapScreen() {
               // Near-realtime reroute while moving (GTA-like line updates), throttled to protect APIs.
               const to = clientCoordsRef.current;
               const now = Date.now();
-              if (to && now - lastRouteRefreshAtRef.current >= 5000) {
+              if (to && now - lastRouteRefreshAtRef.current >= 10000) {
                 lastRouteRefreshAtRef.current = now;
                 refreshRouteAndTraffic(next, to, status).catch(() => {
                   // Keep existing route if a recalculation fails.
@@ -1111,11 +1118,11 @@ export default function BookingLocationMapScreen() {
         }
       })();
 
-      // Push location to backend every 5 seconds (supplements watcher which may fire less often)
+      // Keep a slower backup push in case the GPS watcher fires less often.
       const locationPushInterval = setInterval(() => {
         const coords = mechanicCoordsRef.current;
-        if (coords) pushLocationToBackend(coords);
-      }, 5000);
+        if (coords) pushLocationToBackend(coords, true);
+      }, 15000);
 
       updateIntervalRef.current = setInterval(() => {
         const from = mechanicCoordsRef.current;
@@ -1124,7 +1131,7 @@ export default function BookingLocationMapScreen() {
         refreshRouteAndTraffic(from, to, status).catch(() => {
           // Realtime refresh failures are reflected by existing fallback state.
         });
-      }, 15000);
+      }, 30000);
 
       return () => {
         isMounted = false;
@@ -1167,7 +1174,7 @@ export default function BookingLocationMapScreen() {
     pullMechanicLocation();
     pollIntervalRef.current = setInterval(() => {
       pullMechanicLocation();
-    }, 3000);
+    }, 10000);
 
     staleCheckIntervalRef.current = setInterval(() => {
       const last = lastMechanicUpdateAtRef.current;
@@ -1203,7 +1210,7 @@ export default function BookingLocationMapScreen() {
     if (!to || !bookingStatusIsLiveTracking(statusRef.current)) return;
 
     const now = Date.now();
-    if (now - lastClientWsRouteRefreshRef.current < 5000) return;
+    if (now - lastClientWsRouteRefreshRef.current < 10000) return;
     lastClientWsRouteRefreshRef.current = now;
 
     refreshRouteAndTraffic(coords, to, statusRef.current).catch(() => {

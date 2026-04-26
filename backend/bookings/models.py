@@ -288,6 +288,26 @@ class Receipt(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 
+class CashRemittance(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending"
+        RECEIVED = "received"
+
+    booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name="cash_remittance")
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name="cash_remittances")
+    lead_mechanic = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="cash_remittances_to_surrender")
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    reminders_count = models.PositiveIntegerField(default=0)
+    last_reminded_at = models.DateTimeField(null=True, blank=True)
+    received_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
 class PaymentInstallment(models.Model):
     class Type(models.TextChoices):
         INITIAL = "initial"

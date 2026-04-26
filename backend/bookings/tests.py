@@ -1,12 +1,25 @@
 import json
+from decimal import Decimal
 
 from django.test import Client as DjangoClient
 from django.test import TestCase
 
 from services.models import MechanicService, Service, ServiceAddOn
-from users.models import Account, Client, Mechanic
+from pricing.models import PricingConfiguration
+from shops.models import Shop, ShopMechanic
+from users.models import Account, Client, Mechanic, ShopOwner, Wallet
 
-from .models import DirectRequest, DirectRequestAddOn
+from .models import (
+	Backjob,
+	Booking,
+	DirectRequest,
+	DirectRequestAddOn,
+	Quotation,
+	QuotationItem,
+	Request,
+	RequestAssignment,
+	ServiceLocation,
+)
 
 
 class MechanicDirectRequestAddonTests(TestCase):
@@ -176,3 +189,216 @@ class MechanicDirectRequestAddonTests(TestCase):
 
 		self.assertEqual(response.status_code, 409)
 		self.assertEqual(DirectRequest.objects.count(), 0)
+
+
+class ShopBookingSplitPaymentTests(TestCase):
+	def setUp(self):
+		self.http_client = DjangoClient()
+		PricingConfiguration.objects.update_or_create(
+			pk=1,
+			defaults={
+				'platform_commission_percentage': Decimal('10.00'),
+				'disbursement_fee': Decimal('0.00'),
+			},
+		)
+
+		self.client_account = self._account('client-split')
+		self.client = Client.objects.create(account=self.client_account, contact_number='09170001001')
+		self._set_wallet_balance(self.client_account, Decimal('5000.00'))
+
+		self.shop_owner_account = self._account('shop-owner-split')
+		self.shop_owner = ShopOwner.objects.create(
+			account=self.shop_owner_account,
+			contact_number='09170001002',
+			verification_status=ShopOwner.VerificationStatus.APPROVED,
+			owns_shop=True,
+		)
+		self._set_wallet_balance(self.shop_owner_account, Decimal('0.00'))
+		self.shop = Shop.objects.create(
+			shop_owner=self.shop_owner,
+			shop_name='Split Test Shop',
+			contact_number='09170001002',
+			email='split-shop@example.com',
+			is_verified=True,
+		)
+
+		self.lead_account, self.lead_mechanic = self._mechanic('lead-split')
+		self.assist_account, self.assist_mechanic = self._mechanic('assist-split')
+		self._set_wallet_balance(self.lead_account, Decimal('0.00'))
+		self._set_wallet_balance(self.assist_account, Decimal('0.00'))
+		ShopMechanic.objects.create(shop=self.shop, mechanic=self.lead_mechanic)
+		ShopMechanic.objects.create(shop=self.shop, mechanic=self.assist_mechanic)
+
+		self.service = Service.objects.create(
+			name='Diagnostic',
+			description='Check vehicle issue',
+			minimum_price=Decimal('1000.00'),
+		)
+
+	def _account(self, username):
+		return Account.objects.create(
+			firstname=username,
+			lastname='User',
+			username=username,
+			email=f'{username}@example.com',
+			password='password',
+		)
+
+	def _set_wallet_balance(self, account, balance):
+		wallet, _ = Wallet.objects.get_or_create(account=account)
+		wallet.balance = balance
+		wallet.save(update_fields=['balance'])
+		return wallet
+
+	def _mechanic(self, username):
+		account = self._account(username)
+		mechanic = Mechanic.objects.create(
+			account=account,
+			contact_number='09170009999',
+			verification_status=Mechanic.VerificationStatus.APPROVED,
+			is_working_for_shop=True,
+			shop=self.shop,
+		)
+		return account, mechanic
+
+	def _shop_booking(self, amount=Decimal('1000.00'), status=Booking.Status.PENDING_PAYMENT):
+		location = ServiceLocation.objects.create(
+			street_name='Main St',
+			barangay='Barangay 1',
+			city_municipality='Metro City',
+		)
+		request = Request.objects.create(
+			client=self.client,
+			provider=self.lead_account,
+			shop=self.shop,
+			request_type=Request.Type.DIRECT,
+			service_location=location,
+			vehicle_type='Car',
+			vehicle_brand='Toyota',
+			vehicle_model='Vios',
+		)
+		DirectRequest.objects.create(request=request, service=self.service, request_status=DirectRequest.Status.ACCEPTED)
+		RequestAssignment.objects.create(request=request, mechanic=self.lead_account, role=RequestAssignment.Role.LEAD)
+		RequestAssignment.objects.create(request=request, mechanic=self.assist_account, role=RequestAssignment.Role.ASSISTANT)
+		booking = Booking.objects.create(
+			request=request,
+			status=status,
+			amount_fee=amount,
+			convenience_fee=Decimal('0.00'),
+		)
+		return booking
+
+	def _login_as(self, account):
+		session = self.http_client.session
+		session['account_id'] = account.id
+		session.save()
+
+	def test_shopowner_pending_payment_detail_has_pricing_split_and_team(self):
+		booking = self._shop_booking()
+		quotation = Quotation.objects.create(
+			booking=booking,
+			mechanic=self.lead_account,
+			status=Quotation.Status.ACCEPTED,
+			total_amount=Decimal('1000.00'),
+			is_final=True,
+		)
+		QuotationItem.objects.create(
+			quotation=quotation,
+			line_kind=QuotationItem.LineKind.SERVICE,
+			service=self.service,
+			description='Diagnostic',
+			quantity=1,
+			unit_price=Decimal('1000.00'),
+			status=Quotation.Status.ACCEPTED,
+		)
+
+		self._login_as(self.shop_owner_account)
+		response = self.http_client.get(f'/api/bookings/shopowner/bookings/{booking.id}/')
+
+		self.assertEqual(response.status_code, 200)
+		payload = json.loads(response.content)
+		booking_payload = payload['booking']
+		self.assertEqual(booking_payload['status'], Booking.Status.PENDING_PAYMENT)
+		self.assertEqual(len(booking_payload['request']['assigned_mechanics']), 2)
+		self.assertEqual(booking_payload['payment_split']['shop_owner_amount'], 100.0)
+		self.assertEqual(booking_payload['payment_split']['mechanic_amount'], 900.0)
+		self.assertEqual(booking_payload['payment_split']['mechanic_count'], 2)
+		self.assertEqual(booking_payload['payment_summary']['remaining_balance'], 1000.0)
+
+	def test_credits_payment_splits_shop_booking_between_shop_owner_lead_and_assist(self):
+		booking = self._shop_booking()
+
+		self._login_as(self.client_account)
+		response = self.http_client.post(
+			'/api/bookings/payments/pay-with-credits/',
+			data=json.dumps({'booking_id': booking.id, 'amount': 1000}),
+			content_type='application/json',
+		)
+
+		self.assertEqual(response.status_code, 200)
+		booking.refresh_from_db()
+		self.assertEqual(booking.status, Booking.Status.COMPLETED)
+		self.assertEqual(booking.payment_status, Booking.PaymentStatus.FULLY_PAID)
+		self.assertEqual(Wallet.objects.get(account=self.client_account).balance, Decimal('4000.00'))
+		self.assertEqual(Wallet.objects.get(account=self.shop_owner_account).balance, Decimal('100.00'))
+		self.assertEqual(Wallet.objects.get(account=self.lead_account).balance, Decimal('450.00'))
+		self.assertEqual(Wallet.objects.get(account=self.assist_account).balance, Decimal('450.00'))
+		self.assertEqual(booking.receipt.platform_fee, Decimal('100.00'))
+		self.assertEqual(booking.receipt.mechanic_payout, Decimal('900.00'))
+
+	def test_backjob_credits_payment_only_splits_new_backjob_charges(self):
+		booking = self._shop_booking(amount=Decimal('1000.00'))
+		backjob = Backjob.objects.create(
+			booking=booking,
+			status=Booking.Status.PENDING_PAYMENT,
+			requested_by=self.client_account,
+			reason='Issue came back',
+		)
+		quotation = Quotation.objects.create(
+			booking=booking,
+			mechanic=self.lead_account,
+			status=Quotation.Status.ACCEPTED,
+			is_backjob=True,
+			total_amount=Decimal('1300.00'),
+			is_final=True,
+		)
+		QuotationItem.objects.create(
+			quotation=quotation,
+			line_kind=QuotationItem.LineKind.SERVICE,
+			service=self.service,
+			description='Original paid service',
+			quantity=1,
+			unit_price=Decimal('1000.00'),
+			status=Quotation.Status.ACCEPTED,
+			is_backjob_line=False,
+		)
+		QuotationItem.objects.create(
+			quotation=quotation,
+			line_kind=QuotationItem.LineKind.ITEM,
+			description='Replacement part',
+			quantity=1,
+			unit_price=Decimal('300.00'),
+			status=Quotation.Status.ACCEPTED,
+			is_backjob_line=True,
+			backjob=backjob,
+		)
+
+		self._login_as(self.client_account)
+		response = self.http_client.post(
+			'/api/bookings/payments/pay-with-credits/',
+			data=json.dumps({'booking_id': booking.id, 'amount': 300}),
+			content_type='application/json',
+		)
+
+		self.assertEqual(response.status_code, 200)
+		booking.refresh_from_db()
+		backjob.refresh_from_db()
+		self.assertEqual(booking.amount_fee, Decimal('300.00'))
+		self.assertEqual(booking.status, Booking.Status.COMPLETED)
+		self.assertEqual(backjob.status, Booking.Status.COMPLETED)
+		self.assertEqual(Wallet.objects.get(account=self.client_account).balance, Decimal('4700.00'))
+		self.assertEqual(Wallet.objects.get(account=self.shop_owner_account).balance, Decimal('30.00'))
+		self.assertEqual(Wallet.objects.get(account=self.lead_account).balance, Decimal('135.00'))
+		self.assertEqual(Wallet.objects.get(account=self.assist_account).balance, Decimal('135.00'))
+		self.assertEqual(booking.receipt.platform_fee, Decimal('30.00'))
+		self.assertEqual(booking.receipt.mechanic_payout, Decimal('270.00'))

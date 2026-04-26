@@ -1726,6 +1726,12 @@ def mechanic_accept_backjob(request, booking_id):
     except Booking.DoesNotExist:
         return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
 
+    if getattr(getattr(account, "mechanic", None), "is_working_for_shop", False) and booking.request.shop_id:
+        return Response(
+            {"error": "Backjob requests for shop bookings must be accepted by the shop owner."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
     try:
         backjob = booking.backjob
     except Exception:
@@ -1878,13 +1884,13 @@ def mechanic_location_view(request, booking_id):
         return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
 
     try:
-        account = Account.objects.get(id=account_id)
+        account = Account.objects.select_related("mechanic").get(id=account_id)
     except Account.DoesNotExist:
         return Response({"error": "Account not found"}, status=status.HTTP_404_NOT_FOUND)
 
     # Try to find the booking — accessible by either the mechanic (provider) or the client
     try:
-        booking = Booking.objects.get(id=booking_id)
+        booking = Booking.objects.select_related("request", "request__client").get(id=booking_id)
     except Booking.DoesNotExist:
         return Response({"error": "Booking not found"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -1986,6 +1992,15 @@ def _mechanic_booking_access_q(account):
     bookings may be owner-scoped even when assigned to a shop mechanic).
     """
     return Q(request__assignments__mechanic=account) | Q(request__provider=account)
+
+
+def _mechanic_pending_backjob_queryset(account):
+    if getattr(getattr(account, "mechanic", None), "is_working_for_shop", False):
+        return Booking.objects.none()
+    return Booking.objects.filter(
+        _mechanic_booking_access_q(account),
+        backjobs__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
+    ).distinct()
 
 
 def _get_accessible_booking(account, booking_id):
@@ -2200,10 +2215,7 @@ def list_mechanic_bookings(request):
             # pending includes pending direct requests + bookings that have a backjob
             pending_direct_count = _count_pending_direct_requests(account)
             # Only count backjobs that are still requested (not yet accepted)
-            backjob_count = Booking.objects.filter(
-                _mechanic_booking_access_q(account),
-                backjobs__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
-            ).distinct().count()
+            backjob_count = _mechanic_pending_backjob_queryset(account).count()
             pending_count = pending_direct_count + backjob_count
             bookings_count = bookings_queryset.count()
             total_count = pending_count + bookings_count
@@ -2217,10 +2229,7 @@ def list_mechanic_bookings(request):
                 # Need some pending items on this page
                 direct_pending = _serialize_pending_direct_requests(account)
                 # Only include backjob bookings that are pending mechanic acceptance.
-                backjob_qs = Booking.objects.filter(
-                    _mechanic_booking_access_q(account),
-                    backjobs__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
-                ).distinct().order_by("-booked_at")
+                backjob_qs = _mechanic_pending_backjob_queryset(account).order_by("-booked_at")
                 backjob_pending = serialize_booking_list(backjob_qs)
                 all_pending = direct_pending + backjob_pending
                 pending_slice = all_pending[start_index:min(end_index, pending_count)]
@@ -2280,10 +2289,7 @@ def list_mechanic_bookings(request):
             # include both direct pending requests and bookings that have backjob requests
             direct_pending = _serialize_pending_direct_requests(account)
             # Only include backjob bookings that are pending acceptance.
-            backjob_qs = Booking.objects.filter(
-                _mechanic_booking_access_q(account),
-            backjobs__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
-        ).distinct().order_by("-booked_at")
+            backjob_qs = _mechanic_pending_backjob_queryset(account).order_by("-booked_at")
             backjob_pending = serialize_booking_list(backjob_qs)
             all_pending = direct_pending + backjob_pending
             total_count = len(all_pending)
@@ -2405,10 +2411,7 @@ def list_mechanic_bookings(request):
     ).count()
     disputed_count = bookings_queryset.filter(dispute_status=Booking.DisputeState.ACTIVE).count()
     # Include backjob bookings in the pending count, but only those not yet accepted.
-    pending_count = _count_pending_direct_requests(account) + Booking.objects.filter(
-        _mechanic_booking_access_q(account),
-        backjobs__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
-    ).distinct().count()
+    pending_count = _count_pending_direct_requests(account) + _mechanic_pending_backjob_queryset(account).count()
 
     # Single DB aggregate — much cheaper than fetching all completed records
     total_earnings = bookings_queryset.filter(status="completed").aggregate(
