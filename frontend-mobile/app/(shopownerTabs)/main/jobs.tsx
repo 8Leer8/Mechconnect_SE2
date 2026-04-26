@@ -12,7 +12,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import { useNotification } from '@/hooks/useNotification';
@@ -24,6 +24,10 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL;
 interface Booking {
   id: number;
   status: string;
+  has_backjob?: boolean;
+  backjob?: { id?: number; status?: string } | null;
+  backjob_status?: string | null;
+  is_backjob?: boolean;
   dispute_status?: 'none' | 'active' | 'resolved' | string;
   amount_fee: number;
   booked_at: string;
@@ -59,6 +63,32 @@ interface Booking {
   };
 }
 
+interface CashRemittance {
+  id: number;
+  booking_id: number;
+  amount: number;
+  status: string;
+  reminders_count: number;
+  last_reminded_at?: string | null;
+  created_at: string;
+  booking: {
+    id: number;
+    amount_fee: number;
+    completed_at?: string | null;
+  };
+  client: {
+    firstname?: string;
+    lastname?: string;
+    username?: string;
+  };
+  lead_mechanic: {
+    id: number;
+    firstname?: string;
+    lastname?: string;
+    username?: string;
+  };
+}
+
 type PendingRequest = {
   id: number;
   request_type: string;
@@ -87,7 +117,8 @@ type TabType =
   | 'completed'
   | 'cancelled'
   | 'reworked'
-  | 'disputed';
+  | 'disputed'
+  | 'remittance';
 type RequestTabType = 'custom' | 'direct' | 'broadcast';
 
 type GroupedResponse = {
@@ -129,6 +160,7 @@ interface Assignment {
 
 export default function ShopOwnerJobsScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ tab?: string }>();
   const { showNotification } = useNotification();
   const { confirm } = useConfirmation();
   const { lastMessage } = useWebSocketContext();
@@ -141,6 +173,8 @@ export default function ShopOwnerJobsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [counts, setCounts] = useState<Record<string, number>>({});
+  const [cashRemittances, setCashRemittances] = useState<CashRemittance[]>([]);
+  const [remittanceActionId, setRemittanceActionId] = useState<number | null>(null);
 
   // Assign modal state
   const [assignModalVisible, setAssignModalVisible] = useState(false);
@@ -155,6 +189,12 @@ export default function ShopOwnerJobsScreen() {
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const pageSize = 8;
+
+  useEffect(() => {
+    if (params.tab === 'remittance') {
+      setActiveTab('remittance');
+    }
+  }, [params.tab]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -269,19 +309,46 @@ export default function ShopOwnerJobsScreen() {
     }
   }, []);
 
+  const fetchCashRemittances = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = Boolean(options?.silent);
+    try {
+      if (!silent) setLoading(true);
+      setError(null);
+      const res = await fetch(`${API_URL}/bookings/shopowner/cash-remittances/?status=pending`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!res.ok) throw new Error('Failed to fetch cash remittances');
+      const data = (await res.json()) as { remittances?: CashRemittance[]; count?: number };
+      const items = data.remittances || [];
+      setCashRemittances(items);
+      setCounts((prev) => ({ ...prev, remittance: data.count ?? items.length }));
+    } catch (e: any) {
+      setError(e.message || 'Failed to fetch cash remittances');
+      setCashRemittances([]);
+    } finally {
+      if (!silent) setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
   // Re-fetch when a WebSocket booking update arrives (e.g., lead mechanic starts/finishes job)
   useEffect(() => {
     if (!lastMessage) return;
     const t = String(lastMessage.type || '').toLowerCase();
     if (t !== 'booking_update') return;
     if (activeTab === 'pending') fetchRequests({ silent: true });
+    else if (activeTab === 'remittance') fetchCashRemittances({ silent: true });
     else fetchBookings({ silent: true });
-  }, [lastMessage, activeTab, currentPage, fetchBookings, fetchRequests]);
+  }, [lastMessage, activeTab, currentPage, fetchBookings, fetchRequests, fetchCashRemittances]);
 
   const onRefresh = () => {
     setRefreshing(true);
     if (activeTab === 'pending') {
       fetchRequests();
+    } else if (activeTab === 'remittance') {
+      fetchCashRemittances();
     } else {
       fetchBookings();
     }
@@ -289,8 +356,9 @@ export default function ShopOwnerJobsScreen() {
 
   const fetchData = useCallback(() => {
     if (activeTab === 'pending') fetchRequests({ silent: true });
+    else if (activeTab === 'remittance') fetchCashRemittances({ silent: true });
     else fetchBookings({ silent: true });
-  }, [activeTab, fetchBookings, fetchRequests]);
+  }, [activeTab, fetchBookings, fetchRequests, fetchCashRemittances]);
 
   useFocusEffect(
     useCallback(() => {
@@ -302,8 +370,9 @@ export default function ShopOwnerJobsScreen() {
 
   useEffect(() => {
     if (activeTab === 'pending') fetchRequests();
+    else if (activeTab === 'remittance') fetchCashRemittances();
     else fetchBookings();
-  }, [activeTab, currentPage, fetchBookings, fetchRequests]);
+  }, [activeTab, currentPage, fetchBookings, fetchRequests, fetchCashRemittances]);
 
   // ── Status helpers ──
   const getStatusLabel = (s: string) => {
@@ -316,6 +385,7 @@ export default function ShopOwnerJobsScreen() {
       paused: 'Paused',
       finished: 'Finished',
       pending_payment: 'Pending Payment',
+      backjob_pending: 'Backjob Pending',
       completed: 'Completed',
       cancelled: 'Cancelled',
       reworked: 'Reworked',
@@ -334,6 +404,7 @@ export default function ShopOwnerJobsScreen() {
       paused: '#8E8E93',
       finished: '#34C759',
       pending_payment: '#FFD60A',
+      backjob_pending: '#FFD60A',
       completed: '#34C759',
       cancelled: '#FF3B30',
       reworked: '#FFD60A',
@@ -352,6 +423,7 @@ export default function ShopOwnerJobsScreen() {
       paused: 'pause-circle',
       finished: 'check-circle',
       pending_payment: 'money',
+      backjob_pending: 'refresh',
       completed: 'check-circle',
       cancelled: 'times-circle',
       reworked: 'refresh',
@@ -367,6 +439,9 @@ export default function ShopOwnerJobsScreen() {
 
   /** Shop owner jobs view: show "Assigned" once mechanics are linked. */
   const getCardStatusLabel = (b: Booking) => {
+    if (isBackjobBooking(b)) {
+      return 'Backjob';
+    }
     if (b.status === 'accepted' && hasRequestAssignments(b)) {
       return 'Assigned';
     }
@@ -374,6 +449,9 @@ export default function ShopOwnerJobsScreen() {
   };
 
   const getCardStatusColor = (b: Booking) => {
+    if (isBackjobBooking(b)) {
+      return '#FFD60A';
+    }
     if (b.status === 'accepted' && hasRequestAssignments(b)) {
       return '#34C759';
     }
@@ -381,6 +459,9 @@ export default function ShopOwnerJobsScreen() {
   };
 
   const getCardStatusIcon = (b: Booking) => {
+    if (isBackjobBooking(b)) {
+      return 'refresh';
+    }
     if (b.status === 'accepted' && hasRequestAssignments(b)) {
       return 'users';
     }
@@ -401,8 +482,28 @@ export default function ShopOwnerJobsScreen() {
     return `${displayName} +${assigned.length - 1} more`;
   };
 
+  const isBackjobBooking = (b: Booking) => {
+    const status = String(b.status || '').toLowerCase();
+    return Boolean(
+      b.has_backjob ||
+      b.is_backjob ||
+      b.backjob ||
+      String(b.backjob_status || '').trim() ||
+      status === 'backjob_pending' ||
+      status === 'reworked'
+    );
+  };
+
   const formatDate = (d: string) =>
     new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+  const formatMoney = (amount: number) => `₱${Number(amount || 0).toFixed(2)}`;
+
+  const getPersonName = (person?: { firstname?: string; lastname?: string; username?: string }) => {
+    if (!person) return 'Unknown';
+    const fullName = `${person.firstname || ''} ${person.lastname || ''}`.trim();
+    return fullName || person.username || 'Unknown';
+  };
 
   const getTimeSince = (d: string) => {
     const sec = Math.floor((Date.now() - new Date(d).getTime()) / 1000);
@@ -644,10 +745,64 @@ export default function ShopOwnerJobsScreen() {
     }
   };
 
+  const handleMarkRemittanceReceived = async (item: CashRemittance) => {
+    const ok = await confirm({
+      type: 'success',
+      title: 'Mark Cash Received',
+      message: `Confirm that ${getPersonName(item.lead_mechanic)} surrendered ${formatMoney(item.amount)}?`,
+      confirmText: 'Received',
+      cancelText: 'Cancel',
+    });
+    if (!ok) return;
+
+    setRemittanceActionId(item.id);
+    try {
+      const res = await fetch(`${API_URL}/bookings/shopowner/cash-remittances/${item.id}/received/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
+      if (!res.ok) {
+        showNotification({ type: 'error', message: data.error || 'Failed to update remittance' });
+        return;
+      }
+      showNotification({ type: 'success', message: data.message || 'Cash remittance received.' });
+      fetchCashRemittances({ silent: true });
+    } catch {
+      showNotification({ type: 'error', message: 'Network error' });
+    } finally {
+      setRemittanceActionId(null);
+    }
+  };
+
+  const handleRemindRemittance = async (item: CashRemittance) => {
+    setRemittanceActionId(item.id);
+    try {
+      const res = await fetch(`${API_URL}/bookings/shopowner/cash-remittances/${item.id}/remind/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
+      if (!res.ok) {
+        showNotification({ type: 'error', message: data.error || 'Failed to send reminder' });
+        return;
+      }
+      showNotification({ type: 'success', message: data.message || 'Reminder sent.' });
+      fetchCashRemittances({ silent: true });
+    } catch {
+      showNotification({ type: 'error', message: 'Network error' });
+    } finally {
+      setRemittanceActionId(null);
+    }
+  };
+
   // ── Tab bar ──
   const tabConfig: { key: TabType; label: string; icon: string }[] = [
     { key: 'all', label: 'All', icon: 'th-list' },
     { key: 'pending', label: 'Pending', icon: 'envelope' },
+    { key: 'remittance', label: 'Remit', icon: 'handshake-o' },
     { key: 'booked', label: 'Booked', icon: 'calendar-check-o' },
     { key: 'assigned', label: 'Assigned', icon: 'users' },
     { key: 'on_going', label: 'On Going', icon: 'play-circle' },
@@ -666,6 +821,8 @@ export default function ShopOwnerJobsScreen() {
           <ThemedText style={styles.headerSub}>
             {activeTab === 'pending'
               ? `${listToShow.length} pending request${listToShow.length !== 1 ? 's' : ''}`
+              : activeTab === 'remittance'
+              ? `${cashRemittances.length} cash remittance${cashRemittances.length !== 1 ? 's' : ''}`
               : `${bookings.length} ${activeTab === 'all' ? 'total' : activeTab} job${
                   bookings.length !== 1 ? 's' : ''
                 }`}
@@ -686,7 +843,12 @@ export default function ShopOwnerJobsScreen() {
         >
           {tabConfig.map((t) => {
             const active = activeTab === t.key;
-            const c = t.key === 'pending' ? pendingRequests.length : (counts[t.key] || 0);
+            const c =
+              t.key === 'pending'
+                ? pendingRequests.length
+                : t.key === 'remittance'
+                ? cashRemittances.length
+                : (counts[t.key] || 0);
             return (
               <TouchableOpacity
                 key={t.key}
@@ -722,10 +884,114 @@ export default function ShopOwnerJobsScreen() {
           <View style={styles.center}>
             <FontAwesome name="exclamation-circle" size={48} color="#FF3B30" />
             <ThemedText style={styles.errorText}>{error}</ThemedText>
-            <TouchableOpacity style={styles.retryBtn} onPress={fetchBookings}>
+            <TouchableOpacity
+              style={styles.retryBtn}
+              onPress={() => {
+                if (activeTab === 'remittance') fetchCashRemittances();
+                else fetchBookings();
+              }}
+            >
               <ThemedText style={styles.retryText}>Retry</ThemedText>
             </TouchableOpacity>
           </View>
+        ) : activeTab === 'remittance' ? (
+          cashRemittances.length === 0 ? (
+            <View style={styles.center}>
+              <View style={styles.emptyCircle}>
+                <FontAwesome name="check-circle" size={40} color="#555" />
+              </View>
+              <ThemedText style={styles.emptyText}>No pending cash remittances</ThemedText>
+              <ThemedText style={styles.emptySub}>Cash shop shares will appear here after completed cash jobs.</ThemedText>
+            </View>
+          ) : (
+            <View style={styles.list}>
+              {cashRemittances.map((item) => (
+                <View key={item.id} style={styles.remittanceCard}>
+                  <View style={styles.cardTop}>
+                    <View style={styles.cardTopLeft}>
+                      <View style={[styles.statusDot, { backgroundColor: '#FF950025' }]}>
+                        <FontAwesome name="handshake-o" size={15} color="#FF9500" />
+                      </View>
+                      <View>
+                        <View style={styles.statusRow}>
+                          <View style={[styles.statusBadge, { backgroundColor: '#FF9500' }]}>
+                            <ThemedText style={styles.statusLabel}>CASH REMITTANCE</ThemedText>
+                          </View>
+                          <ThemedText style={styles.bookingId}>#{item.booking_id}</ThemedText>
+                        </View>
+                        <ThemedText style={styles.reqType}>Lead: {getPersonName(item.lead_mechanic)}</ThemedText>
+                      </View>
+                    </View>
+                    <ThemedText style={styles.timeAgo}>{getTimeSince(item.created_at)}</ThemedText>
+                  </View>
+
+                  <View style={styles.remittanceAmountBox}>
+                    <ThemedText style={styles.remittanceAmountLabel}>Shop cash share to collect</ThemedText>
+                    <ThemedText style={styles.remittanceAmount}>{formatMoney(item.amount)}</ThemedText>
+                  </View>
+
+                  <View style={styles.infoSection}>
+                    <View style={styles.infoRow}>
+                      <FontAwesome name="user" size={13} color="#888" />
+                      <ThemedText style={styles.infoText} numberOfLines={1}>
+                        Client: {getPersonName(item.client)}
+                      </ThemedText>
+                    </View>
+                    <View style={styles.infoRow}>
+                      <FontAwesome name="money" size={13} color="#888" />
+                      <ThemedText style={styles.infoText}>
+                        Job total: {formatMoney(item.booking.amount_fee)}
+                      </ThemedText>
+                    </View>
+                    <View style={styles.infoRow}>
+                      <FontAwesome name="bell" size={13} color="#888" />
+                      <ThemedText style={styles.infoText}>
+                        Reminders sent: {item.reminders_count}
+                      </ThemedText>
+                    </View>
+                  </View>
+
+                  <View style={styles.cardFooter}>
+                    <TouchableOpacity
+                      style={styles.detailsPillBtn}
+                      onPress={() =>
+                        router.push({
+                          pathname: '/shopowner/booking/booking_details',
+                          params: { bookingId: String(item.booking_id) },
+                        })
+                      }
+                    >
+                      <ThemedText style={styles.detailsPillBtnText}>Details</ThemedText>
+                      <FontAwesome name="chevron-right" size={10} color="#FF8C00" />
+                    </TouchableOpacity>
+                    <View style={styles.footerActions}>
+                      <TouchableOpacity
+                        style={[styles.assignBtn, { backgroundColor: '#242424' }]}
+                        onPress={() => handleRemindRemittance(item)}
+                        disabled={remittanceActionId === item.id}
+                      >
+                        <ThemedText style={styles.assignBtnText}>Remind</ThemedText>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.assignPrimaryBtn}
+                        onPress={() => handleMarkRemittanceReceived(item)}
+                        disabled={remittanceActionId === item.id}
+                      >
+                        {remittanceActionId === item.id ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <>
+                            <FontAwesome name="check" size={11} color="#fff" />
+                            <ThemedText style={styles.assignPrimaryBtnText}>Received</ThemedText>
+                          </>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              ))}
+            </View>
+          )
         ) : activeTab === 'pending' ? (
           <>
             {/* Inner tabs for Requests: Custom / Direct / Broadcast */}
@@ -1129,7 +1395,7 @@ export default function ShopOwnerJobsScreen() {
             ))}
           </View>
         )}
-        {activeTab !== 'pending' && !loading && !error && totalPages > 1 ? (
+        {activeTab !== 'pending' && activeTab !== 'remittance' && !loading && !error && totalPages > 1 ? (
           <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 12, marginTop: 14 }}>
             <TouchableOpacity
               style={[styles.assignBtn, currentPage <= 1 ? { opacity: 0.45 } : null]}
@@ -1454,6 +1720,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#2A2A2A',
   },
+  remittanceCard: {
+    backgroundColor: '#1E1E1E',
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#FF950035',
+  },
   disputeBanner: {
     borderWidth: 1,
     borderColor: '#FF3B3060',
@@ -1491,6 +1764,26 @@ const styles = StyleSheet.create({
   infoSection: { marginTop: 12, gap: 6, paddingLeft: 46 },
   infoRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   infoText: { fontSize: 13, color: '#ccc', flex: 1 },
+  remittanceAmountBox: {
+    marginTop: 14,
+    marginLeft: 46,
+    backgroundColor: '#FF950014',
+    borderWidth: 1,
+    borderColor: '#FF950030',
+    borderRadius: 12,
+    padding: 12,
+  },
+  remittanceAmountLabel: {
+    color: '#FFB45C',
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  remittanceAmount: {
+    color: '#FF9500',
+    fontSize: 24,
+    fontWeight: '800',
+  },
 
   cardFooter: {
     flexDirection: 'row',

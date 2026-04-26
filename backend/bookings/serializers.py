@@ -118,8 +118,7 @@ class BroadcastRequestDetailSerializer(serializers.ModelSerializer):
                   'vehicle_type', 'vehicle_brand', 'vehicle_model']
     
     def get_add_ons(self, obj):
-        from .models import BroadcastRequestAddOn
-        add_ons = BroadcastRequestAddOn.objects.filter(broadcast_request=obj).select_related('service_add_on')
+        add_ons = obj.add_ons.all()
         return ServiceAddOnSerializer([addon.service_add_on for addon in add_ons], many=True).data
 
 
@@ -455,10 +454,8 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
             for service in obj.services.all():
                 total_amount += float(service.minimum_price)
 
-            from .models import BroadcastRequestAddOn
-            add_ons = BroadcastRequestAddOn.objects.filter(broadcast_request=obj).select_related('service_add_on')
-            for ar in add_ons:
-                total_amount += float(ar.service_add_on.price)
+            for addon_relation in obj.add_ons.all():
+                total_amount += float(addon_relation.service_add_on.price)
 
             import math
             required = math.ceil(total_amount * 0.02)
@@ -467,6 +464,17 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
             return 0
 
     def _get_current_mechanic_offer(self, obj):
+        prefetched_offers = getattr(obj, 'current_mechanic_offers', None)
+        if prefetched_offers is not None:
+            return prefetched_offers[0] if prefetched_offers else None
+
+        current_mechanic = self.context.get('current_mechanic')
+        if current_mechanic is not None:
+            return BroadcastOffer.objects.filter(
+                broadcast_request=obj,
+                mechanic=current_mechanic,
+            ).order_by('-created_at', '-id').first()
+
         request = self.context.get('request')
         if not request:
             return None
@@ -653,11 +661,155 @@ class QuotationSerializer(serializers.Serializer):
 
     def to_representation(self, instance):
         # instance is a Quotation model
-        from .models import Quotation, QuotationItem
+        from .models import Quotation, QuotationItem, QuotationAmendment
+
+        pending_amendment = None
         if str(getattr(instance, 'status', '')).lower() == Quotation.Status.PENDING:
+            pending_amendment = (
+                instance.amendments
+                .filter(status=QuotationAmendment.Status.PENDING)
+                .order_by('-created_at', '-id')
+                .first()
+            )
+
+        if pending_amendment is not None:
+            visible_items_qs = QuotationItem.objects.filter(
+                quotation=instance,
+                status=Quotation.Status.ACCEPTED,
+            ).order_by('id')
+        elif str(getattr(instance, 'status', '')).lower() == Quotation.Status.PENDING:
             visible_items_qs = QuotationItem.objects.filter(quotation=instance)
         else:
             visible_items_qs = QuotationItem.objects.filter(quotation=instance).exclude(status='rejected')
+
+        items_data = list(QuotationItemSerializer(visible_items_qs, many=True).data)
+        pending_total_amount = None
+        pending_quotation_total = None
+
+        if pending_amendment is not None:
+            requested_service_ids = set()
+            try:
+                request_obj = getattr(instance.booking, 'request', None)
+                direct = getattr(request_obj, 'directrequest', None)
+                if direct and direct.service_id:
+                    requested_service_ids.add(int(direct.service_id))
+                broadcast = getattr(request_obj, 'broadcast_request', None)
+                if broadcast:
+                    requested_service_ids.update(int(sid) for sid in broadcast.services.values_list('id', flat=True))
+            except Exception:
+                requested_service_ids = set()
+
+            def is_booked_service_row(row):
+                try:
+                    return (
+                        str(row.get('line_kind') or '').lower() == QuotationItem.LineKind.SERVICE and
+                        int(row.get('service') or 0) in requested_service_ids
+                    )
+                except Exception:
+                    return False
+
+            def normalize_line_kind(line_kind, service_id=None):
+                value = str(line_kind or QuotationItem.LineKind.ITEM).lower()
+                if value == QuotationItem.LineKind.SERVICE and not service_id:
+                    return QuotationItem.LineKind.ITEM
+                if value not in (QuotationItem.LineKind.SERVICE, QuotationItem.LineKind.ITEM):
+                    return QuotationItem.LineKind.ITEM
+                return value
+
+            def rows_are_same(original, proposed):
+                return (
+                    normalize_line_kind(original.get('line_kind'), original.get('service')) ==
+                    normalize_line_kind(proposed.get('line_kind'), proposed.get('service')) and
+                    str(original.get('source') or '') == str(proposed.get('source') or '') and
+                    str(original.get('service') or '') == str(proposed.get('service') or '') and
+                    str(original.get('service_add_on') or '') == str(proposed.get('service_add_on') or '') and
+                    str(original.get('description') or '') == str(proposed.get('description') or '') and
+                    int(original.get('quantity') or 1) == int(proposed.get('quantity') or 1) and
+                    float(original.get('unit_price') or 0) == float(proposed.get('unit_price') or 0)
+                )
+
+            index_by_id = {
+                item.get('id'): idx
+                for idx, item in enumerate(items_data)
+                if item.get('id') is not None
+            }
+            accepted_totals_by_id = {
+                item.get('id'): float(item.get('line_total') or 0)
+                for item in items_data
+                if item.get('id') is not None
+            }
+            # Pending amendment totals represent the requested delta, not the whole booked service total.
+            next_total = 0.0
+
+            for change in pending_amendment.items.all().order_by('id'):
+                proposed = change.proposed_changes or {}
+                original = change.original_snapshot or {}
+                original_id = change.original_item_id or original.get('id')
+                try:
+                    quantity = int(proposed.get('quantity') if proposed.get('quantity') is not None else (original.get('quantity') or 1))
+                except Exception:
+                    quantity = 1
+                try:
+                    unit_price = float(proposed.get('unit_price') if proposed.get('unit_price') is not None else (original.get('unit_price') or 0))
+                except Exception:
+                    unit_price = 0.0
+
+                row = {
+                    'id': original_id,
+                    'line_kind': proposed.get('line_kind') or original.get('line_kind') or QuotationItem.LineKind.ITEM,
+                    'source': proposed.get('source') if proposed.get('source') is not None else original.get('source'),
+                    'purchase_receipt_image': None,
+                    'receipt_submitted_at': None,
+                    'service': proposed.get('service') if proposed.get('service') is not None else original.get('service'),
+                    'service_add_on': proposed.get('service_add_on') if proposed.get('service_add_on') is not None else original.get('service_add_on'),
+                    'description': proposed.get('description') if proposed.get('description') is not None else original.get('description'),
+                    'quantity': quantity,
+                    'unit_price': unit_price,
+                    'line_total': quantity * unit_price,
+                    'status': Quotation.Status.PENDING,
+                    'change_type': change.action_type,
+                    'previous_description': original.get('description'),
+                    'previous_quantity': original.get('quantity'),
+                    'previous_unit_price': original.get('unit_price'),
+                    'is_backjob_new_line': bool(getattr(instance, 'is_backjob', False) and change.action_type == 'added'),
+                    'backjob_id': original.get('backjob_id'),
+                    'created_at': None,
+                    'updated_at': None,
+                }
+                if str(row['line_kind'] or '').lower() == QuotationItem.LineKind.SERVICE and not row.get('service'):
+                    row['line_kind'] = QuotationItem.LineKind.ITEM
+
+                if change.action_type == 'removed' and is_booked_service_row(row):
+                    continue
+                if change.action_type == 'edited' and rows_are_same(original, proposed):
+                    continue
+
+                if change.action_type == 'added':
+                    items_data.append(row)
+                    next_total += row['line_total']
+                    continue
+
+                if original_id in index_by_id:
+                    items_data[index_by_id[original_id]] = row
+                else:
+                    items_data.append(row)
+
+                previous_total = accepted_totals_by_id.get(original_id, 0.0)
+                if change.action_type == 'edited':
+                    next_total += row['line_total'] - previous_total
+                elif change.action_type == 'removed':
+                    next_total -= previous_total
+
+            pending_quotation_total = max(0.0, float(next_total))
+            try:
+                fee_total = float(getattr(instance.booking, 'convenience_fee', 0) or 0)
+                traffic_fee = float(getattr(instance.booking, 'traffic_surcharge', 0) or 0)
+                if fee_total <= 0 and traffic_fee <= 0:
+                    fee_total = float(getattr(instance.booking, 'convenience_fee', 0) or 0)
+                pending_total_amount = max(0.0, pending_quotation_total + fee_total + traffic_fee)
+            except Exception:
+                pending_total_amount = pending_quotation_total
+
         data = {
             'id': instance.id,
             'booking': instance.booking.id,
@@ -669,10 +821,13 @@ class QuotationSerializer(serializers.Serializer):
             'backjob_discount': float(getattr(instance, 'backjob_discount', 0) or 0),
             'final_labor_total': float(getattr(instance, 'final_labor_total', 0) or 0),
             'total_amount': float(instance.total_amount),
+            'pending_total_amount': pending_total_amount,
+            'pending_quotation_total': pending_quotation_total,
+            'amendment_id': pending_amendment.id if pending_amendment is not None else None,
             'is_final': instance.is_final,
             'created_at': instance.created_at,
             'updated_at': instance.updated_at,
-            'items': QuotationItemSerializer(visible_items_qs, many=True).data,
+            'items': items_data,
         }
         return data
 

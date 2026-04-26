@@ -154,6 +154,11 @@ interface FormState {
   description: string;
 }
 
+interface PricingSplitState {
+  mechanicShare: string;
+  walletShare: string;
+}
+
 const EMPTY_FORM: FormState = {
   firstname: '',
   lastname: '',
@@ -175,6 +180,11 @@ const EMPTY_FORM: FormState = {
   shop_email: '',
   website: '',
   description: '',
+};
+
+const DEFAULT_PRICING_SPLIT: PricingSplitState = {
+  mechanicShare: '90',
+  walletShare: '10',
 };
 
 export default function EditProfileScreen() {
@@ -199,6 +209,8 @@ export default function EditProfileScreen() {
   const [mainBranchLng, setMainBranchLng] = useState<number | null>(null);
   const [mainBranchFormattedAddress, setMainBranchFormattedAddress] = useState('');
   const [mainBranchBarangay, setMainBranchBarangay] = useState('');
+  const [pricingSplit, setPricingSplit] = useState<PricingSplitState>(DEFAULT_PRICING_SPLIT);
+  const [pricingLoading, setPricingLoading] = useState(false);
 
   const [dobMonth, setDobMonth] = useState('');
   const [dobDay, setDobDay] = useState('');
@@ -412,6 +424,38 @@ export default function EditProfileScreen() {
   }, [loadProfile]);
 
   useEffect(() => {
+    if (activeRole !== 'shop_owner') return;
+
+    const fetchPricingSplit = async () => {
+      setPricingLoading(true);
+      try {
+        const response = await fetch(`${API_URL}/pricing/config/`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+        if (!response.ok) return;
+
+        const data = (await response.json().catch(() => ({}))) as {
+          platform_commission_percentage?: string | number;
+        };
+        const walletShare = Number(data.platform_commission_percentage ?? DEFAULT_PRICING_SPLIT.walletShare);
+        const safeWalletShare = Number.isFinite(walletShare) ? Math.min(100, Math.max(0, walletShare)) : 10;
+
+        setPricingSplit({
+          walletShare: String(safeWalletShare),
+          mechanicShare: String(100 - safeWalletShare),
+        });
+      } finally {
+        setPricingLoading(false);
+      }
+    };
+
+    fetchPricingSplit();
+  }, [activeRole]);
+
+  useEffect(() => {
     if (!branchSyncPayload || branchSyncPayload.role !== activeRole) {
       return;
     }
@@ -501,6 +545,26 @@ export default function EditProfileScreen() {
 
   const setField = (field: keyof FormState, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const updateMechanicShare = (value: string) => {
+    const cleaned = value.replace(/[^0-9.]/g, '');
+    const numberValue = Number(cleaned);
+
+    setPricingSplit({
+      mechanicShare: cleaned,
+      walletShare: Number.isFinite(numberValue) ? String(Math.max(0, 100 - numberValue)) : '',
+    });
+  };
+
+  const updateWalletShare = (value: string) => {
+    const cleaned = value.replace(/[^0-9.]/g, '');
+    const numberValue = Number(cleaned);
+
+    setPricingSplit({
+      walletShare: cleaned,
+      mechanicShare: Number.isFinite(numberValue) ? String(Math.max(0, 100 - numberValue)) : '',
+    });
   };
 
   const displayDob = useMemo(() => {
@@ -697,6 +761,26 @@ export default function EditProfileScreen() {
       return;
     }
 
+    const mechanicShare = Number(pricingSplit.mechanicShare);
+    const walletShare = Number(pricingSplit.walletShare);
+    if (
+      activeRole === 'shop_owner' &&
+      (!Number.isFinite(mechanicShare) ||
+        !Number.isFinite(walletShare) ||
+        mechanicShare < 0 ||
+        walletShare < 0 ||
+        mechanicShare > 100 ||
+        walletShare > 100 ||
+        Math.abs(mechanicShare + walletShare - 100) > 0.01)
+    ) {
+      showNotification({
+        type: 'error',
+        title: 'Validation',
+        message: 'Mechanic and wallet shares must total 100%.',
+      });
+      return;
+    }
+
     setSaving(true);
     try {
       const data = new FormData();
@@ -762,6 +846,21 @@ export default function EditProfileScreen() {
       if (!response.ok) {
         const errMsg = payload?.error || payload?.shop_name?.[0] || 'Failed to update profile';
         throw new Error(errMsg);
+      }
+
+      if (activeRole === 'shop_owner') {
+        const pricingResponse = await fetch(`${API_URL}/pricing/config/update/`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            platform_commission_percentage: walletShare,
+          }),
+        });
+
+        if (!pricingResponse.ok) {
+          throw new Error('Profile saved, but money split failed to update.');
+        }
       }
 
       const updatedProfile = payload?.profile as ProfileData | undefined;
@@ -925,7 +1024,11 @@ export default function EditProfileScreen() {
         <View style={styles.headerBtn} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.scrollArea}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
         <ThemedText style={styles.roleTag}>{roleLabel}</ThemedText>
 
         <View style={styles.photoRow}>
@@ -1118,6 +1221,43 @@ export default function EditProfileScreen() {
 
         {activeRole === 'shop_owner' && (
           <>
+            <SectionTitle title="Money Split" />
+            <View style={styles.moneySplitCard}>
+              <View style={styles.moneySplitHeader}>
+                <View>
+                  <ThemedText style={styles.moneySplitTitle}>Job Payment Split</ThemedText>
+                  <ThemedText style={styles.moneySplitSubtext}>Set how each paid job is divided.</ThemedText>
+                </View>
+                {pricingLoading ? <ActivityIndicator size="small" color="#FF8C00" /> : null}
+              </View>
+
+              <View style={styles.moneySplitRow}>
+                <View style={styles.moneySplitInputWrap}>
+                  <Field
+                    label="Mechanic Share (%)"
+                    value={pricingSplit.mechanicShare}
+                    onChangeText={updateMechanicShare}
+                    keyboardType="decimal-pad"
+                  />
+                </View>
+                <View style={styles.moneySplitInputWrap}>
+                  <Field
+                    label="Shop Wallet Share (%)"
+                    value={pricingSplit.walletShare}
+                    onChangeText={updateWalletShare}
+                    keyboardType="decimal-pad"
+                  />
+                </View>
+              </View>
+
+              <View style={styles.moneySplitPreview}>
+                <ThemedText style={styles.moneySplitPreviewText}>
+                  Example: for every ₱1,000 job, mechanic gets ₱{((Number(pricingSplit.mechanicShare) || 0) * 10).toFixed(2)}
+                  {' '}and shop wallet gets ₱{((Number(pricingSplit.walletShare) || 0) * 10).toFixed(2)}.
+                </ThemedText>
+              </View>
+            </View>
+
             <SectionTitle title="Shop Details" />
             <Field label="Shop Name" value={form.shop_name} onChangeText={(v) => setField('shop_name', v)} />
             <Field
@@ -1383,13 +1523,13 @@ function SelectField({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0F0F10',
+    backgroundColor: '#0D0D0D',
   },
   centered: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#0F0F10',
+    backgroundColor: '#0D0D0D',
   },
   header: {
     flexDirection: 'row',
@@ -1399,7 +1539,8 @@ const styles = StyleSheet.create({
     paddingTop: 56,
     paddingBottom: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#242426',
+    borderBottomColor: '#252525',
+    backgroundColor: '#0D0D0D',
   },
   headerBtn: {
     width: 36,
@@ -1410,6 +1551,11 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 18,
     fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  scrollArea: {
+    flex: 1,
+    backgroundColor: '#0D0D0D',
   },
   content: {
     padding: 16,
@@ -1439,8 +1585,8 @@ const styles = StyleSheet.create({
     borderRadius: 43,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#3A3A3C',
-    backgroundColor: '#1C1C1E',
+    borderColor: '#252525',
+    backgroundColor: '#151515',
   },
   photo: {
     width: '100%',
@@ -1450,15 +1596,15 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#1C1C1E',
+    backgroundColor: '#151515',
   },
   photoBtn: {
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: 10,
-    backgroundColor: '#1C1C1E',
+    backgroundColor: '#151515',
     borderWidth: 1,
-    borderColor: '#2A2A2C',
+    borderColor: '#252525',
   },
   photoBtnText: {
     color: '#FF8C00',
@@ -1469,6 +1615,7 @@ const styles = StyleSheet.create({
     marginBottom: 2,
     fontSize: 16,
     fontWeight: '700',
+    color: '#FFFFFF',
   },
   fieldWrap: {
     marginBottom: 10,
@@ -1495,8 +1642,8 @@ const styles = StyleSheet.create({
   },
   input: {
     borderWidth: 1,
-    borderColor: '#2C2C2E',
-    backgroundColor: '#1C1C1E',
+    borderColor: '#252525',
+    backgroundColor: '#151515',
     color: '#FFFFFF',
     borderRadius: 10,
     paddingHorizontal: 12,
@@ -1509,8 +1656,8 @@ const styles = StyleSheet.create({
   },
   selectInput: {
     borderWidth: 1,
-    borderColor: '#2C2C2E',
-    backgroundColor: '#1C1C1E',
+    borderColor: '#252525',
+    backgroundColor: '#151515',
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 12,
@@ -1538,8 +1685,8 @@ const styles = StyleSheet.create({
   mapBtn: {
     marginTop: 2,
     borderWidth: 1,
-    borderColor: '#2C2C2E',
-    backgroundColor: '#1C1C1E',
+    borderColor: '#252525',
+    backgroundColor: '#151515',
     borderRadius: 10,
     paddingVertical: 11,
     paddingHorizontal: 12,
@@ -1553,8 +1700,8 @@ const styles = StyleSheet.create({
   },
   branchSummaryCard: {
     borderWidth: 1,
-    borderColor: '#2C2C2E',
-    backgroundColor: '#1C1C1E',
+    borderColor: '#252525',
+    backgroundColor: '#151515',
     borderRadius: 12,
     padding: 12,
     flexDirection: 'row',
@@ -1581,9 +1728,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderRadius: 10,
-    backgroundColor: '#242426',
+    backgroundColor: '#1A1A1A',
     borderWidth: 1,
-    borderColor: '#303033',
+    borderColor: '#252525',
   },
   branchMapBtnText: {
     color: '#FF8C00',
@@ -1612,8 +1759,8 @@ const styles = StyleSheet.create({
   },
   branchItemCard: {
     borderWidth: 1,
-    borderColor: '#2C2C2E',
-    backgroundColor: '#1C1C1E',
+    borderColor: '#252525',
+    backgroundColor: '#151515',
     borderRadius: 12,
     padding: 12,
     marginBottom: 10,
@@ -1639,9 +1786,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 9,
     borderRadius: 10,
-    backgroundColor: '#242426',
+    backgroundColor: '#1A1A1A',
     borderWidth: 1,
-    borderColor: '#303033',
+    borderColor: '#252525',
   },
   branchActionText: {
     color: '#FFFFFF',
@@ -1659,8 +1806,8 @@ const styles = StyleSheet.create({
   },
   branchEmptyCard: {
     borderWidth: 1,
-    borderColor: '#2C2C2E',
-    backgroundColor: '#1C1C1E',
+    borderColor: '#252525',
+    backgroundColor: '#151515',
     borderRadius: 12,
     padding: 12,
     marginBottom: 10,
@@ -1668,6 +1815,51 @@ const styles = StyleSheet.create({
   branchEmptyText: {
     color: '#8E8E93',
     fontSize: 12,
+  },
+  moneySplitCard: {
+    borderWidth: 1,
+    borderColor: '#252525',
+    backgroundColor: '#151515',
+    borderRadius: 12,
+    padding: 12,
+    gap: 10,
+    marginBottom: 10,
+  },
+  moneySplitHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  moneySplitTitle: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  moneySplitSubtext: {
+    color: '#8E8E93',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  moneySplitRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  moneySplitInputWrap: {
+    flex: 1,
+  },
+  moneySplitPreview: {
+    borderRadius: 10,
+    backgroundColor: '#FF8C0014',
+    borderWidth: 1,
+    borderColor: '#FF8C0030',
+    padding: 10,
+  },
+  moneySplitPreviewText: {
+    color: '#FFB45C',
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
   },
   bannerLabel: {
     marginTop: 4,
@@ -1682,8 +1874,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#2C2C2E',
-    backgroundColor: '#1C1C1E',
+    borderColor: '#252525',
+    backgroundColor: '#151515',
     marginBottom: 10,
   },
   banner: {
@@ -1708,7 +1900,7 @@ const styles = StyleSheet.create({
   },
   mapContainer: {
     flex: 1,
-    backgroundColor: '#0F0F10',
+    backgroundColor: '#0D0D0D',
   },
   mapHeader: {
     flexDirection: 'row',
@@ -1718,7 +1910,8 @@ const styles = StyleSheet.create({
     paddingTop: 54,
     paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#242426',
+    borderBottomColor: '#252525',
+    backgroundColor: '#0D0D0D',
   },
   mapHeaderBtn: {
     width: 34,
@@ -1726,13 +1919,14 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#1C1C1E',
+    backgroundColor: '#151515',
     borderWidth: 1,
-    borderColor: '#2C2C2E',
+    borderColor: '#252525',
   },
   mapHeaderTitle: {
     fontWeight: '700',
     fontSize: 16,
+    color: '#FFFFFF',
   },
   mapView: {
     flex: 1,

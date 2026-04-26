@@ -15,13 +15,14 @@ from ...models import (
     ReworkBooking, DisputeBooking, CompleteBooking, Receipt, BroadcastOffer, PaymentInstallment, Quotation, RequestAssignment,
     BroadcastRequest, BroadcastRequestAddOn, DirectRequestAddOn, MechanicLocation, QuotationItem
 )
-from ...serializers import BookingSerializer, BookingPaymentSerializer
+from ...serializers import BookingSerializer, BookingPaymentSerializer, QuotationSerializer
 from ...backjob_utils import (
     backjob_accepted_payable_total,
     booking_has_backjob,
     backjob_phase_total_paid,
     backjob_scoped_payments_active,
 )
+from pricing.models import PricingConfiguration
 from users.models import Account, Mechanic, MechanicReview, TokenTransaction
 from ...ws_utils import upsert_booking_party_notification
 
@@ -110,6 +111,47 @@ def _to_money(value):
 
     amount = Decimal(value or 0)
     return amount.quantize(Decimal('0.01'))
+
+
+def _build_payment_split_payload(booking, mechanic_count=None):
+    from decimal import Decimal
+
+    total = _to_money(booking.amount_fee)
+    has_shop = getattr(booking.request, 'shop_id', None) is not None
+    if not has_shop:
+        return {
+            'total_amount': float(total),
+            'mechanic_percentage': 100.0,
+            'shop_owner_percentage': 0.0,
+            'mechanic_amount': float(total),
+            'shop_owner_amount': 0.0,
+            'mechanic_count': 1,
+            'per_mechanic_amount': float(total),
+        }
+
+    pricing = PricingConfiguration.get_config()
+    shop_percentage = Decimal(getattr(pricing, 'platform_commission_percentage', 0) or 0)
+    if shop_percentage < 0:
+        shop_percentage = Decimal('0')
+    if shop_percentage > 100:
+        shop_percentage = Decimal('100')
+
+    shop_amount = _to_money(total * shop_percentage / Decimal('100'))
+    mechanic_amount = _to_money(total - shop_amount)
+    if mechanic_count is None:
+        mechanic_count = RequestAssignment.objects.filter(request=booking.request).count()
+    mechanic_count = mechanic_count or 1
+    per_mechanic_amount = _to_money(mechanic_amount / Decimal(mechanic_count))
+
+    return {
+        'total_amount': float(total),
+        'mechanic_percentage': float(Decimal('100') - shop_percentage),
+        'shop_owner_percentage': float(shop_percentage),
+        'mechanic_amount': float(mechanic_amount),
+        'shop_owner_amount': float(shop_amount),
+        'mechanic_count': mechanic_count,
+        'per_mechanic_amount': float(per_mechanic_amount),
+    }
 
 
 def _haversine_meters(lat1, lon1, lat2, lon2):
@@ -352,6 +394,7 @@ def list_client_bookings(request):
             'request__client',
             'request__client__account',
             'request__provider',
+            'request__shop',
             'request__service_location'
         ).prefetch_related(
             Prefetch('activebooking', queryset=ActiveBooking.objects.all()),
@@ -360,7 +403,8 @@ def list_client_bookings(request):
             Prefetch('disputebooking', queryset=DisputeBooking.objects.select_related(
                 'complainer', 'complaint_against', 'admin'
             )),
-            Prefetch('completebooking', queryset=CompleteBooking.objects.all())
+            Prefetch('completebooking', queryset=CompleteBooking.objects.all()),
+            Prefetch('request__assignments', queryset=RequestAssignment.objects.select_related('mechanic')),
         ).order_by('-booked_at')
         
         # Apply status filter if provided
@@ -411,36 +455,38 @@ def list_client_bookings(request):
         
         # If no filter, return bookings grouped by status (no pagination for grouped view)
         else:
-            active_bookings = bookings_queryset.filter(status__in=[
+            all_bookings = list(bookings_queryset)
+            active_statuses = {
                 'accepted', 'active', 'on_the_way', 'at_location', 'diagnosing', 'pending_payment', 'backjob_pending',
-            ])
-            completed_bookings = bookings_queryset.filter(status='completed')
-            cancelled_bookings = bookings_queryset.filter(status='cancelled')
-            reworked_bookings = bookings_queryset.filter(status='reworked')
-            disputed_bookings = bookings_queryset.filter(status='disputed')
+            }
+            active_bookings = [booking for booking in all_bookings if booking.status in active_statuses]
+            completed_bookings = [booking for booking in all_bookings if booking.status == 'completed']
+            cancelled_bookings = [booking for booking in all_bookings if booking.status == 'cancelled']
+            reworked_bookings = [booking for booking in all_bookings if booking.status == 'reworked']
+            disputed_bookings = [booking for booking in all_bookings if booking.status == 'disputed']
 
             return Response({
                 'active': {
                     'bookings': _serialize_bookings(active_bookings, viewer_account=account),
-                    'count': active_bookings.count()
+                    'count': len(active_bookings)
                 },
                 'completed': {
                     'bookings': _serialize_bookings(completed_bookings, viewer_account=account),
-                    'count': completed_bookings.count()
+                    'count': len(completed_bookings)
                 },
                 'cancelled': {
                     'bookings': _serialize_bookings(cancelled_bookings, viewer_account=account),
-                    'count': cancelled_bookings.count()
+                    'count': len(cancelled_bookings)
                 },
                 'reworked': {
                     'bookings': _serialize_bookings(reworked_bookings, viewer_account=account),
-                    'count': reworked_bookings.count()
+                    'count': len(reworked_bookings)
                 },
                 'disputed': {
                     'bookings': _serialize_bookings(disputed_bookings, viewer_account=account),
-                    'count': disputed_bookings.count()
+                    'count': len(disputed_bookings)
                 },
-                'total_count': bookings_queryset.count()
+                'total_count': len(all_bookings)
             }, status=status.HTTP_200_OK)
     
     except Account.DoesNotExist:
@@ -489,6 +535,7 @@ def get_booking_detail(request, booking_id):
             'request__client',
             'request__client__account',
             'request__provider',
+            'request__shop',
             'request__service_location'
         ).prefetch_related(
             Prefetch('activebooking', queryset=ActiveBooking.objects.all()),
@@ -497,7 +544,8 @@ def get_booking_detail(request, booking_id):
             Prefetch('disputebooking', queryset=DisputeBooking.objects.select_related(
                 'complainer', 'complaint_against', 'admin'
             )),
-            Prefetch('completebooking', queryset=CompleteBooking.objects.all())
+            Prefetch('completebooking', queryset=CompleteBooking.objects.all()),
+            Prefetch('request__assignments', queryset=RequestAssignment.objects.select_related('mechanic')),
         ).get(id=booking_id, request__client=client)
         
         # Ensure ActiveBooking exists for runtime details when booking is in a running/finished state
@@ -1077,6 +1125,10 @@ def _serialize_bookings(bookings_queryset, viewer_account=None):
 
 def _serialize_single_booking(booking, viewer_account=None):
     """Helper function to serialize a single booking with all details"""
+    prefetched_assignments = getattr(booking.request, '_prefetched_objects_cache', {}).get('assignments')
+    assignments = list(prefetched_assignments) if prefetched_assignments is not None else list(
+        RequestAssignment.objects.filter(request=booking.request).select_related('mechanic')
+    )
     broadcast_request_payload = None
     accepted_offer = None
     if hasattr(booking.request, 'broadcast_request') and booking.request.broadcast_request is not None:
@@ -1188,7 +1240,7 @@ def _serialize_single_booking(booking, viewer_account=None):
                     },
                     'assigned_at': a.assigned_at.isoformat() if a.assigned_at else None,
                 }
-                for a in RequestAssignment.objects.filter(request=booking.request).select_related('mechanic')
+                for a in assignments
             ],
         },
         'provider': {
@@ -1196,6 +1248,12 @@ def _serialize_single_booking(booking, viewer_account=None):
             'name': f"{booking.request.provider.firstname} {booking.request.provider.lastname}",
             'email': booking.request.provider.email,
         } if booking.request.provider else None,
+        'shop': {
+            'id': booking.request.shop.id,
+            'shop_name': booking.request.shop.shop_name,
+            'contact_number': booking.request.shop.contact_number,
+            'email': booking.request.shop.email,
+        } if getattr(booking.request, 'shop', None) else None,
         'client': {
             'firstname':booking.request.client.account.firstname,
             'lastname':booking.request.client.account.lastname,
@@ -1214,6 +1272,7 @@ def _serialize_single_booking(booking, viewer_account=None):
         'service_location': service_location,
         'location': location_payload,
     }
+    booking_data['payment_split'] = _build_payment_split_payload(booking, mechanic_count=len(assignments))
     
     # Add active booking runtime details when ActiveBooking exists
     if hasattr(booking, 'activebooking'):
@@ -1362,47 +1421,17 @@ def _serialize_single_booking(booking, viewer_account=None):
         # never fail serialization for minor request detail issues
         pass
 
-    # Attach mechanic quotation if one exists for this booking (manual build)
+    # Attach mechanic quotation if one exists for this booking.
+    # Use the shared serializer so pending amendment rows match mechanic/shop owner views.
     try:
         try:
             q = booking.quotation
-            qd = {
-                'id': q.id,
-                'mechanic_id': q.mechanic.id if q.mechanic else None,
-                'status': q.status,
-                'notes': q.notes,
-                'total_amount': float(q.total_amount) if q.total_amount is not None else None,
-                'is_final': bool(q.is_final),
-                'created_at': q.created_at.isoformat() if q.created_at else None,
-                'updated_at': q.updated_at.isoformat() if q.updated_at else None,
-                'items': []
-            }
-            # While quotation is pending, keep rejected item rows visible so clients can
-            # review pending removal proposals in pricing/quotation sections.
-            items_qs = q.items.all() if str(q.status).lower() == 'pending' else q.items.exclude(status='rejected')
-            for it in items_qs:
-                qd['items'].append({
-                    'id': it.id,
-                    'line_kind': getattr(it, 'line_kind', 'item'),
-                    'source': getattr(it, 'source', None),
-                    'service': it.service.id if it.service else None,
-                    'service_add_on': it.service_add_on.id if it.service_add_on else None,
-                    'description': it.description,
-                    'quantity': it.quantity,
-                    'unit_price': float(it.unit_price),
-                    'line_total': float(it.line_total) if hasattr(it, 'line_total') else float(it.quantity * it.unit_price),
-                    'status': it.status if hasattr(it, 'status') and it.status is not None else q.status,
-                    'change_type': getattr(it, 'change_type', None),
-                    'is_backjob_new_line': bool(getattr(it, 'is_backjob_line', False)),
-                    'backjob_id': getattr(it, 'backjob_id', None),
-                    'created_at': it.created_at.isoformat() if getattr(it, 'created_at', None) else None,
-                    'updated_at': it.updated_at.isoformat() if getattr(it, 'updated_at', None) else None,
-                    'previous_description': getattr(it, 'previous_description', None),
-                    'previous_quantity': getattr(it, 'previous_quantity', None),
-                    'previous_unit_price': float(it.previous_unit_price) if getattr(it, 'previous_unit_price', None) is not None else None,
-                    'purchase_receipt_image': it.purchase_receipt_image.url if getattr(it, 'purchase_receipt_image', None) else None,
-                    'receipt_submitted_at': it.receipt_submitted_at.isoformat() if getattr(it, 'receipt_submitted_at', None) else None,
-                })
+            qd = QuotationSerializer(q).data
+            if 'mechanic' in qd and 'mechanic_id' not in qd:
+                try:
+                    qd['mechanic_id'] = q.mechanic.id if q.mechanic else None
+                except Exception:
+                    qd['mechanic_id'] = None
             booking_data['quotation'] = qd
         except Exception:
             # no related quotation present

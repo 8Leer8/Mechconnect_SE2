@@ -97,6 +97,7 @@ urlpatterns = [
     path('mechanic/emergency/', views.get_emergency_requests, name='get-emergency-requests'),
     path('shopowner/emergency/', views.list_shopowner_emergency_requests, name='shopowner-emergency-requests'),
     path('shopowner/emergency/<int:request_id>/accept/', views.shopowner_accept_emergency_request, name='shopowner-accept-emergency-request'),
+    path('shopowner/broadcasts/<int:broadcast_id>/accept/', views.shopowner_accept_broadcast_request, name='shopowner-accept-broadcast-request'),
 
     # Shop owner: list pending requests (Jobs > Requests tab)
     path('shopowner/requests/', views.list_shopowner_requests, name='list-shopowner-requests'),
@@ -111,6 +112,10 @@ urlpatterns = [
     path('shopowner/bookings/', views.list_shopowner_bookings, name='list-shopowner-bookings'),
     path('shopowner/bookings/<int:booking_id>/', views.get_shopowner_booking_detail, name='get-shopowner-booking-detail'),
     path('shopowner/bookings/<int:booking_id>/quotation/', views.get_shopowner_booking_quotation, name='get-shopowner-booking-quotation'),
+    path('shopowner/bookings/<int:booking_id>/accept-backjob/', views.shopowner_accept_backjob, name='shopowner-accept-backjob'),
+    path('shopowner/cash-remittances/', views.list_cash_remittances, name='list-cash-remittances'),
+    path('shopowner/cash-remittances/<int:remittance_id>/received/', views.mark_cash_remittance_received, name='mark-cash-remittance-received'),
+    path('shopowner/cash-remittances/<int:remittance_id>/remind/', views.remind_cash_remittance, name='remind-cash-remittance'),
 
     # Request assignment endpoints (shop owner assigns mechanics to jobs)
     path('requests/<int:request_id>/assignments/', views.list_request_assignments, name='list-request-assignments'),

@@ -1,7 +1,11 @@
 from django.db import models
+from django.core.cache import cache
 
 
 class PricingConfiguration(models.Model):
+    CACHE_KEY = "pricing_configuration:singleton"
+    CACHE_TIMEOUT_SECONDS = 5 * 60
+
     # Token pricing
     base_token_price = models.DecimalField(
         max_digits=10, decimal_places=2, default=1.00,
@@ -88,5 +92,15 @@ class PricingConfiguration(models.Model):
 
     @classmethod
     def get_config(cls):
+        cached = cache.get(cls.CACHE_KEY)
+        if cached is not None:
+            return cached
+
         config, _ = cls.objects.get_or_create(pk=1)
+        cache.set(cls.CACHE_KEY, config, cls.CACHE_TIMEOUT_SECONDS)
         return config
+
+    def save(self, *args, **kwargs):
+        result = super().save(*args, **kwargs)
+        cache.set(self.CACHE_KEY, self, self.CACHE_TIMEOUT_SECONDS)
+        return result

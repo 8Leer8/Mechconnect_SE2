@@ -655,6 +655,24 @@ export const styles = StyleSheet.create({
   acceptedItem: {
     paddingVertical: 6,
   },
+  removedItem: {
+    backgroundColor: '#2A2020',
+    borderStyle: 'solid',
+    borderWidth: 1,
+    borderColor: '#6B3B3B',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    opacity: 0.9,
+  },
+  removedItemText: {
+    textDecorationLine: 'line-through',
+    color: '#B5B7BB',
+  },
+  removedItemAmount: {
+    textDecorationLine: 'line-through',
+    color: '#B5B7BB',
+  },
   receiptDivider: {
     height: 1,
     backgroundColor: '#222426',

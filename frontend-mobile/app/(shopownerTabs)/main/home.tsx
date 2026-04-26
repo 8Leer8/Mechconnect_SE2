@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { StyleSheet, View, ScrollView, RefreshControl, Dimensions, TouchableOpacity, Image, Switch } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -15,6 +15,8 @@ import { router } from 'expo-router';
 
 const { width } = Dimensions.get('window');
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
+const DASHBOARD_REFRESH_THROTTLE_MS = 10 * 1000;
+const DASHBOARD_POLL_MS = 60 * 1000;
 
 interface DashboardData {
   shop_name: string;
@@ -26,6 +28,11 @@ interface DashboardData {
   average_rating: number;
   shop_status: string;
   is_verified: boolean;
+}
+
+interface CashRemittanceSummary {
+  count: number;
+  totalAmount: number;
 }
 
 const getGreeting = () => {
@@ -43,18 +50,41 @@ export default function ShopOwnerHome() {
   const [shopBannerUrl, setShopBannerUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [statusUpdating, setStatusUpdating] = useState(false);
+  const [cashRemittanceSummary, setCashRemittanceSummary] = useState<CashRemittanceSummary>({
+    count: 0,
+    totalAmount: 0,
+  });
   const { lastMessage } = useWebSocketContext();
+  const dashboardFetchInFlightRef = useRef(false);
+  const lastDashboardFetchAtRef = useRef(0);
 
-  const fetchDashboardData = useCallback(async () => {
+  const fetchDashboardData = useCallback(async (forceRefresh = false) => {
+    const now = Date.now();
+    if (!forceRefresh && now - lastDashboardFetchAtRef.current < DASHBOARD_REFRESH_THROTTLE_MS) {
+      setRefreshing(false);
+      return;
+    }
+    if (dashboardFetchInFlightRef.current) {
+      setRefreshing(false);
+      return;
+    }
+
+    dashboardFetchInFlightRef.current = true;
+    lastDashboardFetchAtRef.current = now;
     try {
       setError(null);
-      const [response, profile] = await Promise.all([
+      const [response, profile, remittanceResponse] = await Promise.all([
         fetch(`${API_URL}/shops/dashboard/`, {
           method: 'GET',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
         }),
         fetchProfileDetailsCached(false),
+        fetch(`${API_URL}/bookings/shopowner/cash-remittances/?status=pending`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        }).catch(() => null),
       ]);
 
       const payload = (await response.json().catch(() => ({}))) as DashboardData & { error?: string };
@@ -70,6 +100,21 @@ export default function ShopOwnerHome() {
       setDashboardData(payload as DashboardData);
 
       setShopBannerUrl(profile?.current_role_profile?.shop_owner?.shop?.service_banner || null);
+
+      if (remittanceResponse?.ok) {
+        const remittancePayload = (await remittanceResponse.json().catch(() => ({}))) as {
+          remittances?: { amount?: number | string }[];
+          count?: number;
+        };
+        const remittances = remittancePayload.remittances || [];
+        const totalAmount = remittances.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+        setCashRemittanceSummary({
+          count: remittancePayload.count ?? remittances.length,
+          totalAmount,
+        });
+      } else {
+        setCashRemittanceSummary({ count: 0, totalAmount: 0 });
+      }
     } catch (err) {
       const message =
         err instanceof Error
@@ -80,6 +125,7 @@ export default function ShopOwnerHome() {
       setError(message);
       console.error('Dashboard error:', err);
     } finally {
+      dashboardFetchInFlightRef.current = false;
       setLoading(false);
       setRefreshing(false);
     }
@@ -89,21 +135,21 @@ export default function ShopOwnerHome() {
     if (!lastMessage) return;
     const t = String(lastMessage.type || '').toLowerCase();
     if (t === 'booking_update') {
-      fetchDashboardData();
+      fetchDashboardData(true);
     }
   }, [lastMessage, fetchDashboardData]);
 
   useFocusEffect(
     useCallback(() => {
       fetchDashboardData();
-      const poll = setInterval(fetchDashboardData, 30000);
+      const poll = setInterval(fetchDashboardData, DASHBOARD_POLL_MS);
       return () => clearInterval(poll);
     }, [fetchDashboardData])
   );
 
   const onRefresh = () => {
     setRefreshing(true);
-    fetchDashboardData();
+    fetchDashboardData(true);
   };
 
   const updateShopAvailability = useCallback(async (isAvailable: boolean) => {
@@ -269,6 +315,35 @@ export default function ShopOwnerHome() {
         {/* Shop Management */}
         <View style={styles.summarySection}>
           <ThemedText style={styles.sectionTitle}>Shop Management</ThemedText>
+          {cashRemittanceSummary.count > 0 ? (
+            <TouchableOpacity
+              style={styles.remittanceHomeCard}
+              activeOpacity={0.8}
+              onPress={() =>
+                router.push({
+                  pathname: '/(shopownerTabs)/main/jobs',
+                  params: { tab: 'remittance' },
+                } as any)
+              }
+            >
+              <View style={styles.managementActionLeft}>
+                <View style={styles.remittanceIcon}>
+                  <FontAwesome name="handshake-o" size={16} color="#FFD60A" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <ThemedText style={styles.managementActionTitle}>Pending Cash Remittance</ThemedText>
+                  <ThemedText style={styles.managementActionSubtitle}>
+                    {cashRemittanceSummary.count} job{cashRemittanceSummary.count === 1 ? '' : 's'} need cash surrender.
+                  </ThemedText>
+                </View>
+              </View>
+              <View style={styles.remittanceAmountPill}>
+                <ThemedText style={styles.remittanceAmountText}>
+                  ₱{cashRemittanceSummary.totalAmount.toFixed(2)}
+                </ThemedText>
+              </View>
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity
             style={styles.managementActionCard}
             activeOpacity={0.8}
@@ -717,6 +792,7 @@ const styles = StyleSheet.create({
   // ─── Summary Section ───
   summarySection: {
     marginBottom: 20,
+    gap: 12,
   },
   summaryCard: {
     backgroundColor: '#151515',
@@ -774,6 +850,17 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 12,
   },
+  remittanceHomeCard: {
+    backgroundColor: '#1A1710',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#FF950040',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
   managementActionLeft: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -787,6 +874,27 @@ const styles = StyleSheet.create({
     backgroundColor: '#FF8C0020',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  remittanceIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: '#FFD60A20',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  remittanceAmountPill: {
+    backgroundColor: '#FF950020',
+    borderWidth: 1,
+    borderColor: '#FF950050',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  remittanceAmountText: {
+    color: '#FFD60A',
+    fontSize: 13,
+    fontWeight: '800',
   },
   managementActionTitle: {
     fontSize: 15,
