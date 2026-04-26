@@ -39,6 +39,7 @@ export default function BookingChatScreen() {
   const [didInitialScrollToLatest, setDidInitialScrollToLatest] = useState(false);
   const [showQuotationDecisionModal, setShowQuotationDecisionModal] = useState(false);
   const [quotationDecisionAction, setQuotationDecisionAction] = useState<'accept' | 'reject' | null>(null);
+  const [shownSatisfiedNotice, setShownSatisfiedNotice] = useState(false);
   const initialScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isNearBottomRef = useRef(true);
   const forceFollowNextUpdateRef = useRef(false);
@@ -277,6 +278,16 @@ export default function BookingChatScreen() {
 
     return () => { mounted = false; };
   }, [bookingId]);
+
+  useEffect(() => {
+    if (loading || !chatAccessDenied || shownSatisfiedNotice) return;
+    setShownSatisfiedNotice(true);
+    Alert.alert(
+      'Backjob satisfied',
+      'This backjob is already done, so the booking chat is closed again.',
+      [{ text: 'OK', onPress: () => router.back() }]
+    );
+  }, [loading, chatAccessDenied, shownSatisfiedNotice]);
 
   const handleHeaderMore = () => {
     setShowOptionsModal(true);
@@ -1223,15 +1234,39 @@ export default function BookingChatScreen() {
         messageCreatedMs >= latestBackjobRequestAt;
       const isBackjobQuote = Boolean(parsed.is_backjob) || wasSentAfterBackjobRequest;
       const isPendingBackjobQuote = isPending && isBackjobQuote;
+      const isCurrentBackjobChatItem = (line: any, row?: any) => {
+        if (!isBackjobQuote) return true;
+        const payloadBackjobId = Number(parsed?.backjob_id || 0);
+        const lineBackjobId = Number(line?.backjob_id || 0);
+        if (payloadBackjobId > 0 && lineBackjobId > 0) {
+          return payloadBackjobId === lineBackjobId;
+        }
+
+        const lineCreatedMs = Number(new Date(String(line?.created_at || '')).getTime());
+        if (Number.isFinite(lineCreatedMs) && latestBackjobRequestAt > 0) {
+          return lineCreatedMs >= latestBackjobRequestAt;
+        }
+
+        const changeType = String(line?.change_type || '').toLowerCase();
+        return Boolean(row?.isAdded) || changeType === 'added';
+      };
       const isAddedBackjobRow = (row: any) => {
         const changeType = String(row?.currentIt?.change_type || '').toLowerCase();
-        return Boolean(row?.currentIt?.is_backjob_new_line) || row?.isAdded || changeType === 'added';
+        return isCurrentBackjobChatItem(row?.currentIt, row) && (
+          Boolean(row?.currentIt?.is_backjob_new_line) ||
+          row?.isAdded ||
+          changeType === 'added'
+        );
       };
-      const rowsForDisplay = isPendingBackjobQuote
-        ? matchedRows.filter((row: any) => !row?.isRemoved && isAddedBackjobRow(row))
+      const rowsForDisplay = isBackjobQuote
+        ? matchedRows.filter((row: any) => {
+          if (row?.isRemoved) return false;
+          if (!isCurrentBackjobChatItem(row?.currentIt, row)) return false;
+          return isPendingBackjobQuote ? isAddedBackjobRow(row) : true;
+        })
         : matchedRows;
       const removedRowsFromCurrent = matchedRows.filter((row: any) => Boolean(row?.isRemoved));
-      const removedItems = isPendingBackjobQuote
+      const removedItems = isBackjobQuote
         ? []
         : [...removedRowsFromCurrent.map((row: any) => row.currentIt), ...removedItemsFromPrevious];
       const pendingChargeTotal = Math.max(0, rowsForDisplay.reduce((sum: number, row: any) => {
@@ -1239,7 +1274,7 @@ export default function BookingChatScreen() {
         const currentLine = Number(row?.currentIt?.line_total) || 0;
         const previousLine = Number(row?.previousIt?.line_total) || 0;
         if (row?.isAdded) return sum + currentLine;
-        if (isPendingBackjobQuote && Boolean(row?.currentIt?.is_backjob_new_line)) return sum + currentLine;
+        if (isPendingBackjobQuote && isCurrentBackjobChatItem(row?.currentIt, row) && Boolean(row?.currentIt?.is_backjob_new_line)) return sum + currentLine;
         if (row?.isEdited) return sum + (currentLine - previousLine);
         return sum;
       }, 0) - removedItems.reduce((sum: number, it: any) => sum + (Number(it?.line_total) || 0), 0));
@@ -1535,10 +1570,10 @@ export default function BookingChatScreen() {
           >
             <FontAwesome name="ban" size={28} color="#FF8C00" />
             <ThemedText style={{ color: '#ECEDEE', fontSize: 20, fontWeight: '800', marginTop: 12 }}>
-              Chat unavailable
+              Backjob satisfied
             </ThemedText>
             <ThemedText style={{ color: '#8E8E93', textAlign: 'center', marginTop: 8, lineHeight: 20 }}>
-              This booking is closed to chat unless there is a live backjob in progress.
+              This backjob is already done, so the booking chat is closed again.
             </ThemedText>
             <TouchableOpacity
               style={{ marginTop: 18, backgroundColor: '#FF8C00', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12 }}
@@ -1616,7 +1651,7 @@ export default function BookingChatScreen() {
                   <ThemedText style={styles.optionText}>Copy chat</ThemedText>
                 </TouchableOpacity>
 
-                {hasBackjobRequest ? (
+                {hasBackjobRequest && backjobRequestStatus === 'pending' ? (
                   <TouchableOpacity style={styles.optionRow} onPress={() => { setShowOptionsModal(false); setShowAcceptModal(true); }}>
                     <FontAwesome name="check-circle" size={14} color="#FFB357" />
                     <ThemedText style={styles.optionText}>Accept Backjob</ThemedText>

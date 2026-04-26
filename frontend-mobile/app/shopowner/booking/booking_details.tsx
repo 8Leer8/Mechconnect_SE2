@@ -669,6 +669,16 @@ export default function ShopOwnerBookingDetailScreen() {
     null;
   const assignedIds = new Set(assignments.map((a) => a.mechanic.id));
   const availableMechanics = shopMechanics.filter((m) => !assignedIds.has(m.account_id));
+  const assignedTeam = (assignments.length > 0
+    ? assignments
+    : (booking.request?.assigned_mechanics || []).map((a) => ({
+        id: a.id,
+        role: a.role,
+        assigned_at: a.assigned_at || '',
+        mechanic: a.mechanic,
+      }))) as Assignment[];
+  const leadCount = assignedTeam.filter((a) => a.role === 'lead').length;
+  const assistCount = assignedTeam.filter((a) => a.role === 'assistant').length;
 
   return (
     <ThemedView style={styles.container}>
@@ -781,12 +791,30 @@ export default function ShopOwnerBookingDetailScreen() {
               <FontAwesome name="users" size={16} color="#34C759" />
             </View>
             <ThemedText style={styles.sectionTitle}>Assigned Team</ThemedText>
+            {assignedTeam.length > 0 ? (
+              <View style={{ flexDirection: 'row', gap: 6, marginLeft: 'auto' }}>
+                {leadCount > 0 ? (
+                  <View style={{ backgroundColor: '#FF950030', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 }}>
+                    <ThemedText style={{ fontSize: 11, fontWeight: '800', color: '#fff' }}>
+                      Lead {leadCount}
+                    </ThemedText>
+                  </View>
+                ) : null}
+                {assistCount > 0 ? (
+                  <View style={{ backgroundColor: '#34C75930', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 }}>
+                    <ThemedText style={{ fontSize: 11, fontWeight: '800', color: '#fff' }}>
+                      Assist {assistCount}
+                    </ThemedText>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
           </View>
-          {assignments.length === 0 ? (
+          {assignedTeam.length === 0 ? (
             <ThemedText style={{ color: '#888', marginTop: 6 }}>No mechanics assigned yet.</ThemedText>
           ) : (
             <View style={{ gap: 8, marginTop: 8 }}>
-              {assignments.map((a) => (
+              {assignedTeam.map((a) => (
                 <View
                   key={a.id}
                   style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
@@ -810,16 +838,6 @@ export default function ShopOwnerBookingDetailScreen() {
               ))}
             </View>
           )}
-          {canManageAssignment(booking.status) ? (
-            <TouchableOpacity
-              style={[styles.refreshBtn, { marginTop: 14, alignSelf: 'flex-start', width: 'auto', paddingHorizontal: 14 }]}
-              onPress={() => setAssignModalVisible(true)}
-            >
-              <ThemedText style={{ color: '#FF8C00', fontWeight: '700' }}>
-                {booking.status === 'accepted' ? 'Assign' : 'Reassign'}
-              </ThemedText>
-            </TouchableOpacity>
-          ) : null}
         </View>
 
         <View style={styles.sectionCard}>

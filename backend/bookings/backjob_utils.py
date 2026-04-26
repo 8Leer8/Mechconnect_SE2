@@ -26,7 +26,13 @@ def get_booking_backjob(booking):
         return None
 
     try:
-        return booking.backjob
+        if not getattr(booking, 'pk', None):
+            return None
+        if str(getattr(booking, 'status', '') or '').lower() == Booking.Status.COMPLETED:
+            return None
+        return booking.backjobs.exclude(
+            status=Booking.Status.COMPLETED,
+        ).order_by("-id").first()
     except Backjob.DoesNotExist:
         return None
     except Exception:
@@ -103,13 +109,21 @@ def backjob_quotation_has_pending_client_lines(booking) -> bool:
     True when the booking is a backjob and at least one new backjob quotation line
     is still waiting for the client to accept or reject.
     """
-    if not booking_has_backjob(booking):
+    backjob = get_booking_backjob(booking)
+    if backjob is None:
         return False
     quotation = getattr(booking, "quotation", None)
     if quotation is None:
         return False
+    current_line_filter = Q(backjob=backjob)
+    if getattr(backjob, "created_at", None) is not None:
+        current_line_filter = current_line_filter | Q(
+            backjob__isnull=True,
+            is_backjob_line=True,
+            created_at__gte=backjob.created_at,
+        )
     return quotation.items.filter(
-        is_backjob_line=True,
+        current_line_filter,
         status=quotation.Status.PENDING,
     ).exists()
 
@@ -128,11 +142,18 @@ def backjob_accepted_payable_total(quotation) -> Decimal:
     if quotation is None:
         return Decimal("0.00")
     backjob = get_booking_backjob(getattr(quotation, "booking", None))
-    new_line_filter = Q(is_backjob_line=True)
+    if backjob is None:
+        return Decimal("0.00")
+
+    new_line_filter = Q(backjob=backjob)
     if backjob is not None and getattr(backjob, "created_at", None) is not None:
         # Self-heal older accepted rows that were added after the backjob but were
         # not flagged by older code.
-        new_line_filter = new_line_filter | Q(created_at__gte=backjob.created_at)
+        new_line_filter = new_line_filter | Q(
+            backjob__isnull=True,
+            is_backjob_line=True,
+            created_at__gte=backjob.created_at,
+        )
 
     total = Decimal("0.00")
     for item in quotation.items.filter(

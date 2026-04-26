@@ -26,6 +26,7 @@ from ...backjob_utils import (
     backjob_phase_total_paid,
     backjob_scoped_payments_active,
     booking_has_backjob,
+    get_booking_backjob,
 )
 
 
@@ -610,10 +611,14 @@ def _finalize_payment_success(
         if booking.payment_status != summary["payment_status"]:
             booking.payment_status = summary["payment_status"]
 
+        active_backjob = get_booking_backjob(booking)
         if summary["fully_paid"] and booking.status == Booking.Status.PENDING_PAYMENT:
             booking.status = Booking.Status.COMPLETED
             booking.completed_at = paid_at
             booking.save(update_fields=["payment_status", "status", "completed_at", "updated_at"])
+            if active_backjob is not None:
+                active_backjob.status = Booking.Status.COMPLETED
+                active_backjob.save(update_fields=["status", "updated_at"])
         else:
             booking.save(update_fields=["payment_status", "updated_at"])
 

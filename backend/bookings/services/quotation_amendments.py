@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.db import transaction
 
 from bookings.models import AmendmentItem, Quotation, QuotationAmendment, QuotationItem
+from bookings.backjob_utils import get_booking_backjob
 
 
 def _snapshot_item(item: QuotationItem) -> dict:
@@ -182,10 +183,7 @@ def resolve_amendment(amendment_id: int, decision: str) -> QuotationAmendment:
         quotation = amendment.quotation
         current_backjob = None
         if getattr(quotation, "is_backjob", False):
-            try:
-                current_backjob = quotation.booking.backjob
-            except Exception:
-                current_backjob = None
+            current_backjob = get_booking_backjob(getattr(quotation, "booking", None))
         if decision_norm == "accepted":
             for change in amendment.items.all().order_by("id"):
                 if change.action_type == AmendmentItem.ActionType.ADDED:

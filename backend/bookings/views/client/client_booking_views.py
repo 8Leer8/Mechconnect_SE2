@@ -1394,6 +1394,7 @@ def _serialize_single_booking(booking, viewer_account=None):
                     'status': it.status if hasattr(it, 'status') and it.status is not None else q.status,
                     'change_type': getattr(it, 'change_type', None),
                     'is_backjob_new_line': bool(getattr(it, 'is_backjob_line', False)),
+                    'backjob_id': getattr(it, 'backjob_id', None),
                     'created_at': it.created_at.isoformat() if getattr(it, 'created_at', None) else None,
                     'updated_at': it.updated_at.isoformat() if getattr(it, 'updated_at', None) else None,
                     'previous_description': getattr(it, 'previous_description', None),
@@ -1410,10 +1411,30 @@ def _serialize_single_booking(booking, viewer_account=None):
         # don't fail serialization if quotation construction fails
         pass
 
-    # Attach backjob info when present
+    # Attach current backjob info plus past rounds for the timeline.
     try:
-        if hasattr(booking, 'backjob') and booking.backjob is not None:
-            bj = booking.backjob
+        backjob_rows = list(booking.backjobs.all().order_by('created_at', 'id'))
+        booking_data['backjob_history'] = [
+            {
+                'id': bj.id,
+                'status': bj.status,
+                'reason': bj.reason,
+                'images': bj.images or [],
+                'requested_by': {
+                    'id': bj.requested_by.id,
+                    'name': f"{bj.requested_by.firstname} {bj.requested_by.lastname}",
+                } if bj.requested_by else None,
+                'created_at': bj.created_at.isoformat() if bj.created_at else None,
+                'updated_at': bj.updated_at.isoformat() if bj.updated_at else None,
+            }
+            for bj in backjob_rows
+        ]
+
+        live_backjobs = []
+        if booking.status != Booking.Status.COMPLETED:
+            live_backjobs = [bj for bj in backjob_rows if bj.status != Booking.Status.COMPLETED]
+        if live_backjobs:
+            bj = live_backjobs[-1]
             booking_data['has_backjob'] = True
             booking_data['backjob'] = {
                 'id': bj.id,
@@ -1425,11 +1446,15 @@ def _serialize_single_booking(booking, viewer_account=None):
                     'name': f"{bj.requested_by.firstname} {bj.requested_by.lastname}",
                 } if bj.requested_by else None,
                 'created_at': bj.created_at.isoformat() if bj.created_at else None,
+                'updated_at': bj.updated_at.isoformat() if bj.updated_at else None,
             }
         else:
             booking_data['has_backjob'] = False
+            booking_data['backjob'] = None
     except Exception:
         booking_data['has_backjob'] = False
+        booking_data['backjob'] = None
+        booking_data['backjob_history'] = []
 
     # Attach payment/receipt information so clients and mechanics can see chosen method
     try:

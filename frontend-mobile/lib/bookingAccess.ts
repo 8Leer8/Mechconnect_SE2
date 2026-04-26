@@ -19,6 +19,11 @@ const LIVE_BACKJOB_STATUSES = new Set([
 ]);
 
 export function bookingHasBackjob(booking?: BookingBackjobLike | null): boolean {
+  const bookingStatus = String(booking?.status || '').toLowerCase();
+  if (bookingStatus === 'completed') return false;
+
+  const backjobStatus = String(booking?.backjob?.status || '').toLowerCase();
+  if (backjobStatus === 'completed') return false;
   return Boolean(booking?.has_backjob || booking?.backjob);
 }
 
@@ -36,6 +41,7 @@ export function bookingHasLiveBackjob(booking?: BookingBackjobLike | null): bool
 export function bookingInBackjobPaymentPhase(booking?: BookingBackjobLike | null): boolean {
   if (!bookingHasBackjob(booking)) return false;
   const st = String(booking?.backjob?.status || '').toLowerCase();
+  if (st === 'completed') return false;
   return st !== 'backjob_pending' && st !== 'reworked';
 }
 

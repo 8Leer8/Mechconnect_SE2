@@ -9,7 +9,8 @@ from .serializers import ConversationSerializer, MessageSerializer
 from users.models import Account
 from django.db.models import Prefetch
 from bookings.models import Booking
-from bookings.models import Backjob
+from bookings.models import Backjob, Quotation, QuotationItem, RequestAssignment
+from bookings.backjob_utils import get_booking_backjob
 from .permissions import evaluate_booking_chat_access, sync_booking_conversation_participants
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
@@ -32,6 +33,71 @@ def get_current_account(request):
         except Account.DoesNotExist:
             return None
     return None
+
+
+def ensure_default_backjob_quotation(booking, backjob):
+    if booking is None or backjob is None:
+        return
+
+    request_obj = getattr(booking, 'request', None)
+    mechanic_account = getattr(request_obj, 'provider', None)
+    if mechanic_account is None and request_obj is not None:
+        assignment = RequestAssignment.objects.filter(
+            request=request_obj,
+            role=RequestAssignment.Role.LEAD,
+        ).select_related('mechanic').first()
+        if assignment is None:
+            assignment = RequestAssignment.objects.filter(
+                request=request_obj,
+            ).select_related('mechanic').order_by('assigned_at', 'id').first()
+        mechanic_account = assignment.mechanic if assignment is not None else None
+    if mechanic_account is None:
+        return
+
+    quotation, _ = Quotation.objects.get_or_create(
+        booking=booking,
+        defaults={
+            'mechanic': mechanic_account,
+            'notes': 'Default free backjob booking.',
+            'status': Quotation.Status.ACCEPTED,
+            'is_backjob': True,
+            'is_final': False,
+        },
+    )
+
+    quotation.mechanic = quotation.mechanic or mechanic_account
+    quotation.is_backjob = True
+    quotation.status = Quotation.Status.ACCEPTED
+    if not quotation.notes:
+        quotation.notes = 'Default free backjob booking.'
+    quotation.save(update_fields=['mechanic', 'notes', 'status', 'is_backjob', 'updated_at'])
+
+    exists = quotation.items.filter(
+        backjob=backjob,
+        description='Backjob Repair',
+        unit_price=0,
+    ).exists()
+    if not exists:
+        QuotationItem.objects.create(
+            quotation=quotation,
+            line_kind=QuotationItem.LineKind.SERVICE,
+            description='Backjob Repair',
+            quantity=1,
+            unit_price=0,
+            status=Quotation.Status.ACCEPTED,
+            change_type=None,
+            is_backjob_line=True,
+            backjob=backjob,
+        )
+
+    quotation.recalculate_totals()
+    quotation.save(update_fields=[
+        'original_labor_cost',
+        'backjob_discount',
+        'final_labor_total',
+        'total_amount',
+        'updated_at',
+    ])
 
 
 @api_view(['GET'])
@@ -241,17 +307,27 @@ def request_backjob(request, booking_id):
     conv.save()
     serializer = MessageSerializer(msg, context={'request': request})
 
-    # Create or update Backjob record for this booking
+    # Create a new round when the previous backjob was already completed.
+    # If there is still a live round, update that one instead of stacking duplicates.
     try:
-        Backjob.objects.update_or_create(
-            booking=booking,
-            defaults={
-                'requested_by': account,
-                'reason': reason,
-                'images': image_urls,
-                'status': Booking.Status.BACKJOB_PENDING,
-            },
-        )
+        current_backjob = get_booking_backjob(booking)
+        if current_backjob is None:
+            current_backjob = Backjob.objects.create(
+                booking=booking,
+                requested_by=account,
+                reason=reason,
+                images=image_urls,
+                status=Booking.Status.BACKJOB_PENDING,
+            )
+        else:
+            current_backjob.requested_by = account
+            current_backjob.reason = reason
+            current_backjob.images = image_urls
+            current_backjob.status = Booking.Status.BACKJOB_PENDING
+            current_backjob.save(update_fields=["requested_by", "reason", "images", "status", "updated_at"])
+
+        ensure_default_backjob_quotation(booking, current_backjob)
+
         # Re-open booking state for backjob diagnostic flow while preserving history.
         if booking.status == Booking.Status.COMPLETED:
             booking.status = Booking.Status.BACKJOB_PENDING
