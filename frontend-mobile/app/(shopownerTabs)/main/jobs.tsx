@@ -377,6 +377,7 @@ export default function ShopOwnerJobsScreen() {
   // ── Status helpers ──
   const getStatusLabel = (s: string) => {
     const map: Record<string, string> = {
+      booked: 'Booked',
       accepted: 'Booked',
       active: 'Active',
       on_the_way: 'On the Way',
@@ -396,6 +397,7 @@ export default function ShopOwnerJobsScreen() {
 
   const getStatusColor = (s: string) => {
     const map: Record<string, string> = {
+      booked: '#00B8D9',
       accepted: '#00B8D9',
       active: '#FF8C00',
       on_the_way: '#007AFF',
@@ -415,6 +417,7 @@ export default function ShopOwnerJobsScreen() {
 
   const getStatusIcon = (s: string): any => {
     const map: Record<string, string> = {
+      booked: 'calendar-check-o',
       accepted: 'calendar-check-o',
       active: 'play-circle',
       on_the_way: 'car',
@@ -442,7 +445,7 @@ export default function ShopOwnerJobsScreen() {
     if (isBackjobBooking(b)) {
       return 'Backjob';
     }
-    if (b.status === 'accepted' && hasRequestAssignments(b)) {
+    if ((b.status === 'accepted' || b.status === 'booked') && hasRequestAssignments(b)) {
       return 'Assigned';
     }
     return getStatusLabel(b.status);
@@ -452,7 +455,7 @@ export default function ShopOwnerJobsScreen() {
     if (isBackjobBooking(b)) {
       return '#FFD60A';
     }
-    if (b.status === 'accepted' && hasRequestAssignments(b)) {
+    if ((b.status === 'accepted' || b.status === 'booked') && hasRequestAssignments(b)) {
       return '#34C759';
     }
     return getStatusColor(b.status);
@@ -462,7 +465,7 @@ export default function ShopOwnerJobsScreen() {
     if (isBackjobBooking(b)) {
       return 'refresh';
     }
-    if (b.status === 'accepted' && hasRequestAssignments(b)) {
+    if ((b.status === 'accepted' || b.status === 'booked') && hasRequestAssignments(b)) {
       return 'users';
     }
     return getStatusIcon(b.status);
