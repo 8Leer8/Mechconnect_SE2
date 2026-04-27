@@ -77,6 +77,8 @@ interface BroadcastRequest {
   }[];
   created_at: string;
   expires_at: string;
+  /** When the client wants the job done (from Request.scheduled_time); null/omitted = ASAP */
+  scheduled_time?: string | null;
   status: string;
   concern_picture?: string;
   required_tokens?: number;
@@ -143,6 +145,19 @@ interface PricingConfig {
   min_job_price: number;
   platform_commission_percentage: number;
   token_deduction_percentage: number;
+}
+
+function formatBroadcastServiceSchedule(iso: string | null | undefined): string {
+  if (!iso) return 'As soon as possible';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return 'As soon as possible';
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
 }
 
 const DEFAULT_PRICING_CONFIG: PricingConfig = {
@@ -1233,6 +1248,12 @@ export default function MapScreen() {
                       <View style={styles.serviceTag}><ThemedText style={styles.serviceTagText}>+{broadcast.services.length - 2} more</ThemedText></View>
                     )}
                   </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 8, paddingRight: 4 }}>
+                    <FontAwesome name="calendar" size={12} color="#FF8C00" />
+                    <ThemedText style={{ fontSize: 12, color: '#AEAEB2', flex: 1 }} numberOfLines={2}>
+                      Service: {formatBroadcastServiceSchedule(broadcast.scheduled_time)}
+                    </ThemedText>
+                  </View>
                   <View style={styles.jobCardFooter}>
                     <View style={styles.timerContainer}>
                       <FontAwesome name="clock-o" size={14} color="#FF8C00" />
@@ -1285,6 +1306,13 @@ export default function MapScreen() {
                     <FontAwesome name="clock-o" size={20} color="#FF8C00" />
                     <ThemedText style={[styles.modalTimerText, ms.timer]}>
                       Time Remaining: {getTimeRemaining(selectedBroadcast.expires_at)}
+                    </ThemedText>
+                  </View>
+
+                  <View style={styles.modalSection}>
+                    <ThemedText style={[styles.modalSectionTitle, ms.sectionTitle]}>Scheduled service time</ThemedText>
+                    <ThemedText style={[styles.modalText, ms.body]}>
+                      {formatBroadcastServiceSchedule(selectedBroadcast.scheduled_time)}
                     </ThemedText>
                   </View>
 

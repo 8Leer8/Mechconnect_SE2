@@ -30,7 +30,7 @@ type DisputeStatus =
 interface DisputeDetails {
   id?: number;
   issue_description?: string;
-  issue_picture?: string | null;
+  issue_pictures?: string[];
   mechanic_defense_description?: string | null;
   mechanic_defense_picture?: string | null;
   refund_receipt_image?: string | null;
@@ -66,10 +66,10 @@ export default function DisputeResolutionCenterScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [booking, setBooking] = useState<DisputeBookingPayload | null>(null);
-  const [actionView, setActionView] = useState<'refund' | 'defend'>('refund');
+  const [actionView, setActionView] = useState<'payment' | 'defend'>('payment');
   const [defenseDescription, setDefenseDescription] = useState('');
-  const [selectedReceiptUri, setSelectedReceiptUri] = useState<string | null>(null);
   const [selectedDefenseUri, setSelectedDefenseUri] = useState<string | null>(null);
+  const [mechanicCredits, setMechanicCredits] = useState<number | null>(null);
 
   const dispute = booking?.dispute_details || null;
   const normalizedDisputeStatus = String(
@@ -111,6 +111,19 @@ export default function DisputeResolutionCenterScreen() {
       const detailData = (await detailResponse.json()) as BookingDetailResponse;
       const bookingPayload = (detailData?.booking || detailData) as DisputeBookingPayload;
       setBooking(bookingPayload);
+
+      // Fetch mechanic's current credits
+      try {
+        const walletResponse = await fetch(`${API_URL}/users/wallet/`, {
+          credentials: 'include',
+        });
+        if (walletResponse.ok) {
+          const walletData = await walletResponse.json();
+          setMechanicCredits(walletData?.balance ?? null);
+        }
+      } catch {
+        // Silently fail - credits display is optional
+      }
     } catch (err: any) {
       setError(err?.message || 'Unable to load dispute');
       setBooking(null);
@@ -154,51 +167,40 @@ export default function DisputeResolutionCenterScreen() {
     }
   };
 
-  const pickReceiptImage = async () => {
-    await pickImageFromGallery((uri) => setSelectedReceiptUri(uri));
-  };
-
   const pickDefenseImage = async () => {
     await pickImageFromGallery((uri) => setSelectedDefenseUri(uri));
   };
 
   const submitReceiptProof = async () => {
     if (!booking?.id) return;
-    if (!selectedReceiptUri) {
-      Alert.alert('Missing receipt', 'Please upload your transfer receipt first.');
-      return;
-    }
 
     try {
       setSubmitting(true);
 
-      const fileName = selectedReceiptUri.split('/').pop() || `refund-${booking.id}.jpg`;
-      const ext = fileName.split('.').pop()?.toLowerCase();
-      const mimeType = ext === 'png' ? 'image/png' : 'image/jpeg';
-
-      const formData = new FormData();
-      formData.append('refund_receipt_image', {
-        uri: selectedReceiptUri,
-        name: fileName,
-        type: mimeType,
-      } as any);
-
+      // Simple POST without receipt image - credits are transferred directly
       const response = await fetch(`${API_URL}/bookings/mechanic/bookings/${booking.id}/disputes/upload-receipt/`, {
         method: 'POST',
         credentials: 'include',
-        body: formData as any,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({}),
       });
 
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error((payload as any)?.error || 'Failed to submit refund proof');
+        throw new Error((payload as any)?.error || 'Failed to process credit payment');
       }
 
-      Alert.alert('Proof submitted', 'Receipt uploaded. Waiting for client verification.');
-      setSelectedReceiptUri(null);
+      const amount = payload?.dispute?.amount_refunded || disputeAmount;
+      Alert.alert(
+        'Dispute Resolved',
+        `Credit payment of Php ${amount.toFixed(2)} completed. The dispute has been resolved.`,
+        [{ text: 'OK', onPress: () => router.replace('/(mechanicTabs)/main/home') }]
+      );
       fetchDispute();
     } catch (err: any) {
-      Alert.alert('Submit failed', err?.message || 'Unable to upload receipt proof');
+      Alert.alert('Payment failed', err?.message || 'Unable to process credit payment');
     } finally {
       setSubmitting(false);
     }
@@ -275,9 +277,7 @@ export default function DisputeResolutionCenterScreen() {
     }
 
     if (normalizedDisputeStatus === 'waiting_for_mechanic_payment') {
-      const method = String(dispute.refund_method || 'e-wallet').toUpperCase();
-      const accountNumber = String(dispute.refund_account_number || '').trim();
-      const refundDirective = `You must refund Php ${disputeAmount.toFixed(2)} via ${method} to account ${accountNumber}.`;
+      const creditMessage = `A dispute has been filed against you. The amount of Php ${disputeAmount.toFixed(2)} will be deducted from your credits to resolve this dispute.`;
 
       if (actionView === 'defend') {
         return (
@@ -325,11 +325,11 @@ export default function DisputeResolutionCenterScreen() {
 
             <TouchableOpacity
               style={styles.ghostActionButton}
-              onPress={() => setActionView('refund')}
+              onPress={() => setActionView('payment')}
               disabled={submitting}
               activeOpacity={0.8}
             >
-              <ThemedText style={styles.ghostActionText}>Back to Refund Upload</ThemedText>
+              <ThemedText style={styles.ghostActionText}>Back to Credit Payment</ThemedText>
             </TouchableOpacity>
           </View>
         );
@@ -338,18 +338,21 @@ export default function DisputeResolutionCenterScreen() {
       return (
         <View style={styles.actionCard}>
           <ThemedText style={styles.actionTitle}>Action Required</ThemedText>
-          <ThemedText style={styles.actionBody}>{refundDirective}</ThemedText>
+          <ThemedText style={styles.actionBody}>{creditMessage}</ThemedText>
 
-          <TouchableOpacity style={styles.uploadCard} onPress={pickReceiptImage} activeOpacity={0.8}>
-            {selectedReceiptUri ? (
-              <Image source={{ uri: selectedReceiptUri }} style={styles.uploadPreview} />
-            ) : (
-              <View style={styles.uploadPlaceholder}>
-                <FontAwesome name="upload" size={24} color="#B3B3B3" />
-                <ThemedText style={styles.uploadPlaceholderText}>Tap to upload transfer receipt</ThemedText>
+          <View style={[styles.creditInfoCard, { backgroundColor: '#1A2A1A', borderColor: '#34C759', borderWidth: 1, borderRadius: 10, padding: 14, marginVertical: 8 }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+              <FontAwesome name="credit-card" size={24} color="#34C759" style={{ marginTop: 2 }} />
+              <View style={{ flex: 1 }}>
+                <ThemedText style={{ color: '#34C759', fontSize: 14, fontWeight: '700' }}>
+                  Credit Deduction
+                </ThemedText>
+                <ThemedText style={{ color: '#8E8E93', fontSize: 12, marginTop: 2, flexWrap: 'wrap' }}>
+                  Php {disputeAmount.toFixed(2)} will be deducted from your available credits
+                </ThemedText>
               </View>
-            )}
-          </TouchableOpacity>
+            </View>
+          </View>
 
           <TouchableOpacity
             style={[styles.submitButton, submitting ? styles.submitButtonDisabled : null]}
@@ -360,8 +363,8 @@ export default function DisputeResolutionCenterScreen() {
               <ActivityIndicator size="small" color="#FFFFFF" />
             ) : (
               <>
-                <FontAwesome name="paper-plane" size={14} color="#FFFFFF" />
-                <ThemedText style={styles.submitButtonText}>Submit Proof of Refund</ThemedText>
+                <FontAwesome name="check-circle" size={14} color="#FFFFFF" />
+                <ThemedText style={styles.submitButtonText}>Confirm Credit Payment</ThemedText>
               </>
             )}
           </TouchableOpacity>
@@ -378,25 +381,27 @@ export default function DisputeResolutionCenterScreen() {
       );
     }
 
-    if (normalizedDisputeStatus === 'waiting_for_client_verification') {
-      const receiptUri = selectedReceiptUri || dispute.refund_receipt_image || null;
+    if (normalizedDisputeStatus === 'resolved') {
       return (
         <View style={styles.actionCard}>
-          <ThemedText style={styles.actionTitle}>Pending Verification</ThemedText>
-          <ThemedText style={styles.actionBody}>Receipt uploaded successfully.</ThemedText>
-
-          {receiptUri ? (
-            <Image source={{ uri: receiptUri }} style={styles.uploadPreview} />
-          ) : (
-            <View style={styles.uploadPlaceholder}>
-              <FontAwesome name="image" size={24} color="#B3B3B3" />
-              <ThemedText style={styles.uploadPlaceholderText}>Receipt preview unavailable</ThemedText>
-            </View>
-          )}
-
-          <ThemedText style={styles.waitingText}>
-            Waiting for the client to confirm they received the funds. Your account will automatically unlock once they confirm.
+          <ThemedText style={styles.actionTitle}>Dispute Resolved</ThemedText>
+          <ThemedText style={styles.actionBody}>
+            The dispute has been resolved. Php {disputeAmount.toFixed(2)} has been refunded to the client via credits.
           </ThemedText>
+
+          <View style={[styles.creditInfoCard, { backgroundColor: '#1A2A1A', borderColor: '#34C759', borderWidth: 1, borderRadius: 10, padding: 14, marginVertical: 8 }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <FontAwesome name="check-circle" size={24} color="#34C759" />
+              <View>
+                <ThemedText style={{ color: '#34C759', fontSize: 14, fontWeight: '700' }}>
+                  Refund Completed
+                </ThemedText>
+                <ThemedText style={{ color: '#8E8E93', fontSize: 12, marginTop: 2 }}>
+                  Your account is now unlocked and you can accept new jobs
+                </ThemedText>
+              </View>
+            </View>
+          </View>
         </View>
       );
     }
@@ -475,18 +480,31 @@ export default function DisputeResolutionCenterScreen() {
                 <ThemedText style={styles.detailValue}>Php {disputeAmount.toFixed(2)}</ThemedText>
               </View>
 
+              {mechanicCredits !== null && (
+                <View style={styles.rowBetween}>
+                  <ThemedText style={styles.detailLabel}>Your Available Credits</ThemedText>
+                  <ThemedText style={[styles.detailValue, { color: mechanicCredits >= disputeAmount ? '#34C759' : '#FF4D4D' }]}>
+                    Php {mechanicCredits.toFixed(2)}
+                  </ThemedText>
+                </View>
+              )}
+
               <View style={styles.complaintBlock}>
                 <ThemedText style={styles.complaintTitle}>Client Complaint</ThemedText>
                 <ThemedText style={styles.complaintText}>
                   {dispute.issue_description || 'No complaint description provided.'}
                 </ThemedText>
 
-                {dispute.issue_picture ? (
-                  <Image source={{ uri: dispute.issue_picture }} style={styles.complaintImage} />
+                {dispute.issue_pictures && dispute.issue_pictures.length > 0 ? (
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+                    {dispute.issue_pictures.map((uri: string, index: number) => (
+                      <Image key={index} source={{ uri }} style={[styles.complaintImage, { width: 100, height: 100 }]} />
+                    ))}
+                  </View>
                 ) : (
                   <View style={styles.imageFallback}>
                     <FontAwesome name="image" size={18} color="#8E8E93" />
-                    <ThemedText style={styles.imageFallbackText}>No complaint photo uploaded</ThemedText>
+                    <ThemedText style={styles.imageFallbackText}>No complaint photos uploaded</ThemedText>
                   </View>
                 )}
               </View>
@@ -658,6 +676,14 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 12,
     gap: 10,
+  },
+  creditInfoCard: {
+    backgroundColor: '#1A2A1A',
+    borderWidth: 1,
+    borderColor: '#34C759',
+    borderRadius: 10,
+    padding: 14,
+    marginVertical: 8,
   },
   actionTitle: {
     color: '#ECEDEE',

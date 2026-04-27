@@ -493,7 +493,12 @@ def shopowner_accept_emergency_request(request, request_id):
         except (TypeError, ValueError):
             amount_fee = 0
 
-    booking = Booking.objects.create(request=req, status=Booking.Status.ACCEPTED, amount_fee=amount_fee)
+    booking = Booking.objects.create(
+        request=req,
+        status=Booking.Status.BOOKED,
+        amount_fee=amount_fee,
+        booking_date=req.scheduled_time or timezone.now(),
+    )
     ActiveBooking.objects.create(booking=booking)
 
     data = _serialize_single_booking(booking)
@@ -643,8 +648,9 @@ def shopowner_accept_broadcast_request(request, broadcast_id):
 
         booking = Booking.objects.create(
             request=base_request,
-            status=Booking.Status.ACCEPTED,
+            status=Booking.Status.BOOKED,
             amount_fee=pricing["total_amount"],
+            booking_date=base_request.scheduled_time or timezone.now(),
             distance_km=distance_km,
             convenience_fee=pricing["convenience_fee"],
             eta_minutes=eta_minutes,
@@ -789,8 +795,9 @@ def shopowner_accept_direct_request(request, request_id):
 
     booking = Booking.objects.create(
         request=req,
-        status=Booking.Status.ACCEPTED,
+        status=Booking.Status.BOOKED,
         amount_fee=total_amount,
+        booking_date=req.scheduled_time or timezone.now(),
     )
     ActiveBooking.objects.create(booking=booking)
 
@@ -907,14 +914,16 @@ def shopowner_accept_custom_request(request, request_id):
 
     if hasattr(req, "booking"):
         booking = req.booking
-        booking.status = Booking.Status.ACCEPTED
+        booking.status = Booking.Status.BOOKED
         booking.amount_fee = amount
-        booking.save(update_fields=["status", "amount_fee", "updated_at"])
+        booking.booking_date = req.scheduled_time or booking.booking_date or timezone.now()
+        booking.save(update_fields=["status", "amount_fee", "booking_date", "updated_at"])
     else:
         booking = Booking.objects.create(
             request=req,
-            status=Booking.Status.ACCEPTED,
+            status=Booking.Status.BOOKED,
             amount_fee=amount,
+            booking_date=req.scheduled_time or timezone.now(),
         )
         ActiveBooking.objects.get_or_create(booking=booking)
 
@@ -1035,7 +1044,7 @@ def list_shopowner_bookings(request):
 
     if status_filter:
         valid = [
-            "all", "on_going", "accepted", "on_the_way", "at_location", "diagnosing",
+            "all", "on_going", "booked", "accepted", "on_the_way", "at_location", "diagnosing",
             "active", "paused", "finished",
             "pending_payment", "completed", "cancelled", "reworked", "backjob_pending", "disputed",
         ]
@@ -1053,6 +1062,8 @@ def list_shopowner_bookings(request):
             filtered = qs.filter(status__in=["active", "paused"])
         elif sf == "reworked":
             filtered = qs.filter(Q(status__in=["reworked", "backjob_pending"]) | _shopowner_live_backjob_q()).distinct()
+        elif sf == "accepted":
+            filtered = qs.filter(status__in=["booked", "accepted"])
         else:
             filtered = qs.filter(status=sf)
 
@@ -1077,7 +1088,7 @@ def list_shopowner_bookings(request):
 
         # Keep parity with mechanic list so frontend can render badges from one call.
         if sf == "all":
-            accepted_count = qs.filter(status="accepted").count()
+            accepted_count = qs.filter(status__in=["booked", "accepted"]).count()
             on_the_way_count = qs.filter(status="on_the_way").count()
             at_location_count = qs.filter(status="at_location").count()
             diagnosing_count = qs.filter(status="diagnosing").count()
@@ -1105,7 +1116,7 @@ def list_shopowner_bookings(request):
     groups = {}
     all_bookings = list(qs)
     for s in [
-        "accepted", "on_the_way", "at_location", "diagnosing", "active", "paused", "finished",
+        "booked", "accepted", "on_the_way", "at_location", "diagnosing", "active", "paused", "finished",
         "pending_payment", "completed", "cancelled", "reworked", "backjob_pending", "disputed",
     ]:
         sub = [booking for booking in all_bookings if booking.status == s]

@@ -10,6 +10,7 @@ import { styles } from '@/style/client/bookingDetailsStyles';
 import { SkeletonDetailPage } from '@/components/skeletons/SkeletonLoaders';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import {
@@ -42,6 +43,7 @@ interface BookingDetail {
   dispute_status?: 'none' | 'active' | 'resolved' | string;
   amount_fee: number;
   booked_at: string;
+  booking_date?: string | null;
   updated_at: string;
   completed_at: string | null;
   convenience_fee?: number | null;
@@ -89,6 +91,8 @@ interface BookingDetail {
     after_pictures?: string[];
     is_job_done: boolean;
     is_rescheduled: boolean;
+    proposed_date?: string | null;
+    pre_reschedule_status?: string | null;
     reason: string | null;
     new_time: string | null;
     new_date: string | null;
@@ -112,7 +116,7 @@ interface BookingDetail {
   };
   dispute_details?: {
     issue_description?: string;
-    issue_picture?: string | null;
+    issue_pictures?: string[];
     refund_receipt_image?: string | null;
     dispute_status?: string;
     is_client_verified?: boolean;
@@ -265,10 +269,11 @@ export default function ClientBookingDetailScreen() {
   const [showDisputeModal, setShowDisputeModal] = useState(false);
   const [reportingNoShow, setReportingNoShow] = useState(false);
   const [showReportNoShowModal, setShowReportNoShowModal] = useState(false);
+  const [showReschedulePicker, setShowReschedulePicker] = useState(false);
+  const [rescheduleDate, setRescheduleDate] = useState(new Date(Date.now() + 24 * 60 * 60 * 1000));
+  const [rescheduleSubmitting, setRescheduleSubmitting] = useState(false);
   const [disputeReason, setDisputeReason] = useState('');
-  const [disputeImage, setDisputeImage] = useState<string | null>(null);
-  const [refundMethod, setRefundMethod] = useState<'gcash' | 'maya' | 'voucher'>('gcash');
-  const [refundAccountNumber, setRefundAccountNumber] = useState('');
+  const [disputeImages, setDisputeImages] = useState<string[]>([]);
   const [disputeSubmitting, setDisputeSubmitting] = useState(false);
   const [showRefundVerifyModal, setShowRefundVerifyModal] = useState(false);
   const [verifyRefundSubmitting, setVerifyRefundSubmitting] = useState(false);
@@ -1250,6 +1255,19 @@ export default function ClientBookingDetailScreen() {
         if (action === 'payment.completed') {
           setShowSuccess(true);
         }
+        if (action === 'reschedule_declined') {
+          Alert.alert(
+            'Reschedule Declined',
+            'The other party declined the reschedule. Please suggest a better time or stick to the original schedule.',
+            [
+              { text: 'Cancel Request', onPress: () => fetch(`${API_URL}/bookings/bookings/${bid}/reschedule/cancel/`, { method: 'POST', credentials: 'include' }).then(() => fetchBookingDetail(true)) },
+              { text: 'Suggest New Time', onPress: () => setShowReschedulePicker(true) },
+            ]
+          );
+        }
+        if (action === 'reschedule_accepted') {
+          Alert.alert('Reschedule Accepted', `Action buttons will activate on the scheduled date (${formatDate(lastMessage.new_date)}).`);
+        }
         // lightweight refresh
         fetchBookingDetail(true);
         refreshChatQuotationLabels();
@@ -1267,11 +1285,13 @@ export default function ClientBookingDetailScreen() {
   const getStatusLabel = (status: string) => {
     switch (status) {
       case 'accepted': return 'Booked';
+      case 'booked': return 'Booked';
       case 'active': return 'In Progress';
       case 'on_the_way': return 'Mechanic on the Way';
       case 'completed': return 'Completed';
       case 'cancelled': return 'Cancelled';
       case 'pending': return 'Pending';
+      case 'reschedule_proposed': return 'Waiting for Reschedule Response';
       case 'reworked': return 'Reworked';
       case 'disputed': return 'Disputed';
       default: return status.charAt(0).toUpperCase() + status.slice(1);
@@ -1281,12 +1301,14 @@ export default function ClientBookingDetailScreen() {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'accepted': return '#00B8D9';
+      case 'booked': return '#00B8D9';
       case 'active': return '#FF8C00';
       case 'on_the_way': return '#007AFF';
       case 'reworked': return '#FFD60A';
       case 'completed': return '#34C759';
       case 'cancelled': return '#FF3B30';
       case 'pending': return '#8E8E93';
+      case 'reschedule_proposed': return '#FFD60A';
       case 'disputed': return '#AF52DE';
       default: return '#8E8E93';
     }
@@ -1295,11 +1317,13 @@ export default function ClientBookingDetailScreen() {
   const getStatusIcon = (status: string): string => {
     switch (status) {
       case 'accepted': return 'calendar-check-o';
+      case 'booked': return 'calendar-check-o';
       case 'active': return 'play-circle';
       case 'on_the_way': return 'car';
       case 'completed': return 'check-circle';
       case 'cancelled': return 'times-circle';
       case 'pending': return 'clock-o';
+      case 'reschedule_proposed': return 'calendar';
       case 'reworked': return 'refresh';
       case 'disputed': return 'exclamation-circle';
       default: return 'circle';
@@ -1425,15 +1449,22 @@ export default function ClientBookingDetailScreen() {
 
   const pickDisputeImage = async () => {
     try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') return;
-      const result = await ImagePicker.launchImageLibraryAsync({ allowsEditing: true, quality: 0.8 });
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Camera permission required', 'Please allow camera access to take photos.');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({ allowsEditing: true, quality: 0.8 });
       if (!result.canceled && result.assets && result.assets[0]) {
-        setDisputeImage(result.assets[0].uri);
+        setDisputeImages(prev => [...prev, result.assets![0].uri]);
       }
     } catch {
       // Ignore picker errors to avoid breaking booking details screen.
     }
+  };
+
+  const removeDisputeImage = (index: number) => {
+    setDisputeImages(prev => prev.filter((_, i) => i !== index));
   };
 
   const openChatWithMechanic = () => {
@@ -1731,6 +1762,36 @@ export default function ClientBookingDetailScreen() {
     'disputed',
   ];
   const canCancelBooking = !cannotCancelStatuses.includes(bookingStatusRaw);
+  const scheduledDateValue = booking.booking_date;
+  const scheduledDateMs = scheduledDateValue ? new Date(scheduledDateValue).getTime() : NaN;
+  const canRescheduleBooking =
+    bookingStatusRaw !== 'reschedule_proposed' &&
+    (!scheduledDateValue || (Number.isFinite(scheduledDateMs) && Date.now() < scheduledDateMs - 60 * 60 * 1000));
+
+  const handleRequestReschedule = async (dateValue = rescheduleDate) => {
+    if (!booking?.id || rescheduleSubmitting) return;
+    try {
+      setRescheduleSubmitting(true);
+      const response = await fetch(`${API_URL}/bookings/bookings/${booking.id}/reschedule/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proposed_date: dateValue.toISOString() }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error((data as any)?.error || 'Unable to request reschedule');
+      }
+      setShowReschedulePicker(false);
+      setBooking((data as any)?.booking || data || booking);
+      Alert.alert('Reschedule Sent', 'Waiting for response.');
+      fetchBookingDetail(true);
+    } catch (err: any) {
+      Alert.alert('Reschedule Error', err?.message || 'Unable to request reschedule');
+    } finally {
+      setRescheduleSubmitting(false);
+    }
+  };
 
   const handleOpenCancelBooking = () => {
     if (!canCancelBooking) {
@@ -1832,13 +1893,8 @@ export default function ClientBookingDetailScreen() {
 
   const handleSubmitDispute = async () => {
     const issueDescription = disputeReason.trim();
-    const accountNumber = refundAccountNumber.trim();
     if (!issueDescription) {
       Alert.alert('Missing details', 'Please describe the issue before submitting.');
-      return;
-    }
-    if (refundMethod !== 'voucher' && !accountNumber) {
-      Alert.alert('Missing account number', 'Please enter your refund account number.');
       return;
     }
 
@@ -1847,14 +1903,15 @@ export default function ClientBookingDetailScreen() {
       const formData = new FormData();
       formData.append('issue_description', issueDescription);
 
-      if (disputeImage) {
-        const fileName = disputeImage.split('/').pop() || `dispute-${booking.id}.jpg`;
-        formData.append('issue_picture', {
-          uri: disputeImage,
+      // Append all images as issue_pictures
+      disputeImages.forEach((uri, index) => {
+        const fileName = uri.split('/').pop() || `dispute-${booking.id}-${index}.jpg`;
+        formData.append('issue_pictures', {
+          uri,
           name: fileName,
           type: 'image/jpeg',
         } as any);
-      }
+      });
 
       const response = await fetch(`${API_URL}/bookings/bookings/${booking.id}/disputes/create/`, {
         method: 'POST',
@@ -1867,26 +1924,9 @@ export default function ClientBookingDetailScreen() {
         throw new Error((data as any)?.error || 'Unable to file dispute');
       }
 
-      const refundResponse = await fetch(`${API_URL}/bookings/bookings/${booking.id}/disputes/refund-details/`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          refund_method: refundMethod,
-          account_number: refundMethod === 'voucher' ? '' : accountNumber,
-        }),
-      });
-
-      const refundData = await refundResponse.json().catch(() => ({}));
-      if (!refundResponse.ok) {
-        throw new Error((refundData as any)?.error || 'Dispute filed, but failed to save refund destination details');
-      }
-
       setShowDisputeModal(false);
       setDisputeReason('');
-      setDisputeImage(null);
-      setRefundMethod('gcash');
-      setRefundAccountNumber('');
+      setDisputeImages([]);
       Alert.alert('Dispute filed', 'Your report has been submitted for review.');
       fetchBookingDetail(true);
     } catch (err: any) {
@@ -2029,9 +2069,47 @@ export default function ClientBookingDetailScreen() {
                 Report Mechanic No-Show
               </ThemedText>
             </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                paddingHorizontal: 14,
+                paddingVertical: 12,
+                borderTopWidth: 1,
+                borderTopColor: '#2A2C2E',
+                opacity: canRescheduleBooking ? 1 : 0.45,
+              }}
+              activeOpacity={0.8}
+              onPress={() => {
+                setShowActionMenu(false);
+                setShowReschedulePicker(true);
+              }}
+              disabled={!canRescheduleBooking}
+            >
+              <FontAwesome name="calendar" size={14} color="#FF8C00" />
+              <ThemedText style={{ color: '#ECEDEE', marginLeft: 10, fontWeight: '600' }}>
+                Reschedule Booking
+              </ThemedText>
+            </TouchableOpacity>
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {showReschedulePicker ? (
+        <DateTimePicker
+          value={rescheduleDate}
+          mode="datetime"
+          minimumDate={new Date(Date.now() + 60 * 60 * 1000)}
+          onChange={(event, selectedDate) => {
+            if (Platform.OS !== 'ios') setShowReschedulePicker(false);
+            if (event.type === 'dismissed') return;
+            const nextDate = selectedDate || rescheduleDate;
+            setRescheduleDate(nextDate);
+            handleRequestReschedule(nextDate);
+          }}
+        />
+      ) : null}
 
       <ReportNoShowModal
         visible={showReportNoShowModal}
@@ -2170,7 +2248,11 @@ export default function ClientBookingDetailScreen() {
                 </TouchableOpacity>
               </View>
 
-              <View style={styles.modalContent}>
+              <ScrollView
+                style={styles.modalContent}
+                contentContainerStyle={{ paddingBottom: 24 }}
+                showsVerticalScrollIndicator={false}
+              >
                 <ThemedText style={{ color: '#8E8E93', marginBottom: 8 }}>
                   Describe the issue clearly. This creates a formal dispute for admin review.
                 </ThemedText>
@@ -2185,74 +2267,31 @@ export default function ClientBookingDetailScreen() {
                 />
 
                 <View style={{ height: 12 }} />
-                <ThemedText style={{ color: '#ECEDEE', fontSize: 13, fontWeight: '600', marginBottom: 8 }}>
-                  Refund destination
-                </ThemedText>
-                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
-                  {(['gcash', 'maya', 'voucher'] as const).map((method) => {
-                    const active = refundMethod === method;
-                    return (
-                      <TouchableOpacity
-                        key={method}
-                        onPress={() => setRefundMethod(method)}
-                        style={{
-                          flex: 1,
-                          borderRadius: 10,
-                          borderWidth: 1,
-                          borderColor: active ? '#FF8C00' : '#3A3A3C',
-                          backgroundColor: active ? '#FF8C001E' : '#2C2C2E',
-                          paddingVertical: 10,
-                          alignItems: 'center',
-                        }}
-                      >
-                        <ThemedText style={{ color: active ? '#FFB563' : '#ECEDEE', fontSize: 12, fontWeight: '700' }}>
-                          {method.toUpperCase()}
-                        </ThemedText>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
 
-                {refundMethod !== 'voucher' ? (
-                  <TextInput
-                    style={{
-                      backgroundColor: '#2C2C2E',
-                      borderRadius: 12,
-                      paddingHorizontal: 14,
-                      paddingVertical: 12,
-                      fontSize: 15,
-                      color: '#ECEDEE',
-                      borderWidth: 1,
-                      borderColor: '#3A3A3C',
-                    }}
-                    placeholder={`${refundMethod.toUpperCase()} account number`}
-                    placeholderTextColor="#6C6C70"
-                    keyboardType="number-pad"
-                    value={refundAccountNumber}
-                    onChangeText={setRefundAccountNumber}
-                  />
-                ) : (
-                  <View style={{ backgroundColor: '#2C2C2E', borderRadius: 12, padding: 12 }}>
-                    <ThemedText style={{ color: '#8E8E93', fontSize: 12 }}>
-                      Voucher selected. No account details required.
-                    </ThemedText>
+                {/* Multiple Images Grid */}
+                {disputeImages.length > 0 && (
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                    {disputeImages.map((uri, index) => (
+                      <View key={index} style={[styles.imagePreviewContainer, { width: 100, height: 100 }]}>
+                        <Image source={{ uri }} style={[styles.previewImage, { width: 100, height: 100 }]} />
+                        <TouchableOpacity
+                          style={[styles.removeImageBtn, { top: 4, right: 4 }]}
+                          onPress={() => removeDisputeImage(index)}
+                        >
+                          <FontAwesome name="times-circle" size={22} color="#FF3B30" />
+                        </TouchableOpacity>
+                      </View>
+                    ))}
                   </View>
                 )}
 
-                <View style={{ height: 12 }} />
-                {disputeImage ? (
-                  <View style={styles.imagePreviewContainer}>
-                    <Image source={{ uri: disputeImage }} style={styles.previewImage} />
-                    <TouchableOpacity style={styles.removeImageBtn} onPress={() => setDisputeImage(null)}>
-                      <FontAwesome name="times-circle" size={28} color="#FF3B30" />
-                    </TouchableOpacity>
-                  </View>
-                ) : (
-                  <TouchableOpacity style={styles.addPhotoBtn} onPress={pickDisputeImage}>
-                    <FontAwesome name="camera" size={28} color="#8E8E93" />
-                    <ThemedText style={styles.addPhotoText}>Add Evidence Photo (Optional)</ThemedText>
-                  </TouchableOpacity>
-                )}
+                {/* Add Photo Button - always visible to allow multiple photos */}
+                <TouchableOpacity style={styles.addPhotoBtn} onPress={pickDisputeImage}>
+                  <FontAwesome name="camera" size={28} color="#8E8E93" />
+                  <ThemedText style={styles.addPhotoText}>
+                    {disputeImages.length > 0 ? 'Add Another Photo (Optional)' : 'Take Evidence Photo (Optional)'}
+                  </ThemedText>
+                </TouchableOpacity>
 
                 <View style={{ height: 12 }} />
                 <View style={{ flexDirection: 'row', gap: 12 }}>
@@ -2278,7 +2317,10 @@ export default function ClientBookingDetailScreen() {
                     )}
                   </TouchableOpacity>
                 </View>
-              </View>
+
+                {/* Bottom safe area padding */}
+                <View style={{ height: Platform.OS === 'ios' ? 20 : 12 }} />
+              </ScrollView>
             </View>
           </KeyboardAvoidingView>
         </View>

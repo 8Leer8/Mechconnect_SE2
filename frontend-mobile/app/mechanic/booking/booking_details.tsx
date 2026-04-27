@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 // Ensure the router header is hidden for this route so only the in-page header shows
 export const screenOptions = { headerShown: false } as const;
-import { View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Modal, useWindowDimensions } from 'react-native';
+import { View, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Modal, useWindowDimensions, Alert, Platform } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useWebSocketContext } from '@/context/WebSocketContext';
@@ -374,6 +375,9 @@ export default function BookingDetailScreen() {
     totalPaid: number;
     remaining: number;
   } | null>(null);
+  const [showReschedulePicker, setShowReschedulePicker] = useState(false);
+  const [rescheduleDate, setRescheduleDate] = useState(new Date(Date.now() + 24 * 60 * 60 * 1000));
+  const [rescheduleSubmitting, setRescheduleSubmitting] = useState(false);
   const lastKnownPaymentPaidRef = useRef(false);
   const paidPopupShownKeyRef = useRef<string | null>(null);
   const lastFocusRefreshAtRef = useRef(0);
@@ -1024,11 +1028,15 @@ export default function BookingDetailScreen() {
             setPaymentReceived(true);
             fetchBookingDetail();
             break;
+          case 'reschedule_accepted':
+            Alert.alert('Reschedule Accepted', `Action buttons will activate on the scheduled date (${formatDate(String(message.new_date || ''))}).`);
+            fetchBookingDetail();
+            break;
           default:
             break;
         }
 
-        if (['quotation_accepted', 'quotationaccepted', 'booking_updated', 'booking_update', 'new_chat_message', 'new_chatmessage'].includes(action)) {
+        if (['quotation_accepted', 'quotationaccepted', 'booking_updated', 'booking_update', 'new_chat_message', 'new_chatmessage', 'reschedule_proposed', 'reschedule_declined', 'reschedule_cancelled'].includes(action)) {
           // refresh mechanic view to reflect accepted quotation and updated totals
           fetchBookingDetail();
           fetchQuotation();
@@ -1568,6 +1576,7 @@ export default function BookingDetailScreen() {
   const getStatusLabel = (status: string) => {
     switch (status) {
       case 'accepted': return 'Booked';
+      case 'booked': return 'Booked';
       case 'active': return 'On Going';
       case 'on_the_way': return 'On the Way';
       case 'paused': return 'Paused';
@@ -1576,6 +1585,7 @@ export default function BookingDetailScreen() {
       case 'completed': return 'Completed';
       case 'cancelled': return 'Cancelled';
       case 'pending': return 'Pending';
+      case 'reschedule_proposed': return 'Waiting for Reschedule Response';
       case 'reworked': return 'Reworked';
       case 'disputed': return 'Disputed';
       default: return status.charAt(0).toUpperCase() + status.slice(1);
@@ -1584,6 +1594,7 @@ export default function BookingDetailScreen() {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'accepted': return '#00B8D9';
+      case 'booked': return '#00B8D9';
       case 'active': return '#FF8C00';
       case 'on_the_way': return '#007AFF';
       case 'paused': return '#8E8E93';
@@ -1593,6 +1604,7 @@ export default function BookingDetailScreen() {
       case 'completed': return '#34C759';
       case 'cancelled': return '#FF3B30';
       case 'pending': return '#8E8E93';
+      case 'reschedule_proposed': return '#FFD60A';
       case 'disputed': return '#AF52DE';
       default: return '#8E8E93';
     }
@@ -1600,6 +1612,7 @@ export default function BookingDetailScreen() {
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'accepted': return 'calendar-check-o';
+      case 'booked': return 'calendar-check-o';
       case 'active': return 'play-circle';
       case 'on_the_way': return 'car';
       case 'paused': return 'pause-circle';
@@ -1608,6 +1621,7 @@ export default function BookingDetailScreen() {
       case 'completed': return 'check-circle';
       case 'cancelled': return 'times-circle';
       case 'pending': return 'clock-o';
+      case 'reschedule_proposed': return 'calendar';
       case 'reworked': return 'refresh';
       case 'disputed': return 'exclamation-circle';
       default: return 'circle';
@@ -2513,6 +2527,45 @@ export default function BookingDetailScreen() {
     (!backjobPaymentPhase || totalAmount > 0) &&
     !isQuotationPending &&
     (booking.status === 'pending_payment' || booking.status === 'accepted');
+  const bookingStatusRaw = String((booking as any).status || '').toLowerCase();
+  const scheduledDateValue = (booking as any).booking_date;
+  const scheduledDate = new Date(String(scheduledDateValue || ''));
+  const today = new Date();
+  const isCorrectDate =
+    !scheduledDateValue || (
+    Number.isFinite(scheduledDate.getTime()) &&
+    today.getFullYear() === scheduledDate.getFullYear() &&
+    today.getMonth() === scheduledDate.getMonth() &&
+    today.getDate() === scheduledDate.getDate()
+    );
+  const isRescheduling = bookingStatusRaw === 'reschedule_proposed';
+  const bufferDateValue = (booking as any).booking_date;
+  const bufferDateMs = bufferDateValue ? new Date(String(bufferDateValue)).getTime() : NaN;
+  const canRequestReschedule =
+    !isRescheduling &&
+    (!bufferDateValue || (Number.isFinite(bufferDateMs) && Date.now() < bufferDateMs - 60 * 60 * 1000));
+
+  const handleRequestReschedule = async (dateValue = rescheduleDate) => {
+    if (!booking?.id || rescheduleSubmitting) return;
+    try {
+      setRescheduleSubmitting(true);
+      const res = await fetch(`${API_URL}/bookings/bookings/${booking.id}/reschedule/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proposed_date: dateValue.toISOString() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(parseApiErrorMessage(data, 'Unable to request reschedule'));
+      setShowReschedulePicker(false);
+      showNotification({ type: 'success', message: 'Reschedule request sent.' });
+      await fetchBookingDetail();
+    } catch (e: any) {
+      Alert.alert('Reschedule Error', e?.message || 'Unable to request reschedule');
+    } finally {
+      setRescheduleSubmitting(false);
+    }
+  };
 
   const getPaymentStatusColor = (status: string) => {
     switch (status) {
@@ -2593,6 +2646,16 @@ export default function BookingDetailScreen() {
       {!isCompletedBooking && !isAssistantMechanic ? (
       <View style={[styles.actionButtonsContainer, { paddingBottom: 16 + Math.max(insets.bottom, 6) }]}>
         <View style={styles.actionBarInner}>
+          {isRescheduling ? (
+            <ThemedText style={[styles.noteText, { textAlign: 'center', color: '#FFD60A' }]}>
+              Waiting for Response...
+            </ThemedText>
+          ) : !isCorrectDate ? (
+            <TouchableOpacity style={[styles.largeSecondaryButton, styles.actionButtonDisabled]} disabled>
+              <ThemedText style={styles.actionBarBtnText}>Buttons activate on {formatDate(String(scheduledDateValue))}</ThemedText>
+            </TouchableOpacity>
+          ) : (
+          <>
           {/* Pending: Decline + Accept */}
           {booking.status === 'pending' && (
             <View style={styles.actionRow}>
@@ -2643,7 +2706,7 @@ export default function BookingDetailScreen() {
             </View>
           )}
 
-          {booking.status === 'accepted' && (
+          {(booking.status === 'accepted' || booking.status === 'booked') && (
             <>
               <TouchableOpacity
                 style={[
@@ -2675,6 +2738,21 @@ export default function BookingDetailScreen() {
                   <>
                     <FontAwesome name="times-circle" size={18} color="#FF6B6B" />
                     <ThemedText style={styles.actionBarBtnText}>Cancel booking</ThemedText>
+                  </>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.largeSecondaryButton, (!canRequestReschedule || rescheduleSubmitting) && styles.actionButtonDisabled]}
+                onPress={() => setShowReschedulePicker(true)}
+                disabled={!canRequestReschedule || rescheduleSubmitting}
+                activeOpacity={0.85}
+              >
+                {rescheduleSubmitting ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <FontAwesome name="calendar" size={18} color="#FFD60A" />
+                    <ThemedText style={styles.actionBarBtnText}>Request reschedule</ThemedText>
                   </>
                 )}
               </TouchableOpacity>
@@ -3103,8 +3181,25 @@ export default function BookingDetailScreen() {
               </TouchableOpacity>
             </>
           )}
+          </>
+          )}
         </View>
       </View>
+      ) : null}
+
+      {showReschedulePicker ? (
+        <DateTimePicker
+          value={rescheduleDate}
+          mode="datetime"
+          minimumDate={new Date(Date.now() + 60 * 60 * 1000)}
+          onChange={(event, selectedDate) => {
+            if (Platform.OS !== 'ios') setShowReschedulePicker(false);
+            if (event.type === 'dismissed') return;
+            const nextDate = selectedDate || rescheduleDate;
+            setRescheduleDate(nextDate);
+            handleRequestReschedule(nextDate);
+          }}
+        />
       ) : null}
 
       <ScrollView

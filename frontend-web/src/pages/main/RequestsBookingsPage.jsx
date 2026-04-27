@@ -24,6 +24,7 @@ const REQUEST_TYPE_TABS = [
 
 const STATUS_FILTERS = [
   { key: "all", label: "All Status" },
+  { key: "booked", label: "Booked" },
   { key: "accepted", label: "Accepted" },
   { key: "on_the_way", label: "On The Way" },
   { key: "at_location", label: "At Location" },
@@ -32,6 +33,7 @@ const STATUS_FILTERS = [
   { key: "paused", label: "Paused" },
   { key: "finished", label: "Finished" },
   { key: "pending_payment", label: "Pending Payment" },
+  { key: "reschedule_proposed", label: "Reschedule Proposed" },
   { key: "completed", label: "Completed" },
   { key: "reworked", label: "Reworked" },
   { key: "cancelled", label: "Cancelled" },
@@ -81,7 +83,7 @@ function formatTypeLabel(value) {
 function getTableStatusClass(status) {
   const value = String(status || "").toLowerCase();
 
-  if (value === "accepted") {
+  if (value === "accepted" || value === "booked") {
     return "border-emerald-500/40 bg-emerald-500/15 text-emerald-300";
   }
   if (value === "on_the_way") {
@@ -104,6 +106,9 @@ function getTableStatusClass(status) {
   }
   if (value === "pending_payment") {
     return "border-orange-500/40 bg-orange-500/15 text-orange-300";
+  }
+  if (value === "reschedule_proposed") {
+    return "border-yellow-500/40 bg-yellow-500/15 text-yellow-300";
   }
   if (value === "completed") {
     return "border-green-500/40 bg-green-500/15 text-green-300";
@@ -206,25 +211,17 @@ export function RequestsBookingsPage() {
     return result;
   }, [bookings, activeRequestType, activeStatusFilter, sortOrder]);
 
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [activeRequestType, activeStatusFilter, sortOrder]);
-
   const totalPages = useMemo(
     () => Math.max(Math.ceil(filteredBookings.length / ITEMS_PER_PAGE), 1),
     [filteredBookings.length],
   );
 
-  useEffect(() => {
-    if (currentPage > totalPages) {
-      setCurrentPage(totalPages);
-    }
-  }, [currentPage, totalPages]);
+  const effectiveCurrentPage = Math.min(currentPage, totalPages);
 
   const paginatedBookings = useMemo(() => {
-    const start = (currentPage - 1) * ITEMS_PER_PAGE;
+    const start = (effectiveCurrentPage - 1) * ITEMS_PER_PAGE;
     return filteredBookings.slice(start, start + ITEMS_PER_PAGE);
-  }, [filteredBookings, currentPage]);
+  }, [filteredBookings, effectiveCurrentPage]);
 
   return (
     <AdminLayout title="Requests & Bookings">
@@ -266,7 +263,10 @@ export function RequestsBookingsPage() {
                   <button
                     key={tab.key}
                     type="button"
-                    onClick={() => setActiveRequestType(tab.key)}
+                    onClick={() => {
+                      setActiveRequestType(tab.key);
+                      setCurrentPage(1);
+                    }}
                     className={`rounded-lg border px-3 py-1.5 text-sm transition ${
                       activeRequestType === tab.key
                         ? "border-primary/40 bg-primary/10 text-primary"
@@ -286,7 +286,10 @@ export function RequestsBookingsPage() {
                   <select
                     id="booking-sort"
                     value={sortOrder}
-                    onChange={(event) => setSortOrder(event.target.value)}
+                    onChange={(event) => {
+                      setSortOrder(event.target.value);
+                      setCurrentPage(1);
+                    }}
                     className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm text-foreground outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/20"
                   >
                     {SORT_OPTIONS.map((sortOption) => (
@@ -304,7 +307,10 @@ export function RequestsBookingsPage() {
                   <select
                     id="booking-status-filter"
                     value={activeStatusFilter}
-                    onChange={(event) => setActiveStatusFilter(event.target.value)}
+                    onChange={(event) => {
+                      setActiveStatusFilter(event.target.value);
+                      setCurrentPage(1);
+                    }}
                     className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm text-foreground outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/20"
                   >
                     {STATUS_FILTERS.map((statusOption) => (
@@ -376,7 +382,7 @@ export function RequestsBookingsPage() {
 
             {!isLoading && filteredBookings.length > 0 && (
               <PaginationControls
-                currentPage={currentPage}
+                currentPage={effectiveCurrentPage}
                 totalItems={filteredBookings.length}
                 pageSize={ITEMS_PER_PAGE}
                 onPageChange={setCurrentPage}

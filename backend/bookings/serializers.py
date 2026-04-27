@@ -172,7 +172,7 @@ class RequestSerializer(serializers.ModelSerializer):
         model = Request
         fields = ['id', 'type', 'request_type', 'broadcast_request', 'client', 'provider', 'shop',
                   'service_location', 'vehicle_type', 'vehicle_brand', 'vehicle_model',
-                  'vehicle_description', 'created_at', 'request_details', 'assigned_mechanics']
+                  'vehicle_description', 'scheduled_time', 'created_at', 'request_details', 'assigned_mechanics']
 
     def get_broadcast_request(self, obj):
         if not hasattr(obj, 'broadcast_request') or obj.broadcast_request is None:
@@ -222,7 +222,8 @@ class ActiveBookingSerializer(serializers.ModelSerializer):
         model = ActiveBooking
         fields = [
             'id', 'before_picture_service', 'is_job_done', 'after_picture_service',
-            'is_rescheduled', 'reason', 'new_time', 'new_date', 'started_at', 'paused_at', 'total_pause_duration'
+            'is_rescheduled', 'proposed_date', 'pre_reschedule_status', 'reschedule_requested_by',
+            'reason', 'new_time', 'new_date', 'started_at', 'paused_at', 'total_pause_duration'
         ]
 
 
@@ -285,16 +286,17 @@ class BookingSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'request', 'status', 'dispute_status', 'amount_fee', 'convenience_fee',
             'distance_km', 'estimated_eta_minutes', 'traffic_level', 'traffic_surcharge',
-            'booked_at', 'updated_at', 'completed_at', 'active_details', 'quotation',
+            'booked_at', 'booking_date', 'updated_at', 'completed_at', 'active_details', 'quotation',
             'vehicle_type', 'base_fee', 'services_list', 'vehicle_information',
             'payment_breakdown', 'quotation_details'
         ]
-        read_only_fields = ['id', 'request', 'amount_fee', 'booked_at', 'updated_at', 'completed_at', 'active_details']
+        read_only_fields = ['id', 'request', 'amount_fee', 'booked_at', 'booking_date', 'updated_at', 'completed_at', 'active_details']
 
     def get_active_details(self, obj):
         # Show active details for statuses where mechanic may need them
         if obj.status in [
-            'active', 'on_the_way', 'at_location', 'diagnosing', 'accepted', 'paused', 'finished', 'pending_payment',
+            'active', 'on_the_way', 'at_location', 'diagnosing', 'booked', 'accepted', 'paused',
+            'finished', 'pending_payment', 'reschedule_proposed',
         ]:
             try:
                 active = obj.activebooking
@@ -444,12 +446,13 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
     vehicle_type = serializers.CharField(source='request.vehicle_type', read_only=True, allow_null=True)
     vehicle_brand = serializers.CharField(source='request.vehicle_brand', read_only=True, allow_null=True)
     vehicle_model = serializers.CharField(source='request.vehicle_model', read_only=True, allow_null=True)
+    scheduled_time = serializers.DateTimeField(source='request.scheduled_time', read_only=True, allow_null=True)
     
     class Meta:
         model = BroadcastRequest
         fields = [
             'id', 'description', 'latitude', 'longitude', 
-            'vehicle_type', 'vehicle_brand', 'vehicle_model',
+            'vehicle_type', 'vehicle_brand', 'vehicle_model', 'scheduled_time',
             'services', 'add_ons', 'search_radius_km', 'radius_km',
             'created_at', 'expires_at', 'accepted_at',
             'status', 'concern_picture', 'required_tokens',

@@ -422,7 +422,7 @@ def list_client_bookings(request):
         # Apply status filter if provided
         if status_filter:
             valid_statuses = [
-                'all', 'accepted', 'active', 'on_the_way', 'at_location', 'diagnosing',
+                'all', 'booked', 'accepted', 'active', 'on_the_way', 'at_location', 'diagnosing',
                 'pending_payment', 'completed', 'cancelled', 'reworked', 'backjob_pending', 'disputed',
             ]
             if status_filter.lower() not in valid_statuses:
@@ -436,8 +436,10 @@ def list_client_bookings(request):
             # For 'active' tab, merge in-progress statuses through payment pending
             elif status_filter.lower() == 'active':
                 bookings_queryset = bookings_queryset.filter(status__in=[
-                    'accepted', 'active', 'on_the_way', 'at_location', 'diagnosing', 'pending_payment', 'backjob_pending',
+                    'booked', 'accepted', 'active', 'on_the_way', 'at_location', 'diagnosing', 'pending_payment', 'backjob_pending',
                 ])
+            elif status_filter.lower() == 'accepted':
+                bookings_queryset = bookings_queryset.filter(status__in=['booked', 'accepted'])
             else:
                 bookings_queryset = bookings_queryset.filter(status=status_filter.lower())
 
@@ -807,7 +809,13 @@ def create_dispute(request, booking_id):
         if complaint_against is None:
             return Response({'error': 'No provider found to file dispute against'}, status=status.HTTP_400_BAD_REQUEST)
 
-        issue_picture = request.FILES.get('issue_picture')
+        # Handle multiple images
+        issue_pictures = request.FILES.getlist('issue_pictures') if hasattr(request.FILES, 'getlist') else []
+        if not issue_pictures:
+            # Fallback for single image (backward compatibility)
+            single_pic = request.FILES.get('issue_picture')
+            if single_pic:
+                issue_pictures = [single_pic]
 
         with transaction.atomic():
             dispute = DisputeBooking.objects.create(
@@ -815,9 +823,13 @@ def create_dispute(request, booking_id):
                 complainer=account,
                 complaint_against=complaint_against,
                 issue_description=issue_description,
-                issue_picture=issue_picture,
                 status=DisputeBooking.Status.ACTIVE,
             )
+
+            # Save multiple images to DisputeImage model
+            from bookings.models import DisputeImage
+            for pic in issue_pictures:
+                DisputeImage.objects.create(dispute=dispute, image=pic)
 
             booking.dispute_status = Booking.DisputeState.ACTIVE
             booking.save(update_fields=['dispute_status', 'updated_at'])
@@ -837,7 +849,7 @@ def create_dispute(request, booking_id):
                     'booking_id': dispute.booking_id,
                     'status': dispute.status,
                     'issue_description': dispute.issue_description,
-                    'issue_picture': dispute.issue_picture.url if dispute.issue_picture else None,
+                    'issue_pictures': [img.image.url for img in dispute.images.all()] if hasattr(dispute, 'images') else [],
                     'created_at': dispute.created_at.isoformat() if dispute.created_at else None,
                 },
                 'booking': {
@@ -1189,7 +1201,7 @@ def list_my_disputes(request):
                     'booking_dispute_status': dispute.booking.dispute_status,
                     'status': dispute.status,
                     'issue_description': dispute.issue_description,
-                    'issue_picture': dispute.issue_picture.url if dispute.issue_picture else None,
+                    'issue_pictures': [img.image.url for img in dispute.images.all()],
                     'complainer': {
                         'id': dispute.complainer.id,
                         'name': f"{dispute.complainer.firstname} {dispute.complainer.lastname}".strip(),
@@ -1321,6 +1333,7 @@ def _serialize_single_booking(booking, viewer_account=None):
         'traffic_level': traffic_level_value,
         'mechanic_location': mechanic_location_payload,
         'booked_at': booking.booked_at.isoformat(),
+        'booking_date': booking.booking_date.isoformat() if getattr(booking, 'booking_date', None) else None,
         'updated_at': booking.updated_at.isoformat(),
         'completed_at': booking.completed_at.isoformat() if booking.completed_at else None,
         'request': {
@@ -1389,6 +1402,9 @@ def _serialize_single_booking(booking, viewer_account=None):
             'after_pictures': after_photos,
             'is_job_done': active.is_job_done,
             'is_rescheduled': active.is_rescheduled,
+            'proposed_date': active.proposed_date.isoformat() if getattr(active, 'proposed_date', None) else None,
+            'pre_reschedule_status': active.pre_reschedule_status,
+            'reschedule_requested_by': active.reschedule_requested_by_id,
             'reason': active.reason,
             'new_time': active.new_time.isoformat() if active.new_time else None,
             'new_date': active.new_date.isoformat() if active.new_date else None,
@@ -1432,7 +1448,7 @@ def _serialize_single_booking(booking, viewer_account=None):
                 'name': f"{dispute.complaint_against.firstname} {dispute.complaint_against.lastname}",
             },
             'issue_description': dispute.issue_description,
-            'issue_picture': dispute.issue_picture.url if dispute.issue_picture else None,
+            'issue_pictures': [img.image.url for img in dispute.images.all()],
             'mechanic_defense_description': dispute.mechanic_defense_description,
             'mechanic_defense_picture': dispute.mechanic_defense_picture.url if dispute.mechanic_defense_picture else None,
             'refund_receipt_image': dispute.refund_receipt_image.url if dispute.refund_receipt_image else None,

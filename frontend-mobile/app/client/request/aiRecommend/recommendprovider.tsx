@@ -42,6 +42,7 @@ export default function RecommendProviderScreen() {
   const vehicle_type = params.vehicle_type as string || '';
   const vehicle_brand = params.vehicle_brand as string || '';
   const vehicle_model = params.vehicle_model as string || '';
+  const scheduled_time = params.scheduled_time as string || '';
 
   // ─── State ────────────────────────────────────────────────
   const [sentIds, setSentIds] = useState<Set<string>>(new Set());
@@ -61,6 +62,9 @@ export default function RecommendProviderScreen() {
       formData.append('vehicle_type', vehicle_type);
       formData.append('vehicle_brand', vehicle_brand);
       formData.append('vehicle_model', vehicle_model);
+      if (scheduled_time) {
+        formData.append('scheduled_time', scheduled_time);
+      }
 
       if (type === 'shop') {
         formData.append('shop_id', id.toString());

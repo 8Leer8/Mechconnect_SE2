@@ -3,6 +3,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from django.db.models import Q
 from datetime import timedelta
 
@@ -34,6 +35,17 @@ def _extract_vehicle_fields(request):
     vehicle_model = str(request.data.get('vehicle_model') or '').strip()
     vehicle_description = str(request.data.get('vehicle_description') or '').strip()
     return vehicle_type, vehicle_brand, vehicle_model, vehicle_description
+
+
+def _parse_optional_schedule(value):
+    if not value:
+        return None
+    parsed = parse_datetime(str(value))
+    if parsed is None:
+        return None
+    if timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+    return parsed
 
 
 def _clean_location_text(value, fallback='Unavailable'):
@@ -131,6 +143,7 @@ def create_custom_request(request):
         description = request.data.get('description')
         service_location_data = request.data.get('service_location')
         concern_picture = request.FILES.get('concern_picture')
+        scheduled_time = _parse_optional_schedule(request.data.get('scheduled_time'))
         vehicle_type, vehicle_brand, vehicle_model, _vehicle_description = _extract_vehicle_fields(request)
         
         # Parse service_location JSON string when sent via FormData
@@ -196,6 +209,7 @@ def create_custom_request(request):
             vehicle_type=vehicle_type,
             vehicle_brand=vehicle_brand,
             vehicle_model=vehicle_model,
+            scheduled_time=scheduled_time,
         )
         
         # Create custom request
@@ -248,7 +262,7 @@ def create_mechanic_direct_request(request):
         service_id = request.data.get('service_id')
         add_on_ids = request.data.get('add_on_ids', [])
         service_lines_raw = request.data.get('service_lines')
-        _scheduled_time = request.data.get('scheduled_time')
+        scheduled_time = _parse_optional_schedule(request.data.get('scheduled_time'))
         vehicle_type, vehicle_brand, vehicle_model, _vehicle_description = _extract_vehicle_fields(request)
 
         if isinstance(service_location_data, str):
@@ -382,6 +396,7 @@ def create_mechanic_direct_request(request):
             vehicle_type=vehicle_type,
             vehicle_brand=vehicle_brand,
             vehicle_model=vehicle_model,
+            scheduled_time=scheduled_time,
         )
 
         direct_request = DirectRequest.objects.create(
@@ -672,7 +687,7 @@ def create_shop_direct_request(request):
         service_location_data = request.data.get('service_location')
         add_on_ids = request.data.get('add_on_ids', [])
         service_lines_raw = request.data.get('service_lines')
-        _scheduled_time = request.data.get('scheduled_time')
+        scheduled_time = _parse_optional_schedule(request.data.get('scheduled_time'))
         vehicle_type, vehicle_brand, vehicle_model, _vehicle_description = _extract_vehicle_fields(request)
 
         if isinstance(service_location_data, str):
@@ -822,6 +837,7 @@ def create_shop_direct_request(request):
             vehicle_type=vehicle_type,
             vehicle_brand=vehicle_brand,
             vehicle_model=vehicle_model,
+            scheduled_time=scheduled_time,
         )
 
         direct_request = DirectRequest.objects.create(
@@ -901,6 +917,7 @@ def create_emergency_request(request):
         service_location_data = request.data.get('service_location')
         concern_picture = request.FILES.get('concern_picture')
         concern_pictures = request.FILES.getlist('concern_pictures')
+        scheduled_time = _parse_optional_schedule(request.data.get('scheduled_time'))
         vehicle_type, vehicle_brand, vehicle_model, vehicle_description = _extract_vehicle_fields(request)
 
         total_photos = len(concern_pictures) + (1 if concern_picture and not concern_pictures else 0)
@@ -975,6 +992,7 @@ def create_emergency_request(request):
             vehicle_brand=vehicle_brand,
             vehicle_model=vehicle_model,
             vehicle_description=vehicle_description,
+            scheduled_time=scheduled_time,
         )
         
         # Create emergency request

@@ -150,6 +150,7 @@ def list_requests(request):
                         'city_municipality': req.service_location.city_municipality,
                     } if req.service_location else None,
                     'created_at': req.created_at.isoformat(),
+                    'scheduled_time': req.scheduled_time.isoformat() if req.scheduled_time else None,
                     'has_booking': hasattr(req, 'booking')
                 })
             elif req.request_type == 'direct' and hasattr(req, 'directrequest'):
@@ -204,6 +205,7 @@ def list_requests(request):
                         'city_municipality': req.service_location.city_municipality,
                     } if req.service_location else None,
                     'created_at': req.created_at.isoformat(),
+                    'scheduled_time': req.scheduled_time.isoformat() if req.scheduled_time else None,
                     'has_booking': hasattr(req, 'booking')
                 })
             elif req.request_type == 'emergency' and hasattr(req, 'emergencyrequest'):
@@ -231,6 +233,7 @@ def list_requests(request):
                     'created_at': req.created_at.isoformat(),
                     'expires_at': emergency_expires_at.isoformat(),
                     'remaining_seconds': remaining_seconds,
+                    'scheduled_time': req.scheduled_time.isoformat() if req.scheduled_time else None,
                     'has_booking': hasattr(req, 'booking')
                 })
             elif req.request_type == 'broadcast' and hasattr(req, 'broadcast_request'):
@@ -272,6 +275,7 @@ def list_requests(request):
                     } if req.service_location else None,
                     'created_at': req.created_at.isoformat(),
                     'expires_at': req.broadcast_request.expires_at.isoformat(),
+                    'scheduled_time': req.scheduled_time.isoformat() if req.scheduled_time else None,
                     'has_booking': hasattr(req, 'booking')
                 })
         
@@ -351,7 +355,8 @@ def get_request_detail(request, request_id):
                 'id': req.shop.id,
                 'shop_name': req.shop.shop_name,
             } if req.shop else None,
-            'has_booking': hasattr(req, 'booking')
+            'has_booking': hasattr(req, 'booking'),
+            'scheduled_time': req.scheduled_time.isoformat() if req.scheduled_time else None,
         }
 
         # custom

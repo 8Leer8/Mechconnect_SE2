@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from django.test import Client as DjangoClient
 from django.test import TestCase
+from django.utils import timezone
 
 from services.models import MechanicService, Service, ServiceAddOn
 from pricing.models import PricingConfiguration
@@ -15,12 +16,153 @@ from .models import (
 	DirectRequest,
 	DirectRequestAddOn,
 	DirectRequestServiceLine,
+	ActiveBooking,
 	Quotation,
 	QuotationItem,
 	Request,
 	RequestAssignment,
 	ServiceLocation,
 )
+
+
+class RescheduleBookingTests(TestCase):
+	def setUp(self):
+		self.http_client = DjangoClient()
+		self.client_account = self._account('client-reschedule')
+		self.client_profile = Client.objects.create(account=self.client_account, contact_number='09170001001')
+		self.mechanic_account = self._account('mechanic-reschedule')
+		self.mechanic = Mechanic.objects.create(account=self.mechanic_account, contact_number='09170001002')
+		self.request = Request.objects.create(
+			client=self.client_profile,
+			provider=self.mechanic_account,
+			request_type=Request.Type.DIRECT,
+		)
+		self.booking = Booking.objects.create(
+			request=self.request,
+			status=Booking.Status.ACCEPTED,
+			amount_fee=Decimal('500.00'),
+			booking_date=timezone.now() + timezone.timedelta(days=2),
+		)
+		ActiveBooking.objects.create(booking=self.booking)
+
+	def _account(self, username):
+		return Account.objects.create(
+			firstname=username,
+			lastname='User',
+			username=username,
+			email=f'{username}@example.com',
+			password='password',
+		)
+
+	def _login_as(self, account):
+		session = self.http_client.session
+		session['account_id'] = account.id
+		session.save()
+
+	def _propose(self, booking=None):
+		booking = booking or self.booking
+		return self.http_client.post(
+			f'/api/bookings/bookings/{booking.id}/reschedule/',
+			data=json.dumps({'proposed_date': (timezone.now() + timezone.timedelta(days=3)).isoformat()}),
+			content_type='application/json',
+		)
+
+	def test_client_can_propose_and_mechanic_can_accept_independent_booking(self):
+		self._login_as(self.client_account)
+		response = self._propose()
+		self.assertEqual(response.status_code, 200)
+
+		self.booking.refresh_from_db()
+		active = self.booking.activebooking
+		self.assertEqual(self.booking.status, Booking.Status.RESCHEDULE_PROPOSED)
+		self.assertEqual(active.pre_reschedule_status, Booking.Status.ACCEPTED)
+		self.assertEqual(active.reschedule_requested_by_id, self.client_account.id)
+
+		self._login_as(self.mechanic_account)
+		response = self.http_client.post(
+			f'/api/bookings/bookings/{self.booking.id}/reschedule/respond/',
+			data=json.dumps({'action': 'ACCEPT'}),
+			content_type='application/json',
+		)
+		self.assertEqual(response.status_code, 200)
+
+		self.booking.refresh_from_db()
+		active.refresh_from_db()
+		self.assertEqual(self.booking.status, Booking.Status.PENDING)
+		self.assertIsNotNone(self.booking.booking_date)
+		self.assertIsNone(active.proposed_date)
+		self.assertIsNone(active.pre_reschedule_status)
+
+	def test_booked_status_can_start_reschedule(self):
+		self.booking.status = Booking.Status.BOOKED
+		self.booking.save(update_fields=['status'])
+
+		self._login_as(self.client_account)
+		response = self._propose()
+		self.assertEqual(response.status_code, 200)
+
+		self.booking.refresh_from_db()
+		self.assertEqual(self.booking.status, Booking.Status.RESCHEDULE_PROPOSED)
+		self.assertEqual(self.booking.activebooking.pre_reschedule_status, Booking.Status.BOOKED)
+
+	def test_booked_status_without_booking_date_can_start_reschedule(self):
+		self.booking.status = Booking.Status.BOOKED
+		self.booking.booking_date = None
+		self.booking.save(update_fields=['status', 'booking_date'])
+
+		self._login_as(self.client_account)
+		response = self._propose()
+		self.assertEqual(response.status_code, 200)
+
+	def test_rejects_reschedule_inside_one_hour_buffer(self):
+		self.booking.booking_date = timezone.now() + timezone.timedelta(minutes=30)
+		self.booking.save(update_fields=['booking_date'])
+
+		self._login_as(self.client_account)
+		response = self._propose()
+		self.assertEqual(response.status_code, 403)
+
+	def test_rejects_stacked_reschedule_request(self):
+		self._login_as(self.client_account)
+		first = self._propose()
+		second = self._propose()
+		self.assertEqual(first.status_code, 200)
+		self.assertEqual(second.status_code, 409)
+
+	def test_shop_based_mechanic_cannot_respond_shop_owner_can(self):
+		shop_owner_account = self._account('shop-owner-reschedule')
+		shop_owner = ShopOwner.objects.create(
+			account=shop_owner_account,
+			contact_number='09170001003',
+		)
+		shop = Shop.objects.create(shop_owner=shop_owner, shop_name='Owner Shop')
+		self.mechanic.is_working_for_shop = True
+		self.mechanic.shop = shop
+		self.mechanic.save(update_fields=['is_working_for_shop', 'shop'])
+		self.request.shop = shop
+		self.request.save(update_fields=['shop'])
+		RequestAssignment.objects.create(request=self.request, mechanic=self.mechanic_account, role=RequestAssignment.Role.LEAD)
+
+		self._login_as(self.client_account)
+		self.assertEqual(self._propose().status_code, 200)
+
+		self._login_as(self.mechanic_account)
+		mechanic_response = self.http_client.post(
+			f'/api/bookings/bookings/{self.booking.id}/reschedule/respond/',
+			data=json.dumps({'action': 'ACCEPT'}),
+			content_type='application/json',
+		)
+		self.assertEqual(mechanic_response.status_code, 403)
+
+		self._login_as(shop_owner_account)
+		owner_response = self.http_client.post(
+			f'/api/bookings/bookings/{self.booking.id}/reschedule/respond/',
+			data=json.dumps({'action': 'DECLINE'}),
+			content_type='application/json',
+		)
+		self.assertEqual(owner_response.status_code, 200)
+		self.booking.refresh_from_db()
+		self.assertEqual(self.booking.status, Booking.Status.RESCHEDULE_PROPOSED)
 
 
 class MechanicDirectRequestAddonTests(TestCase):
@@ -170,6 +312,85 @@ class MechanicDirectRequestAddonTests(TestCase):
 		self.assertEqual(DirectRequest.objects.count(), 1)
 		self.assertEqual(DirectRequestAddOn.objects.count(), 1)
 		self.assertEqual(DirectRequestAddOn.objects.first().service_add_on_id, self.mechanic_addon.id)
+
+	def test_direct_request_schedule_copies_to_booking_date_on_accept(self):
+		scheduled_time = timezone.now() + timezone.timedelta(days=2)
+		session = self.http_client.session
+		session['account_id'] = self.client_account.id
+		session.save()
+
+		response = self.http_client.post(
+			'/api/bookings/direct/mechanic/create/',
+			data=json.dumps({
+				'provider_id': self.mechanic_account.id,
+				'service_id': self.service.id,
+				'vehicle_type': 'Car',
+				'vehicle_brand': 'Toyota',
+				'vehicle_model': 'Vios',
+				'scheduled_time': scheduled_time.isoformat(),
+				'service_location': {
+					'street_name': 'Main St',
+					'barangay': 'Barangay 1',
+					'city_municipality': 'Metro City',
+					'latitude': 14.5995,
+					'longitude': 120.9842,
+				},
+			}),
+			content_type='application/json',
+		)
+		self.assertEqual(response.status_code, 201)
+		request_id = json.loads(response.content)['request_id']
+		self.assertEqual(Request.objects.get(id=request_id).scheduled_time, scheduled_time)
+
+		session = self.http_client.session
+		session['account_id'] = self.mechanic_account.id
+		session.save()
+		accept_response = self.http_client.post(f'/api/bookings/mechanic/requests/{request_id}/accept/')
+		self.assertEqual(accept_response.status_code, 201)
+
+		booking = Booking.objects.get(request_id=request_id)
+		self.assertEqual(booking.status, Booking.Status.BOOKED)
+		self.assertEqual(booking.booking_date, scheduled_time)
+
+	def test_direct_request_without_schedule_defaults_booking_date_to_now(self):
+		session = self.http_client.session
+		session['account_id'] = self.client_account.id
+		session.save()
+
+		response = self.http_client.post(
+			'/api/bookings/direct/mechanic/create/',
+			data=json.dumps({
+				'provider_id': self.mechanic_account.id,
+				'service_id': self.service.id,
+				'vehicle_type': 'Car',
+				'vehicle_brand': 'Toyota',
+				'vehicle_model': 'Vios',
+				'service_location': {
+					'street_name': 'Main St',
+					'barangay': 'Barangay 1',
+					'city_municipality': 'Metro City',
+					'latitude': 14.5995,
+					'longitude': 120.9842,
+				},
+			}),
+			content_type='application/json',
+		)
+		self.assertEqual(response.status_code, 201)
+		request_id = json.loads(response.content)['request_id']
+
+		before_accept = timezone.now()
+		session = self.http_client.session
+		session['account_id'] = self.mechanic_account.id
+		session.save()
+		accept_response = self.http_client.post(f'/api/bookings/mechanic/requests/{request_id}/accept/')
+		after_accept = timezone.now()
+		self.assertEqual(accept_response.status_code, 201)
+
+		booking = Booking.objects.get(request_id=request_id)
+		self.assertEqual(booking.status, Booking.Status.BOOKED)
+		self.assertIsNotNone(booking.booking_date)
+		self.assertGreaterEqual(booking.booking_date, before_accept)
+		self.assertLessEqual(booking.booking_date, after_accept)
 
 	def test_mechanic_direct_request_accepts_service_lines_multi_service(self):
 		session = self.http_client.session
