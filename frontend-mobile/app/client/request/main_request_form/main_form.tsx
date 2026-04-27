@@ -16,6 +16,7 @@ import { usePricing } from '@/hooks/usePricing';
 import { calculateBroadcastFee, FeeBreakdown } from '@/utils/trafficutils';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
+const TOMTOM_KEY = process.env.EXPO_PUBLIC_TOMTOM_API_KEY;
 const NEARBY_REFRESH_INTERVAL_MS = 7000;
 const NEARBY_MIN_FETCH_GAP_MS = 2000;
 
@@ -108,10 +109,76 @@ export default function MainRequestFormScreen() {
   const nearbyFetchInFlightRef = useRef(false);
   const lastNearbyFetchAtRef = useRef(0);
 
+  // Cache for reverse geocoded addresses: key = "lat,lng"
+  const [addressCache, setAddressCache] = useState<Record<string, string>>({});
+
+  const fetchReverseGeocode = useCallback(async (latitude: number, longitude: number): Promise<string | null> => {
+    if (!TOMTOM_KEY) return null;
+    try {
+      const url = `https://api.tomtom.com/search/2/reverseGeocode/${latitude},${longitude}.json?key=${encodeURIComponent(TOMTOM_KEY)}&language=en-US&radius=100`;
+      const response = await fetch(url);
+      if (!response.ok) return null;
+      const data = await response.json() as any;
+      const address = data?.addresses?.[0]?.address;
+      if (!address) return null;
+      // Build a readable address string
+      const parts = [
+        address.streetName,
+        address.streetNumber,
+        address.municipalitySubdivision,
+        address.municipality,
+        address.countrySubdivision,
+      ].filter(Boolean);
+      return parts.length > 0 ? parts.join(', ') : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // Fetch reverse geocodes for nearby providers when they change
+  useEffect(() => {
+    if (!nearbyProviders.length) return;
+
+    const fetchMissingAddresses = async () => {
+      const newCache: Record<string, string> = {};
+
+      await Promise.all(
+        nearbyProviders.map(async (provider) => {
+          const lat = Number(provider.proximity_latitude);
+          const lng = Number(provider.proximity_longitude);
+          if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+          const cacheKey = `${lat.toFixed(6)},${lng.toFixed(6)}`;
+          if (addressCache[cacheKey]) return; // Already cached
+
+          const address = await fetchReverseGeocode(lat, lng);
+          if (address) {
+            newCache[cacheKey] = address;
+          }
+        })
+      );
+
+      if (Object.keys(newCache).length > 0) {
+        setAddressCache((prev) => ({ ...prev, ...newCache }));
+      }
+    };
+
+    fetchMissingAddresses();
+  }, [nearbyProviders, fetchReverseGeocode, addressCache]);
+
   const formatLiveLocation = (provider: NearbyProvider) => {
     const lat = Number(provider.proximity_latitude);
     const lng = Number(provider.proximity_longitude);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+    const cacheKey = `${lat.toFixed(6)},${lng.toFixed(6)}`;
+    const cachedAddress = addressCache[cacheKey];
+
+    if (cachedAddress) {
+      return cachedAddress;
+    }
+
+    // Return coordinates while loading, will update when address is fetched
     return `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
   };
 
