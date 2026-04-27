@@ -92,7 +92,7 @@ def admin_list_disputes(request):
                 'booking_id': dispute.booking_id,
                 'status': dispute.status,
                 'issue_description': dispute.issue_description,
-                'issue_picture': dispute.issue_picture.url if dispute.issue_picture else None,
+                'issue_pictures': [img.image.url for img in dispute.images.all()],
                 'complainer': dispute.complainer.username,
                 'complaint_against': dispute.complaint_against.username,
                 'mechanic_defense_description': dispute.mechanic_defense_description,

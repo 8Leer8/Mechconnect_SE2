@@ -1089,7 +1089,7 @@ def mechanic_payment_received(request, booking_id):
 @permission_classes([AllowAny])
 @parser_classes([MultiPartParser, FormParser, JSONParser])
 def mechanic_upload_dispute_receipt(request, booking_id):
-    """Mechanic uploads refund proof, then dispute waits for client verification."""
+    """Mechanic confirms credit payment - credits are transferred from mechanic to client immediately."""
     account, err = _get_mechanic_account(request)
     if err:
         return err
@@ -1113,32 +1113,92 @@ def mechanic_upload_dispute_receipt(request, booking_id):
     }
     if dispute.status not in allowed_states:
         return Response(
-            {"error": "Dispute is not waiting for mechanic payment proof"},
+            {"error": "Dispute is not waiting for mechanic payment"},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    refund_receipt_image = request.FILES.get("refund_receipt_image")
-    if refund_receipt_image is None:
-        return Response({"error": "refund_receipt_image is required"}, status=status.HTTP_400_BAD_REQUEST)
+    # Get the refund amount
+    amount = dispute.amount_refunded or dispute.booking.amount_fee
+    if not amount:
+        return Response({"error": "Dispute amount not set"}, status=status.HTTP_400_BAD_REQUEST)
 
-    resolution_notes = str(request.data.get("resolution_notes", "")).strip()
+    from users.models import Wallet
+    from notification.upsert import upsert_notification
 
     with transaction.atomic():
-        dispute.refund_receipt_image = refund_receipt_image
-        dispute.resolution_notes = resolution_notes or dispute.resolution_notes
-        dispute.status = DisputeBooking.Status.WAITING_FOR_CLIENT_VERIFICATION
-        dispute.save(update_fields=["refund_receipt_image", "resolution_notes", "status"])
+        # Get mechanic's wallet
+        try:
+            mechanic_wallet = Wallet.objects.get(account=account)
+        except Wallet.DoesNotExist:
+            return Response({"error": "Mechanic wallet not found"}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Check if mechanic has enough credits
+        if mechanic_wallet.balance < amount:
+            return Response(
+                {"error": f"Insufficient credits. Balance: {mechanic_wallet.balance}, Required: {amount}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Get client's wallet
+        client_account = booking.request.client.account
+        try:
+            client_wallet = Wallet.objects.get(account=client_account)
+        except Wallet.DoesNotExist:
+            return Response({"error": "Client wallet not found"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Deduct from mechanic
+        mechanic_wallet.balance -= amount
+        mechanic_wallet.save(update_fields=["balance"])
+
+        # Add to client
+        client_wallet.balance += amount
+        client_wallet.save(update_fields=["balance"])
+
+        # Resolve the dispute immediately
+        dispute.status = DisputeBooking.Status.RESOLVED_REFUNDED
+        dispute.is_client_verified = True
+        dispute.refund_receiver = client_account
+        dispute.resolved_at = timezone.now()
+        dispute.save(update_fields=["status", "is_client_verified", "refund_receiver", "resolved_at"])
+
+        # Update booking dispute status
+        booking.dispute_status = Booking.DisputeState.RESOLVED
+        booking.save(update_fields=["dispute_status", "updated_at"])
+
+        # Unlock mechanic if locked
+        if hasattr(account, 'mechanic') and account.mechanic.is_locked:
+            account.mechanic.is_locked = False
+            account.mechanic.save(update_fields=["is_locked"])
+
+    # Send notification to client
+    try:
+        upsert_notification(
+            receiver_id=client_account.id,
+            correlation_key=f'booking:{booking.id}',
+            title='Dispute Refunded',
+            message=f'The mechanic has refunded Php {amount:.2f} in credits for booking #{booking.id}. The dispute has been resolved.',
+            payload={
+                'booking_id': booking.id,
+                'dispute_id': dispute.id,
+                'amount': float(amount),
+                'action': 'dispute_resolved_credits',
+            },
+            mark_unread=True,
+        )
+    except Exception:
+        pass
+
+    # WebSocket notification
     try:
         channel_layer = get_channel_layer()
         if channel_layer is not None:
             payload = {
                 "type": "booking_update",
-                "action": "booking.dispute_receipt_uploaded",
+                "action": "booking.dispute_resolved",
                 "booking_id": booking.id,
                 "status": booking.status,
                 "dispute_status": booking.dispute_status,
-                "message": "Mechanic uploaded refund proof",
+                "message": f"Dispute resolved. Credits refunded: Php {amount:.2f}",
             }
             targets = {
                 account.id,
@@ -1153,11 +1213,11 @@ def mechanic_upload_dispute_receipt(request, booking_id):
 
     return Response(
         {
-            "message": "Refund receipt uploaded. Waiting for client verification.",
+            "message": f"Credit payment of Php {amount:.2f} completed. Dispute resolved.",
             "dispute": {
                 "id": dispute.id,
                 "status": dispute.status,
-                "refund_receipt_image": dispute.refund_receipt_image.url if dispute.refund_receipt_image else None,
+                "amount_refunded": float(amount),
             },
             "booking": {
                 "id": booking.id,

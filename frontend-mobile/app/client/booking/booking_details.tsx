@@ -110,7 +110,7 @@ interface BookingDetail {
   };
   dispute_details?: {
     issue_description?: string;
-    issue_picture?: string | null;
+    issue_pictures?: string[];
     refund_receipt_image?: string | null;
     dispute_status?: string;
     is_client_verified?: boolean;
@@ -260,9 +260,7 @@ export default function ClientBookingDetailScreen() {
   const [reportingNoShow, setReportingNoShow] = useState(false);
   const [showReportNoShowModal, setShowReportNoShowModal] = useState(false);
   const [disputeReason, setDisputeReason] = useState('');
-  const [disputeImage, setDisputeImage] = useState<string | null>(null);
-  const [refundMethod, setRefundMethod] = useState<'gcash' | 'maya' | 'voucher'>('gcash');
-  const [refundAccountNumber, setRefundAccountNumber] = useState('');
+  const [disputeImages, setDisputeImages] = useState<string[]>([]);
   const [disputeSubmitting, setDisputeSubmitting] = useState(false);
   const [showRefundVerifyModal, setShowRefundVerifyModal] = useState(false);
   const [verifyRefundSubmitting, setVerifyRefundSubmitting] = useState(false);
@@ -1378,15 +1376,22 @@ export default function ClientBookingDetailScreen() {
 
   const pickDisputeImage = async () => {
     try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') return;
-      const result = await ImagePicker.launchImageLibraryAsync({ allowsEditing: true, quality: 0.8 });
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Camera permission required', 'Please allow camera access to take photos.');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({ allowsEditing: true, quality: 0.8 });
       if (!result.canceled && result.assets && result.assets[0]) {
-        setDisputeImage(result.assets[0].uri);
+        setDisputeImages(prev => [...prev, result.assets![0].uri]);
       }
     } catch {
       // Ignore picker errors to avoid breaking booking details screen.
     }
+  };
+
+  const removeDisputeImage = (index: number) => {
+    setDisputeImages(prev => prev.filter((_, i) => i !== index));
   };
 
   const openChatWithMechanic = () => {
@@ -1724,13 +1729,8 @@ export default function ClientBookingDetailScreen() {
 
   const handleSubmitDispute = async () => {
     const issueDescription = disputeReason.trim();
-    const accountNumber = refundAccountNumber.trim();
     if (!issueDescription) {
       Alert.alert('Missing details', 'Please describe the issue before submitting.');
-      return;
-    }
-    if (refundMethod !== 'voucher' && !accountNumber) {
-      Alert.alert('Missing account number', 'Please enter your refund account number.');
       return;
     }
 
@@ -1739,14 +1739,15 @@ export default function ClientBookingDetailScreen() {
       const formData = new FormData();
       formData.append('issue_description', issueDescription);
 
-      if (disputeImage) {
-        const fileName = disputeImage.split('/').pop() || `dispute-${booking.id}.jpg`;
-        formData.append('issue_picture', {
-          uri: disputeImage,
+      // Append all images as issue_pictures
+      disputeImages.forEach((uri, index) => {
+        const fileName = uri.split('/').pop() || `dispute-${booking.id}-${index}.jpg`;
+        formData.append('issue_pictures', {
+          uri,
           name: fileName,
           type: 'image/jpeg',
         } as any);
-      }
+      });
 
       const response = await fetch(`${API_URL}/bookings/bookings/${booking.id}/disputes/create/`, {
         method: 'POST',
@@ -1759,26 +1760,9 @@ export default function ClientBookingDetailScreen() {
         throw new Error((data as any)?.error || 'Unable to file dispute');
       }
 
-      const refundResponse = await fetch(`${API_URL}/bookings/bookings/${booking.id}/disputes/refund-details/`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          refund_method: refundMethod,
-          account_number: refundMethod === 'voucher' ? '' : accountNumber,
-        }),
-      });
-
-      const refundData = await refundResponse.json().catch(() => ({}));
-      if (!refundResponse.ok) {
-        throw new Error((refundData as any)?.error || 'Dispute filed, but failed to save refund destination details');
-      }
-
       setShowDisputeModal(false);
       setDisputeReason('');
-      setDisputeImage(null);
-      setRefundMethod('gcash');
-      setRefundAccountNumber('');
+      setDisputeImages([]);
       Alert.alert('Dispute filed', 'Your report has been submitted for review.');
       fetchBookingDetail(true);
     } catch (err: any) {
@@ -1946,7 +1930,11 @@ export default function ClientBookingDetailScreen() {
                 </TouchableOpacity>
               </View>
 
-              <View style={styles.modalContent}>
+              <ScrollView
+                style={styles.modalContent}
+                contentContainerStyle={{ paddingBottom: 24 }}
+                showsVerticalScrollIndicator={false}
+              >
                 <ThemedText style={{ color: '#8E8E93', marginBottom: 8 }}>
                   Describe the issue clearly. This creates a formal dispute for admin review.
                 </ThemedText>
@@ -1961,74 +1949,31 @@ export default function ClientBookingDetailScreen() {
                 />
 
                 <View style={{ height: 12 }} />
-                <ThemedText style={{ color: '#ECEDEE', fontSize: 13, fontWeight: '600', marginBottom: 8 }}>
-                  Refund destination
-                </ThemedText>
-                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
-                  {(['gcash', 'maya', 'voucher'] as const).map((method) => {
-                    const active = refundMethod === method;
-                    return (
-                      <TouchableOpacity
-                        key={method}
-                        onPress={() => setRefundMethod(method)}
-                        style={{
-                          flex: 1,
-                          borderRadius: 10,
-                          borderWidth: 1,
-                          borderColor: active ? '#FF8C00' : '#3A3A3C',
-                          backgroundColor: active ? '#FF8C001E' : '#2C2C2E',
-                          paddingVertical: 10,
-                          alignItems: 'center',
-                        }}
-                      >
-                        <ThemedText style={{ color: active ? '#FFB563' : '#ECEDEE', fontSize: 12, fontWeight: '700' }}>
-                          {method.toUpperCase()}
-                        </ThemedText>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
 
-                {refundMethod !== 'voucher' ? (
-                  <TextInput
-                    style={{
-                      backgroundColor: '#2C2C2E',
-                      borderRadius: 12,
-                      paddingHorizontal: 14,
-                      paddingVertical: 12,
-                      fontSize: 15,
-                      color: '#ECEDEE',
-                      borderWidth: 1,
-                      borderColor: '#3A3A3C',
-                    }}
-                    placeholder={`${refundMethod.toUpperCase()} account number`}
-                    placeholderTextColor="#6C6C70"
-                    keyboardType="number-pad"
-                    value={refundAccountNumber}
-                    onChangeText={setRefundAccountNumber}
-                  />
-                ) : (
-                  <View style={{ backgroundColor: '#2C2C2E', borderRadius: 12, padding: 12 }}>
-                    <ThemedText style={{ color: '#8E8E93', fontSize: 12 }}>
-                      Voucher selected. No account details required.
-                    </ThemedText>
+                {/* Multiple Images Grid */}
+                {disputeImages.length > 0 && (
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                    {disputeImages.map((uri, index) => (
+                      <View key={index} style={[styles.imagePreviewContainer, { width: 100, height: 100 }]}>
+                        <Image source={{ uri }} style={[styles.previewImage, { width: 100, height: 100 }]} />
+                        <TouchableOpacity
+                          style={[styles.removeImageBtn, { top: 4, right: 4 }]}
+                          onPress={() => removeDisputeImage(index)}
+                        >
+                          <FontAwesome name="times-circle" size={22} color="#FF3B30" />
+                        </TouchableOpacity>
+                      </View>
+                    ))}
                   </View>
                 )}
 
-                <View style={{ height: 12 }} />
-                {disputeImage ? (
-                  <View style={styles.imagePreviewContainer}>
-                    <Image source={{ uri: disputeImage }} style={styles.previewImage} />
-                    <TouchableOpacity style={styles.removeImageBtn} onPress={() => setDisputeImage(null)}>
-                      <FontAwesome name="times-circle" size={28} color="#FF3B30" />
-                    </TouchableOpacity>
-                  </View>
-                ) : (
-                  <TouchableOpacity style={styles.addPhotoBtn} onPress={pickDisputeImage}>
-                    <FontAwesome name="camera" size={28} color="#8E8E93" />
-                    <ThemedText style={styles.addPhotoText}>Add Evidence Photo (Optional)</ThemedText>
-                  </TouchableOpacity>
-                )}
+                {/* Add Photo Button - always visible to allow multiple photos */}
+                <TouchableOpacity style={styles.addPhotoBtn} onPress={pickDisputeImage}>
+                  <FontAwesome name="camera" size={28} color="#8E8E93" />
+                  <ThemedText style={styles.addPhotoText}>
+                    {disputeImages.length > 0 ? 'Add Another Photo (Optional)' : 'Take Evidence Photo (Optional)'}
+                  </ThemedText>
+                </TouchableOpacity>
 
                 <View style={{ height: 12 }} />
                 <View style={{ flexDirection: 'row', gap: 12 }}>
@@ -2054,7 +1999,10 @@ export default function ClientBookingDetailScreen() {
                     )}
                   </TouchableOpacity>
                 </View>
-              </View>
+
+                {/* Bottom safe area padding */}
+                <View style={{ height: Platform.OS === 'ios' ? 20 : 12 }} />
+              </ScrollView>
             </View>
           </KeyboardAvoidingView>
         </View>

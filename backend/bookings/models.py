@@ -233,6 +233,18 @@ class DisputeBooking(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     resolved_at = models.DateTimeField(null=True, blank=True)
 
+class DisputeImage(models.Model):
+    """Multiple images for a dispute"""
+    dispute = models.ForeignKey(DisputeBooking, on_delete=models.CASCADE, related_name='images')
+    image = models.ImageField(upload_to='bookings/disputes/images/')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['uploaded_at']
+
+    def __str__(self):
+        return f"Image for dispute #{self.dispute.id}"
+
 class CompleteBooking(models.Model):
     booking = models.OneToOneField(Booking, on_delete=models.CASCADE)
     completed_at = models.DateTimeField(auto_now_add=True)
