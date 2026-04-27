@@ -2,11 +2,15 @@
 Shop owner booking views: accept/decline direct requests.
 Mirrors the mechanic accept/decline logic but for shop owner accounts.
 """
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, parser_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
+import logging
+
+from django.db import transaction
 from django.db.models import Prefetch, Q, Subquery
 from django.utils import timezone
 from datetime import timedelta
@@ -26,6 +30,7 @@ from ...models import (
     DisputeBooking,
     BroadcastRequest,
     Quotation,
+    QuotationItem,
     Receipt,
     CashRemittance,
     RequestAssignment,
@@ -1159,6 +1164,29 @@ def get_shopowner_booking_quotation(request, booking_id):
             try:
                 existing = booking.quotation
             except Quotation.DoesNotExist:
+                existing = None
+
+            if data.get("action") == "delete" and existing:
+                try:
+                    post_quotation_chat_message(
+                        account, booking, existing, action="retracted", request=request
+                    )
+                    try:
+                        notify_booking_parties(
+                            account.id,
+                            booking.request.client.account_id,
+                            booking.id,
+                            booking.status,
+                            "Quotation retracted",
+                        )
+                    except Exception:
+                        pass
+                    existing.delete()
+                except Exception:
+                    pass
+                return Response({"message": "Quotation deleted"}, status=status.HTTP_200_OK)
+
+            if existing is None:
                 existing = Quotation.objects.create(
                     booking=booking,
                     mechanic=account,
@@ -1168,24 +1196,29 @@ def get_shopowner_booking_quotation(request, booking_id):
                     is_backjob=booking_has_backjob(booking),
                 )
 
-            if data.get("action") == "delete":
-                existing.delete()
-                return Response({"message": "Quotation deleted"}, status=status.HTTP_200_OK)
-
-            if "notes" in data:
-                existing.notes = data.get("notes")
-            if "is_final" in data:
-                existing.is_final = bool(data.get("is_final", existing.is_final))
-            existing.mechanic = account
-            existing.is_backjob = booking_has_backjob(booking)
-            existing.save(update_fields=["mechanic", "notes", "is_final", "is_backjob", "updated_at"])
-
-            amendment = create_amendment_request(
-                quotation_id=existing.id,
-                mechanic_id=account.id,
-                changes=data.get("items") or [],
-            )
-            existing.refresh_from_db()
+            try:
+                with transaction.atomic():
+                    if "notes" in data:
+                        existing.notes = data.get("notes")
+                    if "is_final" in data:
+                        existing.is_final = bool(data.get("is_final", existing.is_final))
+                    existing.mechanic = account
+                    existing.is_backjob = booking_has_backjob(booking)
+                    existing.save(
+                        update_fields=["mechanic", "notes", "is_final", "is_backjob", "updated_at"]
+                    )
+                    amendment = create_amendment_request(
+                        quotation_id=existing.id,
+                        mechanic_id=account.id,
+                        changes=data.get("items") or [],
+                    )
+                    existing.refresh_from_db()
+            except Exception as e:
+                logging.getLogger(__name__).exception("Failed to create/update shop quotation: %s", e)
+                return Response(
+                    {"error": "Failed to save quotation", "details": str(e)},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
 
             try:
                 post_quotation_chat_message(
@@ -1196,8 +1229,10 @@ def get_shopowner_booking_quotation(request, booking_id):
                     request=request,
                     amendment=amendment,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logging.getLogger(__name__).exception(
+                    "Quotation saved but failed to post quotation chat message: %s", e
+                )
 
             try:
                 notify_booking_parties(
@@ -1231,6 +1266,7 @@ def get_shopowner_booking_quotation(request, booking_id):
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
+            logging.getLogger(__name__).exception("Shop quotation save failed: %s", e)
             return Response({"error": "Failed to save quotation", "details": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
@@ -1247,6 +1283,156 @@ def get_shopowner_booking_quotation(request, booking_id):
 
     ser = QuotationSerializer(quotation, context={"request": request})
     return Response(ser.data, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
+def shopowner_upload_quotation_item_receipt(request, booking_id, item_id):
+    """Upload a part receipt for a quotation item (same rules as mechanic flow)."""
+    account, err = _get_shopowner_account(request)
+    if err:
+        return err
+
+    try:
+        booking = _shopowner_bookings_queryset(account).get(id=booking_id)
+    except Booking.DoesNotExist:
+        return Response(
+            {"error": "Booking not found or you do not have permission to update it"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if booking.status == Booking.Status.COMPLETED:
+        return Response(
+            {"error": "Completed bookings are read-only. Quotation data is frozen."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    try:
+        quotation = booking.quotation
+    except Quotation.DoesNotExist:
+        return Response({"error": "No quotation found for this booking"}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        qitem = quotation.items.get(id=item_id)
+    except QuotationItem.DoesNotExist:
+        return Response({"error": "Quotation item not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    if qitem.line_kind != QuotationItem.LineKind.ITEM:
+        return Response(
+            {"error": "Receipt upload is only allowed for item quotations"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if qitem.source != QuotationItem.ItemSource.TO_BE_PURCHASED:
+        return Response(
+            {"error": "Receipt upload is only required for 'to be purchased' items"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    receipt_image = request.FILES.get("receipt_image")
+    if receipt_image is None:
+        return Response({"error": "receipt_image is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+    actual_unit_price_raw = request.data.get("actual_unit_price")
+    if actual_unit_price_raw in (None, ""):
+        actual_unit_price = Decimal(str(qitem.unit_price or 0))
+    else:
+        try:
+            actual_unit_price = Decimal(str(actual_unit_price_raw))
+        except Exception:
+            return Response(
+                {"error": "actual_unit_price must be a valid number"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    if actual_unit_price < 0:
+        return Response(
+            {"error": "actual_unit_price must be non-negative"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    old_price = Decimal(str(qitem.unit_price or 0))
+    price_changed = actual_unit_price != old_price
+
+    with transaction.atomic():
+        qitem.purchase_receipt_image = receipt_image
+        qitem.receipt_submitted_at = timezone.now()
+
+        if price_changed:
+            qitem.previous_description = qitem.description
+            qitem.previous_quantity = qitem.quantity
+            qitem.previous_unit_price = old_price
+            qitem.unit_price = actual_unit_price
+            qitem.status = Quotation.Status.PENDING
+            qitem.change_type = "edited"
+
+        qitem.save()
+
+        try:
+            has_pending_like = quotation.items.filter(
+                status__in=[Quotation.Status.PENDING, Quotation.Status.REJECTED]
+            ).exists()
+            quotation.status = (
+                Quotation.Status.PENDING if has_pending_like else Quotation.Status.ACCEPTED
+            )
+        except Exception:
+            pass
+
+        try:
+            quotation.total_amount = sum(
+                float(i.line_total) for i in quotation.items.exclude(status=Quotation.Status.REJECTED)
+            )
+        except Exception:
+            quotation.total_amount = 0
+        quotation.save(update_fields=["status", "total_amount", "updated_at"])
+
+    try:
+        post_quotation_chat_message(account, booking, quotation, action="updated", request=request)
+    except Exception:
+        pass
+
+    try:
+        notify_booking_parties(
+            account.id,
+            booking.request.client.account_id,
+            booking.id,
+            booking.status,
+            (
+                "Quotation receipt uploaded. Please review updated item price."
+                if price_changed
+                else "Quotation receipt uploaded."
+            ),
+        )
+    except Exception:
+        pass
+
+    return Response(
+        {
+            "message": (
+                "Receipt uploaded and price-difference request sent."
+                if price_changed
+                else "Receipt uploaded."
+            ),
+            "quotation_id": quotation.id,
+            "item": {
+                "id": qitem.id,
+                "description": qitem.description,
+                "unit_price": float(qitem.unit_price),
+                "previous_unit_price": (
+                    float(qitem.previous_unit_price)
+                    if qitem.previous_unit_price is not None
+                    else None
+                ),
+                "status": qitem.status,
+                "change_type": qitem.change_type,
+                "purchase_receipt_image": (
+                    qitem.purchase_receipt_image.url if qitem.purchase_receipt_image else None
+                ),
+            },
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 @api_view(["POST"])

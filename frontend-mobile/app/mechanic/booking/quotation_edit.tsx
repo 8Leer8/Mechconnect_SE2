@@ -5,6 +5,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { styles } from '../../../style/mechanic/quotation_edit';
+import { directRequestServiceUnitPrice } from '@/lib/directRequestDisplay';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -164,7 +165,7 @@ export default function QuotationEdit() {
       rows.push({
         id: sid,
         name: String(svc?.name || 'Service'),
-        default_price: Number(svc?.minimum_price || booking?.amount_fee || 0),
+        default_price: directRequestServiceUnitPrice(svc as Record<string, unknown>),
       });
     };
 
@@ -1002,7 +1003,10 @@ export default function QuotationEdit() {
       formData.append('actual_unit_price', String(Math.max(0, Number(item.unit_price || 0))));
 
       setReceiptUploadingKey(key);
-      const res = await fetchWithAuthRetry(`${API_URL}/bookings/mechanic/bookings/${bookingId}/quotation/items/${item.id}/receipt/`, {
+      const receiptUrl = isShopOwnerSource
+        ? `${API_URL}/bookings/shopowner/bookings/${bookingId}/quotation/items/${item.id}/receipt/`
+        : `${API_URL}/bookings/mechanic/bookings/${bookingId}/quotation/items/${item.id}/receipt/`;
+      const res = await fetchWithAuthRetry(receiptUrl, {
         method: 'POST',
         credentials: 'include',
         body: formData as any,

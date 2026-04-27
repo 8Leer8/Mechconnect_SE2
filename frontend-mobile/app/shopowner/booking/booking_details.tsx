@@ -8,7 +8,12 @@ import { ThemedView } from '@/components/themed-view';
 import { SkeletonDetailPage } from '@/components/skeletons/SkeletonLoaders';
 import { Image } from 'expo-image';
 import { styles } from '@/style/mechanic/bookingDetailsStyles';
-import { canOpenBookingChat } from '@/lib/bookingAccess';
+import { bookingHasBackjob, canOpenBookingChat } from '@/lib/bookingAccess';
+import {
+  normalizeBookedServiceRows,
+  normalizeRequestedAddOnRows,
+  directRequestServiceUnitPrice,
+} from '@/lib/directRequestDisplay';
 import { fetchBookingChatPreview } from '@/lib/bookingChatPreview';
 import { useNotification } from '@/hooks/useNotification';
 import { coerceBarangayForDisplay } from '@/lib/locationAddress';
@@ -577,108 +582,175 @@ export default function ShopOwnerBookingDetailScreen() {
   };
 
   const getDisplayQuotation = () => {
-    const getRowAssocKey = (it: any) => {
-      const serviceId = Number(it?.service);
-      const addOnId = Number(it?.service_add_on);
-      if (Number.isFinite(serviceId) && serviceId > 0) return `service:${serviceId}`;
-      if (Number.isFinite(addOnId) && addOnId > 0) return `addon:${addOnId}`;
-      return null;
+    const isBackjobBooking = bookingHasBackjob(booking as any);
+    const details = (booking && booking.request && (booking.request as any).request_details) || null;
+    if (!details && !(quotation && (quotation.items || []).length > 0)) return null;
+
+    const toPrice = (value: any) => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
     };
+
+    const expectedServiceItems: any[] = isBackjobBooking ? [] : (() => {
+      const rows: any[] = [];
+      normalizeBookedServiceRows(details as Record<string, unknown> | null).forEach((svc: any) => {
+        rows.push({
+          description: svc.name || 'Service',
+          quantity: 1,
+          unit_price: toPrice(directRequestServiceUnitPrice(svc as Record<string, unknown>)),
+          service: svc.id,
+          line_kind: 'service',
+          status: 'accepted',
+        });
+      });
+      return rows;
+    })();
+
     const applyPendingSnapshotOverlay = (baseRows: any[]) => {
       const snapshotItems = Array.isArray(pendingQuoteSnapshot?.items) ? pendingQuoteSnapshot.items : [];
       if (!snapshotItems.length) return baseRows;
 
       const mergedRows = [...baseRows];
+      const rowById = new Map<string, number>();
+      const getOverlayAssocKey = (row: any) => {
+        const serviceId = Number(row?.service);
+        const addOnId = Number(row?.service_add_on);
+        if (Number.isFinite(serviceId) && serviceId > 0) return `service:${serviceId}`;
+        if (Number.isFinite(addOnId) && addOnId > 0) return `addon:${addOnId}`;
+        return null;
+      };
       const normalizeOverlayText = (value: any) => String(value ?? '').trim().toLowerCase();
-      snapshotItems.forEach((snap: any) => {
-        const snapId = snap?.id != null ? String(snap.id) : null;
-        const snapAssoc = getRowAssocKey(snap);
-        const snapDesc = normalizeOverlayText(snap?.description || snap?.name);
-        const idx = mergedRows.findIndex((row: any) => {
-          if (snapId && row?.id != null && String(row.id) === snapId) return true;
-          const rowAssoc = getRowAssocKey(row);
-          if (snapAssoc && rowAssoc && snapAssoc === rowAssoc) return true;
-          const rowDesc = normalizeOverlayText(row?.description || row?.name);
-          if (snapDesc && rowDesc && snapDesc === rowDesc) return true;
-          return false;
-        });
-        if (idx >= 0) {
-          mergedRows[idx] = {
-            ...mergedRows[idx],
-            ...snap,
+      mergedRows.forEach((row: any, idx: number) => {
+        if (row?.id != null) rowById.set(String(row.id), idx);
+      });
+
+      snapshotItems.forEach((row: any) => {
+        const changeType = String(row?.change_type || '').toLowerCase();
+        const rowId = row?.id != null ? String(row.id) : null;
+        const rowAssoc = getOverlayAssocKey(row);
+        const rowDesc = normalizeOverlayText(row?.description || row?.name);
+        const targetIdx =
+          rowId != null && rowById.has(rowId)
+            ? Number(rowById.get(rowId))
+            : mergedRows.findIndex((existing: any) => {
+                const existingAssoc = getOverlayAssocKey(existing);
+                if (rowAssoc && existingAssoc && rowAssoc === existingAssoc) return true;
+                const existingDesc = normalizeOverlayText(existing?.description || existing?.name);
+                return Boolean(rowDesc && existingDesc && rowDesc === existingDesc);
+              });
+
+        if (changeType === 'added' && targetIdx < 0) {
+          mergedRows.push({
+            ...row,
             status: 'pending',
-            change_type: snap.change_type || snap.change || snap.modification_type || mergedRows[idx]?.change_type || null,
+            change_type: 'added',
+          });
+          return;
+        }
+
+        if (targetIdx >= 0) {
+          mergedRows[targetIdx] = {
+            ...mergedRows[targetIdx],
+            ...row,
+            status: 'pending',
+            change_type: changeType || mergedRows[targetIdx]?.change_type || null,
           };
           return;
         }
-        mergedRows.push({
-          ...snap,
-          status: 'pending',
-          change_type: snap.change_type || snap.change || snap.modification_type || null,
-        });
+
+        if (changeType.includes('remove') || changeType.includes('delete')) {
+          mergedRows.push({
+            ...row,
+            status: 'pending',
+            change_type: changeType || 'removed',
+          });
+        }
       });
+
       return mergedRows;
     };
 
-    // Prefer server-saved quotation if available.
     if (quotation && (quotation.items || []).length > 0) {
-      const quoteItems = quotation.items || [];
+      const mergedItems = [...(quotation.items || [])];
+      expectedServiceItems.forEach((svcRow: any) => {
+        const sid = Number(svcRow?.service);
+        if (!Number.isFinite(sid) || sid <= 0) return;
+        const exists = mergedItems.some(
+          (it: any) => Number(it?.service) === sid && String(it?.status || '').toLowerCase() !== 'rejected',
+        );
+        if (!exists) mergedItems.push(svcRow);
+      });
       const hasServerPendingAmendment = Boolean(
         quotation?.amendment_id ||
-        quoteItems.some((it: any) =>
-          String(it?.status || '').toLowerCase() === 'pending' &&
-          String(it?.change_type || '').trim()
-        )
+          mergedItems.some(
+            (it: any) =>
+              String(it?.status || '').toLowerCase() === 'pending' && String(it?.change_type || '').trim(),
+          ),
       );
-      const overlayedItems = hasServerPendingAmendment ? quoteItems : applyPendingSnapshotOverlay(quoteItems);
+      const overlayedItems = hasServerPendingAmendment ? mergedItems : applyPendingSnapshotOverlay(mergedItems);
       const mergedTotal = overlayedItems.reduce((sum: number, it: any) => {
         const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
         const qty = Number(it?.quantity ?? 1) || 1;
-        return sum + (price * qty);
+        return sum + price * qty;
       }, 0);
       return {
         ...quotation,
         status: pendingQuoteSnapshot?.status || quotation?.status,
         items: overlayedItems,
-        total_amount: Math.max(Number(pendingQuoteSnapshot?.total_amount || 0), Number(quotation?.total_amount || 0), mergedTotal),
+        total_amount: Math.max(
+          Number(pendingQuoteSnapshot?.total_amount || 0),
+          Number(quotation?.total_amount || 0),
+          mergedTotal,
+        ),
       };
     }
     if (pendingQuoteSnapshot && Array.isArray(pendingQuoteSnapshot.items) && pendingQuoteSnapshot.items.length > 0) {
       return pendingQuoteSnapshot;
     }
-    if (!booking) return null;
-    const details = (booking.request as any)?.request_details || null;
-    if (!details) return null;
 
-    const hasBackjob = Boolean(booking.has_backjob || booking.backjob || booking.status === 'backjob_pending' || booking.status === 'reworked');
-    if (hasBackjob) return null;
+    if (!details) return null;
+    if (isBackjobBooking) return null;
 
     const items: any[] = [];
-    if (details.service) {
-      const svc: any = details.service;
-      const unit = Number(svc.minimum_price ?? booking.amount_fee ?? 0) || 0;
+
+    normalizeBookedServiceRows(details as Record<string, unknown> | null).forEach((svc: any) => {
+      const unit = toPrice(directRequestServiceUnitPrice(svc as Record<string, unknown>));
       items.push({
         description: svc.name || 'Service',
         quantity: 1,
         unit_price: unit,
         service: svc.id,
+        line_kind: 'service',
       });
-    } else if (Array.isArray(details.services) && details.services.length > 0) {
-      const primary: any = details.services[0];
-      const unit = Number(primary.minimum_price ?? booking.amount_fee ?? 0) || 0;
+    });
+
+    normalizeRequestedAddOnRows(details as Record<string, unknown> | null).forEach((addOn: any) => {
+      const unit = toPrice(addOn?.price);
       items.push({
-        description: primary.name || 'Service',
+        description: addOn?.name || 'Item / product',
         quantity: 1,
         unit_price: unit,
-        service: primary.id,
+        service_add_on: addOn?.id,
+        line_kind: 'item',
       });
+    });
+
+    let total_amount = items.reduce(
+      (s, it) => s + (Number(it.unit_price) || 0) * (Number(it.quantity) || 1),
+      0,
+    );
+
+    if (total_amount <= 0 && booking && toPrice(booking.amount_fee) > 0) {
+      items.length = 0;
+      items.push({
+        description: 'Booked total',
+        quantity: 1,
+        unit_price: toPrice(booking.amount_fee),
+      });
+      total_amount = toPrice(booking.amount_fee);
     }
 
     if (items.length === 0) return null;
-    const total_amount = items.reduce(
-      (s, it) => s + (Number(it.unit_price) || 0) * (Number(it.quantity) || 1),
-      0
-    );
     return { items, total_amount };
   };
 

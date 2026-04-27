@@ -113,6 +113,11 @@ urlpatterns = [
     path('shopowner/bookings/', views.list_shopowner_bookings, name='list-shopowner-bookings'),
     path('shopowner/bookings/<int:booking_id>/', views.get_shopowner_booking_detail, name='get-shopowner-booking-detail'),
     path('shopowner/bookings/<int:booking_id>/quotation/', views.get_shopowner_booking_quotation, name='get-shopowner-booking-quotation'),
+    path(
+        'shopowner/bookings/<int:booking_id>/quotation/items/<int:item_id>/receipt/',
+        views.shopowner_upload_quotation_item_receipt,
+        name='shopowner-upload-quotation-item-receipt',
+    ),
     path('shopowner/bookings/<int:booking_id>/accept-backjob/', views.shopowner_accept_backjob, name='shopowner-accept-backjob'),
     path('shopowner/cash-remittances/', views.list_cash_remittances, name='list-cash-remittances'),
     path('shopowner/cash-remittances/<int:remittance_id>/received/', views.mark_cash_remittance_received, name='mark-cash-remittance-received'),

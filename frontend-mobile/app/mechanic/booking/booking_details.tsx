@@ -29,6 +29,11 @@ import { ensureForegroundLocationAccess } from '@/lib/locationPermission';
 import { fetchProfileDetailsCached } from '@/lib/profileCache';
 import { reverseGeocodeAddress, coerceBarangayForDisplay } from '@/lib/locationAddress';
 import { sortQuotationItemsForDisplay } from '@/lib/quotationOrdering';
+import {
+  normalizeBookedServiceRows,
+  normalizeRequestedAddOnRows,
+  directRequestServiceUnitPrice,
+} from '@/lib/directRequestDisplay';
 import { runDedupedRequest } from '@/lib/requestDedupe';
 import { fetchPricingConfig as fetchPricingConfigCached } from '@/hooks/usePricing';
 
@@ -98,25 +103,6 @@ function buildSyntheticRequestDetailsFromRequestListApi(requestObj: Record<strin
   return null;
 }
 
-function normalizeBookedServiceRows(details: Record<string, unknown> | null | undefined): Array<Record<string, unknown>> {
-  if (!details || typeof details !== 'object') return [];
-  const multi = details.services;
-  if (Array.isArray(multi) && multi.length > 0) {
-    return multi.filter((s) => s && typeof s === 'object') as Array<Record<string, unknown>>;
-  }
-  const one = details.service;
-  if (one && typeof one === 'object') {
-    const row = one as Record<string, unknown>;
-    if (row.id != null || row.name) return [row];
-  }
-  return [];
-}
-
-function normalizeRequestedAddOnRows(details: Record<string, unknown> | null | undefined): Array<Record<string, unknown>> {
-  if (!details || !Array.isArray(details.add_ons)) return [];
-  return (details.add_ons as unknown[]).filter((x) => x && typeof x === 'object') as Array<Record<string, unknown>>;
-}
-
 function sumDirectRequestListPrice(requestObj: Record<string, unknown>): number {
   const services =
     Array.isArray(requestObj.services) && requestObj.services.length > 0
@@ -127,7 +113,7 @@ function sumDirectRequestListPrice(requestObj: Record<string, unknown>): number 
   let t = 0;
   for (const s of services) {
     const row = s as Record<string, unknown>;
-    t += Number(row.price ?? row.minimum_price ?? 0) || 0;
+    t += Number(row.booked_unit_price ?? row.price ?? row.minimum_price ?? 0) || 0;
   }
   const addons = Array.isArray(requestObj.add_ons) ? (requestObj.add_ons as unknown[]) : [];
   for (const a of addons) {
@@ -536,7 +522,7 @@ export default function BookingDetailScreen() {
         rows.push({
           description: svc.name || 'Service',
           quantity: 1,
-          unit_price: toPrice(svc.minimum_price ?? svc.price),
+          unit_price: toPrice(directRequestServiceUnitPrice(svc as Record<string, unknown>)),
           service: svc.id,
           line_kind: 'service',
           status: 'accepted',
@@ -637,10 +623,12 @@ export default function BookingDetailScreen() {
     }
 
     if (!details) return null;
+    if (isBackjobBooking) return null;
+
     const items: any[] = [];
 
     normalizeBookedServiceRows(details as Record<string, unknown> | null).forEach((svc: any) => {
-      const unit = toPrice(svc.minimum_price ?? svc.price);
+      const unit = toPrice(directRequestServiceUnitPrice(svc as Record<string, unknown>));
       items.push({ description: svc.name || 'Service', quantity: 1, unit_price: unit, service: svc.id });
     });
 

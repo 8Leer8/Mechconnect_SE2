@@ -330,6 +330,7 @@ def create_mechanic_direct_request(request):
             lines_spec.append({'service_id': sid, 'add_on_ids': _coerce_int_list(add_on_ids)})
 
         resolved_lines = []
+        requested_addon_ids = set()
         for spec in lines_spec:
             try:
                 service = Service.objects.get(id=spec['service_id'])
@@ -502,13 +503,15 @@ def get_service_addons(request, service_id):
     """
     Get add-ons for a specific service.
     Optional query params:
-        - provider_id: when set to a mechanic account id, returns mechanic-owned add-ons only.
-            When set to a shop owner account id, returns add-ons owned by that shop only.
+        - provider_id: provider account id.
+        - provider_type: mechanic | shop | shop_owner (use on shop direct request so
+          mixed-role accounts return shop items, not mechanic rows).
       Without provider_id, only legacy global add-ons are returned.
     """
     try:
         service = Service.objects.get(id=service_id)
         provider_id = request.query_params.get('provider_id')
+        provider_type = str(request.query_params.get('provider_type') or '').strip().lower()
         add_ons = ServiceAddOn.objects.filter(service=service)
 
         if provider_id:
@@ -517,15 +520,29 @@ def get_service_addons(request, service_id):
             except (TypeError, ValueError):
                 return Response({'error': 'provider_id must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
 
-            try:
-                mechanic = Mechanic.objects.get(account__id=provider_id)
-                add_ons = add_ons.filter(mechanic=mechanic)
-            except Mechanic.DoesNotExist:
+            if provider_type in {'shop', 'shop_owner'}:
                 try:
                     shop_owner = ShopOwner.objects.select_related('shop').get(account__id=provider_id)
                     add_ons = add_ons.filter(shop=shop_owner.shop)
                 except ShopOwner.DoesNotExist:
-                    return Response({'error': 'Provider not found'}, status=status.HTTP_404_NOT_FOUND)
+                    return Response({'error': 'Shop provider not found'}, status=status.HTTP_404_NOT_FOUND)
+            elif provider_type == 'mechanic':
+                try:
+                    mechanic = Mechanic.objects.get(account__id=provider_id)
+                    add_ons = add_ons.filter(mechanic=mechanic)
+                except Mechanic.DoesNotExist:
+                    return Response({'error': 'Mechanic provider not found'}, status=status.HTTP_404_NOT_FOUND)
+            else:
+                # Older clients: mechanic first, then shop owner.
+                try:
+                    mechanic = Mechanic.objects.get(account__id=provider_id)
+                    add_ons = add_ons.filter(mechanic=mechanic)
+                except Mechanic.DoesNotExist:
+                    try:
+                        shop_owner = ShopOwner.objects.select_related('shop').get(account__id=provider_id)
+                        add_ons = add_ons.filter(shop=shop_owner.shop)
+                    except ShopOwner.DoesNotExist:
+                        return Response({'error': 'Provider not found'}, status=status.HTTP_404_NOT_FOUND)
         else:
             add_ons = add_ons.filter(shop__isnull=True, mechanic__isnull=True)
 
@@ -632,8 +649,9 @@ def get_shop_services(request, shop_id):
 def create_shop_direct_request(request):
     """
     Create a direct request to a shop.
-    Required fields: shop_id, service_id, service_location
-    Optional fields: add_on_ids (array), scheduled_time
+    Single service (legacy): shop_id, service_id, service_location, optional add_on_ids.
+    Multiple services: shop_id, service_location, and service_lines:
+        [ {"service_id": 1, "add_on_ids": [10]}, {"service_id": 2, "add_on_ids": []} ]
     """
     account_id = request.session.get('account_id')
 
@@ -653,6 +671,7 @@ def create_shop_direct_request(request):
         service_id = request.data.get('service_id')
         service_location_data = request.data.get('service_location')
         add_on_ids = request.data.get('add_on_ids', [])
+        service_lines_raw = request.data.get('service_lines')
         _scheduled_time = request.data.get('scheduled_time')
         vehicle_type, vehicle_brand, vehicle_model, _vehicle_description = _extract_vehicle_fields(request)
 
@@ -665,9 +684,6 @@ def create_shop_direct_request(request):
         if not shop_id:
             return Response({'error': 'Shop is required'}, status=status.HTTP_400_BAD_REQUEST)
 
-        if not service_id:
-            return Response({'error': 'Service is required'}, status=status.HTTP_400_BAD_REQUEST)
-
         if not service_location_data:
             return Response({'error': 'Service location is required'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -676,11 +692,8 @@ def create_shop_direct_request(request):
 
         try:
             shop = Shop.objects.select_related('shop_owner', 'shop_owner__account').get(id=shop_id)
-            service = Service.objects.get(id=service_id)
         except Shop.DoesNotExist:
             return Response({'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
-        except Service.DoesNotExist:
-            return Response({'error': 'Service not found'}, status=status.HTTP_404_NOT_FOUND)
 
         if shop.status != Shop.Status.OPEN:
             return Response(
@@ -695,10 +708,100 @@ def create_shop_direct_request(request):
         if provider_id and str(provider.id) != str(provider_id):
             return Response({'error': 'Provider does not match selected shop'}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            shop_service = ShopService.objects.get(shop=shop, service=service)
-        except ShopService.DoesNotExist:
-            return Response({'error': 'Selected shop does not offer this service'}, status=status.HTTP_400_BAD_REQUEST)
+        def _coerce_int_list(raw):
+            if isinstance(raw, str):
+                try:
+                    raw = json.loads(raw)
+                except json.JSONDecodeError:
+                    return []
+            if not isinstance(raw, list):
+                return []
+            out = []
+            for x in raw:
+                try:
+                    out.append(int(x))
+                except (TypeError, ValueError):
+                    continue
+            return out
+
+        lines_spec = []
+        if service_lines_raw is not None:
+            if isinstance(service_lines_raw, str):
+                try:
+                    service_lines_raw = json.loads(service_lines_raw)
+                except json.JSONDecodeError:
+                    return Response({'error': 'Invalid service_lines format'}, status=status.HTTP_400_BAD_REQUEST)
+            if not isinstance(service_lines_raw, list) or len(service_lines_raw) == 0:
+                return Response({'error': 'service_lines must be a non-empty list'}, status=status.HTTP_400_BAD_REQUEST)
+            seen_svc = set()
+            for row in service_lines_raw:
+                if not isinstance(row, dict):
+                    return Response({'error': 'Each service_lines entry must be an object'}, status=status.HTTP_400_BAD_REQUEST)
+                sid = row.get('service_id')
+                if sid is None:
+                    return Response({'error': 'Each service_lines entry needs service_id'}, status=status.HTTP_400_BAD_REQUEST)
+                try:
+                    sid = int(sid)
+                except (TypeError, ValueError):
+                    return Response({'error': 'Invalid service_id in service_lines'}, status=status.HTTP_400_BAD_REQUEST)
+                if sid in seen_svc:
+                    return Response({'error': 'Duplicate service in service_lines'}, status=status.HTTP_400_BAD_REQUEST)
+                seen_svc.add(sid)
+                lines_spec.append({'service_id': sid, 'add_on_ids': _coerce_int_list(row.get('add_on_ids', []))})
+        else:
+            if not service_id:
+                return Response({'error': 'Service is required'}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                sid = int(service_id)
+            except (TypeError, ValueError):
+                return Response({'error': 'Invalid service_id'}, status=status.HTTP_400_BAD_REQUEST)
+            lines_spec.append({'service_id': sid, 'add_on_ids': _coerce_int_list(add_on_ids)})
+
+        resolved_lines = []
+        requested_addon_ids = set()
+        for spec in lines_spec:
+            try:
+                service = Service.objects.get(id=spec['service_id'])
+            except Service.DoesNotExist:
+                return Response({'error': 'Service not found'}, status=status.HTTP_404_NOT_FOUND)
+            try:
+                shop_service = ShopService.objects.get(shop=shop, service=service)
+            except ShopService.DoesNotExist:
+                return Response(
+                    {'error': 'Selected shop does not offer one of the chosen services'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            row_addon_ids = []
+            for add_on_id in spec['add_on_ids']:
+                try:
+                    aid = int(add_on_id)
+                except (TypeError, ValueError):
+                    continue
+                row_addon_ids.append(aid)
+                requested_addon_ids.add(aid)
+            resolved_lines.append((service, shop_service, row_addon_ids))
+
+        # Shop "add-ons" are presented to clients as items/products.
+        # Validate ownership by shop first so mixed-role/provider ambiguity
+        # does not incorrectly reject valid shop items.
+        addon_by_id = {}
+        if requested_addon_ids:
+            addon_qs = ServiceAddOn.objects.filter(
+                id__in=requested_addon_ids,
+                shop=shop,
+            )
+            addon_by_id = {a.id: a for a in addon_qs}
+            missing_ids = [aid for aid in requested_addon_ids if aid not in addon_by_id]
+            if missing_ids:
+                return Response(
+                    {
+                        'error': 'One or more selected items/products are not available in this shop',
+                        'invalid_item_ids': sorted(missing_ids),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        first_service = resolved_lines[0][0]
 
         service_location = ServiceLocation.objects.create(
             street_name=service_location_data.get('street_name', ''),
@@ -723,30 +826,28 @@ def create_shop_direct_request(request):
 
         direct_request = DirectRequest.objects.create(
             request=new_request,
-            service=service,
+            service=first_service,
         )
 
-        total_amount = float(shop_service.price)
+        for i, (service, _ss, _addons) in enumerate(resolved_lines):
+            DirectRequestServiceLine.objects.create(
+                request=new_request,
+                service=service,
+                sort_order=i,
+            )
 
-        if isinstance(add_on_ids, str):
-            try:
-                add_on_ids = json.loads(add_on_ids)
-            except json.JSONDecodeError:
-                add_on_ids = []
-
-        if not isinstance(add_on_ids, list):
-            add_on_ids = []
-
-        for add_on_id in add_on_ids:
-            try:
-                add_on = ServiceAddOn.objects.get(id=add_on_id, service=service, shop=shop)
+        total_amount = 0.0
+        for _service, shop_service, row_addon_ids in resolved_lines:
+            total_amount += float(shop_service.price)
+            for add_on_id in row_addon_ids:
+                add_on = addon_by_id.get(add_on_id)
+                if not add_on:
+                    continue
                 DirectRequestAddOn.objects.create(
                     request=new_request,
                     service_add_on=add_on,
                 )
                 total_amount += float(add_on.price)
-            except ServiceAddOn.DoesNotExist:
-                continue
 
         return Response({
             'message': 'Direct request to shop created successfully',
