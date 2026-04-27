@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Check, ChevronDown, Eye } from "lucide-react";
+import { ChevronDown, Eye } from "lucide-react";
 import { AdminLayout } from "../AdminLayout";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -448,15 +448,6 @@ export function VerificationQueuePage() {
                     >
                       <Eye className="size-4" />
                       View Details
-                    </Button>
-                    <Button
-                      size="sm"
-                      className="rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
-                      onClick={() => handleDecision(item, "approve")}
-                      disabled={processingKey === itemKey(item)}
-                    >
-                      <Check className="size-4" />
-                      {processingKey === itemKey(item) ? "Processing..." : "Approve"}
                     </Button>
                   </div>
                 </CardContent>

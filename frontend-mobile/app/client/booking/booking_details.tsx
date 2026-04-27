@@ -249,6 +249,7 @@ export default function ClientBookingDetailScreen() {
   const [showPaymentReceiptConfirm, setShowPaymentReceiptConfirm] = useState(false);
   const [showEWalletModal, setShowEWalletModal] = useState(false);
   const [showCreditsModal, setShowCreditsModal] = useState(false);
+  const [creditsPaymentAmount, setCreditsPaymentAmount] = useState<number | null>(null);
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [showQRConfirm, setShowQRConfirm] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -1693,7 +1694,7 @@ export default function ClientBookingDetailScreen() {
   const isPaymentBlockedByPendingQuote = isQuotationPending;
   const showPaymentCTA =
     (!backjobPaymentPhase || payableTotal > 0) &&
-    (isBookedState || (booking.status === 'pending_payment' && remainingBalance > 0));
+    ((isBookedState && !hasPaidInstallment) || (booking.status === 'pending_payment' && remainingBalance > 0));
   const mechanicReviewMeta = booking.mechanic_review || {};
   const existingMechanicReview = mechanicReviewMeta.review || null;
   const canRateMechanic =
@@ -3769,7 +3770,7 @@ export default function ClientBookingDetailScreen() {
         selectedPercentage={selectedInitialPaymentPercentage}
         onSelectPercentage={setSelectedInitialPaymentPercentage}
         onClose={() => setShowPaymentModal(false)}
-        onPaymentInitiated={(method) => {
+        onPaymentInitiated={(method, amount) => {
           setPaymentMethod(method);
           if (method === 'cash') {
             setShowPaymentModal(false);
@@ -3784,6 +3785,7 @@ export default function ClientBookingDetailScreen() {
 
           if (method === 'credits') {
             setShowPaymentModal(false);
+            setCreditsPaymentAmount(amount ?? modalAmountToPay);
             setShowCreditsModal(true);
           }
         }}
@@ -3792,7 +3794,7 @@ export default function ClientBookingDetailScreen() {
       <CreditsPaymentModal
         visible={showCreditsModal && (!backjobPaymentPhase || payableTotal > 0)}
         bookingId={booking.id}
-        totalAmount={modalAmountToPay}
+        totalAmount={creditsPaymentAmount ?? modalAmountToPay}
         onClose={() => setShowCreditsModal(false)}
         onPaymentSuccess={(data) => {
           setShowCreditsModal(false);

@@ -15,7 +15,7 @@ interface PaymentMethodModalProps {
   selectedPercentage?: 0.3 | 0.5;
   onSelectPercentage?: (value: 0.3 | 0.5) => void;
   onClose: () => void;
-  onPaymentInitiated: (method: string) => void;
+  onPaymentInitiated: (method: string, amount?: number) => void;
 }
 
 export default function PaymentMethodModal({
@@ -147,7 +147,7 @@ export default function PaymentMethodModal({
 
           <TouchableOpacity
             style={styles.optionCard}
-            onPress={() => onPaymentInitiated('credits')}
+            onPress={() => onPaymentInitiated('credits', amountToPay)}
             disabled={loadingMethod !== null}
             activeOpacity={0.85}
           >

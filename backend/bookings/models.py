@@ -352,6 +352,7 @@ class PaymentInstallment(models.Model):
         INITIAL = "initial"
         FINAL = "final"
         FULL = "full"
+        PARTIAL = "partial"
 
     class Status(models.TextChoices):
         PENDING = "pending"
@@ -384,6 +385,7 @@ class PaymentTransaction(models.Model):
         QR = "qr"
         GCASH = "gcash"
         MAYA = "maya"
+        CREDITS = "credits"
 
     class Status(models.TextChoices):
         SUCCESS = "success"

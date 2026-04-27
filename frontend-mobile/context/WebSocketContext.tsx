@@ -14,9 +14,13 @@ import { WS_URL } from '@/config';
 export interface BookingUpdateMessage {
   type: string;
   booking_id?: number;
+  broadcast_id?: number;
+  broadcastId?: number;
   status?: string;
   message?: string;
   action?: string;
+  offer_id?: number;
+  offerId?: number;
   /** Backend hint for UI (e.g. mechanic_accepted_direct). */
   event_source?: string;
   _timestamp?: number;

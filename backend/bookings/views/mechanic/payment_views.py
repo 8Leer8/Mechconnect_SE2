@@ -42,7 +42,7 @@ from ...direct_request_utils import iter_direct_request_services
 
 logger = logging.getLogger(__name__)
 WEBHOOK_MAX_AGE_SECONDS = 30 * 60
-PAYMENT_OPEN_STATUSES = {Booking.Status.PENDING_PAYMENT, Booking.Status.ACCEPTED}
+PAYMENT_OPEN_STATUSES = {Booking.Status.PENDING_PAYMENT, Booking.Status.ACCEPTED, Booking.Status.BOOKED}
 
 
 def _build_paymongo_redirect_urls():
@@ -1866,7 +1866,22 @@ def pay_with_credits(request):
             if target_installment is None or target_installment.status == PaymentInstallment.Status.PAID:
                 return Response({"error": "Booking is already fully paid"}, status=400)
 
-            amount_to_pay = _to_money(target_installment.amount)
+            installment_amount = _to_money(target_installment.amount)
+            
+            # Check if this is a partial payment (requested_amount < installment_amount)
+            if requested_amount < installment_amount:
+                # Validate partial payment is reasonable (at least 30% or specified percentage)
+                min_partial = installment_amount * Decimal('0.3')
+                if requested_amount < min_partial:
+                    return Response({
+                        "error": f"Partial payment must be at least 30% of the installment amount",
+                        "minimum_required": float(min_partial),
+                        "installment_amount": float(installment_amount),
+                    }, status=400)
+                amount_to_pay = requested_amount
+            else:
+                amount_to_pay = installment_amount
+            
             required_credits = int(amount_to_pay.to_integral_value(rounding=ROUND_UP))
 
             # Lock client's wallet after we know the real payable installment.
@@ -1899,14 +1914,55 @@ def pay_with_credits(request):
                 payment_label=target_installment.installment_type,
             )
             
-            # Mark payment as successful
-            payment_result = _finalize_payment_success(
-                booking,
-                paid_at=timezone.now(),
-                external_reference=f'credits_{booking_id}_{timezone.now().timestamp()}',
-                installment_type=target_installment.installment_type,
-                method='credits',
-            )
+            # Handle partial payment logic
+            is_partial = amount_to_pay < installment_amount
+            remaining = installment_amount - amount_to_pay
+            
+            if is_partial and remaining > Decimal('0.01'):
+                # For partial payments, update the current installment to remaining amount
+                # and create a new paid record for the paid portion
+                target_installment.amount = remaining
+                target_installment.save(update_fields=['amount', 'updated_at'])
+                
+                # Create a PaymentTransaction record for the partial payment
+                PaymentTransaction.objects.create(
+                    booking=booking,
+                    installment=target_installment,
+                    amount=amount_to_pay,
+                    status=PaymentTransaction.Status.SUCCESS,
+                    method=PaymentTransaction.Method.CREDITS,
+                    reference=f'credits_partial_{booking_id}_{timezone.now().timestamp()}',
+                )
+                
+                # Create a new paid installment record for tracking
+                paid_installment = PaymentInstallment.objects.create(
+                    booking=booking,
+                    installment_type=PaymentInstallment.Type.PARTIAL,
+                    amount=amount_to_pay,
+                    status=PaymentInstallment.Status.PAID,
+                )
+                paid_installment.created_at = timezone.now()
+                paid_installment.save(update_fields=['created_at'])
+                
+                # Update booking payment status to partially_paid
+                booking.payment_status = Booking.PaymentStatus.PARTIALLY_PAID
+                booking.save(update_fields=['payment_status', 'updated_at'])
+                
+                payment_result = {
+                    "summary": _get_payment_summary(booking),
+                    "partial_payment": True,
+                    "paid_amount": float(amount_to_pay),
+                    "remaining_amount": float(remaining),
+                }
+            else:
+                # Full installment payment - use standard flow
+                payment_result = _finalize_payment_success(
+                    booking,
+                    paid_at=timezone.now(),
+                    external_reference=f'credits_{booking_id}_{timezone.now().timestamp()}',
+                    installment_type=target_installment.installment_type,
+                    method='credits',
+                )
             summary = payment_result.get("summary") or {}
             
             return Response({

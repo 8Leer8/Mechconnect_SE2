@@ -190,7 +190,7 @@ export default function MapScreen() {
   const lastPricingConfigFetchAtRef = useRef(0);
   const { showNotification } = useNotification();
   const pathname = usePathname();
-  const segments = useSegments();
+  const segments = useSegments() as string[];
   const isShopOwnerMap =
     pathname.includes('(shopownerTabs)') ||
     pathname.includes('/main/shop') ||
@@ -813,7 +813,7 @@ export default function MapScreen() {
     setSelectedBroadcast(broadcast);
     await fetchRouteAndTraffic(broadcast);
   };
-  const handleViewAndAccept = (broadcast: BroadcastRequest) => {
+  const handleViewAndAccept = async (broadcast: BroadcastRequest) => {
     if (!canInteractWithBroadcast(broadcast)) {
       showNotification({
         type: 'info',
@@ -827,9 +827,7 @@ export default function MapScreen() {
     setAwaitingClientSelectionBroadcastId(hasPendingOffer ? broadcast.id : null);
     setOfferNotice(null);
     setAccepting(false);
-    if (lastFetchedBroadcastId.current === broadcast.id && cachedRouteData.current) {
-      setRouteCoords(cachedRouteData.current.routeCoords); setTrafficData(cachedRouteData.current.trafficData); setFeeData(cachedRouteData.current.feeData); setRouteError(null); setRouteLoading(false);
-    }
+    await fetchRouteAndTraffic(broadcast);
     setModalVisible(true); void fetchTokensBalance();
   };
 
