@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import { View, ScrollView, TouchableOpacity, RefreshControl } from 'react-native';
 import { Image } from 'expo-image';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -44,6 +44,8 @@ export default function EmergencyScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [mechanicCanAccept, setMechanicCanAccept] = useState(true);
+  const [acceptDisabledReason, setAcceptDisabledReason] = useState<string | null>(null);
 
   useEffect(() => {
     fetchEmergencyRequests();
@@ -51,6 +53,13 @@ export default function EmergencyScreen() {
     const interval = setInterval(fetchEmergencyRequests, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchEmergencyRequests();
+      return undefined;
+    }, [])
+  );
 
   const fetchEmergencyRequests = async () => {
     try {
@@ -60,14 +69,35 @@ export default function EmergencyScreen() {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
       });
+      const data = await response.json().catch(() => ({}));
 
-      if (!response.ok) throw new Error('Failed to fetch emergency requests');
-      const data = await response.json();
+      if (!response.ok) {
+        const backendMessage =
+          typeof data?.error === 'string' && data.error.trim()
+            ? data.error
+            : typeof data?.message === 'string' && data.message.trim()
+            ? data.message
+            : '';
+        if (response.status === 404) {
+          throw new Error(
+            backendMessage || 'Emergency endpoint not found. Please restart backend server and try again.'
+          );
+        }
+        throw new Error(backendMessage || `Failed to fetch emergency requests (${response.status})`);
+      }
+
       const emergencies = data.emergency_requests || [];
       setRequests(emergencies);
+      const canAccept = data?.mechanic_can_accept !== false;
+      setMechanicCanAccept(canAccept);
+      setAcceptDisabledReason(
+        typeof data?.accept_disabled_reason === 'string' && data.accept_disabled_reason.trim()
+          ? data.accept_disabled_reason
+          : null
+      );
     } catch (err: any) {
       console.error('[Emergency Page] Error:', err);
-      setError(err.message);
+      setError(err?.message || 'Failed to fetch emergency requests');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -96,6 +126,17 @@ export default function EmergencyScreen() {
   };
 
   const handleAcceptEmergency = async (requestId: number) => {
+    if (!mechanicCanAccept) {
+      showNotification({
+        type: 'warning',
+        message:
+          acceptDisabledReason === 'mechanic_locked'
+            ? 'Your account is locked from accepting jobs right now.'
+            : 'Your status is unavailable. Switch to Available to accept emergency requests.',
+      });
+      return;
+    }
+
     try {
       const response = await fetch(`${API_URL}/bookings/mechanic/emergency/${requestId}/accept/`, {
         method: 'POST',
@@ -104,7 +145,7 @@ export default function EmergencyScreen() {
         body: JSON.stringify({ amount_fee: 0 }), // Can be updated to show amount input
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
 
       if (response.ok) {
         const acceptedBookingId = Number(
@@ -119,7 +160,22 @@ export default function EmergencyScreen() {
           });
         }
       } else {
-        showNotification({ type: 'error', message: data.error || 'Failed to accept emergency request' });
+        const backendMessage =
+          typeof data?.error === 'string' && data.error.trim()
+            ? data.error
+            : typeof data?.message === 'string' && data.message.trim()
+            ? data.message
+            : '';
+
+        if (data?.reason === 'mechanic_unavailable') {
+          setMechanicCanAccept(false);
+          setAcceptDisabledReason('mechanic_unavailable');
+        }
+
+        showNotification({
+          type: 'error',
+          message: backendMessage || `Failed to accept emergency request (${response.status})`,
+        });
       }
     } catch (error) {
       console.error('Error accepting emergency:', error);
@@ -172,6 +228,17 @@ export default function EmergencyScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF3B30" />
         }
       >
+        {!loading && !error && !mechanicCanAccept && (
+          <View style={styles.unavailableBanner}>
+            <FontAwesome name="ban" size={14} color="#fff" />
+            <ThemedText style={styles.unavailableBannerText}>
+              {acceptDisabledReason === 'mechanic_locked'
+                ? 'Emergency requests are disabled while your account is locked.'
+                : 'Emergency requests are disabled while your status is Unavailable.'}
+            </ThemedText>
+          </View>
+        )}
+
         {loading && !refreshing ? (
           <SkeletonEmergencyList />
         ) : error ? (
@@ -191,7 +258,10 @@ export default function EmergencyScreen() {
         ) : (
           <View style={styles.requestsList}>
             {requests.map((request, index) => (
-              <View key={request.id} style={styles.emergencyCard}>
+              <View
+                key={request.id}
+                style={[styles.emergencyCard, !mechanicCanAccept && styles.emergencyCardDisabled]}
+              >
                 <View style={styles.cardHeader}>
                   <View style={styles.headerLeft}>
                     <View style={styles.cardNumberBadge}>
@@ -277,16 +347,20 @@ export default function EmergencyScreen() {
 
                 <View style={styles.actionButtons}>
                   <TouchableOpacity 
-                    style={[styles.actionBtn, styles.acceptBtn]}
+                    style={[styles.actionBtn, styles.acceptBtn, !mechanicCanAccept && styles.actionBtnDisabled]}
                     onPress={() => handleAcceptEmergency(request.id)}
+                    disabled={!mechanicCanAccept}
                   >
                     <FontAwesome name="check" size={16} color="#fff" />
-                    <ThemedText style={styles.actionBtnText}>Accept</ThemedText>
+                    <ThemedText style={styles.actionBtnText}>
+                      {mechanicCanAccept ? 'Accept' : 'Unavailable'}
+                    </ThemedText>
                   </TouchableOpacity>
 
                   <TouchableOpacity 
-                    style={[styles.actionBtn, styles.navigateBtn]}
+                    style={[styles.actionBtn, styles.navigateBtn, !mechanicCanAccept && styles.actionBtnDisabled]}
                     onPress={() => handleNavigate(request)}
+                    disabled={!mechanicCanAccept}
                   >
                     <FontAwesome name="location-arrow" size={16} color="#fff" />
                     <ThemedText style={styles.actionBtnText}>Navigate</ThemedText>

@@ -3,14 +3,21 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from django.db.models import Q
 from datetime import timedelta
 
 import json
 
 from ...models import (
-    Request, CustomRequest, DirectRequest, EmergencyRequest, EmergencyRequestPhoto,
-    ServiceLocation, DirectRequestAddOn
+    Request,
+    CustomRequest,
+    DirectRequest,
+    EmergencyRequest,
+    EmergencyRequestPhoto,
+    ServiceLocation,
+    DirectRequestAddOn,
+    DirectRequestServiceLine,
 )
 from users.models import Account, Mechanic, ShopOwner
 from services.models import Service, ServiceAddOn, MechanicService, ShopService
@@ -28,6 +35,17 @@ def _extract_vehicle_fields(request):
     vehicle_model = str(request.data.get('vehicle_model') or '').strip()
     vehicle_description = str(request.data.get('vehicle_description') or '').strip()
     return vehicle_type, vehicle_brand, vehicle_model, vehicle_description
+
+
+def _parse_optional_schedule(value):
+    if not value:
+        return None
+    parsed = parse_datetime(str(value))
+    if parsed is None:
+        return None
+    if timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+    return parsed
 
 
 def _clean_location_text(value, fallback='Unavailable'):
@@ -125,6 +143,7 @@ def create_custom_request(request):
         description = request.data.get('description')
         service_location_data = request.data.get('service_location')
         concern_picture = request.FILES.get('concern_picture')
+        scheduled_time = _parse_optional_schedule(request.data.get('scheduled_time'))
         vehicle_type, vehicle_brand, vehicle_model, _vehicle_description = _extract_vehicle_fields(request)
         
         # Parse service_location JSON string when sent via FormData
@@ -190,6 +209,7 @@ def create_custom_request(request):
             vehicle_type=vehicle_type,
             vehicle_brand=vehicle_brand,
             vehicle_model=vehicle_model,
+            scheduled_time=scheduled_time,
         )
         
         # Create custom request
@@ -219,8 +239,10 @@ def create_custom_request(request):
 def create_mechanic_direct_request(request):
     """
     Create a direct request to a mechanic.
-    Required fields: provider_id, service_id, service_location
-    Optional fields: add_on_ids (array), scheduled_time
+
+    Single service (legacy): provider_id, service_id, service_location, optional add_on_ids.
+    Multiple services: provider_id, service_location, and service_lines:
+        [ {"service_id": 1, "add_on_ids": [10]}, {"service_id": 2, "add_on_ids": []} ]
     """
     account_id = request.session.get('account_id')
 
@@ -236,17 +258,21 @@ def create_mechanic_direct_request(request):
         client = account.client
 
         provider_id = request.data.get('provider_id')
-        service_id = request.data.get('service_id')
         service_location_data = request.data.get('service_location')
+        service_id = request.data.get('service_id')
         add_on_ids = request.data.get('add_on_ids', [])
-        _scheduled_time = request.data.get('scheduled_time')
+        service_lines_raw = request.data.get('service_lines')
+        scheduled_time = _parse_optional_schedule(request.data.get('scheduled_time'))
         vehicle_type, vehicle_brand, vehicle_model, _vehicle_description = _extract_vehicle_fields(request)
+
+        if isinstance(service_location_data, str):
+            try:
+                service_location_data = json.loads(service_location_data)
+            except json.JSONDecodeError:
+                return Response({'error': 'Invalid service location format'}, status=status.HTTP_400_BAD_REQUEST)
 
         if not provider_id:
             return Response({'error': 'Provider is required'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if not service_id:
-            return Response({'error': 'Service is required'}, status=status.HTTP_400_BAD_REQUEST)
 
         if not service_location_data:
             return Response({'error': 'Service location is required'}, status=status.HTTP_400_BAD_REQUEST)
@@ -256,46 +282,100 @@ def create_mechanic_direct_request(request):
 
         try:
             provider = Account.objects.get(id=provider_id)
-            service = Service.objects.get(id=service_id)
         except Account.DoesNotExist:
             return Response({'error': 'Provider not found'}, status=status.HTTP_404_NOT_FOUND)
-        except Service.DoesNotExist:
-            return Response({'error': 'Service not found'}, status=status.HTTP_404_NOT_FOUND)
 
         if not hasattr(provider, 'mechanic'):
             return Response({'error': 'Selected provider is not a mechanic'}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            mechanic_service = MechanicService.objects.get(
-                mechanic=provider.mechanic,
-                service=service,
+        if provider.mechanic.status != Mechanic.WorkStatus.AVAILABLE:
+            return Response(
+                {'error': 'Mechanic not available for booking'},
+                status=status.HTTP_409_CONFLICT,
             )
-        except MechanicService.DoesNotExist:
-            return Response({'error': 'Selected mechanic does not offer this service'}, status=status.HTTP_400_BAD_REQUEST)
 
-        if isinstance(add_on_ids, str):
+        def _coerce_int_list(raw):
+            if isinstance(raw, str):
+                try:
+                    raw = json.loads(raw)
+                except json.JSONDecodeError:
+                    return []
+            if not isinstance(raw, list):
+                return []
+            out = []
+            for x in raw:
+                try:
+                    out.append(int(x))
+                except (TypeError, ValueError):
+                    continue
+            return out
+
+        lines_spec = []
+        if service_lines_raw is not None:
+            if isinstance(service_lines_raw, str):
+                try:
+                    service_lines_raw = json.loads(service_lines_raw)
+                except json.JSONDecodeError:
+                    return Response({'error': 'Invalid service_lines format'}, status=status.HTTP_400_BAD_REQUEST)
+            if not isinstance(service_lines_raw, list) or len(service_lines_raw) == 0:
+                return Response({'error': 'service_lines must be a non-empty list'}, status=status.HTTP_400_BAD_REQUEST)
+            seen_svc = set()
+            for row in service_lines_raw:
+                if not isinstance(row, dict):
+                    return Response({'error': 'Each service_lines entry must be an object'}, status=status.HTTP_400_BAD_REQUEST)
+                sid = row.get('service_id')
+                if sid is None:
+                    return Response({'error': 'Each service_lines entry needs service_id'}, status=status.HTTP_400_BAD_REQUEST)
+                try:
+                    sid = int(sid)
+                except (TypeError, ValueError):
+                    return Response({'error': 'Invalid service_id in service_lines'}, status=status.HTTP_400_BAD_REQUEST)
+                if sid in seen_svc:
+                    return Response({'error': 'Duplicate service in service_lines'}, status=status.HTTP_400_BAD_REQUEST)
+                seen_svc.add(sid)
+                lines_spec.append({'service_id': sid, 'add_on_ids': _coerce_int_list(row.get('add_on_ids', []))})
+        else:
+            if not service_id:
+                return Response({'error': 'Service is required'}, status=status.HTTP_400_BAD_REQUEST)
             try:
-                add_on_ids = json.loads(add_on_ids)
-            except json.JSONDecodeError:
-                add_on_ids = []
+                sid = int(service_id)
+            except (TypeError, ValueError):
+                return Response({'error': 'Invalid service_id'}, status=status.HTTP_400_BAD_REQUEST)
+            lines_spec.append({'service_id': sid, 'add_on_ids': _coerce_int_list(add_on_ids)})
 
-        if not isinstance(add_on_ids, list):
-            add_on_ids = []
-
-        resolved_add_ons = []
-        for add_on_id in add_on_ids:
+        resolved_lines = []
+        for spec in lines_spec:
             try:
-                add_on = ServiceAddOn.objects.get(
-                    id=add_on_id,
-                    service=service,
+                service = Service.objects.get(id=spec['service_id'])
+            except Service.DoesNotExist:
+                return Response({'error': 'Service not found'}, status=status.HTTP_404_NOT_FOUND)
+            try:
+                mechanic_service = MechanicService.objects.get(
                     mechanic=provider.mechanic,
+                    service=service,
                 )
-            except ServiceAddOn.DoesNotExist:
+            except MechanicService.DoesNotExist:
                 return Response(
-                    {'error': 'One or more selected add-ons are not available for this mechanic'},
+                    {'error': 'Selected mechanic does not offer one of the chosen services'},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            resolved_add_ons.append(add_on)
+            row_addons = []
+            for add_on_id in spec['add_on_ids']:
+                try:
+                    add_on = ServiceAddOn.objects.get(
+                        id=add_on_id,
+                        service=service,
+                        mechanic=provider.mechanic,
+                    )
+                except ServiceAddOn.DoesNotExist:
+                    return Response(
+                        {'error': 'One or more selected add-ons are not available for this mechanic'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                row_addons.append(add_on)
+            resolved_lines.append((service, mechanic_service, row_addons))
+
+        first_service = resolved_lines[0][0]
 
         service_location = ServiceLocation.objects.create(
             street_name=service_location_data.get('street_name', ''),
@@ -315,21 +395,30 @@ def create_mechanic_direct_request(request):
             vehicle_type=vehicle_type,
             vehicle_brand=vehicle_brand,
             vehicle_model=vehicle_model,
+            scheduled_time=scheduled_time,
         )
 
         direct_request = DirectRequest.objects.create(
             request=new_request,
-            service=service,
+            service=first_service,
         )
 
-        total_amount = float(mechanic_service.price)
-
-        for add_on in resolved_add_ons:
-            DirectRequestAddOn.objects.create(
+        for i, (service, _ms, _addons) in enumerate(resolved_lines):
+            DirectRequestServiceLine.objects.create(
                 request=new_request,
-                service_add_on=add_on,
+                service=service,
+                sort_order=i,
             )
-            total_amount += float(add_on.price)
+
+        total_amount = 0.0
+        for _service, mechanic_service, row_addons in resolved_lines:
+            total_amount += float(mechanic_service.price)
+            for add_on in row_addons:
+                DirectRequestAddOn.objects.create(
+                    request=new_request,
+                    service_add_on=add_on,
+                )
+                total_amount += float(add_on.price)
 
         return Response({
             'message': 'Direct request created successfully',
@@ -352,7 +441,11 @@ def get_mechanics(request):
     Get list of available mechanics with their services.
     """
     try:
-        mechanics = Mechanic.objects.select_related('account').all()
+        mechanics = Mechanic.objects.select_related('account').filter(
+            status=Mechanic.WorkStatus.AVAILABLE,
+            verification_status=Mechanic.VerificationStatus.APPROVED,
+            account__is_active=True,
+        )
 
         mechanics_data = []
         for mechanic in mechanics:
@@ -575,7 +668,7 @@ def create_shop_direct_request(request):
         service_id = request.data.get('service_id')
         service_location_data = request.data.get('service_location')
         add_on_ids = request.data.get('add_on_ids', [])
-        _scheduled_time = request.data.get('scheduled_time')
+        scheduled_time = _parse_optional_schedule(request.data.get('scheduled_time'))
         vehicle_type, vehicle_brand, vehicle_model, _vehicle_description = _extract_vehicle_fields(request)
 
         if isinstance(service_location_data, str):
@@ -603,6 +696,15 @@ def create_shop_direct_request(request):
             return Response({'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
         except Service.DoesNotExist:
             return Response({'error': 'Service not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if shop.status != Shop.Status.OPEN:
+            return Response(
+                {
+                    'error': 'Shop is unavailable for direct requests. The shop is hidden from discovery.',
+                    'reason': 'shop_unavailable',
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
 
         provider = shop.shop_owner.account
         if provider_id and str(provider.id) != str(provider_id):
@@ -632,6 +734,7 @@ def create_shop_direct_request(request):
             vehicle_type=vehicle_type,
             vehicle_brand=vehicle_brand,
             vehicle_model=vehicle_model,
+            scheduled_time=scheduled_time,
         )
 
         direct_request = DirectRequest.objects.create(
@@ -713,6 +816,7 @@ def create_emergency_request(request):
         service_location_data = request.data.get('service_location')
         concern_picture = request.FILES.get('concern_picture')
         concern_pictures = request.FILES.getlist('concern_pictures')
+        scheduled_time = _parse_optional_schedule(request.data.get('scheduled_time'))
         vehicle_type, vehicle_brand, vehicle_model, vehicle_description = _extract_vehicle_fields(request)
 
         total_photos = len(concern_pictures) + (1 if concern_picture and not concern_pictures else 0)
@@ -787,6 +891,7 @@ def create_emergency_request(request):
             vehicle_brand=vehicle_brand,
             vehicle_model=vehicle_model,
             vehicle_description=vehicle_description,
+            scheduled_time=scheduled_time,
         )
         
         # Create emergency request

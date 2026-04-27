@@ -1,6 +1,6 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
-import { FontAwesome } from '@expo/vector-icons';
+import { Feather, FontAwesome } from '@expo/vector-icons';
 import { Modal, TouchableOpacity, View } from 'react-native';
 import { useTabsBackToHome } from '@/hooks/use-tabs-back-to-home';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,8 +15,9 @@ export default function MechanicTabLayout() {
   const [mechanicGlobalModal, setMechanicGlobalModal] = React.useState<{
     visible: boolean;
     title: string;
+    body?: string;
     bookingId: number | null;
-    mode: 'accepted' | 'rejected' | 'info';
+    mode: 'accepted' | 'rejected' | 'info' | 'cancelled';
   }>({
     visible: false,
     title: 'Client has accepted your request',
@@ -24,25 +25,39 @@ export default function MechanicTabLayout() {
     mode: 'accepted',
   });
   const lastHandledMessageKeyRef = React.useRef<string | null>(null);
+  /** Latest booking id for the open success modal (avoids stale closure on "View booking"). */
+  const lastModalBookingIdRef = React.useRef<number | null>(null);
   const mountedAtRef = React.useRef<number>(Date.now());
 
   React.useEffect(() => {
     if (!lastMessage) return;
     const actionText = String(lastMessage.action || '').toLowerCase();
     const messageText = String((lastMessage as any).message || '').toLowerCase();
+    const eventSource = String(lastMessage.event_source || '').toLowerCase();
     const isQuotationUpdate = actionText.includes('quotation') || messageText.includes('quotation');
+    const statusLower = String(lastMessage.status || '').toLowerCase();
+
+    const isMechanicAcceptedDirect =
+      lastMessage.type === 'booking_update' &&
+      statusLower === 'accepted' &&
+      eventSource === 'mechanic_accepted_direct';
+
     const isBroadcastFinalize =
       actionText === 'booking_finalized'
       || (lastMessage.type === 'notification_update' && actionText === 'booking_finalized')
       || (
         lastMessage.type === 'booking_update' &&
-        String(lastMessage.status || '').toLowerCase() === 'accepted' &&
-        !isQuotationUpdate
+        statusLower === 'accepted' &&
+        !isQuotationUpdate &&
+        !isMechanicAcceptedDirect
       );
     const isOfferRejected =
       actionText === 'offer_rejected'
       || (lastMessage.type === 'notification_update' && actionText === 'offer_rejected');
-    if (!isBroadcastFinalize && !isOfferRejected && !isQuotationUpdate) return;
+    const isClientCancelled =
+      lastMessage.type === 'booking_update' &&
+      actionText === 'client_cancelled';
+    if (!isBroadcastFinalize && !isOfferRejected && !isQuotationUpdate && !isMechanicAcceptedDirect && !isClientCancelled) return;
 
     const messageTimestamp = Number(lastMessage._timestamp || 0) || null;
     if (!messageTimestamp) return;
@@ -52,9 +67,37 @@ export default function MechanicTabLayout() {
     lastHandledMessageKeyRef.current = dedupeKey;
 
     const bookingId = Number((lastMessage as any).booking_id ?? (lastMessage as any).bookingId ?? 0) || null;
+    const safeBookingId =
+      bookingId != null && Number.isFinite(bookingId) && bookingId > 0 ? bookingId : null;
+
+    if (isClientCancelled) {
+      const reason = String((lastMessage as any).cancellation_reason || '').trim();
+      lastModalBookingIdRef.current = safeBookingId;
+      setMechanicGlobalModal({
+        visible: true,
+        title: 'Client cancelled this booking',
+        body: reason ? `Reason: ${reason}` : 'The client cancelled before you started travel.',
+        bookingId,
+        mode: 'cancelled',
+      });
+      return;
+    }
+
+    if (isMechanicAcceptedDirect) {
+      lastModalBookingIdRef.current = safeBookingId;
+      setMechanicGlobalModal({
+        visible: true,
+        title: 'You accepted this direct request',
+        bookingId,
+        mode: 'accepted',
+      });
+      return;
+    }
+
     if (isQuotationUpdate) {
       const isQuotationRejected = actionText.includes('rejected') || messageText.includes('rejected');
       const isQuotationAccepted = actionText.includes('accepted') || messageText.includes('accepted');
+      lastModalBookingIdRef.current = safeBookingId;
       setMechanicGlobalModal({
         visible: true,
         title: isQuotationRejected
@@ -68,6 +111,7 @@ export default function MechanicTabLayout() {
       return;
     }
 
+    lastModalBookingIdRef.current = safeBookingId;
     setMechanicGlobalModal({
       visible: true,
       title: isOfferRejected
@@ -83,16 +127,45 @@ export default function MechanicTabLayout() {
   }, []);
 
   const viewAcceptedBooking = React.useCallback(() => {
+    const id = lastModalBookingIdRef.current;
     setMechanicGlobalModal((current) => ({ ...current, visible: false }));
-    if (mechanicGlobalModal.bookingId) {
+    if (id != null && Number.isFinite(id) && id > 0) {
       router.push({
         pathname: '/mechanic/booking/booking_details',
-        params: { bookingId: String(mechanicGlobalModal.bookingId) },
+        params: { bookingId: String(id) },
       } as any);
       return;
     }
     router.push('/(mechanicTabs)/main/bookings' as any);
-  }, [mechanicGlobalModal.bookingId, router]);
+  }, [router]);
+
+  const modalBodyCopy =
+    mechanicGlobalModal.body ||
+    (mechanicGlobalModal.mode === 'cancelled'
+      ? 'The booking was cancelled before travel started.'
+      : mechanicGlobalModal.mode === 'rejected'
+      ? 'You can return to your map or bookings when you are ready.'
+      : mechanicGlobalModal.mode === 'info'
+        ? 'Check your bookings for the latest on this quotation.'
+        : 'Open the booking to view details and next steps.');
+
+  const modalFeatherIcon =
+    mechanicGlobalModal.mode === 'cancelled'
+      ? 'x-circle'
+      : mechanicGlobalModal.mode === 'rejected'
+      ? 'alert-circle'
+      : mechanicGlobalModal.mode === 'info'
+        ? 'info'
+        : 'check-circle';
+
+  const modalIconColor =
+    mechanicGlobalModal.mode === 'cancelled'
+      ? '#FF3B30'
+      : mechanicGlobalModal.mode === 'rejected'
+      ? '#FF9500'
+      : mechanicGlobalModal.mode === 'info'
+        ? '#0A84FF'
+        : '#34C759';
 
   useTabsBackToHome('/(mechanicTabs)/main/home');
 
@@ -195,27 +268,50 @@ export default function MechanicTabLayout() {
                 borderRadius: 28,
                 alignItems: 'center',
                 justifyContent: 'center',
-                backgroundColor: '#34C75922',
-                marginBottom: 14,
+                backgroundColor: `${modalIconColor}22`,
+                marginBottom: 12,
               }}
             >
-              <FontAwesome
-                name={mechanicGlobalModal.mode === 'rejected' ? 'exclamation-circle' : (mechanicGlobalModal.mode === 'info' ? 'info-circle' : 'check-circle')}
-                size={24}
-                color={mechanicGlobalModal.mode === 'rejected' ? '#FF9500' : (mechanicGlobalModal.mode === 'info' ? '#0A84FF' : '#34C759')}
-              />
+              <Feather name={modalFeatherIcon as 'check-circle' | 'alert-circle' | 'info' | 'x-circle'} size={26} color={modalIconColor} />
             </View>
 
             <ThemedText
               style={{
-                fontSize: 18,
+                fontSize: 12,
+                lineHeight: 16,
+                color: '#A7A7AF',
+                textAlign: 'center',
+                fontWeight: '300',
+                marginBottom: 8,
+              }}
+            >
+              Update
+            </ThemedText>
+
+            <ThemedText
+              style={{
+                fontSize: 16,
+                lineHeight: 22,
                 color: '#FFFFFF',
                 textAlign: 'center',
-                fontWeight: '700',
-                marginBottom: 16,
+                fontWeight: '600',
+                marginBottom: 10,
               }}
             >
               {mechanicGlobalModal.title}
+            </ThemedText>
+
+            <ThemedText
+              style={{
+                fontSize: 14,
+                lineHeight: 20,
+                color: '#D1D1D6',
+                textAlign: 'center',
+                fontWeight: '400',
+                marginBottom: 18,
+              }}
+            >
+              {modalBodyCopy}
             </ThemedText>
 
             <View style={{ flexDirection: 'row', gap: 10 }}>
@@ -234,7 +330,7 @@ export default function MechanicTabLayout() {
                 onPress={closeAcceptModal}
                 activeOpacity={0.8}
               >
-                <ThemedText style={{ color: '#E5E5EA', fontSize: 16, fontWeight: '600' }}>Close</ThemedText>
+                <ThemedText style={{ color: '#E5E5EA', fontSize: 16, fontWeight: '400' }}>Close</ThemedText>
               </TouchableOpacity>
 
               {mechanicGlobalModal.mode === 'accepted' && (
@@ -250,7 +346,7 @@ export default function MechanicTabLayout() {
                   onPress={viewAcceptedBooking}
                   activeOpacity={0.85}
                 >
-                  <ThemedText style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>View booking</ThemedText>
+                  <ThemedText style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>View booking</ThemedText>
                 </TouchableOpacity>
               )}
             </View>

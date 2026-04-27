@@ -3,7 +3,7 @@ import hashlib
 import hmac
 import logging
 import uuid
-from decimal import Decimal, ROUND_UP
+from decimal import Decimal, ROUND_DOWN, ROUND_UP
 
 import requests
 from asgiref.sync import async_to_sync
@@ -18,9 +18,18 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from pricing.models import PricingConfiguration
-from users.models import Account
+from users.models import Account, TokenTransaction, Wallet
 
-from ...models import Booking, PaymentInstallment, PaymentQRToken, PaymentTransaction, Quotation, Receipt, RequestAssignment
+from ...models import (
+    Booking,
+    CashRemittance,
+    PaymentInstallment,
+    PaymentQRToken,
+    PaymentTransaction,
+    Quotation,
+    Receipt,
+    RequestAssignment,
+)
 from ...backjob_utils import (
     backjob_accepted_payable_total,
     backjob_phase_total_paid,
@@ -28,6 +37,7 @@ from ...backjob_utils import (
     booking_has_backjob,
     get_booking_backjob,
 )
+from ...direct_request_utils import iter_direct_request_services
 
 
 logger = logging.getLogger(__name__)
@@ -119,15 +129,179 @@ def _get_platform_fee(pricing):
     return Decimal(fee or 0)
 
 
+def _money(value):
+    return Decimal(value or 0).quantize(Decimal("0.01"))
+
+
+def _get_wallet_share_percentage(pricing):
+    percentage = Decimal(getattr(pricing, "platform_commission_percentage", Decimal("0")) or 0)
+    if percentage < 0:
+        return Decimal("0")
+    if percentage > 100:
+        return Decimal("100")
+    return percentage
+
+
 def _compute_payment_split(booking):
     pricing = PricingConfiguration.get_config()
-    total = Decimal(booking.amount_fee or 0)
-    platform_fee = _get_platform_fee(pricing)
-    disbursement_fee = Decimal(getattr(pricing, "disbursement_fee", Decimal("0")) or 0)
-    mechanic_payout = total - platform_fee - disbursement_fee
+    total = _money(booking.amount_fee)
+    wallet_share_percentage = _get_wallet_share_percentage(pricing)
+    platform_fee = _money(total * wallet_share_percentage / Decimal("100"))
+    disbursement_fee = _money(getattr(pricing, "disbursement_fee", Decimal("0")) or 0)
+    mechanic_payout = _money(total - platform_fee)
     if mechanic_payout < 0:
-        mechanic_payout = Decimal("0")
+        mechanic_payout = Decimal("0.00")
     return total, platform_fee, disbursement_fee, mechanic_payout
+
+
+def _get_shop_owner_account(booking):
+    shop = getattr(getattr(booking, "request", None), "shop", None)
+    if not shop:
+        return None
+
+    shop_owner = getattr(shop, "shop_owner", None)
+    if not shop_owner:
+        return None
+
+    return getattr(shop_owner, "account", None)
+
+
+def _get_mechanic_payout_accounts(booking):
+    request_obj = getattr(booking, "request", None)
+    if request_obj is None:
+        return []
+
+    mechanic_ids = list(
+        RequestAssignment.objects.filter(request=request_obj).values_list("mechanic_id", flat=True)
+    )
+    if not mechanic_ids and getattr(request_obj, "provider_id", None):
+        mechanic_ids = [request_obj.provider_id]
+
+    accounts = Account.objects.filter(id__in=mechanic_ids)
+    return [account for account in accounts if hasattr(account, "mechanic")]
+
+
+def _split_amount_between_accounts(amount, accounts):
+    amount = _money(amount)
+    if amount <= 0 or not accounts:
+        return []
+
+    base_share = (amount / Decimal(len(accounts))).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
+    shares = []
+    remaining = amount
+
+    for index, account in enumerate(accounts):
+        share = remaining if index == len(accounts) - 1 else base_share
+        shares.append((account, share))
+        remaining = _money(remaining - share)
+
+    return shares
+
+
+def _credit_wallet_once(account, amount, reason, booking_id):
+    amount = _money(amount)
+    if not account or amount <= 0:
+        return False
+
+    if TokenTransaction.objects.filter(
+        account=account,
+        related_booking_id=booking_id,
+        reason=reason,
+    ).exists():
+        return False
+
+    wallet, _ = Wallet.objects.get_or_create(account=account, defaults={"balance": Decimal("0.00")})
+    wallet.balance = _money(wallet.balance + amount)
+    wallet.save(update_fields=["balance"])
+
+    TokenTransaction.objects.create(
+        account=account,
+        tokens=int(amount.to_integral_value(rounding=ROUND_DOWN)),
+        reason=reason,
+        related_booking_id=booking_id,
+    )
+    return True
+
+
+def _credit_wallet_payment_split(booking, paid_amount, payment_label="payment"):
+    total, shop_wallet_share, _, mechanic_payout = _compute_payment_split(booking)
+    if total <= 0:
+        return
+
+    paid_amount = _money(paid_amount)
+    mechanic_amount = _money(paid_amount * mechanic_payout / total)
+    shop_amount = _money(paid_amount * shop_wallet_share / total)
+
+    mechanic_accounts = _get_mechanic_payout_accounts(booking)
+    for mechanic_account, share in _split_amount_between_accounts(mechanic_amount, mechanic_accounts):
+        _credit_wallet_once(
+            mechanic_account,
+            share,
+            f"Earnings from booking #{booking.id} ({payment_label})",
+            booking.id,
+        )
+
+    shop_owner_account = _get_shop_owner_account(booking)
+    if shop_owner_account:
+        _credit_wallet_once(
+            shop_owner_account,
+            shop_amount,
+            f"Shop wallet share from booking #{booking.id} ({payment_label})",
+            booking.id,
+        )
+
+
+def _get_cash_remittance_lead(booking):
+    request_obj = getattr(booking, "request", None)
+    if request_obj is None:
+        return None
+
+    lead_assignment = (
+        RequestAssignment.objects.filter(request=request_obj, role=RequestAssignment.Role.LEAD)
+        .order_by("assigned_at", "id")
+        .first()
+    )
+    if lead_assignment:
+        return lead_assignment.mechanic
+
+    first_assignment = (
+        RequestAssignment.objects.filter(request=request_obj)
+        .order_by("assigned_at", "id")
+        .first()
+    )
+    if first_assignment:
+        return first_assignment.mechanic
+
+    return getattr(request_obj, "provider", None)
+
+
+def _ensure_cash_remittance_for_booking(booking):
+    shop = getattr(getattr(booking, "request", None), "shop", None)
+    if not shop:
+        return None
+
+    try:
+        receipt = booking.receipt
+    except Exception:
+        return None
+
+    amount = _money(receipt.platform_fee or Decimal("0.00"))
+    if amount <= 0:
+        return None
+
+    lead_mechanic = _get_cash_remittance_lead(booking)
+    if not lead_mechanic:
+        return None
+
+    remittance, _ = CashRemittance.objects.get_or_create(
+        booking=booking,
+        defaults={
+            "shop": shop,
+            "lead_mechanic": lead_mechanic,
+            "amount": amount,
+        },
+    )
+    return remittance
 
 
 def _to_money(value):
@@ -155,11 +329,12 @@ def _compute_request_service_subtotal(booking):
     except Exception:
         pass
 
-    # Direct request path: service minimum price + direct add-ons.
+    # Direct request path: minimum price per booked service + direct add-ons.
     try:
         direct = getattr(request_obj, "directrequest", None)
         if direct is not None:
-            subtotal += _to_money(getattr(direct.service, "minimum_price", 0))
+            for svc in iter_direct_request_services(request_obj):
+                subtotal += _to_money(getattr(svc, "minimum_price", 0))
             for addon_rel in request_obj.directrequestaddon_set.select_related("service_add_on").all():
                 subtotal += _to_money(getattr(addon_rel.service_add_on, "price", 0))
             if subtotal > 0:
@@ -172,6 +347,9 @@ def _compute_request_service_subtotal(booking):
 
 def _compute_overall_payable_total(booking):
     current_total = _to_money(booking.amount_fee)
+    if booking.status == Booking.Status.COMPLETED:
+        return current_total
+
     quotation = getattr(booking, "quotation", None)
     if booking_has_backjob(booking):
         if quotation is None:
@@ -583,6 +761,9 @@ def _finalize_payment_success(
         summary = _get_payment_summary(booking)
 
         receipt, _ = Receipt.objects.get_or_create(booking=booking)
+        _, platform_fee, _, mechanic_payout = _compute_payment_split(booking)
+        receipt.platform_fee = platform_fee
+        receipt.mechanic_payout = mechanic_payout
         receipt.payment_received = summary["fully_paid"]
         if summary["total_paid"] > 0 and not receipt.paid_at:
             receipt.paid_at = paid_at
@@ -593,7 +774,7 @@ def _finalize_payment_success(
             receipt.ewallet_source_id = source_id
         if reference:
             receipt.transaction_id = reference
-        receipt.payment_method = method
+        receipt.payment_method = "cash" if method == "qr" else method
         if method in {"gcash", "maya"}:
             receipt.ewallet_type = method
 
@@ -605,6 +786,8 @@ def _finalize_payment_success(
                 "transaction_id",
                 "payment_method",
                 "ewallet_type",
+                "platform_fee",
+                "mechanic_payout",
             ]
         )
 
@@ -623,7 +806,14 @@ def _finalize_payment_success(
             booking.save(update_fields=["payment_status", "updated_at"])
 
     disbursed = False
-    if summary["fully_paid"] and booking.status == Booking.Status.COMPLETED:
+    if summary["fully_paid"] and booking.status == Booking.Status.COMPLETED and method == "qr":
+        _ensure_cash_remittance_for_booking(booking)
+        _release_paid_installments(booking)
+        disbursed = True
+    elif summary["fully_paid"] and booking.status == Booking.Status.COMPLETED and method == "credits":
+        _release_paid_installments(booking)
+        disbursed = True
+    elif summary["fully_paid"] and booking.status == Booking.Status.COMPLETED:
         disbursed = trigger_disbursement(booking)
         if disbursed:
             _release_paid_installments(booking)
@@ -881,6 +1071,95 @@ def _extract_installment_type_from_paymongo_event(event_payload):
     return None
 
 
+def _send_paymongo_disbursement(account, amount, booking):
+    amount = _money(amount)
+    if amount <= 0:
+        return True
+
+    try:
+        mechanic = account.mechanic
+        payout_number = getattr(mechanic, "payout_number", None)
+        payout_method = getattr(mechanic, "payout_method", None)
+    except Exception:
+        logger.warning("Missing mechanic payout relation for booking %s", booking.id)
+        return False
+
+    if not payout_number or not payout_method:
+        logger.warning("No mechanic payout details for booking %s", booking.id)
+        return False
+
+    bank_code = str(payout_method).upper()
+    valid_paymongo_codes = ["GCASH", "MAYA", "PAYMAYA"]
+    if bank_code not in valid_paymongo_codes:
+        print(
+            f"[DISBURSEMENT] INVALID payout_method "
+            f"'{payout_method}' for booking {booking.id}"
+        )
+        return False
+
+    if bank_code == "MAYA":
+        bank_code = "PAYMAYA"
+
+    try:
+        secret_key = settings.PAYMONGO_SECRET_KEY
+        encoded_key = base64.b64encode(f"{secret_key}:".encode()).decode()
+        amount_centavos = int(amount * 100)
+
+        payload = {
+            "data": {
+                "attributes": {
+                    "amount": amount_centavos,
+                    "currency": "PHP",
+                    "bank_account": {
+                        "account_number": payout_number,
+                        "bank_code": bank_code,
+                    },
+                    "statement_descriptor": f"MechConnect Booking #{booking.id}",
+                    "metadata": {
+                        "booking_id": str(booking.id),
+                        "mechanic_account_id": str(account.id),
+                    },
+                }
+            }
+        }
+
+        response = requests.post(
+            "https://api.paymongo.com/v1/disbursements",
+            json=payload,
+            headers={
+                "Authorization": f"Basic {encoded_key}",
+                "Content-Type": "application/json",
+            },
+            timeout=25,
+        )
+        response.raise_for_status()
+        response_data = response.json()
+
+        print(
+            f"[DISBURSEMENT] SUCCESS booking {booking.id} "
+            f"| mechanic: {account.id} "
+            f"| amount: {amount} "
+            f"| ref: {response_data.get('data', {}).get('id', 'N/A')}"
+        )
+        return True
+    except requests.exceptions.HTTPError as e:
+        print(
+            f"[DISBURSEMENT] HTTP ERROR booking {booking.id} "
+            f"| status: {e.response.status_code} "
+            f"| body: {e.response.text}"
+        )
+        return False
+    except requests.exceptions.Timeout:
+        print(f"[DISBURSEMENT] TIMEOUT booking {booking.id}")
+        return False
+    except Exception as e:
+        print(
+            f"[DISBURSEMENT] UNEXPECTED ERROR booking {booking.id} "
+            f"| error: {str(e)}"
+        )
+        return False
+
+
 def trigger_disbursement(booking):
     """Trigger payout to mechanic/shop owner. Failures are logged but not shown to users."""
     summary = _get_payment_summary(booking)
@@ -905,98 +1184,30 @@ def trigger_disbursement(booking):
     if not receipt.mechanic_payout:
         return False
 
-    payout_number = None
-    payout_method = None
-
     try:
-        if booking.request.shop:
-            shop_owner = booking.request.shop.shop_owner
-            payout_number = getattr(shop_owner, "payout_number", None)
-            payout_method = getattr(shop_owner, "payout_method", None)
-        else:
-            mechanic = booking.request.provider.mechanic
-            payout_number = getattr(mechanic, "payout_number", None)
-            payout_method = getattr(mechanic, "payout_method", None)
+        mechanic_accounts = _get_mechanic_payout_accounts(booking)
+        mechanic_payout = _money(receipt.mechanic_payout)
+        mechanic_shares = _split_amount_between_accounts(mechanic_payout, mechanic_accounts)
+        if not mechanic_shares:
+            logger.warning("No mechanic payout recipients for booking %s", booking.id)
+            return False
+
+        for mechanic_account, share in mechanic_shares:
+            if not _send_paymongo_disbursement(mechanic_account, share, booking):
+                return False
+
+        shop_owner_account = _get_shop_owner_account(booking)
+        if shop_owner_account:
+            _credit_wallet_once(
+                shop_owner_account,
+                receipt.platform_fee or Decimal("0.00"),
+                f"Shop wallet share from booking #{booking.id}",
+                booking.id,
+            )
+
+        return True
     except Exception:
-        logger.warning("Missing payout relation for booking %s", booking.id)
-        return False
-
-    if not payout_number or not payout_method:
-        logger.warning("No payout details for booking %s", booking.id)
-        return False
-
-    bank_code = str(payout_method).upper()
-    valid_paymongo_codes = ["GCASH", "MAYA", "PAYMAYA"]
-    if bank_code not in valid_paymongo_codes:
-        print(
-            f"[DISBURSEMENT] INVALID payout_method "
-            f"'{payout_method}' for booking {booking.id}"
-        )
-        return False
-
-    if bank_code == "MAYA":
-        bank_code = "PAYMAYA"
-
-    try:
-        secret_key = settings.PAYMONGO_SECRET_KEY
-        encoded_key = base64.b64encode(f"{secret_key}:".encode()).decode()
-        mechanic_payout = Decimal(receipt.mechanic_payout)
-        amount_centavos = int(mechanic_payout * 100)
-
-        payload = {
-            "data": {
-                "attributes": {
-                    "amount": amount_centavos,
-                    "currency": "PHP",
-                    "bank_account": {
-                        "account_number": payout_number,
-                        "bank_code": bank_code,
-                    },
-                    "statement_descriptor": f"MechConnect Booking #{booking.id}",
-                    "metadata": {"booking_id": str(booking.id)},
-                }
-            }
-        }
-
-        try:
-            response = requests.post(
-                "https://api.paymongo.com/v1/disbursements",
-                json=payload,
-                headers={
-                    "Authorization": f"Basic {encoded_key}",
-                    "Content-Type": "application/json",
-                },
-                timeout=25,
-            )
-            response.raise_for_status()
-            response_data = response.json()
-
-            print(
-                f"[DISBURSEMENT] SUCCESS booking {booking.id} "
-                f"| amount: {mechanic_payout} "
-                f"| ref: {response_data.get('data', {}).get('id', 'N/A')}"
-            )
-            return True
-        except requests.exceptions.HTTPError as e:
-            print(
-                f"[DISBURSEMENT] HTTP ERROR booking {booking.id} "
-                f"| status: {e.response.status_code} "
-                f"| body: {e.response.text}"
-            )
-            return False
-        except requests.exceptions.Timeout:
-            print(
-                f"[DISBURSEMENT] TIMEOUT booking {booking.id}"
-            )
-            return False
-        except Exception as e:
-            print(
-                f"[DISBURSEMENT] UNEXPECTED ERROR booking {booking.id} "
-                f"| error: {str(e)}"
-            )
-            return False
-    except Exception:
-        logger.exception("Disbursement failed for booking %s", booking.id)
+        logger.exception("Disbursement split failed for booking %s", booking.id)
         return False
 
 
@@ -1618,7 +1829,6 @@ def pay_with_credits(request):
     
     Deducts credits from client's wallet and adds them to mechanic's wallet.
     """
-    from users.models import Account, TokenTransaction
     from django.db import transaction as db_transaction
     
     account = _get_authenticated_account(request)
@@ -1682,20 +1892,12 @@ def pay_with_credits(request):
                 related_booking_id=booking_id,
             )
             
-            # Add to mechanic/provider wallet
-            mechanic_account = booking.request.provider
-            if mechanic_account and hasattr(mechanic_account, 'wallet'):
-                mechanic_wallet = mechanic_account.wallet
-                mechanic_wallet.balance += required_credits
-                mechanic_wallet.save(update_fields=['balance'])
-                
-                # Log mechanic transaction
-                TokenTransaction.objects.create(
-                    account=mechanic_account,
-                    tokens=required_credits,
-                    reason=f'Earnings from booking #{booking_id}',
-                    related_booking_id=booking_id,
-                )
+            # Split credits using the configured mechanic/shop percentages.
+            _credit_wallet_payment_split(
+                booking,
+                amount_to_pay,
+                payment_label=target_installment.installment_type,
+            )
             
             # Mark payment as successful
             payment_result = _finalize_payment_success(

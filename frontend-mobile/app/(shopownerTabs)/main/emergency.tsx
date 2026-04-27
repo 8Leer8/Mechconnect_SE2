@@ -44,6 +44,8 @@ export default function ShopOwnerEmergencyScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [shopownerCanAccept, setShopownerCanAccept] = useState(true);
+  const [acceptDisabledReason, setAcceptDisabledReason] = useState<string | null>(null);
 
   useEffect(() => {
     fetchEmergencyRequests();
@@ -75,6 +77,12 @@ export default function ShopOwnerEmergencyScreen() {
         throw new Error(backendMessage || `Failed to fetch emergency requests (${response.status})`);
       }
       setRequests(data.emergency_requests || []);
+      setShopownerCanAccept(data?.shopowner_can_accept !== false);
+      setAcceptDisabledReason(
+        typeof data?.accept_disabled_reason === 'string' && data.accept_disabled_reason.trim()
+          ? data.accept_disabled_reason
+          : null
+      );
     } catch (err: any) {
       setError(err?.message || 'Failed to fetch emergency requests');
     } finally {
@@ -105,6 +113,17 @@ export default function ShopOwnerEmergencyScreen() {
   };
 
   const handleAcceptEmergency = async (requestId: number) => {
+    if (!shopownerCanAccept) {
+      showNotification({
+        type: 'warning',
+        message:
+          acceptDisabledReason === 'shop_unavailable'
+            ? 'Your shop is unavailable. Switch to accept bookings.'
+            : 'You cannot accept emergency requests right now.',
+      });
+      return;
+    }
+
     try {
       const response = await fetch(`${API_URL}/bookings/shopowner/emergency/${requestId}/accept/`, {
         method: 'POST',
@@ -136,6 +155,10 @@ export default function ShopOwnerEmergencyScreen() {
             : typeof data?.message === 'string' && data.message.trim()
             ? data.message
             : '';
+        if (data?.reason === 'shop_unavailable') {
+          setShopownerCanAccept(false);
+          setAcceptDisabledReason('shop_unavailable');
+        }
         showNotification({
           type: 'error',
           message: backendMessage || `Failed to accept emergency request (${response.status})`,
@@ -195,6 +218,17 @@ export default function ShopOwnerEmergencyScreen() {
         style={styles.scrollView}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF3B30" />}
       >
+        {!loading && !error && !shopownerCanAccept && (
+          <View style={styles.unavailableBanner}>
+            <FontAwesome name="ban" size={14} color="#fff" />
+            <ThemedText style={styles.unavailableBannerText}>
+              {acceptDisabledReason === 'shop_unavailable'
+                ? 'Emergency requests are disabled while your shop is hidden from discovery.'
+                : 'Emergency requests are disabled for your account right now.'}
+            </ThemedText>
+          </View>
+        )}
+
         {loading && !refreshing ? (
           <SkeletonEmergencyList />
         ) : error ? (
@@ -214,7 +248,10 @@ export default function ShopOwnerEmergencyScreen() {
         ) : (
           <View style={styles.requestsList}>
             {requests.map((request, index) => (
-              <View key={request.id} style={styles.emergencyCard}>
+              <View
+                key={request.id}
+                style={[styles.emergencyCard, !shopownerCanAccept && styles.emergencyCardDisabled]}
+              >
                 <View style={styles.cardHeader}>
                   <View style={styles.headerLeft}>
                     <View style={styles.cardNumberBadge}>
@@ -297,16 +334,20 @@ export default function ShopOwnerEmergencyScreen() {
 
                 <View style={styles.actionButtons}>
                   <TouchableOpacity
-                    style={[styles.actionBtn, styles.acceptBtn]}
+                    style={[styles.actionBtn, styles.acceptBtn, !shopownerCanAccept && styles.actionBtnDisabled]}
                     onPress={() => handleAcceptEmergency(request.id)}
+                    disabled={!shopownerCanAccept}
                   >
                     <FontAwesome name="check" size={16} color="#fff" />
-                    <ThemedText style={styles.actionBtnText}>Accept</ThemedText>
+                    <ThemedText style={styles.actionBtnText}>
+                      {shopownerCanAccept ? 'Accept' : 'Unavailable'}
+                    </ThemedText>
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    style={[styles.actionBtn, styles.navigateBtn]}
+                    style={[styles.actionBtn, styles.navigateBtn, !shopownerCanAccept && styles.actionBtnDisabled]}
                     onPress={() => handleNavigate(request)}
+                    disabled={!shopownerCanAccept}
                   >
                     <FontAwesome name="location-arrow" size={16} color="#fff" />
                     <ThemedText style={styles.actionBtnText}>Navigate</ThemedText>

@@ -4,6 +4,7 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const ACCOUNT_ID_KEY = 'account_id';
 const PROFILE_CACHE_KEY_PREFIX = 'profile_details_cache_v2';
 const CACHE_TTL_MS = 60 * 1000; // 1 minute
+let profileDetailsRequest: Promise<any | null> | null = null;
 
 type ProfileCachePayload = {
   cachedAt: number;
@@ -31,6 +32,7 @@ function getProfileCacheKey(accountId: number | null): string {
 
 export async function clearProfileDetailsCache(): Promise<void> {
   try {
+    profileDetailsRequest = null;
     const accountId = await getCachedAccountId();
     await AsyncStorage.multiRemove([
       PROFILE_CACHE_KEY_PREFIX,
@@ -66,7 +68,11 @@ export async function fetchProfileDetailsCached(forceRefresh = false): Promise<a
 
   if (!API_URL) return null;
 
-  try {
+  if (!forceRefresh && profileDetailsRequest) {
+    return profileDetailsRequest;
+  }
+
+  profileDetailsRequest = (async () => {
     const response = await fetch(`${API_URL}/users/profile/details/`, {
       method: 'GET',
       credentials: 'include',
@@ -90,8 +96,14 @@ export async function fetchProfileDetailsCached(forceRefresh = false): Promise<a
     };
     await AsyncStorage.setItem(getProfileCacheKey(nextAccountId), JSON.stringify(payload));
     return profile;
+  })();
+
+  try {
+    return await profileDetailsRequest;
   } catch {
     return null;
+  } finally {
+    profileDetailsRequest = null;
   }
 }
 

@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
+const PRICING_CACHE_TTL_MS = 5 * 60 * 1000;
+
+let cachedPricingConfig: PricingConfig | null = null;
+let cachedPricingConfigAt = 0;
+let pricingConfigRequest: Promise<PricingConfig> | null = null;
 
 export interface PricingConfig {
   base_distance_fee: number;
@@ -30,18 +35,35 @@ const normalizePricingConfig = (raw: Partial<PricingConfig>): PricingConfig => (
 });
 
 export const fetchPricingConfig = async (): Promise<PricingConfig> => {
-  const response = await fetch(`${API_URL}/pricing/config/`, {
-    method: 'GET',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-  });
-
-  if (!response.ok) {
-    throw new Error('Failed to fetch pricing configuration');
+  if (cachedPricingConfig && Date.now() - cachedPricingConfigAt < PRICING_CACHE_TTL_MS) {
+    return cachedPricingConfig;
   }
 
-  const data = (await response.json()) as Partial<PricingConfig>;
-  return normalizePricingConfig(data);
+  if (pricingConfigRequest) {
+    return pricingConfigRequest;
+  }
+
+  pricingConfigRequest = (async () => {
+    const response = await fetch(`${API_URL}/pricing/config/`, {
+      method: 'GET',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch pricing configuration');
+    }
+
+    const data = (await response.json()) as Partial<PricingConfig>;
+    const normalized = normalizePricingConfig(data);
+    cachedPricingConfig = normalized;
+    cachedPricingConfigAt = Date.now();
+    return normalized;
+  })().finally(() => {
+    pricingConfigRequest = null;
+  });
+
+  return pricingConfigRequest;
 };
 
 export const usePricing = () => {

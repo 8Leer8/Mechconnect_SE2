@@ -29,6 +29,7 @@ class Request(models.Model):
     vehicle_brand = models.CharField(max_length=80, null=True, blank=True)
     vehicle_model = models.CharField(max_length=120, null=True, blank=True)
     vehicle_description = models.TextField(null=True, blank=True)
+    scheduled_time = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
 class CustomRequest(models.Model):
@@ -58,6 +59,25 @@ class DirectRequestAddOn(models.Model):
     request = models.ForeignKey(Request, on_delete=models.CASCADE)
     service_add_on = models.ForeignKey(ServiceAddOn, on_delete=models.CASCADE)
 
+
+class DirectRequestServiceLine(models.Model):
+    """
+    Optional extra services on a mechanic direct request (multi-service jobs).
+    The first line always matches DirectRequest.service for backward compatibility.
+    """
+
+    request = models.ForeignKey(
+        Request,
+        on_delete=models.CASCADE,
+        related_name="direct_request_service_lines",
+    )
+    service = models.ForeignKey(Service, on_delete=models.CASCADE)
+    sort_order = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+
+
 class EmergencyRequest(models.Model):
     request = models.OneToOneField(Request, on_delete=models.CASCADE)
     description = models.TextField(null=True, blank=True)
@@ -76,7 +96,10 @@ class EmergencyRequestPhoto(models.Model):
 
 class Booking(models.Model):
     class Status(models.TextChoices):
+        BOOKED = "booked"
         ACCEPTED = "accepted"         # Mechanic accepted, waiting to start
+        PENDING = "pending"
+        RESCHEDULE_PROPOSED = "reschedule_proposed"
         ON_THE_WAY = "on_the_way"    # Mechanic traveling to client
         AT_LOCATION = "at_location"  # Mechanic arrived at service location
         DIAGNOSING = "diagnosing"    # Mechanic met client; inspection / diagnosis
@@ -138,6 +161,7 @@ class Booking(models.Model):
     help_text="Real traffic surcharge added when mechanic went OTW"
     )
     booked_at = models.DateTimeField(auto_now_add=True)
+    booking_date = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 
@@ -162,6 +186,9 @@ class ActiveBooking(models.Model):
     is_job_done = models.BooleanField(default=False)
     after_picture_service = models.ImageField(upload_to='bookings/after/', null=True, blank=True)
     is_rescheduled = models.BooleanField(default=False)
+    proposed_date = models.DateTimeField(null=True, blank=True)
+    pre_reschedule_status = models.CharField(max_length=20, null=True, blank=True)
+    reschedule_requested_by = models.ForeignKey(Account, on_delete=models.SET_NULL, null=True, blank=True, related_name="reschedule_requests")
     reason = models.TextField(null=True, blank=True)
     new_time = models.DateTimeField(null=True, blank=True)
     new_date = models.DateTimeField(null=True, blank=True)
@@ -298,6 +325,26 @@ class Receipt(models.Model):
     transaction_id = models.CharField(max_length=255, null=True, blank=True)
     receipt_image = models.ImageField(upload_to='bookings/receipts/', null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class CashRemittance(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending"
+        RECEIVED = "received"
+
+    booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name="cash_remittance")
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name="cash_remittances")
+    lead_mechanic = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="cash_remittances_to_surrender")
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    reminders_count = models.PositiveIntegerField(default=0)
+    last_reminded_at = models.DateTimeField(null=True, blank=True)
+    received_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
 
 
 class PaymentInstallment(models.Model):

@@ -138,6 +138,55 @@ export const styles = StyleSheet.create({
     color: '#555',
     fontStyle: 'italic',
   },
+  accordionCard: {
+    backgroundColor: '#1A1C1E',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+    marginBottom: 10,
+    overflow: 'hidden',
+  },
+  accordionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    gap: 10,
+  },
+  accordionHeaderSelected: {
+    borderColor: '#FF8C00',
+    backgroundColor: '#FF8C0008',
+  },
+  accordionTitleBlock: {
+    flex: 1,
+  },
+  accordionServiceName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  accordionServicePrice: {
+    fontSize: 13,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+  accordionChevronBtn: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: '#252729',
+  },
+  accordionBody: {
+    paddingHorizontal: 12,
+    paddingBottom: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#2A2C2E',
+  },
+  accordionHint: {
+    fontSize: 12,
+    color: '#555',
+    fontStyle: 'italic',
+    paddingVertical: 8,
+  },
   // Summary
   summaryCard: {
     backgroundColor: '#1A1C1E',

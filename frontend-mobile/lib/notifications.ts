@@ -7,6 +7,8 @@ export interface NotificationTargetPayload {
   offer_id?: number;
   action?: string;
   target_role?: 'client' | 'mechanic' | 'shopowner' | string | null;
+  /** Mirrors WebSocket booking_update (e.g. mechanic_accepted_direct). */
+  event_source?: string;
   [key: string]: unknown;
 }
 

@@ -10,6 +10,7 @@ interface MechanicRatingModalProps {
   loading?: boolean;
   initialRating?: number;
   initialComment?: string;
+  hasExistingReview?: boolean;
   onClose: () => void;
   onSkip: () => void;
   onSubmit: (payload: { rating: number; comment: string }) => void;
@@ -21,6 +22,7 @@ export default function MechanicRatingModal({
   loading = false,
   initialRating,
   initialComment,
+  hasExistingReview = false,
   onClose,
   onSkip,
   onSubmit,
@@ -49,7 +51,11 @@ export default function MechanicRatingModal({
         <View style={styles.sheet}>
           <View style={styles.handle} />
           <ThemedText style={styles.title}>{title}</ThemedText>
-          <ThemedText style={styles.subtitle}>You can skip this and rate later.</ThemedText>
+          <ThemedText style={styles.subtitle}>
+            {hasExistingReview
+              ? 'You already rated this provider. Submit again to update your rating.'
+              : 'You can skip this and rate later.'}
+          </ThemedText>
 
           <View style={styles.starsRow}>
             {[1, 2, 3, 4, 5].map((value) => (
@@ -93,7 +99,9 @@ export default function MechanicRatingModal({
               {loading ? (
                 <ActivityIndicator color="#111214" />
               ) : (
-                <ThemedText style={styles.submitText}>Submit Rating</ThemedText>
+                <ThemedText style={styles.submitText}>
+                  {hasExistingReview ? 'Update Rating' : 'Submit Rating'}
+                </ThemedText>
               )}
             </TouchableOpacity>
           </View>

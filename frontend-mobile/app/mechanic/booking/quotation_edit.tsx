@@ -33,6 +33,43 @@ async function authHeadersMultipart(): Promise<Record<string, string>> {
   }
   return headers;
 }
+
+async function responseHasExpiredToken(res: Response): Promise<boolean> {
+  if (res.status !== 401 && res.status !== 403) return false;
+  try {
+    const body = await res.clone().json();
+    const detail = String(body?.detail || body?.error || '').toLowerCase();
+    return detail.includes('token') && detail.includes('expired');
+  } catch {
+    try {
+      const text = await res.clone().text();
+      const detail = text.toLowerCase();
+      return detail.includes('token') && detail.includes('expired');
+    } catch {
+      return false;
+    }
+  }
+}
+
+async function fetchWithAuthRetry(
+  url: string,
+  options: RequestInit,
+  getHeaders: () => Promise<Record<string, string>>,
+): Promise<Response> {
+  const headers = await getHeaders();
+  const first = await fetch(url, { ...options, headers });
+  if (!(await responseHasExpiredToken(first))) return first;
+
+  try {
+    await AsyncStorage.removeItem('auth_token');
+  } catch {
+    /* ignore */
+  }
+
+  const retryHeaders = await getHeaders();
+  delete retryHeaders.Authorization;
+  return fetch(url, { ...options, headers: retryHeaders });
+}
 /** Prefix logs so you can filter Metro: `npx expo start` terminal. */
 const LOG = '[quotation_edit]';
 
@@ -86,8 +123,9 @@ const clampLabel = (value: string, max = 24) => {
 };
 
 export default function QuotationEdit() {
-  const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
+  const { bookingId, source } = useLocalSearchParams<{ bookingId: string; source?: string }>();
   const router = useRouter();
+  const isShopOwnerSource = source === 'shopowner' || source === 'shop_owner';
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [items, setItems] = useState<QuotationItem[]>([]);
@@ -152,11 +190,10 @@ export default function QuotationEdit() {
       }
 
       try {
-        const res = await fetch(`${API_URL}/chat/booking/${bookingId}/access/`, {
+        const res = await fetchWithAuthRetry(`${API_URL}/chat/booking/${bookingId}/access/`, {
           method: 'GET',
           credentials: 'include',
-          headers: await authJsonHeaders(),
-        });
+        }, authJsonHeaders);
 
         if (res.ok) {
           const data = await res.json();
@@ -381,11 +418,17 @@ export default function QuotationEdit() {
       let bookingPayload: any = null;
 
       try {
-        const bookingRes = await fetch(`${API_URL}/bookings/mechanic/bookings/${bookingId}/`, {
+        const bookingDetailUrl = isShopOwnerSource
+          ? `${API_URL}/bookings/shopowner/bookings/${bookingId}/`
+          : `${API_URL}/bookings/mechanic/bookings/${bookingId}/`;
+        const quotationUrl = isShopOwnerSource
+          ? `${API_URL}/bookings/shopowner/bookings/${bookingId}/quotation/`
+          : `${API_URL}/bookings/mechanic/bookings/${bookingId}/quotation/`;
+
+        const bookingRes = await fetchWithAuthRetry(bookingDetailUrl, {
           method: 'GET',
           credentials: 'include',
-          headers: await authJsonHeaders(),
-        });
+        }, authJsonHeaders);
         if (bookingRes.ok) {
           const payload = await bookingRes.json();
           const booking = payload.booking || payload;
@@ -406,13 +449,13 @@ export default function QuotationEdit() {
           }
         }
 
-        const quotationRes = await fetch(
-          `${API_URL}/bookings/mechanic/bookings/${bookingId}/quotation/?_=${Date.now()}`,
+        const quotationRes = await fetchWithAuthRetry(
+          `${quotationUrl}?_=${Date.now()}`,
           {
             method: 'GET',
             credentials: 'include',
-            headers: await authJsonHeaders(),
           },
+          authJsonHeaders,
         );
         if (cancelled) return;
 
@@ -555,7 +598,7 @@ export default function QuotationEdit() {
     return () => {
       cancelled = true;
     };
-  }, [bookingId]);
+  }, [bookingId, isShopOwnerSource]);
 
   const updateItem = (index: number, patch: any) => {
     if (isReadOnly) return;
@@ -848,14 +891,14 @@ export default function QuotationEdit() {
       const payload = {
         items: buildSavableItems(rowsToSave, removedAcceptedItems),
       };
-      const url = `${API_URL}/bookings/mechanic/bookings/${bookingId}/quotation/`;
-      const headers = await authJsonHeaders();
-      const res = await fetch(url, {
+      const url = isShopOwnerSource
+        ? `${API_URL}/bookings/shopowner/bookings/${bookingId}/quotation/`
+        : `${API_URL}/bookings/mechanic/bookings/${bookingId}/quotation/`;
+      const res = await fetchWithAuthRetry(url, {
         method: 'POST',
         credentials: 'include',
-        headers,
         body: JSON.stringify(payload),
-      });
+      }, authJsonHeaders);
       let body: any = null;
       try {
         body = await res.json();
@@ -898,23 +941,19 @@ export default function QuotationEdit() {
       setShowSaveReviewModal(false);
       try {
         // Ensure chat conversation is created and messages are fetched so chat UI sees the new quotation
-        const convHeaders = await authJsonHeaders();
-        const convRes = await fetch(`${API_URL}/chat/booking/${bookingId}/`, {
+        const convRes = await fetchWithAuthRetry(`${API_URL}/chat/booking/${bookingId}/`, {
           method: 'POST',
           credentials: 'include',
-          headers: convHeaders,
           body: JSON.stringify({}),
-        });
+        }, authJsonHeaders);
         if (convRes.ok) {
           const convData = await convRes.json().catch(() => null);
           const convId = convData?.id;
           if (convId) {
-            const msgHeaders = await authJsonHeaders();
-            await fetch(`${API_URL}/chat/${convId}/messages/?mark_read=1`, {
+            await fetchWithAuthRetry(`${API_URL}/chat/${convId}/messages/?mark_read=1`, {
               method: 'GET',
               credentials: 'include',
-              headers: msgHeaders,
-            });
+            }, authJsonHeaders);
           }
         }
       } catch (e) {
@@ -963,18 +1002,19 @@ export default function QuotationEdit() {
       formData.append('actual_unit_price', String(Math.max(0, Number(item.unit_price || 0))));
 
       setReceiptUploadingKey(key);
-      const receiptHeaders = await authHeadersMultipart();
-      const res = await fetch(`${API_URL}/bookings/mechanic/bookings/${bookingId}/quotation/items/${item.id}/receipt/`, {
+      const res = await fetchWithAuthRetry(`${API_URL}/bookings/mechanic/bookings/${bookingId}/quotation/items/${item.id}/receipt/`, {
         method: 'POST',
         credentials: 'include',
-        headers: receiptHeaders,
         body: formData as any,
-      });
+      }, authHeadersMultipart);
       const payload = await res.json().catch(() => null);
       if (!res.ok) throw new Error(payload?.error || 'Failed to upload receipt');
 
       console.log(LOG, 'receipt upload ok', payload?.message || 'Receipt uploaded');
-      router.replace({ pathname: '/mechanic/booking/quotation_edit', params: { bookingId: String(bookingId) } });
+      router.replace({
+        pathname: '/mechanic/booking/quotation_edit',
+        params: { bookingId: String(bookingId), ...(isShopOwnerSource ? { source: 'shopowner' } : {}) },
+      });
     } catch (e: any) {
       console.error(LOG, 'receipt upload failed', e?.message || e, e);
     } finally {

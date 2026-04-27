@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from bookings.models import RequestAssignment
-from bookings.backjob_utils import booking_allows_chat
+from bookings.backjob_utils import BACKJOB_PRE_ACCEPT_STATUSES, booking_allows_chat, get_booking_backjob
 
 
 def evaluate_booking_chat_access(booking, account) -> Dict[str, Any]:
@@ -62,6 +62,22 @@ def evaluate_booking_chat_access(booking, account) -> Dict[str, Any]:
         mechanic=account,
     ).first()
     if assignment:
+        try:
+            backjob = get_booking_backjob(booking)
+            is_pending_shop_backjob = (
+                booking.request.shop_id
+                and backjob is not None
+                and str(getattr(backjob, "status", "") or "").lower() in BACKJOB_PRE_ACCEPT_STATUSES
+            )
+            if is_pending_shop_backjob:
+                return {
+                    "is_participant": False,
+                    "can_send": False,
+                    "role": "none",
+                }
+        except Exception:
+            pass
+
         is_lead = assignment.role == RequestAssignment.Role.LEAD
         return {
             "is_participant": True,
@@ -125,10 +141,22 @@ def sync_booking_conversation_participants(conversation, booking) -> None:
     except Exception:
         pass
 
-    for mechanic_id in RequestAssignment.objects.filter(request=booking.request).values_list(
-        "mechanic_id", flat=True
-    ):
-        participant_ids.add(mechanic_id)
+    include_assigned_mechanics = True
+    try:
+        backjob = get_booking_backjob(booking)
+        include_assigned_mechanics = not (
+            booking.request.shop_id
+            and backjob is not None
+            and str(getattr(backjob, "status", "") or "").lower() in BACKJOB_PRE_ACCEPT_STATUSES
+        )
+    except Exception:
+        include_assigned_mechanics = True
+
+    if include_assigned_mechanics:
+        for mechanic_id in RequestAssignment.objects.filter(request=booking.request).values_list(
+            "mechanic_id", flat=True
+        ):
+            participant_ids.add(mechanic_id)
 
     if participant_ids:
         conversation.participants.add(*participant_ids)

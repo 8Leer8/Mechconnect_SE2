@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { View, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Animated, Alert, Linking } from 'react-native';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { View, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Animated, Alert, Linking, Platform } from 'react-native';
 import { Image } from 'expo-image';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -15,6 +16,8 @@ import { usePricing } from '@/hooks/usePricing';
 import { calculateBroadcastFee, FeeBreakdown } from '@/utils/trafficutils';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
+const NEARBY_REFRESH_INTERVAL_MS = 7000;
+const NEARBY_MIN_FETCH_GAP_MS = 2000;
 
 interface Service {
   id: number;
@@ -48,6 +51,9 @@ interface NearbyProvider {
   rating: number | null;
   specialization: string | null;
   profile_photo: string | null;
+  proximity_latitude?: number | null;
+  proximity_longitude?: number | null;
+  proximity_source?: string | null;
 }
 
 interface NearbyProvidersResponse {
@@ -80,6 +86,11 @@ export default function MainRequestFormScreen() {
   const [vehicleType, setVehicleType] = useState('');
   const [vehicleBrand, setVehicleBrand] = useState('');
   const [vehicleModel, setVehicleModel] = useState('');
+  const [useCurrentTime, setUseCurrentTime] = useState(true);
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [selectedTime, setSelectedTime] = useState(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(false);
 
   // Location fields (shared by both modes)
   const [selectedAddress, setSelectedAddress] = useState<string>('');
@@ -94,6 +105,53 @@ export default function MainRequestFormScreen() {
   const [showNearbySection, setShowNearbySection] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [feeBreakdown, setFeeBreakdown] = useState<FeeBreakdown | null>(null);
+  const nearbyFetchInFlightRef = useRef(false);
+  const lastNearbyFetchAtRef = useRef(0);
+
+  const formatLiveLocation = (provider: NearbyProvider) => {
+    const lat = Number(provider.proximity_latitude);
+    const lng = Number(provider.proximity_longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+  };
+
+  const proximitySourceLabel = (source?: string | null) => {
+    const key = String(source || '').toLowerCase();
+    if (key === 'live_gps') return 'Live GPS';
+    if (key === 'recent_offer') return 'Last known location';
+    if (key === 'shop_profile_address') return 'Shop main branch';
+    if (key === 'shop_main_branch') return 'Shop main branch';
+    if (key === 'shop_branch_address') return 'Shop branch address';
+    return 'Location source unknown';
+  };
+
+  const getScheduledDateTime = () => {
+    const scheduledDateTime = new Date(selectedDate);
+    scheduledDateTime.setHours(selectedTime.getHours());
+    scheduledDateTime.setMinutes(selectedTime.getMinutes());
+    scheduledDateTime.setSeconds(0);
+    scheduledDateTime.setMilliseconds(0);
+    return scheduledDateTime;
+  };
+
+  const getScheduledTimePayload = () => {
+    if (useCurrentTime) return new Date().toISOString();
+    return getScheduledDateTime().toISOString();
+  };
+
+  const validateSchedule = () => {
+    if (useCurrentTime) return true;
+    if (getScheduledDateTime().getTime() <= Date.now()) {
+      showNotification({ type: 'error', message: 'Please choose a future date and time' });
+      return false;
+    }
+    return true;
+  };
+
+  const formatScheduledDateTime = () => {
+    if (useCurrentTime) return 'Now';
+    return `${selectedDate.toLocaleDateString()} ${selectedTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  };
 
   // ─── Fetch Services (only for Broadcast mode) ─────────────
   useEffect(() => {
@@ -141,7 +199,7 @@ export default function MainRequestFormScreen() {
     }, [selectedLocation, setSelectedLocation])
   );
 
-  useEffect(() => {
+  const fetchNearbyProviders = useCallback(async (options?: { silent?: boolean; force?: boolean }) => {
     if (isCustomMode || latitude === null || longitude === null || !selectedAddress) {
       setNearbyProviders([]);
       setShowNearbySection(false);
@@ -149,57 +207,84 @@ export default function MainRequestFormScreen() {
       return;
     }
 
-    let cancelled = false;
-    const fetchNearbyMechanics = async () => {
-      try {
-        if (!cancelled) {
-          setShowNearbySection(true);
-          setLoadingNearby(true);
-        }
+    const silent = options?.silent === true;
+    const force = options?.force === true;
+    const now = Date.now();
 
-        const query = new URLSearchParams({
-          lat: String(latitude),
-          lng: String(longitude),
-          radius_km: String(searchRadiusKm),
-        });
+    if (!force && now - lastNearbyFetchAtRef.current < NEARBY_MIN_FETCH_GAP_MS) {
+      return;
+    }
 
-        const response = await fetch(`${API_URL}/users/mechanics/nearby/?${query.toString()}`, {
-          method: 'GET',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        });
+    if (nearbyFetchInFlightRef.current) {
+      return;
+    }
 
-        if (!response.ok) {
-          throw new Error('Failed to fetch nearby mechanics');
-        }
+    nearbyFetchInFlightRef.current = true;
+    lastNearbyFetchAtRef.current = now;
 
-        const data = await response.json() as NearbyProvidersResponse;
-        if (!cancelled) {
-          const providers = Array.isArray(data.providers)
-            ? data.providers
-            : Array.isArray(data.mechanics)
-              ? data.mechanics
-              : [];
-          setNearbyProviders(providers);
-        }
-      } catch {
-        if (!cancelled) {
-          // Keep this section silent on API errors per UX requirement.
-          setShowNearbySection(false);
-          setNearbyProviders([]);
-        }
-      } finally {
-        if (!cancelled) {
-          setLoadingNearby(false);
-        }
+    try {
+      if (!silent) {
+        setShowNearbySection(true);
+        setLoadingNearby(true);
       }
-    };
 
-    fetchNearbyMechanics();
-    return () => {
-      cancelled = true;
-    };
+      const query = new URLSearchParams({
+        lat: String(latitude),
+        lng: String(longitude),
+        radius_km: String(searchRadiusKm),
+      });
+
+      const response = await fetch(`${API_URL}/users/mechanics/nearby/?${query.toString()}`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch nearby mechanics');
+      }
+
+      const data = await response.json() as NearbyProvidersResponse;
+      const providers = Array.isArray(data.providers)
+        ? data.providers
+        : Array.isArray(data.mechanics)
+          ? data.mechanics
+          : [];
+      setNearbyProviders(providers);
+      setShowNearbySection(true);
+    } catch {
+      if (!silent) {
+        // Keep this section silent on API errors per UX requirement.
+        setShowNearbySection(false);
+        setNearbyProviders([]);
+      }
+    } finally {
+      if (!silent) {
+        setLoadingNearby(false);
+      }
+      nearbyFetchInFlightRef.current = false;
+    }
   }, [isCustomMode, latitude, longitude, selectedAddress, searchRadiusKm]);
+
+  useEffect(() => {
+    void fetchNearbyProviders({ force: true });
+  }, [fetchNearbyProviders]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (isCustomMode || latitude === null || longitude === null || !selectedAddress) {
+        return;
+      }
+
+      void fetchNearbyProviders({ silent: true, force: true });
+
+      const intervalId = setInterval(() => {
+        void fetchNearbyProviders({ silent: true });
+      }, NEARBY_REFRESH_INTERVAL_MS);
+
+      return () => clearInterval(intervalId);
+    }, [fetchNearbyProviders, isCustomMode, latitude, longitude, selectedAddress])
+  );
 
   // ─── Toggle Custom Mode ────────────────────────────────────
   const handleToggleCustomMode = () => {
@@ -368,7 +453,7 @@ export default function MainRequestFormScreen() {
             <ThemedText style={styles.sectionTitle}>Nearby Providers</ThemedText>
           </View>
           <ThemedText style={styles.nearbySubtitle}>
-            {`Top 3 closest within ${searchRadiusKm} km`}
+            {`Nearby mechanics within ${searchRadiusKm} km + all verified shops`}
           </ThemedText>
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.nearbyScrollContent}>
@@ -420,6 +505,23 @@ export default function MainRequestFormScreen() {
                       />
                     </View>
                     <ThemedText style={styles.nearbyName} numberOfLines={1}>{provider.name}</ThemedText>
+                    {provider.provider_type === 'shop' ? (
+                      <View
+                        style={{
+                          marginLeft: 6,
+                          paddingHorizontal: 6,
+                          paddingVertical: 2,
+                          borderRadius: 999,
+                          backgroundColor: '#FF8C0020',
+                          borderWidth: 1,
+                          borderColor: '#FF8C0040',
+                        }}
+                      >
+                        <ThemedText style={{ fontSize: 10, fontWeight: '600', color: '#FF8C00' }}>
+                          Shop
+                        </ThemedText>
+                      </View>
+                    ) : null}
                   </View>
 
                   <View style={styles.nearbyStatRow}>
@@ -437,6 +539,18 @@ export default function MainRequestFormScreen() {
                   <ThemedText style={styles.nearbyMeta} numberOfLines={1}>
                     {provider.specialization || (provider.provider_type === 'shop' ? 'General automotive services' : 'General mechanic')}
                   </ThemedText>
+                  {formatLiveLocation(provider) ? (
+                    <ThemedText style={styles.nearbyMeta} numberOfLines={1}>
+                      {provider.provider_type === 'shop'
+                        ? `Profile: ${formatLiveLocation(provider)}`
+                        : `Live: ${formatLiveLocation(provider)}`}
+                    </ThemedText>
+                  ) : null}
+                  {provider.proximity_source ? (
+                    <ThemedText style={styles.nearbyMeta} numberOfLines={1}>
+                      {proximitySourceLabel(provider.proximity_source)}
+                    </ThemedText>
+                  ) : null}
                 </TouchableOpacity>
               ))
             )}
@@ -481,6 +595,9 @@ export default function MainRequestFormScreen() {
       showNotification({ type: 'error', message: 'Please select your vehicle type, brand, and model' });
       return false;
     }
+    if (!validateSchedule()) {
+      return false;
+    }
 
     return true;
   };
@@ -505,6 +622,7 @@ export default function MainRequestFormScreen() {
       formData.append('vehicle_type', vehicleType);
       formData.append('vehicle_brand', vehicleBrand);
       formData.append('vehicle_model', vehicleModel);
+      formData.append('scheduled_time', getScheduledTimePayload());
       formData.append('latitude', latValue.toString());
       formData.append('longitude', lngValue.toString());
       formData.append('service_location', JSON.stringify({
@@ -559,6 +677,9 @@ export default function MainRequestFormScreen() {
       showNotification({ type: 'error', message: 'Please select your vehicle type, brand, and model' });
       return;
     }
+    if (!validateSchedule()) {
+      return;
+    }
 
     setLoading(true);
     try {
@@ -587,6 +708,7 @@ export default function MainRequestFormScreen() {
             vehicle_type: vehicleType,
             vehicle_brand: vehicleBrand,
             vehicle_model: vehicleModel,
+            scheduled_time: getScheduledTimePayload(),
           },
         });
       } else {
@@ -762,6 +884,93 @@ export default function MainRequestFormScreen() {
 
         {/* Location — shown in BOTH modes */}
         {renderLocationSection()}
+
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <FontAwesome name="calendar" size={14} color="#FF8C00" />
+            <ThemedText style={styles.sectionTitle}>Schedule (Optional)</ThemedText>
+          </View>
+
+          <TouchableOpacity
+            style={{
+              borderWidth: 1,
+              borderColor: useCurrentTime ? '#FF8C00' : '#2A2C2E',
+              backgroundColor: useCurrentTime ? '#FF8C0012' : '#1A1C1E',
+              borderRadius: 10,
+              padding: 12,
+              marginBottom: 10,
+            }}
+            onPress={() => setUseCurrentTime(true)}
+            activeOpacity={0.85}
+          >
+            <ThemedText style={{ color: '#ECEDEE', fontWeight: '700' }}>Start Now</ThemedText>
+            <ThemedText style={{ color: '#8E8E93', marginTop: 4, fontSize: 12 }}>
+              Use the current date and time.
+            </ThemedText>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={{
+              borderWidth: 1,
+              borderColor: !useCurrentTime ? '#FF8C00' : '#2A2C2E',
+              backgroundColor: !useCurrentTime ? '#FF8C0012' : '#1A1C1E',
+              borderRadius: 10,
+              padding: 12,
+            }}
+            onPress={() => setUseCurrentTime(false)}
+            activeOpacity={0.85}
+          >
+            <ThemedText style={{ color: '#ECEDEE', fontWeight: '700' }}>Schedule for Later</ThemedText>
+            <ThemedText style={{ color: '#8E8E93', marginTop: 4, fontSize: 12 }}>
+              Selected: {formatScheduledDateTime()}
+            </ThemedText>
+          </TouchableOpacity>
+
+          {!useCurrentTime ? (
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+              <TouchableOpacity
+                style={[styles.imageBtn, { flex: 1 }]}
+                onPress={() => setShowDatePicker(true)}
+                activeOpacity={0.85}
+              >
+                <FontAwesome name="calendar" size={14} color="#FF8C00" />
+                <ThemedText style={styles.imageBtnText}>{selectedDate.toLocaleDateString()}</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.imageBtn, { flex: 1 }]}
+                onPress={() => setShowTimePicker(true)}
+                activeOpacity={0.85}
+              >
+                <FontAwesome name="clock-o" size={14} color="#FF8C00" />
+                <ThemedText style={styles.imageBtnText}>
+                  {selectedTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </ThemedText>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
+          {showDatePicker && (
+            <DateTimePicker
+              value={selectedDate}
+              mode="date"
+              minimumDate={new Date()}
+              onChange={(event, date) => {
+                if (Platform.OS !== 'ios') setShowDatePicker(false);
+                if (event.type === 'set' && date) setSelectedDate(date);
+              }}
+            />
+          )}
+          {showTimePicker && (
+            <DateTimePicker
+              value={selectedTime}
+              mode="time"
+              onChange={(event, date) => {
+                if (Platform.OS !== 'ios') setShowTimePicker(false);
+                if (event.type === 'set' && date) setSelectedTime(date);
+              }}
+            />
+          )}
+        </View>
 
         {/* Image Upload */}
         <View style={styles.section}>

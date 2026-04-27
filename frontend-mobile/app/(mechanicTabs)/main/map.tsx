@@ -32,6 +32,9 @@ import { ensureForegroundLocationAccess } from '@/lib/locationPermission';
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const ORS_KEY = process.env.EXPO_PUBLIC_ORS_API_KEY;
 const TOMTOM_KEY = process.env.EXPO_PUBLIC_TOMTOM_API_KEY;
+const BROADCAST_POLL_MS = 15 * 1000;
+const BROADCAST_REFRESH_THROTTLE_MS = 5 * 1000;
+const PRICING_CONFIG_CACHE_MS = 5 * 60 * 1000;
 
 // ─── Modal font rule ──────────────────────────────────────────────────────────
 const ms = StyleSheet.create({
@@ -74,11 +77,17 @@ interface BroadcastRequest {
   }[];
   created_at: string;
   expires_at: string;
+  /** When the client wants the job done (from Request.scheduled_time); null/omitted = ASAP */
+  scheduled_time?: string | null;
   status: string;
   concern_picture?: string;
   required_tokens?: number;
   my_offer_id?: number | null;
   my_offer_status?: string | null;
+  mechanic_can_accept?: boolean;
+  mechanic_accept_block_reason?: string | null;
+  shopowner_can_accept?: boolean;
+  shopowner_accept_block_reason?: string | null;
 }
 
 type TrafficLevel = 'light' | 'moderate' | 'heavy' | 'severe' | 'unknown';
@@ -138,6 +147,19 @@ interface PricingConfig {
   token_deduction_percentage: number;
 }
 
+function formatBroadcastServiceSchedule(iso: string | null | undefined): string {
+  if (!iso) return 'As soon as possible';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return 'As soon as possible';
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 const DEFAULT_PRICING_CONFIG: PricingConfig = {
   base_distance_fee: 50,
   price_per_km: 15,
@@ -164,6 +186,8 @@ export default function MapScreen() {
   const broadcastFetchInFlightRef = useRef(false);
   const pendingBroadcastRefreshRef = useRef(false);
   const lastBroadcastFetchAtRef = useRef(0);
+  const pricingConfigFetchInFlightRef = useRef(false);
+  const lastPricingConfigFetchAtRef = useRef(0);
   const { showNotification } = useNotification();
   const pathname = usePathname();
   const segments = useSegments();
@@ -232,7 +256,7 @@ export default function MapScreen() {
       return;
     }
 
-    if (lastMessage.action === 'booking_finalized' && messageBroadcastId && messageOfferId && pendingOffer?.offerId === messageOfferId) {
+    if (lastMessage.action === 'booking_finalized' && messageBroadcastId) {
       const acceptedBookingId = extractBookingIdFromPayload(lastMessage);
       setOfferNotice({
         broadcastId: messageBroadcastId,
@@ -244,9 +268,13 @@ export default function MapScreen() {
         delete next[messageBroadcastId];
         return next;
       });
+      setAwaitingClientSelectionBroadcastId((current) => (
+        current === messageBroadcastId ? null : current
+      ));
+      setBroadcasts((current) => current.filter((broadcast) => broadcast.id !== messageBroadcastId));
       closeBroadcastModal();
       fetchBroadcasts(true);
-      fetchTokensBalance();
+      fetchTokensBalance(true);
       if (acceptedBookingId) {
         router.push({
           pathname: '/mechanic/booking/booking_details',
@@ -398,9 +426,9 @@ export default function MapScreen() {
     return userLocationRef.current;
   };
 
-  const fetchTokensBalance = async () => {
+  const fetchTokensBalance = async (forceRefresh = false) => {
     const source = isShopOwnerMap ? 'shop-owner' : 'mechanic';
-    const balance = await fetchUnifiedWalletBalance(source);
+    const balance = await fetchUnifiedWalletBalance(source, forceRefresh);
     if (balance !== null) setTokensBalance(balance);
   };
 
@@ -413,11 +441,21 @@ export default function MapScreen() {
         fetchBroadcasts(true);
       }
       fetchTokensBalance();
-    }, 7000);
+    }, BROADCAST_POLL_MS);
     return () => clearInterval(poll);
   }, [broadcastFetchEnabled, isShopOwnerMap]);
 
-  const fetchPricingConfig = async () => {
+  const fetchPricingConfig = async (forceRefresh = false) => {
+    const now = Date.now();
+    if (!forceRefresh && now - lastPricingConfigFetchAtRef.current < PRICING_CONFIG_CACHE_MS) {
+      return;
+    }
+    if (pricingConfigFetchInFlightRef.current) {
+      return;
+    }
+
+    pricingConfigFetchInFlightRef.current = true;
+    lastPricingConfigFetchAtRef.current = now;
     try {
       const response = await fetch(`${API_URL}/pricing/config/`, {
         method: 'GET', credentials: 'include',
@@ -441,6 +479,9 @@ export default function MapScreen() {
       cachedRouteData.current = null;
       lastFetchedBroadcastId.current = null;
     } catch { }
+    finally {
+      pricingConfigFetchInFlightRef.current = false;
+    }
   };
 
   useEffect(() => {
@@ -691,7 +732,7 @@ export default function MapScreen() {
 
     const force = options?.force === true;
     const now = Date.now();
-    if (!force && now - lastBroadcastFetchAtRef.current < 1500) {
+    if (!force && now - lastBroadcastFetchAtRef.current < BROADCAST_REFRESH_THROTTLE_MS) {
       return;
     }
 
@@ -712,7 +753,8 @@ export default function MapScreen() {
       const response = await fetch(endpoint, { method: 'GET', credentials: 'include', headers: { 'Content-Type': 'application/json' } });
       if (!response.ok) throw new Error('Failed to fetch broadcasts');
       const data = await response.json() as any;
-      const normalized = (Array.isArray(data.broadcasts) ? data.broadcasts : [])
+      const rawBroadcasts: unknown[] = Array.isArray(data.broadcasts) ? data.broadcasts : [];
+      const normalized = rawBroadcasts
         .map((item: any) => normalizeBroadcast(item))
         .filter((item: BroadcastRequest | null): item is BroadcastRequest => item !== null);
       setBroadcasts(normalized);
@@ -838,15 +880,42 @@ export default function MapScreen() {
 
   const handleAcceptBroadcast = async () => {
     if (!selectedBroadcast || !userLocation) return;
+    const blockedByAvailability = isShopOwnerMap
+      ? selectedBroadcast.shopowner_can_accept === false
+      : selectedBroadcast.mechanic_can_accept === false;
+    if (blockedByAvailability) {
+      showNotification({
+        type: 'warning',
+        title: 'Unavailable',
+        message: 'Your status is unavailable. Switch to accept bookings.',
+      });
+      return;
+    }
 
     setAccepting(true);
     try {
-      const response = await fetch(`${API_URL}/bookings/broadcasts/${selectedBroadcast.id}/accept/`, {
+      const acceptUrl = isShopOwnerMap
+        ? `${API_URL}/bookings/shopowner/broadcasts/${selectedBroadcast.id}/accept/`
+        : `${API_URL}/bookings/broadcasts/${selectedBroadcast.id}/accept/`;
+      const response = await fetch(acceptUrl, {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mechanic_latitude: userLocation.latitude, mechanic_longitude: userLocation.longitude, distance_km: feeData?.distanceKm, traffic_level: trafficData?.level ?? 'unknown', estimated_eta_minutes: feeData?.etaMinutes }),
       });
       const data = await response.json() as any;
       if (response.ok) {
+        if (isShopOwnerMap) {
+          showNotification({ type: 'success', title: 'Booking created', message: 'Broadcast accepted. You can now assign mechanics.' });
+          closeBroadcastModal();
+          fetchBroadcasts(true);
+          fetchTokensBalance(true);
+          try { eventBus.emit('walletChanged'); } catch { }
+          const bookingId = Number(data.booking_id || data.booking?.id || 0);
+          if (bookingId) {
+            router.push({ pathname: '/shopowner/booking/booking_details', params: { bookingId: String(bookingId) } });
+          }
+          return;
+        }
+
         const offerId = Number(data.offer_id ?? 0) || null;
         const nextStatus = String(data.offer_status || 'pending');
         setPendingOffersByBroadcastId((current) => ({
@@ -869,9 +938,17 @@ export default function MapScreen() {
         });
         showNotification({ type: 'success', title: 'Request sent', message: 'Waiting for the client to accept.' });
         fetchBroadcasts(true);
-        fetchTokensBalance();
+        fetchTokensBalance(true);
         try { eventBus.emit('walletChanged'); } catch { }
       } else {
+        if (data?.reason === 'mechanic_unavailable' || data?.reason === 'shop_unavailable') {
+          showNotification({
+            type: 'warning',
+            title: 'Unavailable',
+            message: data?.error || 'Your status is unavailable. Switch to accept bookings.',
+          });
+          return;
+        }
         showNotification({ type: 'warning', title: 'Already Taken', message: data.error || 'This broadcast is no longer available. Another mechanic was faster.' });
         closeBroadcastModal(); fetchBroadcasts(true);
       }
@@ -902,6 +979,18 @@ export default function MapScreen() {
   const hasInsufficientTokens = requiredTokensPreview !== null && tokensBalance !== null && tokensBalance < requiredTokensPreview;
   const selectedBroadcastCoordinate = selectedBroadcast ? toValidCoordinate(selectedBroadcast.latitude, selectedBroadcast.longitude) : null;
   const isAwaitingClientSelection = isBroadcastPendingClientSelection(selectedBroadcast);
+  const isSelectedBroadcastBlockedByStatus = isShopOwnerMap
+    ? selectedBroadcast?.shopowner_can_accept === false
+    : selectedBroadcast?.mechanic_can_accept === false;
+  const isProviderUnavailableForBroadcasts = useMemo(
+    () =>
+      broadcasts.some((broadcast) =>
+        isShopOwnerMap
+          ? broadcast.shopowner_can_accept === false
+          : broadcast.mechanic_can_accept === false
+      ),
+    [broadcasts, isShopOwnerMap]
+  );
   const activePendingBroadcastId = useMemo(() => {
     if (awaitingClientSelectionBroadcastId !== null) {
       const pendingFromOffers = pendingOffersByBroadcastId[awaitingClientSelectionBroadcastId]?.status === 'pending';
@@ -1115,13 +1204,21 @@ export default function MapScreen() {
             </View>
           ) : (
             <>
+              {isProviderUnavailableForBroadcasts && (
+                <ThemedText style={{ fontSize: 12, color: '#FFB3A7', marginBottom: 10, lineHeight: 18 }}>
+                  Your status is unavailable. Switch to accept bookings.
+                </ThemedText>
+              )}
               {isOtherBroadcastLocked && (
                 <ThemedText style={{ fontSize: 12, color: '#8E8E93', marginBottom: 10, lineHeight: 18 }}>
                   Other broadcasts are unavailable until you withdraw or the client responds to your pending request.
                 </ThemedText>
               )}
               {filteredBroadcasts.map((broadcast) => {
-                const lockedOut = isOtherBroadcastLocked && broadcast.id !== activePendingBroadcastId;
+                const lockedOutByStatus =
+                  isProviderUnavailableForBroadcasts ||
+                  (isShopOwnerMap ? broadcast.shopowner_can_accept === false : broadcast.mechanic_can_accept === false);
+                const lockedOut = lockedOutByStatus || (isOtherBroadcastLocked && broadcast.id !== activePendingBroadcastId);
                 const isCardAwaitingClient = isBroadcastPendingClientSelection(broadcast);
                 return (
                 <TouchableOpacity
@@ -1150,6 +1247,12 @@ export default function MapScreen() {
                     {broadcast.services.length > 2 && (
                       <View style={styles.serviceTag}><ThemedText style={styles.serviceTagText}>+{broadcast.services.length - 2} more</ThemedText></View>
                     )}
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 8, paddingRight: 4 }}>
+                    <FontAwesome name="calendar" size={12} color="#FF8C00" />
+                    <ThemedText style={{ fontSize: 12, color: '#AEAEB2', flex: 1 }} numberOfLines={2}>
+                      Service: {formatBroadcastServiceSchedule(broadcast.scheduled_time)}
+                    </ThemedText>
                   </View>
                   <View style={styles.jobCardFooter}>
                     <View style={styles.timerContainer}>
@@ -1203,6 +1306,13 @@ export default function MapScreen() {
                     <FontAwesome name="clock-o" size={20} color="#FF8C00" />
                     <ThemedText style={[styles.modalTimerText, ms.timer]}>
                       Time Remaining: {getTimeRemaining(selectedBroadcast.expires_at)}
+                    </ThemedText>
+                  </View>
+
+                  <View style={styles.modalSection}>
+                    <ThemedText style={[styles.modalSectionTitle, ms.sectionTitle]}>Scheduled service time</ThemedText>
+                    <ThemedText style={[styles.modalText, ms.body]}>
+                      {formatBroadcastServiceSchedule(selectedBroadcast.scheduled_time)}
                     </ThemedText>
                   </View>
 
@@ -1396,7 +1506,7 @@ export default function MapScreen() {
                       <ThemedText style={[sx.tokensLabel, ms.label]}>Balance</ThemedText>
                       <ThemedText style={[sx.tokensValue, ms.value]}>{tokensBalance ?? '--'}</ThemedText>
                     </View>
-                    {hasInsufficientTokens && !isShopOwnerMap && (
+                    {hasInsufficientTokens && (
                       <ThemedText style={[sx.tokensWarning, ms.warning]}>
                         Insufficient credits. Please top up to accept this job.
                       </ThemedText>
@@ -1411,10 +1521,10 @@ export default function MapScreen() {
                 style={[
                   styles.modalAcceptButton,
                   accepting && styles.modalAcceptButtonDisabled,
-                  (hasInsufficientTokens || isShopOwnerMap || isAwaitingClientSelection) ? styles.modalAcceptButtonDisabled : null,
+                  (hasInsufficientTokens || (!isShopOwnerMap && isAwaitingClientSelection) || isSelectedBroadcastBlockedByStatus) ? styles.modalAcceptButtonDisabled : null,
                 ]}
                 onPress={handleAcceptBroadcast}
-                disabled={accepting || hasInsufficientTokens || isShopOwnerMap || isAwaitingClientSelection}
+                disabled={accepting || hasInsufficientTokens || (!isShopOwnerMap && isAwaitingClientSelection) || isSelectedBroadcastBlockedByStatus}
               >
                 {accepting ? (
                   <>
@@ -1426,15 +1536,17 @@ export default function MapScreen() {
                     <ActivityIndicator color="#fff" />
                     <ThemedText style={styles.modalAcceptText}>Waiting for client approval</ThemedText>
                   </>
-                ) : isShopOwnerMap ? (
+                ) : isSelectedBroadcastBlockedByStatus ? (
                   <>
-                    <FontAwesome name="info-circle" size={18} color="#fff" />
-                    <ThemedText style={styles.modalAcceptText}>Mechanics can accept this job</ThemedText>
+                    <FontAwesome name="pause-circle" size={18} color="#fff" />
+                    <ThemedText style={styles.modalAcceptText}>Switch to accept bookings</ThemedText>
                   </>
                 ) : (
                   <>
                     <FontAwesome name="check" size={18} color="#fff" />
-                    <ThemedText style={styles.modalAcceptText}>Accept This Job</ThemedText>
+                    <ThemedText style={styles.modalAcceptText}>
+                      {isShopOwnerMap ? 'Accept and Create Booking' : 'Accept This Job'}
+                    </ThemedText>
                   </>
                 )}
               </TouchableOpacity>

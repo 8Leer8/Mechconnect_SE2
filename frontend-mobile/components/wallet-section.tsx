@@ -28,8 +28,8 @@ export default function WalletSection({
   const canShowAdd = showAddButton ?? creditsSource !== 'shop-owner';
   const [refreshTick, setRefreshTick] = useState(0);
 
-  const loadBalance = useCallback(async () => {
-    const data = await fetchUnifiedWalletBalance(creditsSource);
+  const loadBalance = useCallback(async (forceRefresh = false) => {
+    const data = await fetchUnifiedWalletBalance(creditsSource, forceRefresh);
     setBalance(data ?? 0);
   }, [creditsSource]);
 
@@ -44,7 +44,7 @@ export default function WalletSection({
   }, [loadBalance]);
 
   useEffect(() => {
-    loadBalance().catch(() => {});
+    loadBalance(refreshTick > 0).catch(() => {});
   }, [loadBalance, refreshTick]);
 
   useFocusEffect(

@@ -15,13 +15,14 @@ from ...models import (
     ReworkBooking, DisputeBooking, CompleteBooking, Receipt, BroadcastOffer, PaymentInstallment, Quotation, RequestAssignment,
     BroadcastRequest, BroadcastRequestAddOn, DirectRequestAddOn, MechanicLocation, QuotationItem
 )
-from ...serializers import BookingSerializer, BookingPaymentSerializer
+from ...serializers import BookingSerializer, BookingPaymentSerializer, QuotationSerializer
 from ...backjob_utils import (
     backjob_accepted_payable_total,
     booking_has_backjob,
     backjob_phase_total_paid,
     backjob_scoped_payments_active,
 )
+from pricing.models import PricingConfiguration
 from users.models import Account, Mechanic, MechanicReview, TokenTransaction
 from ...ws_utils import upsert_booking_party_notification
 
@@ -37,6 +38,7 @@ def _notification_title_for_action(action):
         'booking.dispute_refund_verified': 'Refund Verified',
         'booking.dispute_resolved_voucher': 'Dispute Resolved',
         'booking.dispute_refund_details_submitted': 'Refund Details Submitted',
+        'client_cancelled': 'Booking Cancelled',
         'cancelled_no_show': 'Booking Cancelled',
     }
 
@@ -50,7 +52,7 @@ def _notification_title_for_action(action):
     return 'Notification'
 
 
-def _broadcast_booking_action(booking, action, message):
+def _broadcast_booking_action(booking, action, message, payload_extra=None):
     """Broadcast booking websocket action to all involved account groups."""
     try:
         from channels.layers import get_channel_layer
@@ -76,6 +78,12 @@ def _broadcast_booking_action(booking, action, message):
                 participant_ids.add(booking.request.shop.shop_owner.account_id)
         except Exception:
             pass
+        try:
+            for assignment in RequestAssignment.objects.filter(request=booking.request).select_related('mechanic'):
+                if assignment.mechanic_id:
+                    participant_ids.add(assignment.mechanic_id)
+        except Exception:
+            pass
 
         payload = {
             'type': 'booking_update',
@@ -85,6 +93,8 @@ def _broadcast_booking_action(booking, action, message):
             'dispute_status': booking.dispute_status,
             'message': message,
         }
+        if payload_extra:
+            payload.update(payload_extra)
 
         notification_title = _notification_title_for_action(action)
 
@@ -96,6 +106,7 @@ def _broadcast_booking_action(booking, action, message):
                     notification_title,
                     message,
                     action=action,
+                    payload_extra=payload_extra,
                 )
             except Exception:
                 logger.exception('Failed to upsert notification for account %s', account_id)
@@ -110,6 +121,47 @@ def _to_money(value):
 
     amount = Decimal(value or 0)
     return amount.quantize(Decimal('0.01'))
+
+
+def _build_payment_split_payload(booking, mechanic_count=None):
+    from decimal import Decimal
+
+    total = _to_money(booking.amount_fee)
+    has_shop = getattr(booking.request, 'shop_id', None) is not None
+    if not has_shop:
+        return {
+            'total_amount': float(total),
+            'mechanic_percentage': 100.0,
+            'shop_owner_percentage': 0.0,
+            'mechanic_amount': float(total),
+            'shop_owner_amount': 0.0,
+            'mechanic_count': 1,
+            'per_mechanic_amount': float(total),
+        }
+
+    pricing = PricingConfiguration.get_config()
+    shop_percentage = Decimal(getattr(pricing, 'platform_commission_percentage', 0) or 0)
+    if shop_percentage < 0:
+        shop_percentage = Decimal('0')
+    if shop_percentage > 100:
+        shop_percentage = Decimal('100')
+
+    shop_amount = _to_money(total * shop_percentage / Decimal('100'))
+    mechanic_amount = _to_money(total - shop_amount)
+    if mechanic_count is None:
+        mechanic_count = RequestAssignment.objects.filter(request=booking.request).count()
+    mechanic_count = mechanic_count or 1
+    per_mechanic_amount = _to_money(mechanic_amount / Decimal(mechanic_count))
+
+    return {
+        'total_amount': float(total),
+        'mechanic_percentage': float(Decimal('100') - shop_percentage),
+        'shop_owner_percentage': float(shop_percentage),
+        'mechanic_amount': float(mechanic_amount),
+        'shop_owner_amount': float(shop_amount),
+        'mechanic_count': mechanic_count,
+        'per_mechanic_amount': float(per_mechanic_amount),
+    }
 
 
 def _haversine_meters(lat1, lon1, lat2, lon2):
@@ -184,9 +236,11 @@ def _build_rescue_description(original_request, booking):
 
     if hasattr(original_request, 'directrequest') and original_request.directrequest is not None:
         try:
-            service_name = original_request.directrequest.service.name
-            if service_name:
-                return f"Auto-rescue no-show for {service_name}"
+            from ...direct_request_utils import iter_direct_request_services
+
+            names = [s.name for s in iter_direct_request_services(original_request) if getattr(s, "name", None)]
+            if names:
+                return f"Auto-rescue no-show for {', '.join(names)}"
         except Exception:
             pass
 
@@ -352,6 +406,7 @@ def list_client_bookings(request):
             'request__client',
             'request__client__account',
             'request__provider',
+            'request__shop',
             'request__service_location'
         ).prefetch_related(
             Prefetch('activebooking', queryset=ActiveBooking.objects.all()),
@@ -360,13 +415,14 @@ def list_client_bookings(request):
             Prefetch('disputebooking', queryset=DisputeBooking.objects.select_related(
                 'complainer', 'complaint_against', 'admin'
             )),
-            Prefetch('completebooking', queryset=CompleteBooking.objects.all())
+            Prefetch('completebooking', queryset=CompleteBooking.objects.all()),
+            Prefetch('request__assignments', queryset=RequestAssignment.objects.select_related('mechanic')),
         ).order_by('-booked_at')
         
         # Apply status filter if provided
         if status_filter:
             valid_statuses = [
-                'all', 'accepted', 'active', 'on_the_way', 'at_location', 'diagnosing',
+                'all', 'booked', 'accepted', 'active', 'on_the_way', 'at_location', 'diagnosing',
                 'pending_payment', 'completed', 'cancelled', 'reworked', 'backjob_pending', 'disputed',
             ]
             if status_filter.lower() not in valid_statuses:
@@ -380,8 +436,10 @@ def list_client_bookings(request):
             # For 'active' tab, merge in-progress statuses through payment pending
             elif status_filter.lower() == 'active':
                 bookings_queryset = bookings_queryset.filter(status__in=[
-                    'accepted', 'active', 'on_the_way', 'at_location', 'diagnosing', 'pending_payment', 'backjob_pending',
+                    'booked', 'accepted', 'active', 'on_the_way', 'at_location', 'diagnosing', 'pending_payment', 'backjob_pending',
                 ])
+            elif status_filter.lower() == 'accepted':
+                bookings_queryset = bookings_queryset.filter(status__in=['booked', 'accepted'])
             else:
                 bookings_queryset = bookings_queryset.filter(status=status_filter.lower())
 
@@ -411,36 +469,38 @@ def list_client_bookings(request):
         
         # If no filter, return bookings grouped by status (no pagination for grouped view)
         else:
-            active_bookings = bookings_queryset.filter(status__in=[
+            all_bookings = list(bookings_queryset)
+            active_statuses = {
                 'accepted', 'active', 'on_the_way', 'at_location', 'diagnosing', 'pending_payment', 'backjob_pending',
-            ])
-            completed_bookings = bookings_queryset.filter(status='completed')
-            cancelled_bookings = bookings_queryset.filter(status='cancelled')
-            reworked_bookings = bookings_queryset.filter(status='reworked')
-            disputed_bookings = bookings_queryset.filter(status='disputed')
+            }
+            active_bookings = [booking for booking in all_bookings if booking.status in active_statuses]
+            completed_bookings = [booking for booking in all_bookings if booking.status == 'completed']
+            cancelled_bookings = [booking for booking in all_bookings if booking.status == 'cancelled']
+            reworked_bookings = [booking for booking in all_bookings if booking.status == 'reworked']
+            disputed_bookings = [booking for booking in all_bookings if booking.status == 'disputed']
 
             return Response({
                 'active': {
                     'bookings': _serialize_bookings(active_bookings, viewer_account=account),
-                    'count': active_bookings.count()
+                    'count': len(active_bookings)
                 },
                 'completed': {
                     'bookings': _serialize_bookings(completed_bookings, viewer_account=account),
-                    'count': completed_bookings.count()
+                    'count': len(completed_bookings)
                 },
                 'cancelled': {
                     'bookings': _serialize_bookings(cancelled_bookings, viewer_account=account),
-                    'count': cancelled_bookings.count()
+                    'count': len(cancelled_bookings)
                 },
                 'reworked': {
                     'bookings': _serialize_bookings(reworked_bookings, viewer_account=account),
-                    'count': reworked_bookings.count()
+                    'count': len(reworked_bookings)
                 },
                 'disputed': {
                     'bookings': _serialize_bookings(disputed_bookings, viewer_account=account),
-                    'count': disputed_bookings.count()
+                    'count': len(disputed_bookings)
                 },
-                'total_count': bookings_queryset.count()
+                'total_count': len(all_bookings)
             }, status=status.HTTP_200_OK)
     
     except Account.DoesNotExist:
@@ -489,6 +549,7 @@ def get_booking_detail(request, booking_id):
             'request__client',
             'request__client__account',
             'request__provider',
+            'request__shop',
             'request__service_location'
         ).prefetch_related(
             Prefetch('activebooking', queryset=ActiveBooking.objects.all()),
@@ -497,7 +558,8 @@ def get_booking_detail(request, booking_id):
             Prefetch('disputebooking', queryset=DisputeBooking.objects.select_related(
                 'complainer', 'complaint_against', 'admin'
             )),
-            Prefetch('completebooking', queryset=CompleteBooking.objects.all())
+            Prefetch('completebooking', queryset=CompleteBooking.objects.all()),
+            Prefetch('request__assignments', queryset=RequestAssignment.objects.select_related('mechanic')),
         ).get(id=booking_id, request__client=client)
         
         # Ensure ActiveBooking exists for runtime details when booking is in a running/finished state
@@ -529,6 +591,97 @@ def get_booking_detail(request, booking_id):
         return Response({
             'error': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def client_cancel_booking(request, booking_id):
+    """Let a client cancel only while the booking is still accepted/booked."""
+    account_id = request.session.get('account_id')
+    if not account_id:
+        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    reason = str(request.data.get('reason', '')).strip()
+    if not reason:
+        return Response({'error': 'Please provide a cancellation reason.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        account = Account.objects.get(id=account_id)
+        if not hasattr(account, 'client'):
+            return Response({'error': 'Only clients can cancel their booking'}, status=status.HTTP_403_FORBIDDEN)
+
+        with transaction.atomic():
+            booking = Booking.objects.select_for_update().select_related(
+                'request',
+                'request__client',
+                'request__client__account',
+            ).get(id=booking_id, request__client=account.client)
+
+            if booking.status == Booking.Status.CANCELLED:
+                return Response({'error': 'Booking is already cancelled.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            booking_status = str(booking.status or '').strip().lower()
+            cannot_cancel_statuses = [
+                Booking.Status.ON_THE_WAY,
+                Booking.Status.AT_LOCATION,
+                Booking.Status.DIAGNOSING,
+                Booking.Status.ACTIVE,
+                Booking.Status.PAUSED,
+                Booking.Status.FINISHED,
+                Booking.Status.PENDING_PAYMENT,
+                Booking.Status.COMPLETED,
+                Booking.Status.CANCELLED,
+                Booking.Status.REWORKED,
+                Booking.Status.DISPUTED,
+            ]
+            if booking_status in cannot_cancel_statuses:
+                return Response(
+                    {'error': 'You can only cancel while the booking is booked and the mechanic is not on the way.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            booking.status = Booking.Status.CANCELLED
+            booking.save(update_fields=['status', 'updated_at'])
+
+            CancelBooking.objects.update_or_create(
+                booking=booking,
+                defaults={
+                    'cancelled_by': account,
+                    'reason': reason,
+                },
+            )
+
+        client_name = f"{account.firstname} {account.lastname}".strip() or account.username or 'Client'
+        message = f"{client_name} cancelled the booking. Reason: {reason}"
+        _broadcast_booking_action(
+            booking,
+            'client_cancelled',
+            message,
+            payload_extra={
+                'cancellation_reason': reason,
+                'cancelled_by_name': client_name,
+            },
+        )
+
+        booking.refresh_from_db()
+        return Response(
+            {
+                'message': 'Booking cancelled.',
+                'booking': _serialize_single_booking(booking, viewer_account=account),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    except Account.DoesNotExist:
+        return Response({'error': 'Account not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Booking.DoesNotExist:
+        return Response(
+            {'error': 'Booking not found or you do not have permission to cancel it'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    except Exception as e:
+        logger.exception('Client cancel booking failed for booking %s', booking_id)
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['POST'])
@@ -1087,6 +1240,10 @@ def _serialize_bookings(bookings_queryset, viewer_account=None):
 
 def _serialize_single_booking(booking, viewer_account=None):
     """Helper function to serialize a single booking with all details"""
+    prefetched_assignments = getattr(booking.request, '_prefetched_objects_cache', {}).get('assignments')
+    assignments = list(prefetched_assignments) if prefetched_assignments is not None else list(
+        RequestAssignment.objects.filter(request=booking.request).select_related('mechanic')
+    )
     broadcast_request_payload = None
     accepted_offer = None
     if hasattr(booking.request, 'broadcast_request') and booking.request.broadcast_request is not None:
@@ -1176,6 +1333,7 @@ def _serialize_single_booking(booking, viewer_account=None):
         'traffic_level': traffic_level_value,
         'mechanic_location': mechanic_location_payload,
         'booked_at': booking.booked_at.isoformat(),
+        'booking_date': booking.booking_date.isoformat() if getattr(booking, 'booking_date', None) else None,
         'updated_at': booking.updated_at.isoformat(),
         'completed_at': booking.completed_at.isoformat() if booking.completed_at else None,
         'request': {
@@ -1198,7 +1356,7 @@ def _serialize_single_booking(booking, viewer_account=None):
                     },
                     'assigned_at': a.assigned_at.isoformat() if a.assigned_at else None,
                 }
-                for a in RequestAssignment.objects.filter(request=booking.request).select_related('mechanic')
+                for a in assignments
             ],
         },
         'provider': {
@@ -1206,6 +1364,12 @@ def _serialize_single_booking(booking, viewer_account=None):
             'name': f"{booking.request.provider.firstname} {booking.request.provider.lastname}",
             'email': booking.request.provider.email,
         } if booking.request.provider else None,
+        'shop': {
+            'id': booking.request.shop.id,
+            'shop_name': booking.request.shop.shop_name,
+            'contact_number': booking.request.shop.contact_number,
+            'email': booking.request.shop.email,
+        } if getattr(booking.request, 'shop', None) else None,
         'client': {
             'firstname':booking.request.client.account.firstname,
             'lastname':booking.request.client.account.lastname,
@@ -1224,6 +1388,7 @@ def _serialize_single_booking(booking, viewer_account=None):
         'service_location': service_location,
         'location': location_payload,
     }
+    booking_data['payment_split'] = _build_payment_split_payload(booking, mechanic_count=len(assignments))
     
     # Add active booking runtime details when ActiveBooking exists
     if hasattr(booking, 'activebooking'):
@@ -1237,6 +1402,9 @@ def _serialize_single_booking(booking, viewer_account=None):
             'after_pictures': after_photos,
             'is_job_done': active.is_job_done,
             'is_rescheduled': active.is_rescheduled,
+            'proposed_date': active.proposed_date.isoformat() if getattr(active, 'proposed_date', None) else None,
+            'pre_reschedule_status': active.pre_reschedule_status,
+            'reschedule_requested_by': active.reschedule_requested_by_id,
             'reason': active.reason,
             'new_time': active.new_time.isoformat() if active.new_time else None,
             'new_date': active.new_date.isoformat() if active.new_date else None,
@@ -1308,16 +1476,27 @@ def _serialize_single_booking(booking, viewer_account=None):
         req = booking.request
         rd = {'type': req.request_type}
 
-        # Direct request: single service + possible add-ons
+        # Direct request: one or more services + possible add-ons
         if hasattr(req, 'directrequest') and getattr(req, 'directrequest') is not None:
             try:
-                svc = req.directrequest.service
-                if svc:
+                from ...direct_request_utils import iter_direct_request_services
+
+                svc_rows = iter_direct_request_services(req)
+                if svc_rows:
+                    first = svc_rows[0]
                     rd['service'] = {
-                        'id': svc.id,
-                        'name': svc.name,
-                        'minimum_price': float(svc.minimum_price) if getattr(svc, 'minimum_price', None) is not None else None,
+                        'id': first.id,
+                        'name': first.name,
+                        'minimum_price': float(first.minimum_price) if getattr(first, 'minimum_price', None) is not None else None,
                     }
+                    rd['services'] = [
+                        {
+                            'id': s.id,
+                            'name': s.name,
+                            'minimum_price': float(s.minimum_price) if getattr(s, 'minimum_price', None) is not None else None,
+                        }
+                        for s in svc_rows
+                    ]
                 # collect add-ons for direct requests
                 addons = []
                 from ...models import DirectRequestAddOn
@@ -1372,47 +1551,17 @@ def _serialize_single_booking(booking, viewer_account=None):
         # never fail serialization for minor request detail issues
         pass
 
-    # Attach mechanic quotation if one exists for this booking (manual build)
+    # Attach mechanic quotation if one exists for this booking.
+    # Use the shared serializer so pending amendment rows match mechanic/shop owner views.
     try:
         try:
             q = booking.quotation
-            qd = {
-                'id': q.id,
-                'mechanic_id': q.mechanic.id if q.mechanic else None,
-                'status': q.status,
-                'notes': q.notes,
-                'total_amount': float(q.total_amount) if q.total_amount is not None else None,
-                'is_final': bool(q.is_final),
-                'created_at': q.created_at.isoformat() if q.created_at else None,
-                'updated_at': q.updated_at.isoformat() if q.updated_at else None,
-                'items': []
-            }
-            # While quotation is pending, keep rejected item rows visible so clients can
-            # review pending removal proposals in pricing/quotation sections.
-            items_qs = q.items.all() if str(q.status).lower() == 'pending' else q.items.exclude(status='rejected')
-            for it in items_qs:
-                qd['items'].append({
-                    'id': it.id,
-                    'line_kind': getattr(it, 'line_kind', 'item'),
-                    'source': getattr(it, 'source', None),
-                    'service': it.service.id if it.service else None,
-                    'service_add_on': it.service_add_on.id if it.service_add_on else None,
-                    'description': it.description,
-                    'quantity': it.quantity,
-                    'unit_price': float(it.unit_price),
-                    'line_total': float(it.line_total) if hasattr(it, 'line_total') else float(it.quantity * it.unit_price),
-                    'status': it.status if hasattr(it, 'status') and it.status is not None else q.status,
-                    'change_type': getattr(it, 'change_type', None),
-                    'is_backjob_new_line': bool(getattr(it, 'is_backjob_line', False)),
-                    'backjob_id': getattr(it, 'backjob_id', None),
-                    'created_at': it.created_at.isoformat() if getattr(it, 'created_at', None) else None,
-                    'updated_at': it.updated_at.isoformat() if getattr(it, 'updated_at', None) else None,
-                    'previous_description': getattr(it, 'previous_description', None),
-                    'previous_quantity': getattr(it, 'previous_quantity', None),
-                    'previous_unit_price': float(it.previous_unit_price) if getattr(it, 'previous_unit_price', None) is not None else None,
-                    'purchase_receipt_image': it.purchase_receipt_image.url if getattr(it, 'purchase_receipt_image', None) else None,
-                    'receipt_submitted_at': it.receipt_submitted_at.isoformat() if getattr(it, 'receipt_submitted_at', None) else None,
-                })
+            qd = QuotationSerializer(q).data
+            if 'mechanic' in qd and 'mechanic_id' not in qd:
+                try:
+                    qd['mechanic_id'] = q.mechanic.id if q.mechanic else None
+                except Exception:
+                    qd['mechanic_id'] = None
             booking_data['quotation'] = qd
         except Exception:
             # no related quotation present

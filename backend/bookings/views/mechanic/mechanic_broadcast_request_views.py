@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django.utils import timezone
 from django.db import transaction
+from django.db.models import Prefetch
 import logging
 import math
 
@@ -58,8 +59,19 @@ def get_active_broadcasts(request):
 
         # If the caller is authenticated, exclude broadcasts created by the same account
         account_id = request.session.get('account_id')
+        current_mechanic = None
         if account_id:
             active_broadcasts = active_broadcasts.exclude(request__client__account_id=account_id)
+            account = Account.objects.select_related('mechanic').filter(id=account_id).first()
+            current_mechanic = getattr(account, 'mechanic', None) if account else None
+            if current_mechanic is not None:
+                active_broadcasts = active_broadcasts.prefetch_related(
+                    Prefetch(
+                        'offers',
+                        queryset=BroadcastOffer.objects.filter(mechanic=current_mechanic).order_by('-created_at', '-id'),
+                        to_attr='current_mechanic_offers',
+                    )
+                )
         
         mechanic_lat = request.GET.get('mechanic_lat', request.GET.get('mechanic_latitude'))
         mechanic_lng = request.GET.get('mechanic_lng', request.GET.get('mechanic_longitude'))
@@ -80,7 +92,11 @@ def get_active_broadcasts(request):
                     filtered.append(br)
             active_broadcasts = filtered
 
-        serializer = BroadcastRequestSerializer(active_broadcasts, many=True, context={'request': request})
+        serializer = BroadcastRequestSerializer(
+            active_broadcasts,
+            many=True,
+            context={'request': request, 'current_mechanic': current_mechanic},
+        )
         
         return Response({
             'broadcasts': serializer.data,
@@ -119,6 +135,12 @@ def accept_broadcast_request(request, broadcast_id):
             }, status=status.HTTP_403_FORBIDDEN)
         
         mechanic = account.mechanic
+        if mechanic.status != mechanic.WorkStatus.AVAILABLE:
+            return Response({
+                'error': 'Your status is unavailable. Switch to accept bookings.',
+                'reason': 'mechanic_unavailable',
+                'mechanic_status': mechanic.status,
+            }, status=status.HTTP_403_FORBIDDEN)
         
         # Extract location and pricing data from request
         mechanic_latitude = request.data.get('mechanic_latitude')

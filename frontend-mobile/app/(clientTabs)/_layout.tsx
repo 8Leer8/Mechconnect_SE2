@@ -23,6 +23,10 @@ export default function ClientTabLayout() {
     message: 'A mechanic requested to accept your broadcast.',
   });
   const lastHandledMessageKeyRef = React.useRef<string | null>(null);
+  const lastDirectAcceptDedupeRef = React.useRef<string | null>(null);
+  const lastDirectAcceptBookingIdRef = React.useRef<number | null>(null);
+  const [directAcceptModalVisible, setDirectAcceptModalVisible] = React.useState(false);
+  const [directAcceptModalMessage, setDirectAcceptModalMessage] = React.useState('');
   const mountedAtRef = React.useRef<number>(Date.now());
 
   useTabsBackToHome('/(clientTabs)/main/home');
@@ -55,6 +59,27 @@ export default function ClientTabLayout() {
     setOfferModalVisible(true);
   }, [lastMessage]);
 
+  React.useEffect(() => {
+    if (!lastMessage || lastMessage.type !== 'booking_update') return;
+    if (String(lastMessage.event_source || '') !== 'mechanic_accepted_direct') return;
+
+    const messageTimestamp = Number(lastMessage._timestamp || 0) || null;
+    if (!messageTimestamp) return;
+    if (messageTimestamp < mountedAtRef.current) return;
+
+    const bookingId = Number(lastMessage.booking_id ?? 0) || null;
+    const dedupeKey = `mechanic_accept_direct-${bookingId ?? 0}-${messageTimestamp}`;
+    if (lastDirectAcceptDedupeRef.current === dedupeKey) return;
+    lastDirectAcceptDedupeRef.current = dedupeKey;
+
+    const safeId = bookingId != null && Number.isFinite(bookingId) && bookingId > 0 ? bookingId : null;
+    lastDirectAcceptBookingIdRef.current = safeId;
+    setDirectAcceptModalMessage(
+      String(lastMessage.message || '').trim() || 'A mechanic accepted your direct request.'
+    );
+    setDirectAcceptModalVisible(true);
+  }, [lastMessage]);
+
   const closeOfferModal = React.useCallback(() => {
     setOfferModalVisible(false);
   }, []);
@@ -71,6 +96,23 @@ export default function ClientTabLayout() {
     }
     router.push('/(clientTabs)/main/request' as any);
   }, [offerModalPayload.broadcastId, router]);
+
+  const closeDirectAcceptModal = React.useCallback(() => {
+    setDirectAcceptModalVisible(false);
+  }, []);
+
+  const openDirectAcceptBooking = React.useCallback(() => {
+    const id = lastDirectAcceptBookingIdRef.current;
+    setDirectAcceptModalVisible(false);
+    if (id != null && Number.isFinite(id) && id > 0) {
+      router.push({
+        pathname: '/client/booking/booking_details',
+        params: { bookingId: String(id) },
+      } as any);
+      return;
+    }
+    router.push('/(clientTabs)/main/booking' as any);
+  }, [router]);
 
   return (
     <>
@@ -244,6 +286,114 @@ export default function ClientTabLayout() {
               >
                 <Feather name="external-link" size={14} color="#fff" />
                 <ThemedText style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>View Details</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={directAcceptModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeDirectAcceptModal}
+      >
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0, 0, 0, 0.55)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            paddingHorizontal: 16,
+          }}
+        >
+          <View
+            style={{
+              width: '100%',
+              maxWidth: 420,
+              borderRadius: 20,
+              borderWidth: 1,
+              borderColor: '#2C2C2E',
+              backgroundColor: '#141416',
+              padding: 18,
+            }}
+          >
+            <View
+              style={{
+                alignSelf: 'center',
+                width: 56,
+                height: 56,
+                borderRadius: 28,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: '#34C75922',
+                marginBottom: 14,
+              }}
+            >
+              <Feather name="check-circle" size={24} color="#34C759" />
+            </View>
+
+            <ThemedText
+              style={{
+                fontSize: 18,
+                color: '#FFFFFF',
+                textAlign: 'center',
+                fontWeight: '700',
+                marginBottom: 12,
+              }}
+            >
+              Your direct request was accepted
+            </ThemedText>
+
+            <View
+              style={{
+                borderRadius: 14,
+                borderWidth: 1,
+                borderColor: '#2C2C2E',
+                backgroundColor: '#1A1B1E',
+                padding: 12,
+                marginBottom: 16,
+              }}
+            >
+              <ThemedText style={{ fontSize: 12, color: '#A7A7AF', marginBottom: 6, fontWeight: '300' }}>
+                Update
+              </ThemedText>
+              <ThemedText style={{ fontSize: 14, color: '#F5F5F7', lineHeight: 20, fontWeight: '400' }}>
+                {directAcceptModalMessage}
+              </ThemedText>
+            </View>
+
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: '#2C2C2E',
+                  backgroundColor: '#1A1B1E',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingVertical: 13,
+                }}
+                onPress={closeDirectAcceptModal}
+                activeOpacity={0.8}
+              >
+                <ThemedText style={{ color: '#E5E5EA', fontSize: 16, fontWeight: '600' }}>Close</ThemedText>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  borderRadius: 12,
+                  backgroundColor: '#FF8C00',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingVertical: 13,
+                }}
+                onPress={openDirectAcceptBooking}
+                activeOpacity={0.85}
+              >
+                <ThemedText style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>View booking</ThemedText>
               </TouchableOpacity>
             </View>
           </View>

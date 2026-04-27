@@ -10,6 +10,7 @@ import { styles } from '@/style/client/bookingDetailsStyles';
 import { SkeletonDetailPage } from '@/components/skeletons/SkeletonLoaders';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useWebSocketContext } from '@/context/WebSocketContext';
 import {
@@ -31,6 +32,8 @@ import {
 } from '@/lib/bookingAccess';
 import { coerceBarangayForDisplay } from '@/lib/locationAddress';
 import { sortQuotationItemsForDisplay } from '@/lib/quotationOrdering';
+import { runDedupedRequest } from '@/lib/requestDedupe';
+import { fetchPricingConfig as fetchPricingConfigCached } from '@/hooks/usePricing';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -40,6 +43,7 @@ interface BookingDetail {
   dispute_status?: 'none' | 'active' | 'resolved' | string;
   amount_fee: number;
   booked_at: string;
+  booking_date?: string | null;
   updated_at: string;
   completed_at: string | null;
   convenience_fee?: number | null;
@@ -87,6 +91,8 @@ interface BookingDetail {
     after_pictures?: string[];
     is_job_done: boolean;
     is_rescheduled: boolean;
+    proposed_date?: string | null;
+    pre_reschedule_status?: string | null;
     reason: string | null;
     new_time: string | null;
     new_date: string | null;
@@ -256,9 +262,16 @@ export default function ClientBookingDetailScreen() {
   const [ratingSubmitting, setRatingSubmitting] = useState(false);
   const [ratingPromptDismissed, setRatingPromptDismissed] = useState(false);
   const [showActionMenu, setShowActionMenu] = useState(false);
+  const [showCancelBookingModal, setShowCancelBookingModal] = useState(false);
+  const [showCancelSuccessModal, setShowCancelSuccessModal] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelSubmitting, setCancelSubmitting] = useState(false);
   const [showDisputeModal, setShowDisputeModal] = useState(false);
   const [reportingNoShow, setReportingNoShow] = useState(false);
   const [showReportNoShowModal, setShowReportNoShowModal] = useState(false);
+  const [showReschedulePicker, setShowReschedulePicker] = useState(false);
+  const [rescheduleDate, setRescheduleDate] = useState(new Date(Date.now() + 24 * 60 * 60 * 1000));
+  const [rescheduleSubmitting, setRescheduleSubmitting] = useState(false);
   const [disputeReason, setDisputeReason] = useState('');
   const [disputeImages, setDisputeImages] = useState<string[]>([]);
   const [disputeSubmitting, setDisputeSubmitting] = useState(false);
@@ -317,15 +330,9 @@ export default function ClientBookingDetailScreen() {
 
   useEffect(() => {
     let isMounted = true;
-    const fetchPricingConfig = async () => {
+    const loadPricingConfig = async () => {
       try {
-        const response = await fetch(`${API_URL}/pricing/config/`, {
-          method: 'GET',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-        });
-        if (!response.ok) return;
-        const data = await response.json() as Partial<PricingConfig>;
+        const data = await fetchPricingConfigCached() as Partial<PricingConfig>;
         if (!isMounted) return;
         const toConfigNumber = (value: unknown) => {
           const parsed = Number(value);
@@ -347,7 +354,7 @@ export default function ClientBookingDetailScreen() {
       }
     };
 
-    fetchPricingConfig();
+    loadPricingConfig();
     return () => {
       isMounted = false;
     };
@@ -434,7 +441,14 @@ export default function ClientBookingDetailScreen() {
         const exists = mergedItems.some((it: any) => Number(it?.service) === sid && String(it?.status || '').toLowerCase() !== 'rejected');
         if (!exists) mergedItems.push(svcRow);
       });
-      const overlayedItems = applyPendingSnapshotOverlay(mergedItems);
+      const hasServerPendingAmendment = Boolean(
+        saved?.amendment_id ||
+        mergedItems.some((it: any) =>
+          String(it?.status || '').toLowerCase() === 'pending' &&
+          String(it?.change_type || '').trim()
+        )
+      );
+      const overlayedItems = hasServerPendingAmendment ? mergedItems : applyPendingSnapshotOverlay(mergedItems);
       const mergedTotal = overlayedItems.reduce((sum: number, it: any) => {
         const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
         const qty = Number(it?.quantity ?? 1) || 1;
@@ -442,7 +456,7 @@ export default function ClientBookingDetailScreen() {
       }, 0);
       return {
         ...saved,
-        status: pendingQuoteSnapshot?.status || saved?.status,
+        status: hasServerPendingAmendment ? saved?.status : (pendingQuoteSnapshot?.status || saved?.status),
         items: overlayedItems,
         total_amount: Math.max(Number(pendingQuoteSnapshot?.total_amount || 0), Number(saved?.total_amount || 0), mergedTotal),
       };
@@ -568,11 +582,42 @@ export default function ClientBookingDetailScreen() {
     });
     return ids;
   }, [booking]);
+  const bookedServiceNames = useMemo(() => {
+    const details = (booking as any)?.request?.request_details;
+    const names: string[] = [];
+    if (details?.service?.name) names.push(String(details.service.name));
+    const list = Array.isArray(details?.services) ? details.services : [];
+    list.forEach((svc: any) => {
+      if (svc?.name) names.push(String(svc.name));
+    });
+    return names;
+  }, [booking]);
 
   const sortedQuotationItems = useMemo(() => {
     const items = (displayQuotation && Array.isArray(displayQuotation.items)) ? displayQuotation.items : [];
     return sortQuotationItemsForDisplay(items, serviceItemIds, chatChangeLabelByKey);
   }, [displayQuotation, serviceItemIds, chatChangeLabelByKey]);
+
+  const isFalseBookedServiceRemoval = (it: any) => {
+    const raw = String(it?.change_type || it?.change || it?.modification_type || '').toLowerCase();
+    if (!(raw.includes('remove') || raw.includes('delete'))) return false;
+    const serviceId = Number(it?.service);
+    if (Number.isFinite(serviceId) && serviceItemIds.has(serviceId)) return true;
+    if (String(it?.line_kind || '').toLowerCase() === 'service') return true;
+
+    const desc = String(it?.description || it?.name || '').trim().toLowerCase();
+    if (!desc) return false;
+    return bookedServiceNames.some((name) => {
+      const bookedName = String(name || '').trim().toLowerCase();
+      if (!bookedName) return false;
+      if (bookedName === desc || bookedName.includes(desc) || desc.includes(bookedName)) return true;
+      const bookedTokens = new Set(bookedName.split(/\s+/).filter(Boolean));
+      const descTokens = desc.split(/\s+/).filter(Boolean);
+      if (!bookedTokens.size || !descTokens.length) return false;
+      const overlap = descTokens.filter((token) => bookedTokens.has(token)).length;
+      return overlap / Math.max(bookedTokens.size, descTokens.length) >= 0.6;
+    });
+  };
 
   const getAssocKey = (it: any) => {
     const serviceId = Number(it?.service);
@@ -653,6 +698,7 @@ export default function ClientBookingDetailScreen() {
 
   const refreshChatQuotationLabels = useCallback(async () => {
     if (!bookingId) return;
+    return runDedupedRequest(`client-chat-quote-labels:${bookingId}`, 1500, async () => {
     try {
       const convRes = await fetch(`${API_URL}/chat/booking/${bookingId}/`, {
         method: 'POST',
@@ -665,7 +711,7 @@ export default function ClientBookingDetailScreen() {
       const convId = Number(conv?.id || 0);
       if (!Number.isFinite(convId) || convId <= 0) return;
 
-      const msgRes = await fetch(`${API_URL}/chat/${convId}/messages/?mark_read=1`, {
+      const msgRes = await fetch(`${API_URL}/chat/${convId}/messages/`, {
         method: 'GET',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -801,6 +847,7 @@ export default function ClientBookingDetailScreen() {
     } catch {
       // ignore
     }
+    });
   }, [bookingId]);
 
   // Quotation estimated total: sum only accepted items
@@ -844,14 +891,20 @@ export default function ClientBookingDetailScreen() {
   };
 
   const pendingRequestedQuotationTotal = useMemo(() => {
-    if (!hasLivePendingQuoteRequest) return null;
+    const hasPendingQuotationPayload =
+      hasLivePendingQuoteRequest ||
+      String(displayQuotation?.status || (booking as any)?.quotation?.status || '').toLowerCase() === 'pending';
+    if (!hasPendingQuotationPayload) return null;
     if (bookingInBackjobPaymentPhase(booking) || isBackjobBookingData(booking)) {
       return getBackjobPendingSnapshotTotal();
     }
-    const pendingTotal = Number((pendingQuoteSnapshot as any)?.total_amount);
+    const pendingTotal = Number(
+      (pendingQuoteSnapshot as any)?.total_amount ??
+      (displayQuotation as any)?.pending_total_amount
+    );
     if (!Number.isFinite(pendingTotal) || pendingTotal < 0) return null;
     return pendingTotal;
-  }, [hasLivePendingQuoteRequest, pendingQuoteSnapshot, booking]);
+  }, [hasLivePendingQuoteRequest, pendingQuoteSnapshot, displayQuotation, booking]);
 
   const quotationPendingDeltaTotal = useMemo(() => {
     if (!sortedQuotationItems.length) return 0;
@@ -1170,22 +1223,23 @@ export default function ClientBookingDetailScreen() {
     try { navigation.getParent && navigation.getParent()?.getParent && navigation.getParent()?.getParent()?.setOptions && navigation.getParent()?.getParent()?.setOptions({ headerShown: false }); } catch (e) {}
     fetchBookingDetail();
     refreshChatQuotationLabels();
+    if (hasLivePendingQuoteRequest) return;
     // Poll every 10 seconds so client sees mechanic status changes in real time
     const interval = setInterval(() => {
       fetchBookingDetail(true);
       refreshChatQuotationLabels();
     }, 10000);
     return () => clearInterval(interval);
-  }, [fetchBookingDetail, refreshChatQuotationLabels]);
+  }, [fetchBookingDetail, hasLivePendingQuoteRequest, refreshChatQuotationLabels]);
 
-  // Faster temporary sync while a quotation request is pending,
-  // so UI reflects accept/reject almost immediately.
+  // Faster temporary sync while a quotation request is pending.
+  // 4 seconds keeps UI responsive without overloading chat API.
   useEffect(() => {
     if (!hasLivePendingQuoteRequest) return;
     const quickInterval = setInterval(() => {
       fetchBookingDetail(true);
       refreshChatQuotationLabels();
-    }, 2000);
+    }, 4000);
     return () => clearInterval(quickInterval);
   }, [hasLivePendingQuoteRequest, fetchBookingDetail, refreshChatQuotationLabels]);
 
@@ -1200,6 +1254,19 @@ export default function ClientBookingDetailScreen() {
         const action = String(lastMessage.action || '').toLowerCase();
         if (action === 'payment.completed') {
           setShowSuccess(true);
+        }
+        if (action === 'reschedule_declined') {
+          Alert.alert(
+            'Reschedule Declined',
+            'The other party declined the reschedule. Please suggest a better time or stick to the original schedule.',
+            [
+              { text: 'Cancel Request', onPress: () => fetch(`${API_URL}/bookings/bookings/${bid}/reschedule/cancel/`, { method: 'POST', credentials: 'include' }).then(() => fetchBookingDetail(true)) },
+              { text: 'Suggest New Time', onPress: () => setShowReschedulePicker(true) },
+            ]
+          );
+        }
+        if (action === 'reschedule_accepted') {
+          Alert.alert('Reschedule Accepted', `Action buttons will activate on the scheduled date (${formatDate(lastMessage.new_date)}).`);
         }
         // lightweight refresh
         fetchBookingDetail(true);
@@ -1218,11 +1285,13 @@ export default function ClientBookingDetailScreen() {
   const getStatusLabel = (status: string) => {
     switch (status) {
       case 'accepted': return 'Booked';
+      case 'booked': return 'Booked';
       case 'active': return 'In Progress';
       case 'on_the_way': return 'Mechanic on the Way';
       case 'completed': return 'Completed';
       case 'cancelled': return 'Cancelled';
       case 'pending': return 'Pending';
+      case 'reschedule_proposed': return 'Waiting for Reschedule Response';
       case 'reworked': return 'Reworked';
       case 'disputed': return 'Disputed';
       default: return status.charAt(0).toUpperCase() + status.slice(1);
@@ -1232,12 +1301,14 @@ export default function ClientBookingDetailScreen() {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'accepted': return '#00B8D9';
+      case 'booked': return '#00B8D9';
       case 'active': return '#FF8C00';
       case 'on_the_way': return '#007AFF';
       case 'reworked': return '#FFD60A';
       case 'completed': return '#34C759';
       case 'cancelled': return '#FF3B30';
       case 'pending': return '#8E8E93';
+      case 'reschedule_proposed': return '#FFD60A';
       case 'disputed': return '#AF52DE';
       default: return '#8E8E93';
     }
@@ -1246,11 +1317,13 @@ export default function ClientBookingDetailScreen() {
   const getStatusIcon = (status: string): string => {
     switch (status) {
       case 'accepted': return 'calendar-check-o';
+      case 'booked': return 'calendar-check-o';
       case 'active': return 'play-circle';
       case 'on_the_way': return 'car';
       case 'completed': return 'check-circle';
       case 'cancelled': return 'times-circle';
       case 'pending': return 'clock-o';
+      case 'reschedule_proposed': return 'calendar';
       case 'reworked': return 'refresh';
       case 'disputed': return 'exclamation-circle';
       default: return 'circle';
@@ -1434,9 +1507,8 @@ export default function ClientBookingDetailScreen() {
       summaryPaymentStatus === 'fully_paid' &&
       !!booking.provider &&
       !!booking.mechanic_review?.can_rate;
-    const hasReviewFromBooking = !!booking.mechanic_review?.has_review;
 
-    if (canRateFromBooking && !hasReviewFromBooking && !ratingPromptDismissed) {
+    if (canRateFromBooking && !ratingPromptDismissed) {
       setShowRatingModal(true);
     }
   }, [booking, ratingPromptDismissed]);
@@ -1539,11 +1611,12 @@ export default function ClientBookingDetailScreen() {
     if (isLineCreatedAfterBackjob(it)) return true;
     return rawChangeLabel === 'Added';
   };
+  const nonBookedRemovalQuotationItems = sortedQuotationItems.filter((it: any) => !isFalseBookedServiceRemoval(it));
   const visibleQuotationItems = isAcceptedBackjob
-    ? sortedQuotationItems.filter((it: any) => isBackjobChargeableQuotationLine(it))
-    : sortedQuotationItems;
+    ? nonBookedRemovalQuotationItems.filter((it: any) => isBackjobChargeableQuotationLine(it))
+    : nonBookedRemovalQuotationItems;
   const oldQuotationItems = isAcceptedBackjob
-    ? sortedQuotationItems.filter((it: any) => !isBackjobChargeableQuotationLine(it))
+    ? nonBookedRemovalQuotationItems.filter((it: any) => !isBackjobChargeableQuotationLine(it))
     : [];
   const oldReceiptSubtotal = oldQuotationItems.reduce((sum: number, it: any) => {
     const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
@@ -1633,6 +1706,10 @@ export default function ClientBookingDetailScreen() {
   const paymentProgressPct = totalAmount > 0
     ? Math.min(100, Math.max(0, (totalPaid / totalAmount) * 100))
     : 0;
+  const assignedTeam = Array.isArray(booking.request?.assigned_mechanics)
+    ? booking.request.assigned_mechanics
+    : [];
+  const isShopBooking = Boolean(booking.shop || assignedTeam.length > 0);
 
   const handleSubmitMechanicRating = async (payload: { rating: number; comment: string }) => {
     if (!booking?.id) return;
@@ -1670,6 +1747,93 @@ export default function ClientBookingDetailScreen() {
   const isNoShowEligible =
     (booking.status === 'accepted' || booking.status === 'on_the_way') &&
     !reportingNoShow;
+  const bookingStatusRaw = String(booking.status || '').trim().toLowerCase();
+  const cannotCancelStatuses = [
+    'on_the_way',
+    'at_location',
+    'diagnosing',
+    'active',
+    'paused',
+    'finished',
+    'pending_payment',
+    'completed',
+    'cancelled',
+    'reworked',
+    'disputed',
+  ];
+  const canCancelBooking = !cannotCancelStatuses.includes(bookingStatusRaw);
+  const scheduledDateValue = booking.booking_date;
+  const scheduledDateMs = scheduledDateValue ? new Date(scheduledDateValue).getTime() : NaN;
+  const canRescheduleBooking =
+    bookingStatusRaw !== 'reschedule_proposed' &&
+    (!scheduledDateValue || (Number.isFinite(scheduledDateMs) && Date.now() < scheduledDateMs - 60 * 60 * 1000));
+
+  const handleRequestReschedule = async (dateValue = rescheduleDate) => {
+    if (!booking?.id || rescheduleSubmitting) return;
+    try {
+      setRescheduleSubmitting(true);
+      const response = await fetch(`${API_URL}/bookings/bookings/${booking.id}/reschedule/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proposed_date: dateValue.toISOString() }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error((data as any)?.error || 'Unable to request reschedule');
+      }
+      setShowReschedulePicker(false);
+      setBooking((data as any)?.booking || data || booking);
+      Alert.alert('Reschedule Sent', 'Waiting for response.');
+      fetchBookingDetail(true);
+    } catch (err: any) {
+      Alert.alert('Reschedule Error', err?.message || 'Unable to request reschedule');
+    } finally {
+      setRescheduleSubmitting(false);
+    }
+  };
+
+  const handleOpenCancelBooking = () => {
+    if (!canCancelBooking) {
+      Alert.alert('Cancel unavailable', 'You can only cancel while the booking is booked and the mechanic is not on the way.');
+      return;
+    }
+    setCancelReason('');
+    setShowCancelBookingModal(true);
+  };
+
+  const handleCancelBooking = async () => {
+    const reason = cancelReason.trim();
+    if (!reason) {
+      Alert.alert('Missing reason', 'Please tell us why you are cancelling.');
+      return;
+    }
+
+    try {
+      setCancelSubmitting(true);
+      const response = await fetch(`${API_URL}/bookings/bookings/${booking.id}/cancel/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error((data as any)?.error || 'Unable to cancel booking');
+      }
+
+      setShowCancelBookingModal(false);
+      setCancelReason('');
+      setBooking((data as any)?.booking || booking);
+      setShowCancelSuccessModal(true);
+      fetchBookingDetail(true);
+    } catch (err: any) {
+      Alert.alert('Cancel Error', err?.message || 'Unable to cancel booking');
+    } finally {
+      setCancelSubmitting(false);
+    }
+  };
 
   const handleOpenDisputeForm = () => {
     setShowActionMenu(false);
@@ -1905,9 +2069,47 @@ export default function ClientBookingDetailScreen() {
                 Report Mechanic No-Show
               </ThemedText>
             </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                paddingHorizontal: 14,
+                paddingVertical: 12,
+                borderTopWidth: 1,
+                borderTopColor: '#2A2C2E',
+                opacity: canRescheduleBooking ? 1 : 0.45,
+              }}
+              activeOpacity={0.8}
+              onPress={() => {
+                setShowActionMenu(false);
+                setShowReschedulePicker(true);
+              }}
+              disabled={!canRescheduleBooking}
+            >
+              <FontAwesome name="calendar" size={14} color="#FF8C00" />
+              <ThemedText style={{ color: '#ECEDEE', marginLeft: 10, fontWeight: '600' }}>
+                Reschedule Booking
+              </ThemedText>
+            </TouchableOpacity>
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {showReschedulePicker ? (
+        <DateTimePicker
+          value={rescheduleDate}
+          mode="datetime"
+          minimumDate={new Date(Date.now() + 60 * 60 * 1000)}
+          onChange={(event, selectedDate) => {
+            if (Platform.OS !== 'ios') setShowReschedulePicker(false);
+            if (event.type === 'dismissed') return;
+            const nextDate = selectedDate || rescheduleDate;
+            setRescheduleDate(nextDate);
+            handleRequestReschedule(nextDate);
+          }}
+        />
+      ) : null}
 
       <ReportNoShowModal
         visible={showReportNoShowModal}
@@ -1915,6 +2117,122 @@ export default function ClientBookingDetailScreen() {
         onCancel={() => setShowReportNoShowModal(false)}
         onConfirm={handleConfirmReportNoShow}
       />
+
+      <Modal
+        visible={showCancelSuccessModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCancelSuccessModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 22 }}>
+            <View
+              style={{
+                backgroundColor: '#1A1C1E',
+                borderRadius: 18,
+                borderWidth: 1,
+                borderColor: '#2A2C2E',
+                padding: 20,
+              }}
+            >
+              <View
+                style={{
+                  width: 56,
+                  height: 56,
+                  borderRadius: 28,
+                  backgroundColor: '#FF3B3018',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  alignSelf: 'center',
+                  marginBottom: 14,
+                }}
+              >
+                <FontAwesome name="times-circle" size={28} color="#FF5A52" />
+              </View>
+
+              <ThemedText style={{ color: '#ECEDEE', fontSize: 18, fontWeight: '800', textAlign: 'center' }}>
+                Booking Cancelled
+              </ThemedText>
+              <ThemedText style={{ color: '#A6ABB2', fontSize: 14, lineHeight: 20, textAlign: 'center', marginTop: 8 }}>
+                Your booking has been cancelled. The provider has been notified.
+              </ThemedText>
+
+              <TouchableOpacity
+                style={[styles.sendBtn, { marginTop: 18, backgroundColor: '#FF3B30' }]}
+                onPress={() => setShowCancelSuccessModal(false)}
+                activeOpacity={0.85}
+              >
+                <ThemedText style={styles.sendBtnText}>OK</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={showCancelBookingModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          if (!cancelSubmitting) setShowCancelBookingModal(false);
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, justifyContent: 'flex-end' }}>
+            <View style={styles.modalBox}>
+              <View style={styles.modalHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <FontAwesome name="times-circle" size={18} color="#FF3B30" />
+                  <ThemedText style={styles.modalTitle}>Cancel Booking</ThemedText>
+                </View>
+                <TouchableOpacity onPress={() => setShowCancelBookingModal(false)} disabled={cancelSubmitting}>
+                  <FontAwesome name="times" size={20} color="#8E8E93" />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.modalContent}>
+                <ThemedText style={{ color: '#8E8E93', marginBottom: 8 }}>
+                  Please give a reason. This is allowed only while the booking is still booked and the mechanic is not on the way.
+                </ThemedText>
+                <TextInput
+                  style={styles.textArea}
+                  placeholder="Reason for cancellation..."
+                  placeholderTextColor="#6C6C70"
+                  multiline
+                  numberOfLines={4}
+                  value={cancelReason}
+                  onChangeText={setCancelReason}
+                  editable={!cancelSubmitting}
+                />
+
+                <View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
+                  <TouchableOpacity
+                    style={[styles.cancelBtn, { flex: 1 }]}
+                    onPress={() => setShowCancelBookingModal(false)}
+                    disabled={cancelSubmitting}
+                  >
+                    <ThemedText style={styles.cancelBtnText}>Keep Booking</ThemedText>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.sendBtn, { flex: 1, backgroundColor: '#FF3B30' }, cancelSubmitting ? { opacity: 0.7 } : null]}
+                    onPress={handleCancelBooking}
+                    disabled={cancelSubmitting}
+                  >
+                    {cancelSubmitting ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <>
+                        <FontAwesome name="times" size={14} color="#fff" />
+                        <ThemedText style={styles.sendBtnText}>Cancel Booking</ThemedText>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
 
       <Modal visible={showDisputeModal} transparent animationType="slide" onRequestClose={() => setShowDisputeModal(false)}>
         <View style={styles.modalOverlay}>
@@ -2120,7 +2438,7 @@ export default function ClientBookingDetailScreen() {
         </View>
 
         {/* Provider Information */}
-        {booking.provider && (
+        {!isShopBooking && booking.provider && (
           <TouchableOpacity 
             style={styles.sectionCard}
             onPress={() => router.push({
@@ -2165,11 +2483,13 @@ export default function ClientBookingDetailScreen() {
               <View style={[styles.sectionIcon, { backgroundColor: '#007AFF15' }]}> 
                 <FontAwesome name="comments" size={16} color="#007AFF" />
               </View>
-              <ThemedText style={styles.sectionTitle}>Chat with Mechanic</ThemedText>
+              <ThemedText style={styles.sectionTitle}>{isShopBooking ? 'Chat with Shop' : 'Chat with Mechanic'}</ThemedText>
               <FontAwesome name="chevron-right" size={16} color="#8E8E93" style={{ marginLeft: 'auto' }} />
             </View>
             <View style={{ paddingVertical: 8 }}>
-              <ThemedText style={{ color: '#666' }}>Open the booking chat to message the mechanic.</ThemedText>
+              <ThemedText style={{ color: '#666' }}>
+                {isShopBooking ? 'Open the booking chat to message the shop.' : 'Open the booking chat to message the mechanic.'}
+              </ThemedText>
             </View>
           </TouchableOpacity>
         ) : null}
@@ -2216,9 +2536,8 @@ export default function ClientBookingDetailScreen() {
         )}
 
         {/* Assigned Team (Shop bookings) */}
-        {booking.shop && Array.isArray(booking.request?.assigned_mechanics) && booking.request.assigned_mechanics.length > 0 ? (
+        {isShopBooking ? (
           (() => {
-            const assignedTeam = booking.request.assigned_mechanics || [];
             const leadCount = assignedTeam.filter((m) => String(m.role).toLowerCase() === 'lead').length;
             const assistCount = assignedTeam.filter((m) => String(m.role).toLowerCase() === 'assistant').length;
             const displayName = (m: any) => {
@@ -2242,6 +2561,9 @@ export default function ClientBookingDetailScreen() {
                   </View>
                   <ThemedText style={styles.sectionTitle}>Assigned Team</ThemedText>
                   <View style={{ flexDirection: 'row', gap: 6, marginLeft: 'auto' }}>
+                    <View style={{ backgroundColor: '#8E8E9330', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 }}>
+                      <ThemedText style={{ fontSize: 11, fontWeight: '800', color: '#fff' }}>Read Only</ThemedText>
+                    </View>
                     {leadCount > 0 ? (
                       <View style={{ backgroundColor: '#FF950030', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 }}>
                         <ThemedText style={{ fontSize: 11, fontWeight: '800', color: '#fff' }}>Lead {leadCount}</ThemedText>
@@ -2254,28 +2576,34 @@ export default function ClientBookingDetailScreen() {
                     ) : null}
                   </View>
                 </View>
-                <View style={{ gap: 8, marginTop: 8 }}>
-                  {assignedTeam.map((m) => (
-                    <View
-                      key={m.id}
-                      style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
-                    >
-                      <ThemedText style={{ color: '#ddd' }}>{displayName(m)}</ThemedText>
+                {assignedTeam.length === 0 ? (
+                  <ThemedText style={{ color: '#888', marginTop: 6 }}>
+                    No mechanics assigned yet. The shop owner will assign the team.
+                  </ThemedText>
+                ) : (
+                  <View style={{ gap: 8, marginTop: 8 }}>
+                    {assignedTeam.map((m) => (
                       <View
-                        style={{
-                          backgroundColor: roleBg(m.role),
-                          paddingHorizontal: 8,
-                          paddingVertical: 3,
-                          borderRadius: 8,
-                        }}
+                        key={m.id}
+                        style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
                       >
-                        <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#fff' }}>
-                          {roleLabel(m.role)}
-                        </ThemedText>
+                        <ThemedText style={{ color: '#ddd' }}>{displayName(m)}</ThemedText>
+                        <View
+                          style={{
+                            backgroundColor: roleBg(m.role),
+                            paddingHorizontal: 8,
+                            paddingVertical: 3,
+                            borderRadius: 8,
+                          }}
+                        >
+                          <ThemedText style={{ fontSize: 11, fontWeight: '700', color: '#fff' }}>
+                            {roleLabel(m.role)}
+                          </ThemedText>
+                        </View>
                       </View>
-                    </View>
-                  ))}
-                </View>
+                    ))}
+                  </View>
+                )}
               </View>
             );
           })()
@@ -2556,13 +2884,15 @@ export default function ClientBookingDetailScreen() {
                       const itemStatus = it && (it.status || it.quotation_status || it.state) ? (it.status || it.quotation_status || it.state) : ((booking as any)?.quotation && (booking as any).quotation.status) || 'pending';
                       const statusRaw = String(itemStatus || '').toLowerCase();
                       const isPending = statusRaw === 'pending';
-                      const quotationStatusRaw = String(((booking as any)?.quotation && (booking as any).quotation.status) || '').toLowerCase();
-                      const isPendingQuotationRequest = quotationStatusRaw === 'pending';
+                      const isRejected = statusRaw === 'rejected';
                       const explicitChangeLabel = getExplicitChangeLabel(it);
                       const inferredChangeLabel = inferChangeLabel(it, acceptedByAssoc, acceptedRows, removedRows);
                       const chatDerivedChangeLabel = getQuoteSnapshotKeys(it).map((k) => chatChangeLabelByKey[k]).find(Boolean) || null;
-                      const rawChangeLabel = explicitChangeLabel || chatDerivedChangeLabel || inferredChangeLabel || null;
-                      const changeLabel = (isPending || isPendingQuotationRequest) ? rawChangeLabel : null;
+                      const rawChangeLabelUnfiltered = explicitChangeLabel || chatDerivedChangeLabel || inferredChangeLabel || null;
+                      const serviceId = Number(it?.service);
+                      const isBookedServiceItem = Number.isFinite(serviceId) && serviceItemIds.has(serviceId);
+                      const rawChangeLabel = isBookedServiceItem && rawChangeLabelUnfiltered === 'Removed' ? null : rawChangeLabelUnfiltered;
+                      const changeLabel = (isPending || isRejected) ? rawChangeLabel : null;
                       const desc = it?.description || it?.name || (it.service && `Service #${it.service}`) || 'Item';
                       const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
                       const qty = Number(it?.quantity ?? 1) || 1;
@@ -3034,15 +3364,25 @@ export default function ClientBookingDetailScreen() {
               {canRateMechanic ? (
                 <View style={{ marginTop: 12 }}>
                   {hasMechanicReview && existingMechanicReview ? (
-                    <View style={styles.noteBox}>
-                      <ThemedText style={styles.noteLabel}>Your Rating</ThemedText>
-                      <ThemedText style={styles.noteText}>
-                        {Number(existingMechanicReview.rating || 0).toFixed(0)} / 5
-                      </ThemedText>
-                      {existingMechanicReview.comment ? (
-                        <ThemedText style={[styles.noteText, { marginTop: 6 }]}>{existingMechanicReview.comment}</ThemedText>
-                      ) : null}
-                    </View>
+                    <>
+                      <View style={styles.noteBox}>
+                        <ThemedText style={styles.noteLabel}>Your Rating</ThemedText>
+                        <ThemedText style={styles.noteText}>
+                          {Number(existingMechanicReview.rating || 0).toFixed(0)} / 5
+                        </ThemedText>
+                        {existingMechanicReview.comment ? (
+                          <ThemedText style={[styles.noteText, { marginTop: 6 }]}>{existingMechanicReview.comment}</ThemedText>
+                        ) : null}
+                      </View>
+                      <TouchableOpacity
+                        style={[styles.finishLargeButton, { backgroundColor: '#FFD60A', marginTop: 10 }]}
+                        onPress={() => setShowRatingModal(true)}
+                        activeOpacity={0.85}
+                      >
+                        <FontAwesome name="star" size={16} color="#111214" style={{ marginRight: 8 }} />
+                        <ThemedText style={[styles.actionButtonText, { color: '#111214' }]}>Update Rating</ThemedText>
+                      </TouchableOpacity>
+                    </>
                   ) : (
                     <TouchableOpacity
                       style={[styles.finishLargeButton, { backgroundColor: '#FFD60A' }]}
@@ -3257,6 +3597,24 @@ export default function ClientBookingDetailScreen() {
 
       {showPaymentCTA && (
         <View style={styles.actionButtonsContainer}>
+          {canCancelBooking ? (
+            <TouchableOpacity
+              style={[
+                styles.finishLargeButton,
+                {
+                  backgroundColor: '#FF3B3018',
+                  borderWidth: 1,
+                  borderColor: '#FF3B3060',
+                  marginBottom: 10,
+                },
+              ]}
+              onPress={handleOpenCancelBooking}
+              activeOpacity={0.85}
+            >
+              <FontAwesome name="times-circle" size={16} color="#FF5A52" style={{ marginRight: 8 }} />
+              <ThemedText style={[styles.actionButtonText, { color: '#FF5A52' }]}>Cancel Booking</ThemedText>
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity
             style={[
               styles.finishLargeButton,
@@ -3509,11 +3867,12 @@ export default function ClientBookingDetailScreen() {
       />
 
       <MechanicRatingModal
-        visible={showRatingModal && canRateMechanic && !hasMechanicReview}
+        visible={showRatingModal && canRateMechanic}
         mechanicName={booking.provider?.name}
         loading={ratingSubmitting}
         initialRating={existingMechanicReview?.rating}
         initialComment={existingMechanicReview?.comment || ''}
+        hasExistingReview={hasMechanicReview}
         onClose={() => {
           setShowRatingModal(false);
           setRatingPromptDismissed(true);

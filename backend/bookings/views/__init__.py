@@ -10,6 +10,7 @@ from .mechanic.mechanic_booking_views import *
 from .mechanic.mechanic_emergency_views import *
 from .shopowner.request_assignment_views import *
 from .shopowner.shopowner_booking_views import *
+from .reschedule_views import *
 
 # Ensure the direct mechanic create endpoint resolves to the canonical create view.
 get_mechanics = _client_request_create_views.get_mechanics
@@ -41,6 +42,10 @@ __all__ = [
     # Client booking views
     'list_client_bookings',
     'get_booking_detail',
+    'client_cancel_booking',
+    'propose_reschedule',
+    'respond_reschedule',
+    'cancel_reschedule',
     
     # Direct request views (client-side)
     'get_mechanics',

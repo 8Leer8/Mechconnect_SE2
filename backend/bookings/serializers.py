@@ -10,6 +10,7 @@ from users.models import Account, Client
 from shops.models import Shop
 from MainBackend.storage_utils import get_media_url
 from .backjob_utils import booking_has_backjob, booking_has_live_backjob, get_booking_backjob
+from .direct_request_utils import direct_request_service_ids, iter_direct_request_services
 
 
 class ServiceLocationSerializer(serializers.ModelSerializer):
@@ -72,11 +73,16 @@ class CustomRequestSerializer(serializers.ModelSerializer):
 
 class DirectRequestSerializer(serializers.ModelSerializer):
     service = ServiceBasicSerializer(read_only=True)
+    services = serializers.SerializerMethodField()
     add_ons = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = DirectRequest
-        fields = ['id', 'service', 'request_status', 'add_ons']
+        fields = ['id', 'service', 'services', 'request_status', 'add_ons']
+
+    def get_services(self, obj):
+        rows = iter_direct_request_services(obj.request)
+        return ServiceBasicSerializer(rows, many=True).data
     
     def get_add_ons(self, obj):
         add_ons = DirectRequestAddOn.objects.filter(request=obj.request).select_related('service_add_on')
@@ -118,8 +124,7 @@ class BroadcastRequestDetailSerializer(serializers.ModelSerializer):
                   'vehicle_type', 'vehicle_brand', 'vehicle_model']
     
     def get_add_ons(self, obj):
-        from .models import BroadcastRequestAddOn
-        add_ons = BroadcastRequestAddOn.objects.filter(broadcast_request=obj).select_related('service_add_on')
+        add_ons = obj.add_ons.all()
         return ServiceAddOnSerializer([addon.service_add_on for addon in add_ons], many=True).data
 
 
@@ -149,7 +154,7 @@ class RequestSerializer(serializers.ModelSerializer):
         model = Request
         fields = ['id', 'type', 'request_type', 'broadcast_request', 'client', 'provider', 'shop',
                   'service_location', 'vehicle_type', 'vehicle_brand', 'vehicle_model',
-                  'vehicle_description', 'created_at', 'request_details', 'assigned_mechanics']
+                  'vehicle_description', 'scheduled_time', 'created_at', 'request_details', 'assigned_mechanics']
 
     def get_broadcast_request(self, obj):
         if not hasattr(obj, 'broadcast_request') or obj.broadcast_request is None:
@@ -199,7 +204,8 @@ class ActiveBookingSerializer(serializers.ModelSerializer):
         model = ActiveBooking
         fields = [
             'id', 'before_picture_service', 'is_job_done', 'after_picture_service',
-            'is_rescheduled', 'reason', 'new_time', 'new_date', 'started_at', 'paused_at', 'total_pause_duration'
+            'is_rescheduled', 'proposed_date', 'pre_reschedule_status', 'reschedule_requested_by',
+            'reason', 'new_time', 'new_date', 'started_at', 'paused_at', 'total_pause_duration'
         ]
 
 
@@ -262,16 +268,17 @@ class BookingSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'request', 'status', 'dispute_status', 'amount_fee', 'convenience_fee',
             'distance_km', 'estimated_eta_minutes', 'traffic_level', 'traffic_surcharge',
-            'booked_at', 'updated_at', 'completed_at', 'active_details', 'quotation',
+            'booked_at', 'booking_date', 'updated_at', 'completed_at', 'active_details', 'quotation',
             'vehicle_type', 'base_fee', 'services_list', 'vehicle_information',
             'payment_breakdown', 'quotation_details'
         ]
-        read_only_fields = ['id', 'request', 'amount_fee', 'booked_at', 'updated_at', 'completed_at', 'active_details']
+        read_only_fields = ['id', 'request', 'amount_fee', 'booked_at', 'booking_date', 'updated_at', 'completed_at', 'active_details']
 
     def get_active_details(self, obj):
         # Show active details for statuses where mechanic may need them
         if obj.status in [
-            'active', 'on_the_way', 'at_location', 'diagnosing', 'accepted', 'paused', 'finished', 'pending_payment',
+            'active', 'on_the_way', 'at_location', 'diagnosing', 'booked', 'accepted', 'paused',
+            'finished', 'pending_payment', 'reschedule_proposed',
         ]:
             try:
                 active = obj.activebooking
@@ -321,11 +328,8 @@ class BookingSerializer(serializers.ModelSerializer):
             services = request.broadcast_request.services.all()
             return [service.name for service in services]
 
-        # Handle DirectRequest - single service
         if hasattr(request, 'directrequest') and request.directrequest:
-            service = request.directrequest.service
-            if service:
-                return [service.name]
+            return [s.name for s in iter_direct_request_services(request) if s and s.name]
 
         return []
 
@@ -413,6 +417,10 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
     required_tokens = serializers.SerializerMethodField()
     my_offer_id = serializers.SerializerMethodField()
     my_offer_status = serializers.SerializerMethodField()
+    mechanic_can_accept = serializers.SerializerMethodField()
+    mechanic_accept_block_reason = serializers.SerializerMethodField()
+    shopowner_can_accept = serializers.SerializerMethodField()
+    shopowner_accept_block_reason = serializers.SerializerMethodField()
     search_radius_km = serializers.FloatField(read_only=True)
     radius_km = serializers.SerializerMethodField()
     latitude = serializers.FloatField()
@@ -420,16 +428,19 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
     vehicle_type = serializers.CharField(source='request.vehicle_type', read_only=True, allow_null=True)
     vehicle_brand = serializers.CharField(source='request.vehicle_brand', read_only=True, allow_null=True)
     vehicle_model = serializers.CharField(source='request.vehicle_model', read_only=True, allow_null=True)
+    scheduled_time = serializers.DateTimeField(source='request.scheduled_time', read_only=True, allow_null=True)
     
     class Meta:
         model = BroadcastRequest
         fields = [
             'id', 'description', 'latitude', 'longitude', 
-            'vehicle_type', 'vehicle_brand', 'vehicle_model',
+            'vehicle_type', 'vehicle_brand', 'vehicle_model', 'scheduled_time',
             'services', 'add_ons', 'search_radius_km', 'radius_km',
             'created_at', 'expires_at', 'accepted_at',
             'status', 'concern_picture', 'required_tokens',
             'my_offer_id', 'my_offer_status',
+            'mechanic_can_accept', 'mechanic_accept_block_reason',
+            'shopowner_can_accept', 'shopowner_accept_block_reason',
         ]
     
     def get_concern_picture(self, obj):
@@ -455,10 +466,8 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
             for service in obj.services.all():
                 total_amount += float(service.minimum_price)
 
-            from .models import BroadcastRequestAddOn
-            add_ons = BroadcastRequestAddOn.objects.filter(broadcast_request=obj).select_related('service_add_on')
-            for ar in add_ons:
-                total_amount += float(ar.service_add_on.price)
+            for addon_relation in obj.add_ons.all():
+                total_amount += float(addon_relation.service_add_on.price)
 
             import math
             required = math.ceil(total_amount * 0.02)
@@ -467,6 +476,17 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
             return 0
 
     def _get_current_mechanic_offer(self, obj):
+        prefetched_offers = getattr(obj, 'current_mechanic_offers', None)
+        if prefetched_offers is not None:
+            return prefetched_offers[0] if prefetched_offers else None
+
+        current_mechanic = self.context.get('current_mechanic')
+        if current_mechanic is not None:
+            return BroadcastOffer.objects.filter(
+                broadcast_request=obj,
+                mechanic=current_mechanic,
+            ).order_by('-created_at', '-id').first()
+
         request = self.context.get('request')
         if not request:
             return None
@@ -495,6 +515,70 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
     def get_my_offer_status(self, obj):
         offer = self._get_current_mechanic_offer(obj)
         return offer.status if offer else None
+
+    def _get_current_mechanic(self):
+        request = self.context.get('request')
+        if not request:
+            return None
+
+        account_id = getattr(request, 'session', {}).get('account_id') if hasattr(request, 'session') else None
+        if not account_id:
+            return None
+
+        try:
+            account = Account.objects.get(id=account_id)
+        except Account.DoesNotExist:
+            return None
+
+        if not hasattr(account, 'mechanic'):
+            return None
+        return account.mechanic
+
+    def get_mechanic_can_accept(self, obj):
+        mechanic = self._get_current_mechanic()
+        if mechanic is None:
+            return True
+        return mechanic.status == mechanic.WorkStatus.AVAILABLE
+
+    def get_mechanic_accept_block_reason(self, obj):
+        mechanic = self._get_current_mechanic()
+        if mechanic is None:
+            return None
+        if mechanic.status != mechanic.WorkStatus.AVAILABLE:
+            return 'mechanic_unavailable'
+        return None
+
+    def _get_owned_shop_for_session(self):
+        request = self.context.get('request')
+        if not request:
+            return None
+        account_id = getattr(request, 'session', {}).get('account_id') if hasattr(request, 'session') else None
+        if not account_id:
+            return None
+        try:
+            account = Account.objects.select_related('shopowner').get(id=account_id)
+        except Account.DoesNotExist:
+            return None
+        if not hasattr(account, 'shopowner'):
+            return None
+        try:
+            return account.shopowner.shop
+        except Exception:
+            return None
+
+    def get_shopowner_can_accept(self, obj):
+        shop = self._get_owned_shop_for_session()
+        if shop is None:
+            return True
+        return shop.status == Shop.Status.OPEN
+
+    def get_shopowner_accept_block_reason(self, obj):
+        shop = self._get_owned_shop_for_session()
+        if shop is None:
+            return None
+        if shop.status != Shop.Status.OPEN:
+            return 'shop_unavailable'
+        return None
 
 
 class BroadcastOfferSerializer(serializers.ModelSerializer):
@@ -653,11 +737,153 @@ class QuotationSerializer(serializers.Serializer):
 
     def to_representation(self, instance):
         # instance is a Quotation model
-        from .models import Quotation, QuotationItem
+        from .models import Quotation, QuotationItem, QuotationAmendment
+
+        pending_amendment = None
         if str(getattr(instance, 'status', '')).lower() == Quotation.Status.PENDING:
+            pending_amendment = (
+                instance.amendments
+                .filter(status=QuotationAmendment.Status.PENDING)
+                .order_by('-created_at', '-id')
+                .first()
+            )
+
+        if pending_amendment is not None:
+            visible_items_qs = QuotationItem.objects.filter(
+                quotation=instance,
+                status=Quotation.Status.ACCEPTED,
+            ).order_by('id')
+        elif str(getattr(instance, 'status', '')).lower() == Quotation.Status.PENDING:
             visible_items_qs = QuotationItem.objects.filter(quotation=instance)
         else:
             visible_items_qs = QuotationItem.objects.filter(quotation=instance).exclude(status='rejected')
+
+        items_data = list(QuotationItemSerializer(visible_items_qs, many=True).data)
+        pending_total_amount = None
+        pending_quotation_total = None
+
+        if pending_amendment is not None:
+            requested_service_ids = set()
+            try:
+                request_obj = getattr(instance.booking, 'request', None)
+                requested_service_ids.update(direct_request_service_ids(request_obj))
+                broadcast = getattr(request_obj, 'broadcast_request', None)
+                if broadcast:
+                    requested_service_ids.update(int(sid) for sid in broadcast.services.values_list('id', flat=True))
+            except Exception:
+                requested_service_ids = set()
+
+            def is_booked_service_row(row):
+                try:
+                    return (
+                        str(row.get('line_kind') or '').lower() == QuotationItem.LineKind.SERVICE and
+                        int(row.get('service') or 0) in requested_service_ids
+                    )
+                except Exception:
+                    return False
+
+            def normalize_line_kind(line_kind, service_id=None):
+                value = str(line_kind or QuotationItem.LineKind.ITEM).lower()
+                if value == QuotationItem.LineKind.SERVICE and not service_id:
+                    return QuotationItem.LineKind.ITEM
+                if value not in (QuotationItem.LineKind.SERVICE, QuotationItem.LineKind.ITEM):
+                    return QuotationItem.LineKind.ITEM
+                return value
+
+            def rows_are_same(original, proposed):
+                return (
+                    normalize_line_kind(original.get('line_kind'), original.get('service')) ==
+                    normalize_line_kind(proposed.get('line_kind'), proposed.get('service')) and
+                    str(original.get('source') or '') == str(proposed.get('source') or '') and
+                    str(original.get('service') or '') == str(proposed.get('service') or '') and
+                    str(original.get('service_add_on') or '') == str(proposed.get('service_add_on') or '') and
+                    str(original.get('description') or '') == str(proposed.get('description') or '') and
+                    int(original.get('quantity') or 1) == int(proposed.get('quantity') or 1) and
+                    float(original.get('unit_price') or 0) == float(proposed.get('unit_price') or 0)
+                )
+
+            index_by_id = {
+                item.get('id'): idx
+                for idx, item in enumerate(items_data)
+                if item.get('id') is not None
+            }
+            accepted_totals_by_id = {
+                item.get('id'): float(item.get('line_total') or 0)
+                for item in items_data
+                if item.get('id') is not None
+            }
+            # Pending amendment totals represent the requested delta, not the whole booked service total.
+            next_total = 0.0
+
+            for change in pending_amendment.items.all().order_by('id'):
+                proposed = change.proposed_changes or {}
+                original = change.original_snapshot or {}
+                original_id = change.original_item_id or original.get('id')
+                try:
+                    quantity = int(proposed.get('quantity') if proposed.get('quantity') is not None else (original.get('quantity') or 1))
+                except Exception:
+                    quantity = 1
+                try:
+                    unit_price = float(proposed.get('unit_price') if proposed.get('unit_price') is not None else (original.get('unit_price') or 0))
+                except Exception:
+                    unit_price = 0.0
+
+                row = {
+                    'id': original_id,
+                    'line_kind': proposed.get('line_kind') or original.get('line_kind') or QuotationItem.LineKind.ITEM,
+                    'source': proposed.get('source') if proposed.get('source') is not None else original.get('source'),
+                    'purchase_receipt_image': None,
+                    'receipt_submitted_at': None,
+                    'service': proposed.get('service') if proposed.get('service') is not None else original.get('service'),
+                    'service_add_on': proposed.get('service_add_on') if proposed.get('service_add_on') is not None else original.get('service_add_on'),
+                    'description': proposed.get('description') if proposed.get('description') is not None else original.get('description'),
+                    'quantity': quantity,
+                    'unit_price': unit_price,
+                    'line_total': quantity * unit_price,
+                    'status': Quotation.Status.PENDING,
+                    'change_type': change.action_type,
+                    'previous_description': original.get('description'),
+                    'previous_quantity': original.get('quantity'),
+                    'previous_unit_price': original.get('unit_price'),
+                    'is_backjob_new_line': bool(getattr(instance, 'is_backjob', False) and change.action_type == 'added'),
+                    'backjob_id': original.get('backjob_id'),
+                    'created_at': None,
+                    'updated_at': None,
+                }
+                if str(row['line_kind'] or '').lower() == QuotationItem.LineKind.SERVICE and not row.get('service'):
+                    row['line_kind'] = QuotationItem.LineKind.ITEM
+
+                if change.action_type == 'removed' and is_booked_service_row(row):
+                    continue
+                if change.action_type == 'edited' and rows_are_same(original, proposed):
+                    continue
+
+                if change.action_type == 'added':
+                    items_data.append(row)
+                    next_total += row['line_total']
+                    continue
+
+                if original_id in index_by_id:
+                    items_data[index_by_id[original_id]] = row
+                else:
+                    items_data.append(row)
+
+                previous_total = accepted_totals_by_id.get(original_id, 0.0)
+                if change.action_type == 'edited':
+                    next_total += row['line_total'] - previous_total
+                elif change.action_type == 'removed':
+                    next_total -= previous_total
+
+            pending_quotation_total = max(0.0, float(next_total))
+            try:
+                fee_total = float(getattr(instance.booking, 'convenience_fee', 0) or 0)
+                traffic_fee = float(getattr(instance.booking, 'traffic_surcharge', 0) or 0)
+                if fee_total <= 0 and traffic_fee <= 0:
+                    fee_total = float(getattr(instance.booking, 'convenience_fee', 0) or 0)
+                pending_total_amount = max(0.0, pending_quotation_total + fee_total + traffic_fee)
+            except Exception:
+                pending_total_amount = pending_quotation_total
+
         data = {
             'id': instance.id,
             'booking': instance.booking.id,
@@ -669,10 +895,13 @@ class QuotationSerializer(serializers.Serializer):
             'backjob_discount': float(getattr(instance, 'backjob_discount', 0) or 0),
             'final_labor_total': float(getattr(instance, 'final_labor_total', 0) or 0),
             'total_amount': float(instance.total_amount),
+            'pending_total_amount': pending_total_amount,
+            'pending_quotation_total': pending_quotation_total,
+            'amendment_id': pending_amendment.id if pending_amendment is not None else None,
             'is_final': instance.is_final,
             'created_at': instance.created_at,
             'updated_at': instance.updated_at,
-            'items': QuotationItemSerializer(visible_items_qs, many=True).data,
+            'items': items_data,
         }
         return data
 
@@ -688,8 +917,7 @@ class QuotationSerializer(serializers.Serializer):
                 req = getattr(bk, 'request', None)
                 if req is None:
                     return ids
-                if hasattr(req, 'directrequest') and req.directrequest and req.directrequest.service_id:
-                    ids.add(int(req.directrequest.service_id))
+                ids.update(direct_request_service_ids(req))
                 if hasattr(req, 'broadcast_request') and req.broadcast_request:
                     for svc in req.broadcast_request.services.all():
                         try:
@@ -792,8 +1020,7 @@ class QuotationSerializer(serializers.Serializer):
                 req = getattr(bk, 'request', None)
                 if req is None:
                     return ids
-                if hasattr(req, 'directrequest') and req.directrequest and req.directrequest.service_id:
-                    ids.add(int(req.directrequest.service_id))
+                ids.update(direct_request_service_ids(req))
                 if hasattr(req, 'broadcast_request') and req.broadcast_request:
                     for svc in req.broadcast_request.services.all():
                         try:

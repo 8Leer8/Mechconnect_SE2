@@ -30,6 +30,7 @@ from ...models import (
     ActiveBookingPhoto,
 )
 from ...models import Quotation, QuotationItem
+from ...direct_request_utils import iter_direct_request_services
 from ...backjob_utils import (
     booking_has_backjob,
     backjob_accepted_payable_total,
@@ -1786,6 +1787,12 @@ def mechanic_accept_backjob(request, booking_id):
     except Booking.DoesNotExist:
         return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
 
+    if getattr(getattr(account, "mechanic", None), "is_working_for_shop", False) and booking.request.shop_id:
+        return Response(
+            {"error": "Backjob requests for shop bookings must be accepted by the shop owner."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
     try:
         backjob = booking.backjob
     except Exception:
@@ -1938,13 +1945,13 @@ def mechanic_location_view(request, booking_id):
         return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
 
     try:
-        account = Account.objects.get(id=account_id)
+        account = Account.objects.select_related("mechanic").get(id=account_id)
     except Account.DoesNotExist:
         return Response({"error": "Account not found"}, status=status.HTTP_404_NOT_FOUND)
 
     # Try to find the booking — accessible by either the mechanic (provider) or the client
     try:
-        booking = Booking.objects.get(id=booking_id)
+        booking = Booking.objects.select_related("request", "request__client").get(id=booking_id)
     except Booking.DoesNotExist:
         return Response({"error": "Booking not found"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -2048,6 +2055,15 @@ def _mechanic_booking_access_q(account):
     return Q(request__assignments__mechanic=account) | Q(request__provider=account)
 
 
+def _mechanic_pending_backjob_queryset(account):
+    if getattr(getattr(account, "mechanic", None), "is_working_for_shop", False):
+        return Booking.objects.none()
+    return Booking.objects.filter(
+        _mechanic_booking_access_q(account),
+        backjobs__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
+    ).distinct()
+
+
 def _get_accessible_booking(account, booking_id):
     return Booking.objects.filter(_mechanic_booking_access_q(account)).distinct().get(id=booking_id)
 
@@ -2093,16 +2109,17 @@ def _serialize_pending_direct_requests(account):
     for req in pending_reqs:
         direct = req.directrequest
 
-        # Base price + add-ons (use mechanic's specific price if available)
-        try:
-            mechanic_service = MechanicService.objects.get(
-                mechanic=account.mechanic,
-                service=direct.service,
-            )
-            base_price = float(mechanic_service.price)
-        except MechanicService.DoesNotExist:
-            # Fallback to admin-defined minimum_price on Service
-            base_price = float(getattr(direct.service, "minimum_price", 0))
+        # Base price for every booked service + add-ons (mechanic price when set)
+        base_price = 0.0
+        for svc in iter_direct_request_services(req):
+            try:
+                mechanic_service = MechanicService.objects.get(
+                    mechanic=account.mechanic,
+                    service=svc,
+                )
+                base_price += float(mechanic_service.price)
+            except MechanicService.DoesNotExist:
+                base_price += float(getattr(svc, "minimum_price", 0))
 
         add_ons_total = 0.0
         for addon in req.directrequestaddon_set.all():
@@ -2163,6 +2180,7 @@ def _serialize_mechanic_booking_list(bookings_queryset):
                 "dispute_status": booking.dispute_status,
                 "amount_fee": float(booking.amount_fee),
                 "booked_at": booking.booked_at.isoformat() if booking.booked_at else None,
+                "booking_date": booking.booking_date.isoformat() if getattr(booking, "booking_date", None) else None,
                 "updated_at": booking.updated_at.isoformat() if booking.updated_at else None,
                 "completed_at": booking.completed_at.isoformat() if booking.completed_at else None,
                 "request": {
@@ -2260,10 +2278,7 @@ def list_mechanic_bookings(request):
             # pending includes pending direct requests + bookings that have a backjob
             pending_direct_count = _count_pending_direct_requests(account)
             # Only count backjobs that are still requested (not yet accepted)
-            backjob_count = Booking.objects.filter(
-                _mechanic_booking_access_q(account),
-                backjobs__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
-            ).distinct().count()
+            backjob_count = _mechanic_pending_backjob_queryset(account).count()
             pending_count = pending_direct_count + backjob_count
             bookings_count = bookings_queryset.count()
             total_count = pending_count + bookings_count
@@ -2277,10 +2292,7 @@ def list_mechanic_bookings(request):
                 # Need some pending items on this page
                 direct_pending = _serialize_pending_direct_requests(account)
                 # Only include backjob bookings that are pending mechanic acceptance.
-                backjob_qs = Booking.objects.filter(
-                    _mechanic_booking_access_q(account),
-                    backjobs__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
-                ).distinct().order_by("-booked_at")
+                backjob_qs = _mechanic_pending_backjob_queryset(account).order_by("-booked_at")
                 backjob_pending = serialize_booking_list(backjob_qs)
                 all_pending = direct_pending + backjob_pending
                 pending_slice = all_pending[start_index:min(end_index, pending_count)]
@@ -2294,7 +2306,7 @@ def list_mechanic_bookings(request):
                 paginated.extend(serialize_booking_list(bookings_slice))
 
             # Include tab counts so frontend doesn't need a separate request
-            accepted_count = bookings_queryset.filter(status="accepted").count()
+            accepted_count = bookings_queryset.filter(status__in=["booked", "accepted"]).count()
             on_the_way_count = bookings_queryset.filter(status="on_the_way").count()
             at_location_count = bookings_queryset.filter(status="at_location").count()
             diagnosing_count = bookings_queryset.filter(status="diagnosing").count()
@@ -2340,10 +2352,7 @@ def list_mechanic_bookings(request):
             # include both direct pending requests and bookings that have backjob requests
             direct_pending = _serialize_pending_direct_requests(account)
             # Only include backjob bookings that are pending acceptance.
-            backjob_qs = Booking.objects.filter(
-                _mechanic_booking_access_q(account),
-            backjobs__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
-        ).distinct().order_by("-booked_at")
+            backjob_qs = _mechanic_pending_backjob_queryset(account).order_by("-booked_at")
             backjob_pending = serialize_booking_list(backjob_qs)
             all_pending = direct_pending + backjob_pending
             total_count = len(all_pending)
@@ -2394,6 +2403,7 @@ def list_mechanic_bookings(request):
 
         # Allow filtering by all statuses we expose in the grouped response
         valid_statuses = [
+            "booked",
             "accepted",
             "on_the_way",
             "at_location",
@@ -2417,7 +2427,9 @@ def list_mechanic_bookings(request):
 
         # Treat 'active' as including paused bookings so paused items show up
         # in the mechanic's on-going/active filter.
-        if status_filter.lower() == 'active':
+        if status_filter.lower() == 'accepted':
+            bookings_queryset = bookings_queryset.filter(status__in=['booked', 'accepted'])
+        elif status_filter.lower() == 'active':
             # include bookings that are active/paused OR that have a live backjob requested
             bookings_queryset = bookings_queryset.filter(Q(status__in=['active', 'paused']) | live_backjob_q)
         elif status_filter.lower() == 'reworked':
@@ -2465,10 +2477,7 @@ def list_mechanic_bookings(request):
     ).count()
     disputed_count = bookings_queryset.filter(dispute_status=Booking.DisputeState.ACTIVE).count()
     # Include backjob bookings in the pending count, but only those not yet accepted.
-    pending_count = _count_pending_direct_requests(account) + Booking.objects.filter(
-        _mechanic_booking_access_q(account),
-        backjobs__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
-    ).distinct().count()
+    pending_count = _count_pending_direct_requests(account) + _mechanic_pending_backjob_queryset(account).count()
 
     # Single DB aggregate — much cheaper than fetching all completed records
     total_earnings = bookings_queryset.filter(status="completed").aggregate(
@@ -2596,15 +2605,17 @@ def mechanic_accept_direct_request(request, request_id):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    # Calculate total amount from service + add-ons (same logic as pending)
-    try:
-        mechanic_service = MechanicService.objects.get(
-            mechanic=account.mechanic,
-            service=direct.service,
-        )
-        base_price = float(mechanic_service.price)
-    except MechanicService.DoesNotExist:
-        base_price = float(getattr(direct.service, "minimum_price", 0))
+    # Calculate total amount from all services + add-ons (same logic as pending list)
+    base_price = 0.0
+    for svc in iter_direct_request_services(req):
+        try:
+            mechanic_service = MechanicService.objects.get(
+                mechanic=account.mechanic,
+                service=svc,
+            )
+            base_price += float(mechanic_service.price)
+        except MechanicService.DoesNotExist:
+            base_price += float(getattr(svc, "minimum_price", 0))
 
     add_ons_total = 0.0
     for addon in DirectRequestAddOn.objects.filter(request=req).select_related(
@@ -2626,8 +2637,9 @@ def mechanic_accept_direct_request(request, request_id):
 
     booking = Booking.objects.create(
         request=req,
-        status=Booking.Status.ACCEPTED,
+        status=Booking.Status.BOOKED,
         amount_fee=total_amount,
+        booking_date=req.scheduled_time or timezone.now(),
     )
     ActiveBooking.objects.create(booking=booking)
 
@@ -2639,6 +2651,10 @@ def mechanic_accept_direct_request(request, request_id):
         booking.id,
         booking.status,
         "Your request has been accepted",
+        extra_event_fields={"event_source": "mechanic_accepted_direct"},
+        client_message="A mechanic accepted your direct request.",
+        mechanic_message="You accepted this direct request.",
+        client_title="Mechanic accepted your request",
     )
 
     return Response(
@@ -2722,6 +2738,17 @@ def mechanic_accept_emergency_request(request, request_id):
     if lock_err:
         return lock_err
 
+    mechanic = account.mechanic
+    if mechanic.status != mechanic.WorkStatus.AVAILABLE:
+        return Response(
+            {
+                "error": "Your status is unavailable. Switch to Available to accept emergency requests.",
+                "reason": "mechanic_unavailable",
+                "mechanic_status": mechanic.status,
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
+
     try:
         req = Request.objects.get(id=request_id, request_type="emergency")
     except Request.DoesNotExist:
@@ -2747,7 +2774,12 @@ def mechanic_accept_emergency_request(request, request_id):
     req.provider = account
     req.save(update_fields=["provider"])
 
-    booking = Booking.objects.create(request=req, status=Booking.Status.ACCEPTED, amount_fee=0)
+    booking = Booking.objects.create(
+        request=req,
+        status=Booking.Status.BOOKED,
+        amount_fee=0,
+        booking_date=req.scheduled_time or timezone.now(),
+    )
     ActiveBooking.objects.create(booking=booking)
 
     data = _serialize_single_booking(booking, viewer_account=account)

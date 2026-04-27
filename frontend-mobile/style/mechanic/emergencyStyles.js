@@ -54,6 +54,24 @@ export const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
   },
+  unavailableBanner: {
+    marginHorizontal: 20,
+    marginTop: 12,
+    marginBottom: 6,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#FF8C00',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  unavailableBannerText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#fff',
+    fontWeight: '600',
+  },
   loader: {
     marginTop: 40,
   },
@@ -107,6 +125,9 @@ export const styles = StyleSheet.create({
     marginBottom: 12,
     borderWidth: 1,
     borderColor: '#FF3B3040',
+  },
+  emergencyCardDisabled: {
+    opacity: 0.5,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -210,6 +231,9 @@ export const styles = StyleSheet.create({
     gap: 6,
     paddingVertical: 12,
     borderRadius: 10,
+  },
+  actionBtnDisabled: {
+    backgroundColor: '#6A6D72',
   },
   acceptBtn: {
     backgroundColor: '#34C759',

@@ -7,9 +7,10 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 
-from django.db.models import Prefetch, Q
+from django.db.models import Prefetch, Q, Subquery
 from django.utils import timezone
 from datetime import timedelta
+from decimal import Decimal
 
 from ...models import (
     Booking,
@@ -25,13 +26,28 @@ from ...models import (
     DisputeBooking,
     BroadcastRequest,
     Quotation,
+    Receipt,
+    CashRemittance,
+    RequestAssignment,
 )
 from ...serializers import RequestSerializer
 from ...serializers import QuotationSerializer
-from users.models import Account
+from ...backjob_utils import booking_has_backjob
+from ...direct_request_utils import iter_direct_request_services
+from ...services import create_amendment_request
+from users.models import Account, TokenTransaction
 from services.models import ShopService
+from shops.models import Shop
+from services.pricing_utils import (
+    get_distance_fee,
+    get_traffic_surcharge,
+    get_convenience_fee,
+    apply_min_job_price,
+    get_required_tokens,
+)
 from ..client.client_booking_views import _serialize_single_booking, _serialize_bookings
-from ...ws_utils import notify_user
+from ...ws_utils import notify_booking_parties, notify_user, post_quotation_chat_message
+from ..mechanic.payment_views import _sync_booking_payable_total
 
 EMERGENCY_REQUEST_TTL_MINUTES = 5
 
@@ -59,6 +75,176 @@ def _get_shopowner_account(request):
     return account, None
 
 
+def _get_owned_shop(account):
+    try:
+        return account.shopowner.shop
+    except Exception:
+        return None
+
+
+def _reject_if_shop_unavailable(shop):
+    """Same rule as discovery: only OPEN shops may take new inbound work."""
+    if shop is None:
+        return Response(
+            {"error": "Shop not found for this shop owner"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if shop.status != Shop.Status.OPEN:
+        return Response(
+            {
+                "error": "Your shop is unavailable. Switch to accept bookings.",
+                "reason": "shop_unavailable",
+                "shop_status": shop.status,
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return None
+
+
+def _serialize_cash_remittance(remittance):
+    booking = remittance.booking
+    client_account = booking.request.client.account
+    lead = remittance.lead_mechanic
+    receipt = getattr(booking, "receipt", None)
+
+    return {
+        "id": remittance.id,
+        "booking_id": booking.id,
+        "amount": float(remittance.amount or 0),
+        "status": remittance.status,
+        "payment_method": getattr(receipt, "payment_method", "cash") if receipt else "cash",
+        "reminders_count": remittance.reminders_count,
+        "last_reminded_at": remittance.last_reminded_at.isoformat() if remittance.last_reminded_at else None,
+        "received_at": remittance.received_at.isoformat() if remittance.received_at else None,
+        "created_at": remittance.created_at.isoformat(),
+        "booking": {
+            "id": booking.id,
+            "amount_fee": float(booking.amount_fee or 0),
+            "completed_at": booking.completed_at.isoformat() if booking.completed_at else None,
+        },
+        "client": {
+            "firstname": client_account.firstname,
+            "lastname": client_account.lastname,
+            "username": client_account.username,
+        },
+        "lead_mechanic": {
+            "id": lead.id,
+            "firstname": lead.firstname,
+            "lastname": lead.lastname,
+            "username": lead.username,
+        },
+    }
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def list_cash_remittances(request):
+    account, err = _get_shopowner_account(request)
+    if err:
+        return err
+
+    shop = _get_owned_shop(account)
+    if shop is None:
+        return Response({"remittances": [], "count": 0}, status=status.HTTP_200_OK)
+
+    status_filter = request.GET.get("status", "pending")
+    queryset = CashRemittance.objects.filter(shop=shop).select_related(
+        "booking",
+        "booking__request",
+        "booking__request__client__account",
+        "lead_mechanic",
+    )
+    if status_filter != "all":
+        queryset = queryset.filter(status=status_filter)
+
+    remittances = [_serialize_cash_remittance(item) for item in queryset]
+    return Response(
+        {
+            "remittances": remittances,
+            "count": len(remittances),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def mark_cash_remittance_received(request, remittance_id):
+    account, err = _get_shopowner_account(request)
+    if err:
+        return err
+
+    shop = _get_owned_shop(account)
+    remittance = CashRemittance.objects.filter(id=remittance_id, shop=shop).select_related(
+        "booking",
+        "booking__request",
+        "booking__request__client__account",
+        "lead_mechanic",
+    ).first()
+    if remittance is None:
+        return Response({"error": "Cash remittance not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    if remittance.status != CashRemittance.Status.RECEIVED:
+        remittance.status = CashRemittance.Status.RECEIVED
+        remittance.received_at = timezone.now()
+        remittance.save(update_fields=["status", "received_at", "updated_at"])
+
+    notify_user(
+        remittance.lead_mechanic_id,
+        remittance.booking_id,
+        remittance.booking.status,
+        f"Shop owner marked your cash remittance of ₱{remittance.amount} as received.",
+    )
+
+    return Response(
+        {
+            "message": "Cash remittance marked as received.",
+            "remittance": _serialize_cash_remittance(remittance),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def remind_cash_remittance(request, remittance_id):
+    account, err = _get_shopowner_account(request)
+    if err:
+        return err
+
+    shop = _get_owned_shop(account)
+    remittance = CashRemittance.objects.filter(id=remittance_id, shop=shop).select_related(
+        "booking",
+        "booking__request",
+        "booking__request__client__account",
+        "lead_mechanic",
+    ).first()
+    if remittance is None:
+        return Response({"error": "Cash remittance not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    if remittance.status == CashRemittance.Status.RECEIVED:
+        return Response({"error": "Cash remittance is already received"}, status=status.HTTP_400_BAD_REQUEST)
+
+    remittance.reminders_count += 1
+    remittance.last_reminded_at = timezone.now()
+    remittance.save(update_fields=["reminders_count", "last_reminded_at", "updated_at"])
+
+    notify_user(
+        remittance.lead_mechanic_id,
+        remittance.booking_id,
+        remittance.booking.status,
+        f"Reminder: please remit the shop cash share of ₱{remittance.amount} for booking #{remittance.booking_id}.",
+    )
+
+    return Response(
+        {
+            "message": "Reminder sent to lead mechanic.",
+            "remittance": _serialize_cash_remittance(remittance),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def list_shopowner_requests(request):
@@ -76,14 +262,14 @@ def list_shopowner_requests(request):
     except Exception:
         shop = None
 
-    request_ids_with_booking = set(Booking.objects.values_list("request_id", flat=True))
+    request_ids_with_booking = Booking.objects.values("request_id")
     shop_filter = Q(provider=account)
     if shop is not None:
         shop_filter = Q(shop=shop) | Q(provider=account)
 
     all_requests = (
         Request.objects.filter(shop_filter)
-        .exclude(id__in=request_ids_with_booking)
+        .exclude(id__in=Subquery(request_ids_with_booking))
         .exclude(request_type="emergency")
         .select_related(
             "client",
@@ -102,7 +288,7 @@ def list_shopowner_requests(request):
 
     broadcast_requests = (
         Request.objects.filter(request_type="broadcast")
-        .exclude(id__in=request_ids_with_booking)
+        .exclude(id__in=Subquery(request_ids_with_booking))
         .filter(broadcast_request__status="searching")
         .select_related("client", "client__account", "provider", "shop", "service_location")
         .prefetch_related(Prefetch("broadcast_request", queryset=BroadcastRequest.objects.all()))
@@ -158,6 +344,7 @@ def list_shopowner_declined_requests(request):
     # Requests that have no booking and are declined (rejected)
     all_requests = (
         Request.objects.filter(shop_filter)
+        .exclude(id__in=Subquery(Booking.objects.values("request_id")))
         .exclude(request_type="emergency")
         .exclude(request_type="broadcast")
         .select_related(
@@ -174,11 +361,9 @@ def list_shopowner_declined_requests(request):
         .order_by("-created_at")
     )
 
-    request_ids_with_booking = set(Booking.objects.values_list("request_id", flat=True))
+    request_ids_with_booking = Booking.objects.values("request_id")
     declined = []
     for req in all_requests:
-        if req.id in request_ids_with_booking:
-            continue
         try:
             if req.request_type == "custom" and hasattr(req, "customrequest"):
                 if req.customrequest.request_status == CustomRequest.Status.REJECTED:
@@ -230,11 +415,20 @@ def list_shopowner_emergency_requests(request):
         .order_by("-created_at")
     )
 
+    shop = _get_owned_shop(account)
+    shopowner_can_accept = True
+    accept_disabled_reason = None
+    if shop and shop.status != Shop.Status.OPEN:
+        shopowner_can_accept = False
+        accept_disabled_reason = "shop_unavailable"
+
     serialized_data = RequestSerializer(emergency_requests, many=True, context={"request": request}).data
     return Response(
         {
             "emergency_requests": serialized_data,
             "count": len(serialized_data),
+            "shopowner_can_accept": shopowner_can_accept,
+            "accept_disabled_reason": accept_disabled_reason,
         },
         status=status.HTTP_200_OK,
     )
@@ -249,6 +443,11 @@ def shopowner_accept_emergency_request(request, request_id):
     account, err = _get_shopowner_account(request)
     if err:
         return err
+
+    shop = _get_owned_shop(account)
+    closed_err = _reject_if_shop_unavailable(shop)
+    if closed_err:
+        return closed_err
 
     try:
         req = Request.objects.get(id=request_id, request_type="emergency")
@@ -289,7 +488,12 @@ def shopowner_accept_emergency_request(request, request_id):
         except (TypeError, ValueError):
             amount_fee = 0
 
-    booking = Booking.objects.create(request=req, status=Booking.Status.ACCEPTED, amount_fee=amount_fee)
+    booking = Booking.objects.create(
+        request=req,
+        status=Booking.Status.BOOKED,
+        amount_fee=amount_fee,
+        booking_date=req.scheduled_time or timezone.now(),
+    )
     ActiveBooking.objects.create(booking=booking)
 
     data = _serialize_single_booking(booking)
@@ -302,6 +506,204 @@ def shopowner_accept_emergency_request(request, request_id):
     )
 
     return Response({"message": "Emergency request accepted", "booking": data}, status=status.HTTP_201_CREATED)
+
+
+def _normalize_traffic_level(value):
+    raw = str(value or "").strip().lower()
+    return {
+        "light": "low",
+        "low": "low",
+        "moderate": "medium",
+        "medium": "medium",
+        "heavy": "high",
+        "severe": "high",
+        "high": "high",
+        "unknown": "low",
+    }.get(raw, "low")
+
+
+def _to_float_or_none(value):
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_int_or_none(value):
+    if value is None or value == "":
+        return None
+    try:
+        return int(round(float(value)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _calculate_broadcast_total(broadcast_request, distance_km, traffic_level):
+    service_total = 0.0
+    for service in broadcast_request.services.all():
+        service_total += float(service.minimum_price)
+
+    add_ons_total = 0.0
+    for addon_relation in broadcast_request.add_ons.all():
+        add_ons_total += float(addon_relation.service_add_on.price)
+
+    service_subtotal = service_total + add_ons_total
+    distance_fee = 0.0
+    traffic_surcharge = 0.0
+    if distance_km is not None:
+        distance_fee = get_distance_fee(distance_km)
+        traffic_surcharge = get_traffic_surcharge(distance_fee, traffic_level)
+
+    convenience_fee = get_convenience_fee(service_subtotal)
+    subtotal_amount = service_subtotal + distance_fee + traffic_surcharge + float(convenience_fee)
+    total_amount = apply_min_job_price(subtotal_amount)
+
+    return {
+        "total_amount": total_amount,
+        "convenience_fee": convenience_fee,
+        "traffic_surcharge": traffic_surcharge,
+        "required_tokens": get_required_tokens(total_amount),
+    }
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def shopowner_accept_broadcast_request(request, broadcast_id):
+    """Shop owner directly accepts a broadcast and creates an assignable shop booking."""
+    account, err = _get_shopowner_account(request)
+    if err:
+        return err
+
+    try:
+        shop = account.shopowner.shop
+    except Exception:
+        return Response({"error": "Shop not found for this shop owner"}, status=status.HTTP_400_BAD_REQUEST)
+
+    closed_err = _reject_if_shop_unavailable(shop)
+    if closed_err:
+        return closed_err
+
+    distance_km = _to_float_or_none(request.data.get("distance_km"))
+    eta_minutes = _to_int_or_none(request.data.get("estimated_eta_minutes"))
+    traffic_level = _normalize_traffic_level(request.data.get("traffic_level"))
+
+    from django.db import transaction
+
+    with transaction.atomic():
+        try:
+            broadcast_request = (
+                BroadcastRequest.objects.select_for_update()
+                .select_related("request", "request__client")
+                .prefetch_related("services", "add_ons__service_add_on")
+                .get(id=broadcast_id)
+            )
+        except BroadcastRequest.DoesNotExist:
+            return Response({"error": "Broadcast request not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if not broadcast_request.can_accept_offers():
+            return Response(
+                {
+                    "error": "This broadcast is no longer available",
+                    "reason": "expired" if broadcast_request.is_expired() else "already_accepted",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        base_request = broadcast_request.request
+        if base_request.client and base_request.client.account_id == account.id:
+            return Response({"error": "Cannot accept your own broadcast request"}, status=status.HTTP_403_FORBIDDEN)
+
+        if hasattr(base_request, "booking"):
+            return Response({"error": "Request already has a booking"}, status=status.HTTP_400_BAD_REQUEST)
+
+        pricing = _calculate_broadcast_total(broadcast_request, distance_km, traffic_level)
+        required_tokens = pricing["required_tokens"]
+
+        wallet = account.wallet
+        if wallet.balance < required_tokens:
+            return Response(
+                {
+                    "error": "Not enough credits to accept this broadcast",
+                    "required_tokens": required_tokens,
+                    "current_tokens": int(wallet.balance),
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        now = timezone.now()
+        broadcast_request.status = BroadcastRequest.Status.ACCEPTED
+        broadcast_request.accepted_at = now
+        broadcast_request.save(update_fields=["status", "accepted_at"])
+
+        base_request.provider = account
+        base_request.shop = shop
+        base_request.save(update_fields=["provider", "shop"])
+
+        booking = Booking.objects.create(
+            request=base_request,
+            status=Booking.Status.BOOKED,
+            amount_fee=pricing["total_amount"],
+            booking_date=base_request.scheduled_time or timezone.now(),
+            distance_km=distance_km,
+            convenience_fee=pricing["convenience_fee"],
+            eta_minutes=eta_minutes,
+            traffic_surcharge=pricing["traffic_surcharge"],
+        )
+
+        wallet.balance -= required_tokens
+        wallet.save(update_fields=["balance"])
+        TokenTransaction.objects.create(
+            account=account,
+            tokens=-required_tokens,
+            reason="shop_broadcast_accept",
+            related_booking_id=booking.id,
+        )
+
+    try:
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+
+        channel_layer = get_channel_layer()
+        if channel_layer is not None:
+            async_to_sync(channel_layer.group_send)("broadcasts", {
+                "type": "booking_update",
+                "action": "broadcast_removed",
+                "broadcast_id": broadcast_request.id,
+                "booking_id": booking.id,
+                "message": "Broadcast accepted by shop",
+            })
+            async_to_sync(channel_layer.group_send)(f"user_{base_request.client.account_id}", {
+                "type": "booking_update",
+                "action": "broadcast_finalized",
+                "broadcast_id": broadcast_request.id,
+                "booking_id": booking.id,
+                "status": booking.status,
+                "message": "A shop accepted your broadcast request",
+            })
+    except Exception:
+        pass
+
+    notify_user(
+        base_request.client.account_id,
+        booking.id,
+        booking.status,
+        "A shop accepted your broadcast request",
+    )
+
+    return Response(
+        {
+            "message": "Broadcast accepted and booking created",
+            "broadcast_id": broadcast_request.id,
+            "booking_id": booking.id,
+            "status": booking.status,
+            "tokens_deducted": required_tokens,
+            "tokens_remaining": int(wallet.balance),
+            "booking": _serialize_single_booking(booking),
+        },
+        status=status.HTTP_201_CREATED,
+    )
 
 
 def _get_shopowner_request(request_id, request_type, account):
@@ -327,6 +729,11 @@ def shopowner_accept_direct_request(request, request_id):
     account, err = _get_shopowner_account(request)
     if err:
         return err
+
+    shop_for_gate = _get_owned_shop(account)
+    closed_err = _reject_if_shop_unavailable(shop_for_gate)
+    if closed_err:
+        return closed_err
 
     req = _get_shopowner_request(request_id, "direct", account)
     if req is None:
@@ -355,13 +762,15 @@ def shopowner_accept_direct_request(request, request_id):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    # Calculate total from ShopService price or fallback to service minimum
-    try:
-        shop = req.shop or account.shopowner.shop
-        shop_service = ShopService.objects.get(shop=shop, service=direct.service)
-        base_price = float(shop_service.price)
-    except (ShopService.DoesNotExist, Exception):
-        base_price = float(getattr(direct.service, "minimum_price", 0))
+    # Sum base price for every service line (shop price or service minimum)
+    shop = req.shop or account.shopowner.shop
+    base_price = 0.0
+    for svc in iter_direct_request_services(req):
+        try:
+            shop_service = ShopService.objects.get(shop=shop, service=svc)
+            base_price += float(shop_service.price)
+        except ShopService.DoesNotExist:
+            base_price += float(getattr(svc, "minimum_price", 0))
 
     add_ons_total = 0.0
     for addon in DirectRequestAddOn.objects.filter(request=req).select_related("service_add_on"):
@@ -381,8 +790,9 @@ def shopowner_accept_direct_request(request, request_id):
 
     booking = Booking.objects.create(
         request=req,
-        status=Booking.Status.ACCEPTED,
+        status=Booking.Status.BOOKED,
         amount_fee=total_amount,
+        booking_date=req.scheduled_time or timezone.now(),
     )
     ActiveBooking.objects.create(booking=booking)
 
@@ -452,6 +862,11 @@ def shopowner_accept_custom_request(request, request_id):
     if err:
         return err
 
+    shop_for_gate = _get_owned_shop(account)
+    closed_err = _reject_if_shop_unavailable(shop_for_gate)
+    if closed_err:
+        return closed_err
+
     req = _get_shopowner_request(request_id, "custom", account)
     if req is None:
         return Response(
@@ -494,14 +909,16 @@ def shopowner_accept_custom_request(request, request_id):
 
     if hasattr(req, "booking"):
         booking = req.booking
-        booking.status = Booking.Status.ACCEPTED
+        booking.status = Booking.Status.BOOKED
         booking.amount_fee = amount
-        booking.save(update_fields=["status", "amount_fee", "updated_at"])
+        booking.booking_date = req.scheduled_time or booking.booking_date or timezone.now()
+        booking.save(update_fields=["status", "amount_fee", "booking_date", "updated_at"])
     else:
         booking = Booking.objects.create(
             request=req,
-            status=Booking.Status.ACCEPTED,
+            status=Booking.Status.BOOKED,
             amount_fee=amount,
+            booking_date=req.scheduled_time or timezone.now(),
         )
         ActiveBooking.objects.get_or_create(booking=booking)
 
@@ -578,9 +995,26 @@ def _shopowner_bookings_queryset(account):
                 "disputebooking",
                 queryset=DisputeBooking.objects.select_related("complainer", "complaint_against", "admin"),
             ),
+            Prefetch("request__assignments", queryset=RequestAssignment.objects.select_related("mechanic")),
         )
         .order_by("-booked_at")
     )
+
+
+def _shopowner_live_backjob_q():
+    live_statuses = [
+        Booking.Status.BACKJOB_PENDING,
+        Booking.Status.REWORKED,
+        Booking.Status.ACCEPTED,
+        Booking.Status.ON_THE_WAY,
+        Booking.Status.AT_LOCATION,
+        Booking.Status.DIAGNOSING,
+        Booking.Status.ACTIVE,
+        Booking.Status.PAUSED,
+        Booking.Status.FINISHED,
+        Booking.Status.PENDING_PAYMENT,
+    ]
+    return ~Q(status=Booking.Status.COMPLETED) & Q(backjobs__status__in=live_statuses)
 
 
 @api_view(["GET"])
@@ -605,9 +1039,9 @@ def list_shopowner_bookings(request):
 
     if status_filter:
         valid = [
-            "all", "on_going", "accepted", "on_the_way", "at_location", "diagnosing",
+            "all", "on_going", "booked", "accepted", "on_the_way", "at_location", "diagnosing",
             "active", "paused", "finished",
-            "pending_payment", "completed", "cancelled", "reworked", "disputed",
+            "pending_payment", "completed", "cancelled", "reworked", "backjob_pending", "disputed",
         ]
         sf = status_filter.lower()
         if sf not in valid:
@@ -621,6 +1055,10 @@ def list_shopowner_bookings(request):
             filtered = qs.filter(status__in=["on_the_way", "at_location", "diagnosing", "active", "paused"])
         elif sf == "active":
             filtered = qs.filter(status__in=["active", "paused"])
+        elif sf == "reworked":
+            filtered = qs.filter(Q(status__in=["reworked", "backjob_pending"]) | _shopowner_live_backjob_q()).distinct()
+        elif sf == "accepted":
+            filtered = qs.filter(status__in=["booked", "accepted"])
         else:
             filtered = qs.filter(status=sf)
 
@@ -645,14 +1083,14 @@ def list_shopowner_bookings(request):
 
         # Keep parity with mechanic list so frontend can render badges from one call.
         if sf == "all":
-            accepted_count = qs.filter(status="accepted").count()
+            accepted_count = qs.filter(status__in=["booked", "accepted"]).count()
             on_the_way_count = qs.filter(status="on_the_way").count()
             at_location_count = qs.filter(status="at_location").count()
             diagnosing_count = qs.filter(status="diagnosing").count()
             active_count = qs.filter(status__in=["active", "paused"]).count()
             completed_count = qs.filter(status="completed").count()
             cancelled_count = qs.filter(status="cancelled").count()
-            reworked_count = qs.filter(status="reworked").count()
+            reworked_count = qs.filter(Q(status="reworked") | _shopowner_live_backjob_q()).distinct().count()
             disputed_count = qs.filter(dispute_status=Booking.DisputeState.ACTIVE).count()
             payload["tab_counts"] = {
                 "pending": 0,
@@ -671,14 +1109,15 @@ def list_shopowner_bookings(request):
 
     # Grouped response
     groups = {}
+    all_bookings = list(qs)
     for s in [
-        "accepted", "on_the_way", "at_location", "diagnosing", "active", "paused", "finished",
-        "pending_payment", "completed", "cancelled", "reworked", "disputed",
+        "booked", "accepted", "on_the_way", "at_location", "diagnosing", "active", "paused", "finished",
+        "pending_payment", "completed", "cancelled", "reworked", "backjob_pending", "disputed",
     ]:
-        sub = qs.filter(status=s)
-        groups[s] = {"bookings": _serialize_bookings(sub), "count": sub.count()}
+        sub = [booking for booking in all_bookings if booking.status == s]
+        groups[s] = {"bookings": _serialize_bookings(sub), "count": len(sub)}
 
-    groups["total_count"] = qs.count()
+    groups["total_count"] = len(all_bookings)
     return Response(groups)
 
 
@@ -701,10 +1140,10 @@ def get_shopowner_booking_detail(request, booking_id):
     return Response({"booking": _serialize_single_booking(booking)})
 
 
-@api_view(["GET"])
+@api_view(["GET", "POST"])
 @permission_classes([AllowAny])
 def get_shopowner_booking_quotation(request, booking_id):
-    """Return quotation payload for a shopowner-visible booking."""
+    """Return or update quotation payload for a shopowner-visible booking."""
     account, err = _get_shopowner_account(request)
     if err:
         return err
@@ -713,6 +1152,97 @@ def get_shopowner_booking_quotation(request, booking_id):
         booking = _shopowner_bookings_queryset(account).get(id=booking_id)
     except Booking.DoesNotExist:
         return Response({"error": "Booking not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "POST":
+        if booking.status == Booking.Status.COMPLETED:
+            return Response(
+                {"error": "Completed bookings are read-only. Quotation data is frozen."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            data = dict(request.data or {})
+        except Exception:
+            data = request.data if isinstance(request.data, dict) else {}
+
+        original_booking_status = booking.status
+        try:
+            try:
+                existing = booking.quotation
+            except Quotation.DoesNotExist:
+                existing = Quotation.objects.create(
+                    booking=booking,
+                    mechanic=account,
+                    status=Quotation.Status.ACCEPTED,
+                    notes=data.get("notes", ""),
+                    is_final=bool(data.get("is_final", False)),
+                    is_backjob=booking_has_backjob(booking),
+                )
+
+            if data.get("action") == "delete":
+                existing.delete()
+                return Response({"message": "Quotation deleted"}, status=status.HTTP_200_OK)
+
+            if "notes" in data:
+                existing.notes = data.get("notes")
+            if "is_final" in data:
+                existing.is_final = bool(data.get("is_final", existing.is_final))
+            existing.mechanic = account
+            existing.is_backjob = booking_has_backjob(booking)
+            existing.save(update_fields=["mechanic", "notes", "is_final", "is_backjob", "updated_at"])
+
+            amendment = create_amendment_request(
+                quotation_id=existing.id,
+                mechanic_id=account.id,
+                changes=data.get("items") or [],
+            )
+            existing.refresh_from_db()
+
+            try:
+                post_quotation_chat_message(
+                    account,
+                    booking,
+                    existing,
+                    action="updated",
+                    request=request,
+                    amendment=amendment,
+                )
+            except Exception:
+                pass
+
+            try:
+                notify_booking_parties(
+                    account.id,
+                    booking.request.client.account_id,
+                    booking.id,
+                    booking.status,
+                    "Quotation amendment request sent by shop owner",
+                )
+            except Exception:
+                pass
+
+            try:
+                booking.refresh_from_db(fields=["status"])
+                if booking.status != original_booking_status:
+                    booking.status = original_booking_status
+                    booking.save(update_fields=["status"])
+            except Exception:
+                pass
+
+            try:
+                if booking_has_backjob(booking):
+                    _sync_booking_payable_total(booking)
+            except Exception:
+                pass
+
+            payload = QuotationSerializer(existing, context={"request": request}).data
+            payload["amendment_id"] = amendment.id
+            payload["status"] = "pending"
+            return Response(payload, status=status.HTTP_200_OK)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({"error": "Failed to save quotation", "details": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
         quotation = booking.quotation
@@ -728,3 +1258,113 @@ def get_shopowner_booking_quotation(request, booking_id):
 
     ser = QuotationSerializer(quotation, context={"request": request})
     return Response(ser.data, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def shopowner_accept_backjob(request, booking_id):
+    """Shop owner accepts a client's backjob request for a shop booking."""
+    account, err = _get_shopowner_account(request)
+    if err:
+        return err
+
+    try:
+        booking = _shopowner_bookings_queryset(account).get(id=booking_id)
+    except Booking.DoesNotExist:
+        return Response({"error": "Booking not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        backjob = booking.backjob
+    except Exception:
+        backjob = None
+    if backjob is None:
+        return Response({"error": "No backjob found for this booking"}, status=status.HTTP_404_NOT_FOUND)
+
+    if backjob.status not in [
+        Booking.Status.BACKJOB_PENDING,
+        Booking.Status.REWORKED,
+        Booking.Status.ACCEPTED,
+        Booking.Status.ON_THE_WAY,
+        Booking.Status.AT_LOCATION,
+        Booking.Status.DIAGNOSING,
+        Booking.Status.ACTIVE,
+    ]:
+        return Response({"error": "Backjob cannot be accepted in its current status"}, status=status.HTTP_400_BAD_REQUEST)
+
+    if backjob.status in [Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED]:
+        backjob.status = Booking.Status.ACCEPTED
+        backjob.save(update_fields=["status", "updated_at"])
+
+    booking.status = Booking.Status.ACCEPTED
+    booking.amount_fee = Decimal("0.00")
+    booking.convenience_fee = Decimal("0.00")
+    booking.traffic_surcharge = Decimal("0.00")
+    booking.completed_at = None
+    booking.save(update_fields=[
+        "status",
+        "amount_fee",
+        "convenience_fee",
+        "traffic_surcharge",
+        "completed_at",
+        "updated_at",
+    ])
+    CompleteBooking.objects.filter(booking=booking).delete()
+    Receipt.objects.filter(booking=booking).delete()
+
+    try:
+        from chat.models import Conversation, Message
+        from chat.serializers import MessageSerializer
+        from chat.permissions import sync_booking_conversation_participants
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        import json
+
+        conv = Conversation.objects.filter(booking_id=booking.id).first()
+        if conv is None:
+            conv = Conversation.objects.create(title=f"Booking {booking.id}", booking_id=booking.id)
+        sync_booking_conversation_participants(conv, booking)
+
+        payload = {
+            "type": "backjob_accepted",
+            "mechanic_id": account.id,
+            "mechanic_name": getattr(getattr(account, "shopowner", None), "shop", None).shop_name
+            if getattr(getattr(account, "shopowner", None), "shop", None)
+            else f"{account.firstname} {account.lastname}".strip(),
+            "backjob_id": backjob.id,
+            "booking_id": booking.id,
+            "free": True,
+            "message": "Shop owner accepted the backjob and set it as booked.",
+        }
+
+        existing_msg = Message.objects.filter(
+            Q(content__contains="backjob_accepted") &
+            Q(content__contains=f'"backjob_id": {backjob.id}'),
+            conversation=conv,
+        ).order_by("-id").first()
+        msg = existing_msg or Message.objects.create(conversation=conv, sender=None, content=json.dumps(payload))
+        ser = MessageSerializer(msg, context={"request": request})
+
+        channel_layer = get_channel_layer()
+        if channel_layer:
+            payload_ws = {
+                "type": "booking_update",
+                "action": "new_chat_message",
+                "conversation_id": conv.id,
+                "message": ser.data,
+            }
+            for participant in conv.participants.exclude(id=account.id).all():
+                async_to_sync(channel_layer.group_send)(f"user_{participant.id}", payload_ws)
+    except Exception:
+        pass
+
+    notify_user(
+        booking.request.client.account_id,
+        booking.id,
+        booking.status,
+        "Your backjob request has been accepted by the shop owner",
+    )
+
+    return Response(
+        {"message": "Backjob accepted", "backjob_id": backjob.id, "status": backjob.status},
+        status=status.HTTP_200_OK,
+    )

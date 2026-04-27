@@ -4,12 +4,22 @@ from django.db import transaction
 
 from bookings.models import AmendmentItem, Quotation, QuotationAmendment, QuotationItem
 from bookings.backjob_utils import get_booking_backjob
+from services.models import Service
+
+
+def _normalized_line_kind(line_kind, service_id=None) -> str:
+    value = str(line_kind or QuotationItem.LineKind.ITEM).lower()
+    if value == QuotationItem.LineKind.SERVICE and not service_id:
+        return QuotationItem.LineKind.ITEM
+    if value not in (QuotationItem.LineKind.SERVICE, QuotationItem.LineKind.ITEM):
+        return QuotationItem.LineKind.ITEM
+    return value
 
 
 def _snapshot_item(item: QuotationItem) -> dict:
     return {
         "id": item.id,
-        "line_kind": item.line_kind,
+        "line_kind": _normalized_line_kind(item.line_kind, item.service_id),
         "source": item.source,
         "service": item.service_id,
         "service_add_on": item.service_add_on_id,
@@ -21,15 +31,101 @@ def _snapshot_item(item: QuotationItem) -> dict:
 
 
 def _normalized_row(raw: dict) -> dict:
+    service_id = raw.get("service")
+    line_kind = _normalized_line_kind(raw.get("line_kind", QuotationItem.LineKind.ITEM), service_id)
     return {
-        "line_kind": raw.get("line_kind", QuotationItem.LineKind.ITEM),
+        "line_kind": line_kind,
         "source": raw.get("source"),
-        "service": raw.get("service"),
+        "service": service_id,
         "service_add_on": raw.get("service_add_on"),
         "description": raw.get("description") or "",
         "quantity": int(raw.get("quantity") or 1),
         "unit_price": float(raw.get("unit_price") or 0),
     }
+
+
+def _assoc_key(row: dict) -> str | None:
+    service_id = row.get("service")
+    add_on_id = row.get("service_add_on")
+    if service_id:
+        return f"service:{service_id}"
+    if add_on_id:
+        return f"addon:{add_on_id}"
+    return None
+
+
+def _requested_service_ids(quotation: Quotation) -> set[int]:
+    booking = getattr(quotation, "booking", None)
+    request_obj = getattr(booking, "request", None)
+    service_ids: set[int] = set()
+    if request_obj is None:
+        return service_ids
+
+    try:
+        from ..direct_request_utils import direct_request_service_ids
+
+        service_ids.update(direct_request_service_ids(request_obj))
+    except Exception:
+        pass
+
+    try:
+        broadcast = getattr(request_obj, "broadcast_request", None)
+        if broadcast:
+            service_ids.update(int(sid) for sid in broadcast.services.values_list("id", flat=True))
+    except Exception:
+        pass
+
+    return service_ids
+
+
+def _is_booked_service_row(quotation: Quotation, row: dict | QuotationItem | None) -> bool:
+    """Booked service rows are the original job scope and should not become removal amendments."""
+    if row is None:
+        return False
+    try:
+        line_kind = getattr(row, "line_kind", None) if not isinstance(row, dict) else row.get("line_kind")
+        service_id = getattr(row, "service_id", None) if not isinstance(row, dict) else row.get("service")
+        if str(line_kind or "").lower() != QuotationItem.LineKind.SERVICE:
+            return False
+        service_id = int(service_id or 0)
+        return service_id in _requested_service_ids(quotation)
+    except Exception:
+        return False
+
+
+def _ensure_booked_service_baselines(quotation: Quotation, changes: list[dict]) -> None:
+    """Persist booked services as accepted baseline rows so they are not treated as added amendments."""
+    requested_ids = _requested_service_ids(quotation)
+    if not requested_ids:
+        return
+
+    incoming_service_ids = set()
+    for row in changes or []:
+        try:
+            service_id = int(row.get("service")) if row.get("service") is not None else None
+        except Exception:
+            service_id = None
+        if service_id in requested_ids:
+            incoming_service_ids.add(service_id)
+
+    if not incoming_service_ids:
+        return
+
+    existing_service_ids = set(
+        quotation.items.filter(service_id__in=incoming_service_ids)
+        .values_list("service_id", flat=True)
+    )
+
+    for service in Service.objects.filter(id__in=incoming_service_ids - existing_service_ids):
+        QuotationItem.objects.create(
+            quotation=quotation,
+            line_kind=QuotationItem.LineKind.SERVICE,
+            service=service,
+            description=service.name or "Service",
+            quantity=1,
+            unit_price=service.minimum_price or 0,
+            status=Quotation.Status.ACCEPTED,
+        )
 
 
 def create_amendment_request(quotation_id: int, mechanic_id: int, changes: list[dict]) -> QuotationAmendment:
@@ -45,19 +141,26 @@ def create_amendment_request(quotation_id: int, mechanic_id: int, changes: list[
             .select_related("booking")
             .get(id=quotation_id)
         )
-        existing_pending = quotation.amendments.filter(
-            status=QuotationAmendment.Status.PENDING
-        ).exists()
-        if existing_pending:
-            raise ValueError("A pending amendment already exists for this quotation.")
+        # A shop owner and the lead shop mechanic share the same quotation.
+        # Saving while a request is still pending should revise that pending request,
+        # not create a second competing request or crash the editor.
+        quotation.amendments.filter(status=QuotationAmendment.Status.PENDING).delete()
 
         # Self-heal legacy/stale staged rows left by older flows.
         # New amendment baselines must be built from accepted quotation rows only.
         quotation.items.exclude(status=Quotation.Status.ACCEPTED).delete()
+        _ensure_booked_service_baselines(quotation, changes or [])
+        quotation.recalculate_totals()
 
         existing_items = {
             item.id: item
             for item in quotation.items.filter(status=Quotation.Status.ACCEPTED).order_by("id")
+        }
+        existing_by_assoc = {
+            key: item
+            for item in existing_items.values()
+            for key in [_assoc_key(_snapshot_item(item))]
+            if key
         }
         incoming_by_id = {}
         for row in changes or []:
@@ -85,10 +188,14 @@ def create_amendment_request(quotation_id: int, mechanic_id: int, changes: list[
             except Exception:
                 row_id = None
             original = existing_items.get(row_id) if row_id is not None else None
+            if original is None:
+                original = existing_by_assoc.get(_assoc_key(row or {}))
 
             if original is not None:
                 snapshot = _snapshot_item(original)
                 if declared_change == AmendmentItem.ActionType.REMOVED:
+                    if _is_booked_service_row(quotation, original):
+                        continue
                     AmendmentItem.objects.create(
                         amendment=amendment,
                         original_item=original,
@@ -143,6 +250,8 @@ def create_amendment_request(quotation_id: int, mechanic_id: int, changes: list[
         for existing_id, original in existing_items.items():
             if existing_id in incoming_ids or existing_id in already_removed_ids:
                 continue
+            if _is_booked_service_row(quotation, original):
+                continue
             AmendmentItem.objects.create(
                 amendment=amendment,
                 original_item=original,
@@ -156,7 +265,7 @@ def create_amendment_request(quotation_id: int, mechanic_id: int, changes: list[
             raise ValueError("No staged changes were detected.")
 
         quotation.status = Quotation.Status.PENDING
-        quotation.save(update_fields=["status", "updated_at"])
+        quotation.save(update_fields=["status", "total_amount", "original_labor_cost", "backjob_discount", "final_labor_total", "updated_at"])
         return amendment
 
 
@@ -265,6 +374,8 @@ def resolve_amendment(amendment_id: int, decision: str) -> QuotationAmendment:
                         previous_unit_price=None,
                     )
                 elif change.action_type == AmendmentItem.ActionType.REMOVED:
+                    if _is_booked_service_row(quotation, change.original_snapshot or change.original_item):
+                        continue
                     target_id = change.original_item_id
                     if target_id is None:
                         try:

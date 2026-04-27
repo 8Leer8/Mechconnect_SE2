@@ -17,9 +17,9 @@ export default function WalletBadge({ onPress, creditsSource = 'mechanic' }: Wal
 
   useEffect(() => {
     let mounted = true;
-    async function load() {
+    async function load(forceRefresh = false) {
       try {
-        const data = await fetchUnifiedWalletBalance(creditsSource);
+        const data = await fetchUnifiedWalletBalance(creditsSource, forceRefresh);
         if (!mounted) return;
         setBalance(data ?? 0);
       } catch (e) {
@@ -27,7 +27,7 @@ export default function WalletBadge({ onPress, creditsSource = 'mechanic' }: Wal
       }
     }
     load();
-    const off = eventBus.on('walletChanged', () => load());
+    const off = eventBus.on('walletChanged', () => load(true));
     return () => {
       mounted = false;
       off();

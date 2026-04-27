@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv 
 
@@ -97,6 +98,7 @@ CHANNEL_LAYERS = {
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
 USE_SUPABASE = os.getenv('USE_SUPABASE', 'False') == 'True'
+RUNNING_TESTS = 'test' in sys.argv
 
 if USE_SUPABASE:
     DATABASES = {
@@ -120,6 +122,14 @@ else:
             'PORT': os.getenv('LOCAL_PORT'),
         }
     }
+
+# Remote Postgres (e.g. Supabase) can hit default statement timeouts or pooler quirks during tests.
+if RUNNING_TESTS and DATABASES['default']['ENGINE'] == 'django.db.backends.postgresql':
+    DATABASES['default']['CONN_MAX_AGE'] = 0
+    opts = DATABASES['default'].setdefault('OPTIONS', {})
+    prev = (opts.get('options') or '').strip()
+    extra = '-c statement_timeout=600000'
+    opts['options'] = f'{prev} {extra}'.strip() if prev else extra
 
 
 # Password validation

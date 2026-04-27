@@ -41,8 +41,11 @@ export default function CreditsPaymentModal({
       const res = await fetch(`${API_URL}/users/client/wallet/`, {
         credentials: 'include',
       });
-      if (!res.ok) throw new Error('Failed to fetch balance');
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = data?.error || data?.detail || `HTTP ${res.status}`;
+        throw new Error(`Failed to fetch balance (${detail})`);
+      }
       setCreditsBalance(data.tokens_balance ?? 0);
     } catch (e) {
       console.error('Error fetching credits:', e);
