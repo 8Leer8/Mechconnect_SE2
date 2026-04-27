@@ -18,6 +18,7 @@ from ...models import (
     Booking,
     Request,
     DirectRequest,
+    CustomRequest,
     DirectRequestAddOn,
     ActiveBooking,
     DisputeBooking,
@@ -2042,6 +2043,19 @@ def _count_pending_direct_requests(account):
     ).count()
 
 
+def _count_pending_custom_requests(account):
+    """Return count of pending custom requests without serializing."""
+    if getattr(account.mechanic, "is_working_for_shop", False):
+        return 0
+
+    return Request.objects.filter(
+        provider=account,
+        request_type="custom",
+        customrequest__request_status=CustomRequest.Status.PENDING,
+        booking__isnull=True,
+    ).count()
+
+
 def _mechanic_booking_access_q(account):
     """Access rule for mechanic bookings.
 
@@ -2143,6 +2157,74 @@ def _serialize_pending_direct_requests(account):
                 "id": req.id,
                 "status": "pending",
                 "amount_fee": total_amount,
+                "booked_at": req.created_at.isoformat(),
+                "updated_at": req.created_at.isoformat(),
+                "completed_at": None,
+                "request": {
+                    "id": req.id,
+                    "type": req.request_type,
+                    "created_at": req.created_at.isoformat(),
+                },
+                "provider": {
+                    "id": req.provider.id,
+                    "name": f"{req.provider.firstname} {req.provider.lastname}",
+                    "email": req.provider.email,
+                }
+                if req.provider
+                else None,
+                "service_location": service_location,
+            }
+        )
+
+    return results
+
+
+def _serialize_pending_custom_requests(account):
+    """
+    Build a list of booking-like dicts for pending CUSTOM requests
+    assigned to this mechanic (provider). These have no Booking yet
+    but should appear in the mechanic 'pending' tab.
+    """
+    if getattr(account.mechanic, "is_working_for_shop", False):
+        return []
+
+    pending_reqs = (
+        Request.objects.filter(
+            provider=account,
+            request_type="custom",
+            customrequest__request_status=CustomRequest.Status.PENDING,
+            booking__isnull=True,
+        )
+        .select_related(
+            "client",
+            "client__account",
+            "provider",
+            "service_location",
+            "customrequest",
+        )
+        .order_by("-created_at")
+    )
+
+    results = []
+    for req in pending_reqs:
+        custom = req.customrequest
+        amount = float(custom.quoted_price or 0)
+        loc = req.service_location
+        service_location = None
+        if loc:
+            service_location = {
+                "street_name": loc.street_name,
+                "subdivision_village": loc.subdivision_village,
+                "barangay": loc.barangay,
+                "city_municipality": loc.city_municipality,
+                "landmark": loc.landmark,
+            }
+
+        results.append(
+            {
+                "id": req.id,
+                "status": "pending",
+                "amount_fee": amount,
                 "booked_at": req.created_at.isoformat(),
                 "updated_at": req.created_at.isoformat(),
                 "completed_at": None,
@@ -2277,9 +2359,10 @@ def list_mechanic_bookings(request):
         if status_filter.lower() == "all":
             # pending includes pending direct requests + bookings that have a backjob
             pending_direct_count = _count_pending_direct_requests(account)
+            pending_custom_count = _count_pending_custom_requests(account)
             # Only count backjobs that are still requested (not yet accepted)
             backjob_count = _mechanic_pending_backjob_queryset(account).count()
-            pending_count = pending_direct_count + backjob_count
+            pending_count = pending_direct_count + pending_custom_count + backjob_count
             bookings_count = bookings_queryset.count()
             total_count = pending_count + bookings_count
             total_pages = (total_count + page_size - 1) // page_size if page_size > 0 else 0
@@ -2291,10 +2374,11 @@ def list_mechanic_bookings(request):
             if start_index < pending_count:
                 # Need some pending items on this page
                 direct_pending = _serialize_pending_direct_requests(account)
+                custom_pending = _serialize_pending_custom_requests(account)
                 # Only include backjob bookings that are pending mechanic acceptance.
                 backjob_qs = _mechanic_pending_backjob_queryset(account).order_by("-booked_at")
                 backjob_pending = serialize_booking_list(backjob_qs)
-                all_pending = direct_pending + backjob_pending
+                all_pending = direct_pending + custom_pending + backjob_pending
                 pending_slice = all_pending[start_index:min(end_index, pending_count)]
                 paginated.extend(pending_slice)
 
@@ -2351,10 +2435,11 @@ def list_mechanic_bookings(request):
         if status_filter.lower() == "pending":
             # include both direct pending requests and bookings that have backjob requests
             direct_pending = _serialize_pending_direct_requests(account)
+            custom_pending = _serialize_pending_custom_requests(account)
             # Only include backjob bookings that are pending acceptance.
             backjob_qs = _mechanic_pending_backjob_queryset(account).order_by("-booked_at")
             backjob_pending = serialize_booking_list(backjob_qs)
-            all_pending = direct_pending + backjob_pending
+            all_pending = direct_pending + custom_pending + backjob_pending
             total_count = len(all_pending)
             total_pages = (total_count + page_size - 1) // page_size if page_size > 0 else 0
             start_index = (page - 1) * page_size
@@ -2477,7 +2562,11 @@ def list_mechanic_bookings(request):
     ).count()
     disputed_count = bookings_queryset.filter(dispute_status=Booking.DisputeState.ACTIVE).count()
     # Include backjob bookings in the pending count, but only those not yet accepted.
-    pending_count = _count_pending_direct_requests(account) + _mechanic_pending_backjob_queryset(account).count()
+    pending_count = (
+        _count_pending_direct_requests(account)
+        + _count_pending_custom_requests(account)
+        + _mechanic_pending_backjob_queryset(account).count()
+    )
 
     # Single DB aggregate — much cheaper than fetching all completed records
     total_earnings = bookings_queryset.filter(status="completed").aggregate(
@@ -2715,6 +2804,155 @@ def mechanic_decline_direct_request(request, request_id):
         req.id,
         "rejected",
         "Your request has been declined",
+    )
+
+    return Response(
+        {"message": "Request declined", "request_id": req.id},
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def mechanic_accept_custom_request(request, request_id):
+    """
+    Mechanic accepts a CUSTOM request and turns it into a Booking.
+    Body (optional): { "quoted_price": float, "providers_note": string }
+    """
+    account, err = _get_mechanic_account(request)
+    if err:
+        return err
+
+    lock_err = _reject_if_mechanic_locked(account)
+    if lock_err:
+        return lock_err
+
+    if getattr(account.mechanic, "is_working_for_shop", False):
+        return Response(
+            {"error": "Shop mechanics cannot accept custom requests directly. Jobs must come from shop assignments."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    try:
+        req = Request.objects.select_related("client", "provider").get(
+            id=request_id, provider=account, request_type="custom"
+        )
+    except Request.DoesNotExist:
+        return Response(
+            {"error": "Request not found for this mechanic"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    try:
+        custom = CustomRequest.objects.get(request=req)
+    except CustomRequest.DoesNotExist:
+        return Response(
+            {"error": "Custom request details not found"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if custom.request_status != CustomRequest.Status.PENDING:
+        return Response(
+            {"error": "Request is not pending"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    quoted_price = request.data.get("quoted_price")
+    providers_note = request.data.get("providers_note")
+
+    if quoted_price is not None:
+        try:
+            custom.quoted_price = float(quoted_price)
+        except (TypeError, ValueError):
+            return Response({"error": "Invalid quoted_price"}, status=status.HTTP_400_BAD_REQUEST)
+    if providers_note is not None:
+        custom.providers_note = providers_note
+
+    custom.request_status = CustomRequest.Status.QUOTED
+    custom.save()
+
+    amount = float(custom.quoted_price or 0)
+    if hasattr(req, "booking"):
+        booking = req.booking
+        booking.status = Booking.Status.BOOKED
+        booking.amount_fee = amount
+        booking.booking_date = req.scheduled_time or booking.booking_date or timezone.now()
+        booking.save(update_fields=["status", "amount_fee", "booking_date", "updated_at"])
+    else:
+        booking = Booking.objects.create(
+            request=req,
+            status=Booking.Status.BOOKED,
+            amount_fee=amount,
+            booking_date=req.scheduled_time or timezone.now(),
+        )
+        ActiveBooking.objects.get_or_create(booking=booking)
+
+    data = _serialize_single_booking(booking, viewer_account=account)
+    notify_booking_parties(
+        account.id,
+        req.client.account_id,
+        booking.id,
+        booking.status,
+        "Your custom request has been accepted",
+        extra_event_fields={"event_source": "mechanic_accepted_custom"},
+        client_message="A mechanic accepted your custom request.",
+        mechanic_message="You accepted this custom request.",
+        client_title="Mechanic accepted your custom request",
+    )
+
+    return Response(
+        {"message": "Custom request accepted and booking created", "booking": data},
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def mechanic_decline_custom_request(request, request_id):
+    """Mechanic declines a CUSTOM request."""
+    account, err = _get_mechanic_account(request)
+    if err:
+        return err
+
+    if getattr(account.mechanic, "is_working_for_shop", False):
+        return Response(
+            {"error": "Shop mechanics cannot decline custom requests directly."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    try:
+        req = Request.objects.get(
+            id=request_id, provider=account, request_type="custom"
+        )
+    except Request.DoesNotExist:
+        return Response(
+            {"error": "Request not found for this mechanic"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    try:
+        custom = CustomRequest.objects.get(request=req)
+    except CustomRequest.DoesNotExist:
+        return Response(
+            {"error": "Custom request details not found"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if custom.request_status != CustomRequest.Status.PENDING:
+        return Response(
+            {"error": "Request is not pending"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    custom.request_status = CustomRequest.Status.REJECTED
+    custom.save(update_fields=["request_status"])
+
+    notify_booking_parties(
+        account.id,
+        req.client.account_id,
+        req.id,
+        "rejected",
+        "Your custom request has been declined",
     )
 
     return Response(

@@ -46,6 +46,17 @@ const parseApiErrorMessage = (payload: unknown, fallback: string) => {
   return typeof value === 'string' && value.trim() ? value : fallback;
 };
 
+const getMechanicPendingRequestEndpoint = (
+  requestType: string | undefined,
+  action: 'accept' | 'decline',
+) => {
+  const type = String(requestType || '').toLowerCase();
+  if (type === 'custom') {
+    return action === 'accept' ? 'accept-custom' : 'decline-custom';
+  }
+  return action;
+};
+
 const PHOTO_GRID_BREAKPOINT = 440;
 
 function mergeGalleryWithLegacy(gallery: string[] | undefined, legacy: string | null | undefined) {
@@ -278,9 +289,9 @@ const DEFAULT_PRICING_CONFIG: PricingConfig = {
 };
 
 const FLOW_STATUSES = {
-  quotationVisible: ['accepted', 'on_the_way', 'at_location', 'diagnosing', 'active', 'pending_payment', 'completed'],
-  quotationEditable: ['accepted', 'on_the_way', 'at_location', 'diagnosing', 'active'],
-  livePricing: ['accepted', 'on_the_way', 'at_location', 'diagnosing', 'active', 'paused', 'finished'],
+  quotationVisible: ['booked', 'accepted', 'on_the_way', 'at_location', 'diagnosing', 'active', 'pending_payment', 'completed'],
+  quotationEditable: ['booked', 'accepted', 'on_the_way', 'at_location', 'diagnosing', 'active'],
+  livePricing: ['booked', 'accepted', 'on_the_way', 'at_location', 'diagnosing', 'active', 'paused', 'finished'],
 } as const;
 
 const hasStatus = (statusValue: string | null | undefined, allowed: readonly string[]): boolean => {
@@ -1327,6 +1338,10 @@ export default function BookingDetailScreen() {
   };
 
   const loadChatPreview = useCallback(async () => {
+    if (booking && String(booking.status || '').toLowerCase() === 'pending') {
+      setChatPreview(null);
+      return;
+    }
     const id = Number(bookingId);
     if (!Number.isFinite(id) || id <= 0) {
       setChatPreview(null);
@@ -1335,9 +1350,10 @@ export default function BookingDetailScreen() {
     const preview = await fetchBookingChatPreview(id);
     if (!preview) return;
     setChatPreview(preview.lastPreview || null);
-  }, [bookingId]);
+  }, [bookingId, booking?.status]);
 
   const refreshChatQuotationLabels = useCallback(async () => {
+    if (booking && String(booking.status || '').toLowerCase() === 'pending') return;
     if (!bookingId) return;
     return runDedupedRequest(`mechanic-chat-quote-labels:${bookingId}`, 1500, async () => {
     try {
@@ -1489,7 +1505,7 @@ export default function BookingDetailScreen() {
       // ignore
     }
     });
-  }, [bookingId]);
+  }, [bookingId, booking?.status]);
 
   useEffect(() => {
     // fetch quotation when booking loads
@@ -2029,9 +2045,10 @@ export default function BookingDetailScreen() {
     if (!booking || !booking.request) return;
     if (acceptRequestLoading) return;
     const requestId = booking.request.id;
+    const endpoint = getMechanicPendingRequestEndpoint(booking.request?.type, 'accept');
     setAcceptRequestLoading(true);
     try {
-      const response = await fetch(`${API_URL}/bookings/mechanic/requests/${requestId}/accept/`, {
+      const response = await fetch(`${API_URL}/bookings/mechanic/requests/${requestId}/${endpoint}/`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -2069,9 +2086,10 @@ export default function BookingDetailScreen() {
     const ok = await confirm({ type: 'danger', title: 'Decline Request', message: 'Are you sure you want to decline this request?', confirmText: 'Decline', cancelText: 'Keep' });
     if (!ok) return;
     const requestId = booking.request.id;
+    const endpoint = getMechanicPendingRequestEndpoint(booking.request?.type, 'decline');
     setDeclineRequestLoading(true);
     try {
-      const response = await fetch(`${API_URL}/bookings/mechanic/requests/${requestId}/decline/`, {
+      const response = await fetch(`${API_URL}/bookings/mechanic/requests/${requestId}/${endpoint}/`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -2156,6 +2174,8 @@ export default function BookingDetailScreen() {
   const scopeAddOns = normalizeRequestedAddOnRows(scopeDetailsRaw);
   const scopeDescription = String(scopeDetailsRaw?.description || '').trim();
   const reqTypeLower = String(booking.request?.type || (booking.request as any)?.request_type || '').toLowerCase();
+  const canMechanicChatWithClient =
+    String(booking.status || '').toLowerCase() !== 'pending' && canOpenBookingChat(booking);
 
   const locationText = (value?: string | null, fallback = 'Unavailable') => {
     const text = String(value || '').trim();
@@ -2417,10 +2437,12 @@ export default function BookingDetailScreen() {
       </View>
     );
   };
-  const showPricingQuotationCard = hasStatus(booking.status, FLOW_STATUSES.quotationVisible)
-    && !!(convenienceBreakdown || displayQuotation);
+  const statusAllowsQuotation = hasStatus(booking.status, FLOW_STATUSES.quotationVisible);
+  const statusAllowsQuotationEdit = hasStatus(booking.status, FLOW_STATUSES.quotationEditable);
+  const showPricingQuotationCard = statusAllowsQuotation
+    && (!!(convenienceBreakdown || displayQuotation) || statusAllowsQuotationEdit);
   const isCompletedBooking = String(booking.status || '').toLowerCase() === 'completed';
-  const canEditQuotation = hasStatus(booking.status, FLOW_STATUSES.quotationEditable);
+  const canEditQuotation = statusAllowsQuotationEdit;
   const myAssignmentRole = (() => {
     const assigned = booking.request?.assigned_mechanics || [];
     if (!currentAccountId || !Array.isArray(assigned)) return null;
@@ -3363,7 +3385,7 @@ export default function BookingDetailScreen() {
         </View>
 
         {/* Chat Section */}
-        {canOpenBookingChat(booking) ? (
+        {canMechanicChatWithClient ? (
           <TouchableOpacity
             style={styles.sectionCard}
             onPress={() => router.push({ pathname: '/chat/booking_chat', params: { bookingId: String(booking.id) } })}
@@ -3382,6 +3404,20 @@ export default function BookingDetailScreen() {
               </ThemedText>
             </View>
           </TouchableOpacity>
+        ) : String(booking.status || '').toLowerCase() === 'pending' ? (
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.sectionIcon, { backgroundColor: '#8E8E9315' }]}>
+                <FontAwesome name="lock" size={16} color="#8E8E93" />
+              </View>
+              <ThemedText style={styles.sectionTitle}>Chat with Client</ThemedText>
+            </View>
+            <View style={{ paddingVertical: 8 }}>
+              <ThemedText style={{ color: '#8E8E93' }}>
+                Chat unlocks after you accept this request.
+              </ThemedText>
+            </View>
+          </View>
         ) : null}
 
         {assignedTeam.length > 0 ? (

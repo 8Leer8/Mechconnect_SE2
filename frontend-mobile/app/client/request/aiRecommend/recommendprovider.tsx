@@ -16,7 +16,7 @@ interface MatchedShop {
   is_verified: boolean; status: string; matched_specialties: string[];
 }
 interface MatchedMechanic {
-  id: number; full_name: string; profile_photo: string | null;
+  id: number; mechanic_id?: number; username?: string; full_name: string; profile_photo: string | null;
   average_rating: number; status: string; matched_specialties: string[];
 }
 
@@ -249,6 +249,9 @@ export default function RecommendProviderScreen() {
                       )}
                       <View style={{ flex: 1 }}>
                         <ThemedText style={styles.cardTitle}>{mechanic.full_name}</ThemedText>
+                        {!!mechanic.username && (
+                          <ThemedText style={styles.detailText}>@{mechanic.username}</ThemedText>
+                        )}
                         <View style={styles.ratingRow}>
                           <FontAwesome name="star" size={12} color="#FF8C00" />
                           <ThemedText style={styles.ratingText}>{mechanic.average_rating.toFixed(1)}</ThemedText>

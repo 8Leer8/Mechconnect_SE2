@@ -61,16 +61,21 @@ def predict_and_match(request):
         mechanics_dict = {}
         for ms in mechanic_specialties:
             mechanic = ms.mechanic
-            if mechanic.id not in mechanics_dict:
-                mechanics_dict[mechanic.id] = {
-                    'id': mechanic.id,
-                    'full_name': f"{mechanic.account.firstname} {mechanic.account.lastname}",
+            account = mechanic.account
+            if account.id not in mechanics_dict:
+                mechanics_dict[account.id] = {
+                    # IMPORTANT: this id is used as provider_id in direct/custom request APIs,
+                    # so it must be Account.id (not Mechanic.id).
+                    'id': account.id,
+                    'mechanic_id': mechanic.id,
+                    'username': account.username,
+                    'full_name': f"{account.firstname} {account.lastname}",
                     'profile_photo': mechanic.profile_photo.url if mechanic.profile_photo else None,
                     'average_rating': float(mechanic.average_rating),
                     'status': mechanic.status,
                     'matched_specialties': []
                 }
-            mechanics_dict[mechanic.id]['matched_specialties'].append(ms.specialty.name)
+            mechanics_dict[account.id]['matched_specialties'].append(ms.specialty.name)
 
         return JsonResponse({
             'description': description,

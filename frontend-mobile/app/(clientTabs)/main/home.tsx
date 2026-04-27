@@ -295,6 +295,7 @@ export default function HomeScreen() {
         return '#FF8C00';
       case 'completed': return '#34C759';
       case 'cancelled': return '#FF3B30';
+      case 'booked':
       case 'accepted': return '#00B8D9';
       default: return '#8E8E93';
     }
@@ -302,6 +303,7 @@ export default function HomeScreen() {
 
   const getStatusLabel = (status: string) => {
     switch (status) {
+      case 'booked': return 'Booked';
       case 'accepted': return 'Booked';
       case 'on_the_way': return 'On the Way';
       case 'at_location': return 'At Location';

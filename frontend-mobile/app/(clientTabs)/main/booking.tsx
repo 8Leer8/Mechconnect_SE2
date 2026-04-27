@@ -188,6 +188,7 @@ export default function BookingScreen() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
+      case 'booked': return '#00B8D9';
       case 'on_the_way': return '#007AFF';
       case 'at_location': return '#5AC8FA';
       case 'diagnosing': return '#AF52DE';
@@ -202,6 +203,7 @@ export default function BookingScreen() {
 
   const getStatusLabel = (status: string) => {
     switch (status) {
+      case 'booked': return 'Booked';
       case 'accepted': return 'Booked';
       case 'on_the_way': return 'On the Way';
       case 'at_location': return 'At Location';
@@ -216,6 +218,7 @@ export default function BookingScreen() {
 
   const getStatusIcon = (status: string) => {
     switch (status) {
+      case 'booked': return 'calendar-check-o';
       case 'accepted': return 'calendar-check-o';
       case 'active': return 'play-circle';
       case 'on_the_way': return 'car';

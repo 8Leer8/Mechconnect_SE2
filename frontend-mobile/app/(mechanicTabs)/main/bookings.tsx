@@ -267,6 +267,7 @@ export default function BookingsScreen() {
   const getStatusLabel = (status: string) => {
     const normalized = String(status || '').toLowerCase();
     switch (normalized) {
+      case 'booked': return 'Booked';
       case 'accepted': return 'Booked';
       case 'backjob_pending': return 'Backjob Pending';
       case 'active': return 'On Going';
@@ -287,6 +288,7 @@ export default function BookingsScreen() {
   const getStatusColor = (status: string) => {
     const normalized = String(status || '').toLowerCase();
     switch (normalized) {
+      case 'booked': return '#00B8D9';
       case 'accepted': return '#00B8D9';
       case 'backjob_pending': return '#FFD60A';
       case 'active': return '#FF8C00';
@@ -308,6 +310,7 @@ export default function BookingsScreen() {
   const getStatusIcon = (status: string) => {
     const normalized = String(status || '').toLowerCase();
     switch (normalized) {
+      case 'booked': return 'calendar-check-o';
       case 'accepted': return 'calendar-check-o';
       case 'backjob_pending': return 'refresh';
       case 'active': return 'play-circle';
@@ -326,11 +329,20 @@ export default function BookingsScreen() {
     }
   };
 
-  const handleAcceptPending = async (requestId: number) => {
+  const getPendingEndpoint = (requestType: string | undefined, action: 'accept' | 'decline') => {
+    const type = String(requestType || '').toLowerCase();
+    if (type === 'custom') {
+      return action === 'accept' ? 'accept-custom' : 'decline-custom';
+    }
+    return action;
+  };
+
+  const handleAcceptPendingByType = async (requestId: number, requestType?: string) => {
     try {
       setActionLoadingId(requestId);
+      const endpoint = getPendingEndpoint(requestType, 'accept');
       const response = await fetch(
-        `${API_URL}/bookings/mechanic/requests/${requestId}/accept/`,
+        `${API_URL}/bookings/mechanic/requests/${requestId}/${endpoint}/`,
         {
           method: 'POST',
           credentials: 'include',
@@ -362,11 +374,12 @@ export default function BookingsScreen() {
     }
   };
 
-  const handleDeclinePending = async (requestId: number) => {
+  const handleDeclinePendingByType = async (requestId: number, requestType?: string) => {
     try {
       setActionLoadingId(requestId);
+      const endpoint = getPendingEndpoint(requestType, 'decline');
       const response = await fetch(
-        `${API_URL}/bookings/mechanic/requests/${requestId}/decline/`,
+        `${API_URL}/bookings/mechanic/requests/${requestId}/${endpoint}/`,
         {
           method: 'POST',
           credentials: 'include',
@@ -552,6 +565,7 @@ export default function BookingsScreen() {
                     // pending direct requests so mechanics can inspect
                     // the incoming direct booking before accepting/declining.
                     if (
+                          statusKey === 'booked' ||
                           statusKey === 'active' ||
                           statusKey === 'on_the_way' ||
                           statusKey === 'at_location' ||
@@ -561,8 +575,10 @@ export default function BookingsScreen() {
                           statusKey === 'reworked' ||
                           statusKey === 'backjob_pending' ||
                           statusKey === 'pending_payment' ||
-                          // allow pending direct-type requests to be opened
-                          (statusKey === 'pending' && booking.request && booking.request.type === 'direct')
+                          // allow pending direct/custom requests to be opened
+                          (statusKey === 'pending' &&
+                            booking.request &&
+                            (booking.request.type === 'direct' || booking.request.type === 'custom'))
                         ) {
                       handleViewDetails(booking);
                     }
@@ -645,14 +661,14 @@ export default function BookingsScreen() {
                     <View style={styles.pendingActions}>
                       <TouchableOpacity
                         style={styles.declineBtn}
-                        onPress={() => handleDeclinePending(booking.request.id)}
+                        onPress={() => handleDeclinePendingByType(booking.request.id, booking.request?.type)}
                         disabled={actionLoadingId === booking.request.id}
                       >
                         <ThemedText style={styles.declineBtnText}>Decline</ThemedText>
                       </TouchableOpacity>
                       <TouchableOpacity
                         style={styles.acceptBtn}
-                        onPress={() => handleAcceptPending(booking.request.id)}
+                        onPress={() => handleAcceptPendingByType(booking.request.id, booking.request?.type)}
                         disabled={actionLoadingId === booking.request.id}
                       >
                         {actionLoadingId === booking.request.id ? (
@@ -667,7 +683,7 @@ export default function BookingsScreen() {
                     </View>
                   ) : ((() => {
                     const statusKey = String(booking.status || '').toLowerCase();
-                    return statusKey === 'accepted' || statusKey === 'on_the_way' || statusKey === 'at_location' || statusKey === 'diagnosing' || statusKey === 'active' || statusKey === 'paused' || statusKey === 'completed' || statusKey === 'reworked' || statusKey === 'backjob_pending' || statusKey === 'pending_payment';
+                    return statusKey === 'booked' || statusKey === 'accepted' || statusKey === 'on_the_way' || statusKey === 'at_location' || statusKey === 'diagnosing' || statusKey === 'active' || statusKey === 'paused' || statusKey === 'completed' || statusKey === 'reworked' || statusKey === 'backjob_pending' || statusKey === 'pending_payment';
                   })()) ? (
                     <View style={{ flexDirection: 'row', gap: 8 }}>
                       <TouchableOpacity
