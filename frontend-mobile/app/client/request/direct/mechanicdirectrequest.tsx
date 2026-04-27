@@ -240,7 +240,7 @@ export default function MechanicDirectRequestScreen() {
 
 			setAddonsLoadingKey(key);
 			try {
-				const providerQuery = `?provider_id=${selectedProviderId}`;
+				const providerQuery = `?provider_id=${selectedProviderId}&provider_type=mechanic`;
 				const response = await fetch(
 					`${API_URL}/bookings/direct/services/${expandedServiceId}/addons/${providerQuery}`,
 					{ credentials: 'include' }

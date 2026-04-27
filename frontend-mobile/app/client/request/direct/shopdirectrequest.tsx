@@ -10,7 +10,6 @@ import {
 	View,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { Picker } from '@react-native-picker/picker';
 import { FontAwesome } from '@expo/vector-icons';
 import { router, useFocusEffect, useLocalSearchParams, usePathname } from 'expo-router';
 import * as Location from 'expo-location';
@@ -62,16 +61,6 @@ function parseParamInt(value: string | string[] | undefined): number | null {
 	const raw = Array.isArray(value) ? value[0] : value;
 	const parsed = Number.parseInt(raw, 10);
 	return Number.isNaN(parsed) ? null : parsed;
-}
-
-function toNumberOrNull(value: unknown): number | null {
-	if (value === null || value === undefined) return null;
-	if (typeof value === 'number') return Number.isNaN(value) ? null : value;
-	if (typeof value === 'string') {
-		const parsed = Number.parseInt(value, 10);
-		return Number.isNaN(parsed) ? null : parsed;
-	}
-	return null;
 }
 
 function parseParamFloat(value: string | string[] | undefined): number | null {
@@ -128,14 +117,16 @@ export default function ShopDirectRequestScreen() {
 		region: parseParamString(params.region) ?? parseParamString(params.providerRegion),
 	};
 
-	const [selectedServiceId, setSelectedServiceId] = useState<number | null>(null);
-	const [selectedAddOnIds, setSelectedAddOnIds] = useState<number[]>([]);
+	const [selectedServiceIds, setSelectedServiceIds] = useState<number[]>([]);
+	const [expandedServiceId, setExpandedServiceId] = useState<number | null>(null);
+	const [addonsByServiceId, setAddonsByServiceId] = useState<Record<string, AddOn[]>>({});
+	const [addonsLoadingKey, setAddonsLoadingKey] = useState<string | null>(null);
+	const [selectedAddOnsByService, setSelectedAddOnsByService] = useState<Record<string, number[]>>({});
 	const [vehicleType, setVehicleType] = useState('');
 	const [vehicleBrand, setVehicleBrand] = useState('');
 	const [vehicleModel, setVehicleModel] = useState('');
 
 	const [availableServices, setAvailableServices] = useState<Service[]>([]);
-	const [availableAddOns, setAvailableAddOns] = useState<AddOn[]>([]);
 
 	const [loading, setLoading] = useState(false);
 	const [calculatingFee, setCalculatingFee] = useState(false);
@@ -160,16 +151,23 @@ export default function ShopDirectRequestScreen() {
 	const [confirmVisible, setConfirmVisible] = useState(false);
 	const [hasFetchedCurrentLocation, setHasFetchedCurrentLocation] = useState(false);
 	const isNavigatingToMapRef = useRef(false);
-	const isMountedRef = useRef(true);
-	const locationFetchSeqRef = useRef(0);
 	const [showSummary, setShowSummary] = useState(false);
 	const [feeBreakdown, setFeeBreakdown] = useState<FeeBreakdown | null>(null);
 	const [computedDistanceKm, setComputedDistanceKm] = useState<number | undefined>(undefined);
 	const [distanceResolved, setDistanceResolved] = useState(true);
-  const providerCoordsRef = useRef<{ latitude: number; longitude: number } | null>(null);
+	const providerCoordsRef = useRef<{ latitude: number; longitude: number } | null>(null);
+	const loadedAddonsRef = useRef<Set<string>>(new Set());
+	const isMountedRef = useRef(true);
 	const isFetchingLocationRef = useRef(false);
 
 	const selectedProviderId = routeProviderId;
+
+	useEffect(() => {
+		isMountedRef.current = true;
+		return () => {
+			isMountedRef.current = false;
+		};
+	}, []);
 
 	useEffect(() => {
 		providerCoordsRef.current = null;
@@ -183,41 +181,40 @@ export default function ShopDirectRequestScreen() {
 	]);
 
 	useEffect(() => {
-		isMountedRef.current = true;
-		return () => {
-			isMountedRef.current = false;
-			locationFetchSeqRef.current += 1;
-		};
-	}, []);
-
-	useEffect(() => {
 		let cancelled = false;
-		const controller = new AbortController();
 
 		const fetchServices = async () => {
 			if (!selectedProviderId) {
 				setAvailableServices([]);
-				setSelectedServiceId(null);
+				setSelectedServiceIds([]);
+				setExpandedServiceId(null);
+				setAddonsByServiceId({});
+				setSelectedAddOnsByService({});
+				loadedAddonsRef.current = new Set();
 				return;
 			}
 
 			try {
 				const response = await fetch(
 					`${API_URL}/bookings/direct/shops/${selectedProviderId}/services/`,
-					{ credentials: 'include', signal: controller.signal as any }
+					{ credentials: 'include' }
 				);
-				if (cancelled || !isMountedRef.current) return;
+				if (cancelled) return;
 
 				const data = (await response.json()) as ServicesResponse;
-				if (cancelled || !isMountedRef.current) return;
 				if (response.ok) {
+					loadedAddonsRef.current = new Set();
+					setAddonsByServiceId({});
+					setSelectedServiceIds([]);
+					setExpandedServiceId(null);
+					setSelectedAddOnsByService({});
 					setAvailableServices(data.services || []);
 					return;
 				}
 
 				setAvailableServices([]);
 			} catch {
-				if (!cancelled && isMountedRef.current) {
+				if (!cancelled) {
 					setAvailableServices([]);
 				}
 			}
@@ -226,57 +223,59 @@ export default function ShopDirectRequestScreen() {
 		fetchServices();
 		return () => {
 			cancelled = true;
-			controller.abort();
 		};
 	}, [selectedProviderId]);
 
 	useEffect(() => {
 		let cancelled = false;
-		const controller = new AbortController();
 
-		const fetchAddOns = async () => {
-			if (!selectedServiceId) {
-				setAvailableAddOns([]);
-				setSelectedAddOnIds([]);
+		const load = async () => {
+			if (!expandedServiceId || !selectedProviderId) {
+				return;
+			}
+			const key = String(expandedServiceId);
+			if (loadedAddonsRef.current.has(key)) {
 				return;
 			}
 
+			setAddonsLoadingKey(key);
 			try {
-				const providerQuery = selectedProviderId ? `?provider_id=${selectedProviderId}` : '';
+				const providerQuery = `?provider_id=${selectedProviderId}&provider_type=shop`;
 				const response = await fetch(
-					`${API_URL}/bookings/direct/services/${selectedServiceId}/addons/${providerQuery}`,
-					{ credentials: 'include', signal: controller.signal as any }
+					`${API_URL}/bookings/direct/services/${expandedServiceId}/addons/${providerQuery}`,
+					{ credentials: 'include' }
 				);
-				if (cancelled || !isMountedRef.current) return;
+				if (cancelled) return;
 
 				const data = (await response.json()) as AddOnsResponse;
-				if (cancelled || !isMountedRef.current) return;
-				if (response.ok) {
-					setAvailableAddOns(data.add_ons || []);
-					return;
+				const list = response.ok ? data.add_ons || [] : [];
+				if (!cancelled) {
+					loadedAddonsRef.current.add(key);
+					setAddonsByServiceId((prev) => ({ ...prev, [key]: list }));
 				}
-
-				setAvailableAddOns([]);
 			} catch {
-				if (!cancelled && isMountedRef.current) {
-					setAvailableAddOns([]);
+				if (!cancelled) {
+					loadedAddonsRef.current.add(key);
+					setAddonsByServiceId((prev) => ({ ...prev, [key]: [] }));
+				}
+			} finally {
+				if (!cancelled) {
+					setAddonsLoadingKey((cur) => (cur === key ? null : cur));
 				}
 			}
 		};
 
-		fetchAddOns();
+		load();
 		return () => {
 			cancelled = true;
-			controller.abort();
 		};
-	}, [selectedServiceId, selectedProviderId]);
+	}, [expandedServiceId, selectedProviderId]);
 
 	useFocusEffect(
 		React.useCallback(() => {
 			isNavigatingToMapRef.current = false;
 
 			if (!selectedLocation) return;
-			if (!isMountedRef.current) return;
 
 			setCurrentLatitude(selectedLocation.latitude);
 			setCurrentLongitude(selectedLocation.longitude);
@@ -286,8 +285,6 @@ export default function ShopDirectRequestScreen() {
 			setCurrentCity(selectedLocation.city || '');
 			setCurrentAddress(selectedLocation.address || 'Selected map location');
 			setHasFetchedCurrentLocation(false);
-			setShowDatePicker(false);
-			setShowTimePicker(false);
 			setSelectedLocation(null);
 		}, [selectedLocation, setSelectedLocation])
 	);
@@ -306,20 +303,18 @@ export default function ShopDirectRequestScreen() {
 
 	const fetchCurrentLocation = async () => {
 		if (!selectedProviderId) return;
-		if (isFetchingCurrentLocation || isFetchingLocationRef.current) return;
+		if (isFetchingLocationRef.current) return;
 		isFetchingLocationRef.current = true;
 
-		const fetchSeq = ++locationFetchSeqRef.current;
-
-		setShowDatePicker(false);
-		setShowTimePicker(false);
-
-		setIsFetchingCurrentLocation(true);
-		setCurrentLocationError(null);
+		if (isMountedRef.current) {
+			setIsFetchingCurrentLocation(true);
+			setCurrentLocationError(null);
+		}
 
 		try {
 			const permission = await ensureForegroundLocationAccess();
-			if (!isMountedRef.current || fetchSeq !== locationFetchSeqRef.current) return;
+			if (!isMountedRef.current) return;
+
 			if (!permission.granted) {
 				setCurrentLocationError('Location permission denied');
 				Alert.alert(
@@ -337,7 +332,8 @@ export default function ShopDirectRequestScreen() {
 			});
 
 			const position = await Promise.race([locationPromise, timeoutPromise]);
-			if (!isMountedRef.current || fetchSeq !== locationFetchSeqRef.current) return;
+			if (!isMountedRef.current) return;
+
 			if (
 				!position ||
 				!position.coords ||
@@ -352,16 +348,20 @@ export default function ShopDirectRequestScreen() {
 			setCurrentLongitude(longitude);
 			setHasFetchedCurrentLocation(true);
 
-			const parsed = await reverseGeocodeAddress(latitude, longitude);
-			if (!isMountedRef.current || fetchSeq !== locationFetchSeqRef.current) return;
-			setCurrentStreetName(parsed.streetName || 'Current location');
-			setCurrentSubdivision(parsed.subdivision || '');
-			setCurrentBarangay(parsed.barangay || '');
-			setCurrentCity(parsed.city || '');
-			setCurrentAddress(parsed.address || 'Current location');
-			setCurrentLocationError(null);
+			try {
+				const parsed = await reverseGeocodeAddress(latitude, longitude);
+				if (!isMountedRef.current) return;
+				setCurrentStreetName(parsed.streetName || 'Current location');
+				setCurrentSubdivision(parsed.subdivision || '');
+				setCurrentBarangay(parsed.barangay || '');
+				setCurrentCity(parsed.city || '');
+				setCurrentAddress(parsed.address || 'Current location');
+				setCurrentLocationError(null);
+			} catch (geocodeErr) {
+				console.warn('Reverse geocode failed:', geocodeErr);
+			}
 		} catch (error: any) {
-			if (!isMountedRef.current || fetchSeq !== locationFetchSeqRef.current) return;
+			if (!isMountedRef.current) return;
 			const isTimeout = error?.message === 'Location timeout';
 			setCurrentLocationError('Unable to fetch current location');
 			Alert.alert(
@@ -372,42 +372,62 @@ export default function ShopDirectRequestScreen() {
 			);
 			console.error('Fetch location error:', error);
 		} finally {
-			if (isMountedRef.current && fetchSeq === locationFetchSeqRef.current) {
+			if (isMountedRef.current) {
 				setIsFetchingCurrentLocation(false);
 			}
 			isFetchingLocationRef.current = false;
 		}
 	};
 
-	const toggleAddOn = (addOnId: number) => {
-		setSelectedAddOnIds((prev) =>
-			prev.includes(addOnId) ? prev.filter((id) => id !== addOnId) : [...prev, addOnId]
-		);
+	const toggleServiceSelected = (serviceId: number) => {
+		setSelectedServiceIds((prev) => {
+			if (prev.includes(serviceId)) {
+				const key = String(serviceId);
+				setSelectedAddOnsByService((m) => {
+					const copy = { ...m };
+					delete copy[key];
+					return copy;
+				});
+				return prev.filter((id) => id !== serviceId);
+			}
+			return [...prev, serviceId];
+		});
+	};
+
+	const toggleExpandService = (serviceId: number) => {
+		setExpandedServiceId((cur) => (cur === serviceId ? null : serviceId));
+	};
+
+	const toggleAddOnForService = (serviceId: number, addOnId: number) => {
+		const key = String(serviceId);
+		setSelectedAddOnsByService((prev) => {
+			const list = prev[key] || [];
+			const nextList = list.includes(addOnId) ? list.filter((id) => id !== addOnId) : [...list, addOnId];
+			return { ...prev, [key]: nextList };
+		});
 	};
 
 	const totalPrice = useMemo(() => {
 		let total = 0;
-
-		if (selectedServiceId) {
-			const selectedService = availableServices.find((service) => service.id === selectedServiceId);
-			if (selectedService) total += selectedService.price;
+		for (const sid of selectedServiceIds) {
+			const svc = availableServices.find((s) => s.id === sid);
+			if (svc) total += svc.price;
+			const key = String(sid);
+			const addonList = addonsByServiceId[key] || [];
+			const picked = selectedAddOnsByService[key] || [];
+			for (const aid of picked) {
+				const addOn = addonList.find((a) => a.id === aid);
+				if (addOn) total += addOn.price;
+			}
 		}
-
-		selectedAddOnIds.forEach((addOnId) => {
-			const addOn = availableAddOns.find((item) => item.id === addOnId);
-			if (addOn) total += addOn.price;
-		});
-
 		return total;
-	}, [selectedServiceId, selectedAddOnIds, availableServices, availableAddOns]);
+	}, [selectedServiceIds, selectedAddOnsByService, availableServices, addonsByServiceId]);
 
 	const handleSelectLocation = () => {
 		if (isNavigatingToMapRef.current) return;
 		isNavigatingToMapRef.current = true;
-		const mapPath = getMapRoutePath();
 
-		setShowDatePicker(false);
-		setShowTimePicker(false);
+		const mapPath = getMapRoutePath();
 
 		if (currentLatitude !== null && currentLongitude !== null) {
 			router.push({
@@ -423,27 +443,13 @@ export default function ShopDirectRequestScreen() {
 		router.push(mapPath);
 	};
 
-	const onDateChange = (event: any, date?: Date) => {
-		if (Platform.OS !== 'ios') {
-			setShowDatePicker(false);
-		}
-
-		if (event?.type === 'dismissed') {
-			return;
-		}
-
+	const onDateChange = (_event: any, date?: Date) => {
+		setShowDatePicker(Platform.OS === 'ios');
 		if (date) setSelectedDate(date);
 	};
 
-	const onTimeChange = (event: any, time?: Date) => {
-		if (Platform.OS !== 'ios') {
-			setShowTimePicker(false);
-		}
-
-		if (event?.type === 'dismissed') {
-			return;
-		}
-
+	const onTimeChange = (_event: any, time?: Date) => {
+		setShowTimePicker(Platform.OS === 'ios');
 		if (time) setSelectedTime(time);
 	};
 
@@ -464,8 +470,8 @@ export default function ShopDirectRequestScreen() {
 			return;
 		}
 
-		if (!selectedServiceId) {
-			showNotification({ type: 'error', message: 'Please select a service' });
+		if (selectedServiceIds.length === 0) {
+			showNotification({ type: 'error', message: 'Please select at least one service' });
 			return;
 		}
 
@@ -497,11 +503,15 @@ export default function ShopDirectRequestScreen() {
 		setLoading(true);
 
 		try {
+			const service_lines = selectedServiceIds.map((sid) => ({
+				service_id: sid,
+				add_on_ids: selectedAddOnsByService[String(sid)] || [],
+			}));
+
 			const requestData = {
 				shop_id: routeShopId,
 				provider_id: selectedProviderId,
-				service_id: selectedServiceId,
-				add_on_ids: selectedAddOnIds,
+				service_lines,
 				vehicle_type: vehicleType,
 				vehicle_brand: vehicleBrand,
 				vehicle_model: vehicleModel,
@@ -543,9 +553,6 @@ export default function ShopDirectRequestScreen() {
 	};
 
 	const handleOpenConfirm = async () => {
-		setShowDatePicker(false);
-		setShowTimePicker(false);
-
 		if (!routeShopId) {
 			showNotification({ type: 'error', message: 'Shop not found' });
 			return;
@@ -556,8 +563,8 @@ export default function ShopDirectRequestScreen() {
 			return;
 		}
 
-		if (!selectedServiceId) {
-			showNotification({ type: 'error', message: 'Please select a service' });
+		if (selectedServiceIds.length === 0) {
+			showNotification({ type: 'error', message: 'Please select at least one service' });
 			return;
 		}
 
@@ -642,12 +649,56 @@ export default function ShopDirectRequestScreen() {
 		}
 	};
 
-	const selectedService = availableServices.find((service) => service.id === selectedServiceId);
-	const selectedAddOns = selectedAddOnIds
-		.map((addOnId) => availableAddOns.find((item) => item.id === addOnId))
-		.filter((item): item is AddOn => Boolean(item));
-	const serviceTypeItems = selectedService ? [`${selectedService.name} (₱${selectedService.price.toFixed(2)})`] : [];
-	const addOnItems = selectedAddOns.map((item) => `${item.name} (₱${item.price.toFixed(2)})`);
+	const selectedServicesOrdered = useMemo(
+		() =>
+			selectedServiceIds
+				.map((id) => availableServices.find((s) => s.id === id))
+				.filter((s): s is Service => Boolean(s)),
+		[selectedServiceIds, availableServices]
+	);
+
+	const serviceTypeItems = useMemo(
+		() => selectedServicesOrdered.map((s) => `${s.name} (₱${s.price.toFixed(2)})`),
+		[selectedServicesOrdered]
+	);
+
+	const addOnItems = useMemo(() => {
+		const lines: string[] = [];
+		for (const sid of selectedServiceIds) {
+			const key = String(sid);
+			const svc = availableServices.find((s) => s.id === sid);
+			const name = svc?.name || 'Service';
+			const list = addonsByServiceId[key] || [];
+			for (const aid of selectedAddOnsByService[key] || []) {
+				const addOn = list.find((a) => a.id === aid);
+				if (addOn) {
+					lines.push(`${name} — ${addOn.name} (₱${addOn.price.toFixed(2)})`);
+				}
+			}
+		}
+		return lines;
+	}, [selectedServiceIds, selectedAddOnsByService, addonsByServiceId, availableServices]);
+
+	const combinedServiceDescription = useMemo(
+		() =>
+			selectedServicesOrdered
+				.map((s) => (s.description || '').trim())
+				.filter(Boolean)
+				.join(' · '),
+		[selectedServicesOrdered]
+	);
+
+	const flatSelectedAddOns = useMemo(() => {
+		const out: AddOn[] = [];
+		for (const sid of selectedServiceIds) {
+			const list = addonsByServiceId[String(sid)] || [];
+			for (const aid of selectedAddOnsByService[String(sid)] || []) {
+				const a = list.find((x) => x.id === aid);
+				if (a) out.push(a);
+			}
+		}
+		return out;
+	}, [selectedServiceIds, selectedAddOnsByService, addonsByServiceId]);
 	const locationActionLabel = hasFetchedCurrentLocation ? 'Try Again' : 'Fetch Current Location';
 	const locationActionIcon = hasFetchedCurrentLocation ? 'refresh' : 'location-arrow';
 	const disabled = !selectedProviderId;
@@ -703,65 +754,114 @@ export default function ShopDirectRequestScreen() {
 				<View style={styles.section}>
 					<View style={styles.sectionHeader}>
 						<FontAwesome name="cog" size={14} color="#FF8C00" />
-						<ThemedText style={styles.sectionTitle}>Select Service *</ThemedText>
+						<ThemedText style={styles.sectionTitle}>Available Services *</ThemedText>
 					</View>
-					<View style={[styles.pickerContainer, disabled && styles.disabledContainer]}>
-						<Picker
-							enabled={!!selectedProviderId}
-							selectedValue={selectedServiceId}
-							onValueChange={(value) => {
-								setSelectedServiceId(toNumberOrNull(value));
-								setSelectedAddOnIds([]);
-							}}
-							style={[styles.picker, disabled && styles.disabledPicker]}
-							dropdownIconColor={selectedProviderId ? '#FF8C00' : '#555'}
-						>
-							<Picker.Item label="Choose a service..." value={null} />
-							{availableServices.map((service) => (
-								<Picker.Item key={service.id} label={`${service.name} - P${service.price.toFixed(2)}`} value={service.id} />
-							))}
-						</Picker>
-					</View>
-				</View>
-
-				<View style={styles.section}>
-					<View style={styles.sectionHeader}>
-						<FontAwesome name="plus-circle" size={14} color="#FF8C00" />
-						<ThemedText style={styles.sectionTitle}>Add-ons</ThemedText>
-					</View>
-					{availableAddOns.length > 0 ? (
-						availableAddOns.map((addOn) => (
-							<TouchableOpacity
-								key={addOn.id}
-								style={[styles.addOnItem, selectedAddOnIds.includes(addOn.id) && styles.addOnItemSelected, disabled && styles.disabledContainer]}
-								onPress={() => toggleAddOn(addOn.id)}
-								disabled={disabled}
-								activeOpacity={0.7}
-							>
-								<View style={styles.addOnCheck}>
-									<FontAwesome
-										name={selectedAddOnIds.includes(addOn.id) ? 'check-square' : 'square-o'}
-										size={18}
-										color={selectedAddOnIds.includes(addOn.id) ? '#FF8C00' : '#555'}
-									/>
-								</View>
-								<View style={styles.addOnInfo}>
-									<ThemedText style={[styles.addOnName, disabled && styles.disabledText]}>{addOn.name}</ThemedText>
-									{!!addOn.category && (
-										<ThemedText style={[styles.addOnDescription, disabled && styles.disabledText]}>{addOn.category}</ThemedText>
-									)}
-									<ThemedText style={[styles.addOnDescription, disabled && styles.disabledText]}>{addOn.description}</ThemedText>
-								</View>
-								<ThemedText style={[styles.addOnPrice, disabled && styles.disabledText]}>P{addOn.price.toFixed(2)}</ThemedText>
-							</TouchableOpacity>
-						))
-					) : (
+					{availableServices.length === 0 ? (
 						<View style={styles.emptyCard}>
 							<FontAwesome name="info-circle" size={14} color="#555" />
 							<ThemedText style={styles.emptyText}>
-								{selectedServiceId ? 'No add-ons available for this service' : 'Select a service to view add-ons'}
+								{selectedProviderId ? 'No services listed for this shop' : 'Choose a shop first'}
 							</ThemedText>
 						</View>
+					) : (
+						availableServices.map((service) => {
+							const isSelected = selectedServiceIds.includes(service.id);
+							const isExpanded = expandedServiceId === service.id;
+							const key = String(service.id);
+							const rowAddons = addonsByServiceId[key];
+							const picked = selectedAddOnsByService[key] || [];
+							const loadingRow = addonsLoadingKey === key;
+
+							return (
+								<View
+									key={service.id}
+									style={[styles.accordionCard, isSelected && styles.accordionHeaderSelected]}
+								>
+									<View style={styles.accordionHeader}>
+										<TouchableOpacity
+											onPress={() => !disabled && toggleServiceSelected(service.id)}
+											disabled={disabled}
+											activeOpacity={0.7}
+											style={styles.addOnCheck}
+										>
+											<FontAwesome
+												name={isSelected ? 'check-square' : 'square-o'}
+												size={20}
+												color={isSelected ? '#FF8C00' : '#555'}
+											/>
+										</TouchableOpacity>
+										<View style={styles.accordionTitleBlock}>
+											<ThemedText style={[styles.accordionServiceName, disabled && styles.disabledText]}>
+												{service.name}
+											</ThemedText>
+											<ThemedText style={[styles.accordionServicePrice, disabled && styles.disabledText]}>
+												Base P{service.price.toFixed(2)}
+											</ThemedText>
+										</View>
+										<TouchableOpacity
+											style={styles.accordionChevronBtn}
+											onPress={() => !disabled && toggleExpandService(service.id)}
+											disabled={disabled}
+											activeOpacity={0.7}
+										>
+											<FontAwesome
+												name={isExpanded ? 'chevron-up' : 'chevron-down'}
+												size={16}
+												color="#FF8C00"
+											/>
+										</TouchableOpacity>
+									</View>
+
+									{isExpanded ? (
+										<View style={styles.accordionBody}>
+											{loadingRow && rowAddons === undefined ? (
+												<ActivityIndicator color="#FF8C00" style={{ marginVertical: 12 }} />
+											) : null}
+											{!loadingRow && rowAddons !== undefined && rowAddons.length === 0 ? (
+												<ThemedText style={styles.accordionHint}>No add-ons for this service</ThemedText>
+											) : null}
+											{rowAddons && rowAddons.length > 0
+												? rowAddons.map((addOn) => (
+														<TouchableOpacity
+															key={addOn.id}
+															style={[
+																styles.addOnItem,
+																picked.includes(addOn.id) && styles.addOnItemSelected,
+																disabled && styles.disabledContainer,
+															]}
+															onPress={() => !disabled && toggleAddOnForService(service.id, addOn.id)}
+															disabled={disabled}
+															activeOpacity={0.7}
+														>
+															<View style={styles.addOnCheck}>
+																<FontAwesome
+																	name={picked.includes(addOn.id) ? 'check-square' : 'square-o'}
+																	size={18}
+																	color={picked.includes(addOn.id) ? '#FF8C00' : '#555'}
+																/>
+															</View>
+															<View style={styles.addOnInfo}>
+																<ThemedText style={[styles.addOnName, disabled && styles.disabledText]}>{addOn.name}</ThemedText>
+																{!!addOn.category && (
+																	<ThemedText style={[styles.addOnDescription, disabled && styles.disabledText]}>
+																		{addOn.category}
+																	</ThemedText>
+																)}
+																<ThemedText style={[styles.addOnDescription, disabled && styles.disabledText]}>
+																	{addOn.description}
+																</ThemedText>
+															</View>
+															<ThemedText style={[styles.addOnPrice, disabled && styles.disabledText]}>
+																P{addOn.price.toFixed(2)}
+															</ThemedText>
+														</TouchableOpacity>
+													))
+												: null}
+										</View>
+									) : null}
+								</View>
+							);
+						})
 					)}
 				</View>
 
@@ -770,21 +870,18 @@ export default function ShopDirectRequestScreen() {
 						<FontAwesome name="list-alt" size={14} color="#FF8C00" />
 						<ThemedText style={styles.sectionTitle}>Summary</ThemedText>
 					</View>
-					{selectedService && (
-						<View style={styles.summaryRow}>
-							<ThemedText style={styles.summaryLabel}>{selectedService.name}</ThemedText>
-							<ThemedText style={styles.summaryValue}>P{selectedService.price.toFixed(2)}</ThemedText>
+					{selectedServicesOrdered.map((svc) => (
+						<View key={svc.id} style={styles.summaryRow}>
+							<ThemedText style={styles.summaryLabel}>{svc.name}</ThemedText>
+							<ThemedText style={styles.summaryValue}>P{svc.price.toFixed(2)}</ThemedText>
 						</View>
-					)}
-					{selectedAddOnIds.map((addOnId) => {
-						const addOn = availableAddOns.find((item) => item.id === addOnId);
-						return addOn ? (
-							<View key={addOn.id} style={styles.summaryRow}>
-								<ThemedText style={styles.summaryLabel}>{addOn.name}</ThemedText>
-								<ThemedText style={styles.summaryValue}>P{addOn.price.toFixed(2)}</ThemedText>
-							</View>
-						) : null;
-					})}
+					))}
+					{flatSelectedAddOns.map((addOn) => (
+						<View key={`${addOn.id}-${addOn.name}`} style={styles.summaryRow}>
+							<ThemedText style={styles.summaryLabel}>{addOn.name}</ThemedText>
+							<ThemedText style={styles.summaryValue}>P{addOn.price.toFixed(2)}</ThemedText>
+						</View>
+					))}
 					<View style={styles.summaryDivider} />
 					<View style={styles.summaryRow}>
 						<ThemedText style={styles.totalText}>Total</ThemedText>
@@ -826,11 +923,7 @@ export default function ShopDirectRequestScreen() {
 						<View style={styles.dateTimeContainer}>
 							<TouchableOpacity
 								style={[styles.dateTimeBtn, disabled && styles.disabledContainer]}
-								onPress={() => {
-									if (!selectedProviderId) return;
-									setShowTimePicker(false);
-									setShowDatePicker(true);
-								}}
+								onPress={() => selectedProviderId && setShowDatePicker(true)}
 								disabled={disabled}
 								activeOpacity={0.7}
 							>
@@ -839,11 +932,7 @@ export default function ShopDirectRequestScreen() {
 							</TouchableOpacity>
 							<TouchableOpacity
 								style={[styles.dateTimeBtn, disabled && styles.disabledContainer]}
-								onPress={() => {
-									if (!selectedProviderId) return;
-									setShowDatePicker(false);
-									setShowTimePicker(true);
-								}}
+								onPress={() => selectedProviderId && setShowTimePicker(true)}
 								disabled={disabled}
 								activeOpacity={0.7}
 							>
@@ -889,8 +978,6 @@ export default function ShopDirectRequestScreen() {
 							]}
 							onPress={() => {
 								if (disabled) return;
-								locationFetchSeqRef.current += 1;
-								setIsFetchingCurrentLocation(false);
 								setLocationMode('current');
 								setCurrentLocationError(null);
 							}}
@@ -911,8 +998,6 @@ export default function ShopDirectRequestScreen() {
 							]}
 							onPress={() => {
 								if (disabled) return;
-								locationFetchSeqRef.current += 1;
-								setIsFetchingCurrentLocation(false);
 								setLocationMode('map');
 								setHasFetchedCurrentLocation(false);
 								setCurrentLocationError(null);
@@ -1027,10 +1112,12 @@ export default function ShopDirectRequestScreen() {
 								<ThemedText style={styles.modalSummaryValue}>{routeProviderName || 'Selected shop'}</ThemedText>
 							</View>
 							<View style={styles.modalSummaryRow}>
-								<ThemedText style={styles.modalSummaryLabel}>Service</ThemedText>
-								<ThemedText style={styles.modalSummaryValue}>{selectedService?.name || '-'}</ThemedText>
+								<ThemedText style={styles.modalSummaryLabel}>Services</ThemedText>
+								<ThemedText style={styles.modalSummaryValue}>
+									{selectedServicesOrdered.map((s) => s.name).join(', ') || '-'}
+								</ThemedText>
 							</View>
-							{selectedAddOns.map((item) => (
+							{flatSelectedAddOns.map((item) => (
 								<View key={item.id} style={styles.modalSummaryRow}>
 									<ThemedText style={styles.modalSummaryLabel}>{item.name}</ThemedText>
 									<ThemedText style={styles.modalSummaryValue}>P{item.price.toFixed(2)}</ThemedText>
@@ -1093,9 +1180,9 @@ export default function ShopDirectRequestScreen() {
 					addOnItems={addOnItems}
 					serviceAmount={totalPrice}
 					vehicleModel={vehicleModel}
-					description={selectedService?.description || ''}
+					description={combinedServiceDescription}
 					locationAddress={currentAddress || 'Selected map location'}
-					shopName={routeProviderName || undefined}
+					mechanicName={routeProviderName || undefined}
 					distanceKm={computedDistanceKm}
 					distanceResolved={distanceResolved}
 					showDistanceInDetails

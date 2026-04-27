@@ -5,7 +5,7 @@ from .models import (
     EmergencyRequestPhoto,
     RequestAssignment, Receipt, Quotation, QuotationItem
 )
-from services.models import Service, ServiceAddOn
+from services.models import Service, ServiceAddOn, ShopService, MechanicService
 from users.models import Account, Client
 from shops.models import Shop
 from MainBackend.storage_utils import get_media_url
@@ -81,8 +81,26 @@ class DirectRequestSerializer(serializers.ModelSerializer):
         fields = ['id', 'service', 'services', 'request_status', 'add_ons']
 
     def get_services(self, obj):
-        rows = iter_direct_request_services(obj.request)
-        return ServiceBasicSerializer(rows, many=True).data
+        """Catalog fields plus booked_unit_price (ShopService / MechanicService row price)."""
+        req = obj.request
+        rows = list(iter_direct_request_services(req))
+        out = []
+        shop = getattr(req, 'shop', None)
+        provider = getattr(req, 'provider', None)
+        for svc in rows:
+            data = dict(ServiceBasicSerializer(svc, context=self.context).data)
+            booked = float(data.get('minimum_price') or 0)
+            if shop is not None:
+                ss = ShopService.objects.filter(shop=shop, service=svc).first()
+                if ss is not None:
+                    booked = float(ss.price)
+            elif provider is not None and getattr(provider, 'mechanic', None) is not None:
+                ms = MechanicService.objects.filter(mechanic=provider.mechanic, service=svc).first()
+                if ms is not None:
+                    booked = float(ms.price)
+            data['booked_unit_price'] = booked
+            out.append(data)
+        return out
     
     def get_add_ons(self, obj):
         add_ons = DirectRequestAddOn.objects.filter(request=obj.request).select_related('service_add_on')

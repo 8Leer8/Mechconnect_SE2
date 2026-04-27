@@ -43,7 +43,7 @@ type RequestDetailPayload = {
   status?: string;
   service?: { id?: number; name?: string; price?: number };
   add_ons?: { id?: number; name?: string; price?: number }[];
-  services?: { id?: number; name?: string }[];
+  services?: { id?: number; name?: string; price?: number }[];
   expires_at?: string | null;
 };
 
@@ -176,11 +176,21 @@ export default function ShopOwnerRequestDetailsScreen() {
   const serviceTypeLabel = kind
     ? `${kind.charAt(0).toUpperCase() + kind.slice(1)} service`
     : 'Service request';
+  const directServices =
+    kind === 'direct'
+      ? req.services && req.services.length > 0
+        ? req.services
+        : req.service
+          ? [req.service]
+          : []
+      : [];
+  const directServicesTotal = directServices.reduce((sum, service) => sum + Number(service.price || 0), 0);
+  const directAddOnsTotal = (req.add_ons || []).reduce((sum, addOn) => sum + Number(addOn.price || 0), 0);
 
   const headerIcon = getRequestHeaderIcon(kind);
   const displayPrice =
-    kind === 'direct' && req.service?.price != null
-      ? `₱${Number(req.service.price).toFixed(2)}`
+    kind === 'direct' && (directServices.length > 0 || (req.add_ons?.length || 0) > 0)
+      ? `₱${Number(directServicesTotal + directAddOnsTotal).toFixed(2)}`
       : kind === 'custom' && req.quoted_price != null && req.quoted_price !== undefined
         ? `₱${Number(req.quoted_price).toFixed(2)}`
         : null;
@@ -330,7 +340,7 @@ export default function ShopOwnerRequestDetailsScreen() {
           </View>
         ) : null}
 
-        {kind === 'direct' && req.service ? (
+        {kind === 'direct' && directServices.length > 0 ? (
           <View style={styles.sectionCard}>
             <View style={styles.sectionHeader}>
               <View style={[styles.sectionIcon, { backgroundColor: '#34C75915' }]}>
@@ -339,16 +349,15 @@ export default function ShopOwnerRequestDetailsScreen() {
               <ThemedText style={styles.sectionTitle}>Service & pricing</ThemedText>
             </View>
             <View style={styles.infoGrid}>
-              <View style={styles.infoItem}>
-                <ThemedText style={styles.infoLabel}>Service</ThemedText>
-                <ThemedText style={styles.infoValue}>{req.service.name || '—'}</ThemedText>
-              </View>
-              <View style={styles.infoItem}>
-                <ThemedText style={styles.infoLabel}>Price</ThemedText>
-                <ThemedText style={styles.infoValue}>
-                  {req.service.price != null ? `₱${Number(req.service.price).toFixed(2)}` : '—'}
-                </ThemedText>
-              </View>
+              {directServices.map((service, index) => (
+                <View key={`service-${service.id || index}`} style={styles.infoItem}>
+                  <ThemedText style={styles.infoLabel}>Service {directServices.length > 1 ? index + 1 : ''}</ThemedText>
+                  <ThemedText style={styles.infoValue}>
+                    {service.name || '—'}
+                    {service.price != null ? ` • ₱${Number(service.price).toFixed(2)}` : ''}
+                  </ThemedText>
+                </View>
+              ))}
             </View>
             {req.add_ons && req.add_ons.length > 0 ? (
               <View style={{ marginTop: 12 }}>
