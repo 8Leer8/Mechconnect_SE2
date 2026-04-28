@@ -28,7 +28,6 @@ const PAGE_SIZE = 20;
 const METHOD_COLORS = {
   cash: "#f97316",
   e_cash: "#22c55e",
-  qr: "#a855f7",
   credits: "#facc15",
   unknown: "#9ca3af",
 };
@@ -72,6 +71,9 @@ function formatMethodLabel(value) {
   }
   if (value === "gcash" || value === "maya" || value === "e_cash") {
     return "E-Cash";
+  }
+  if (value === "qr") {
+    return "Cash";
   }
   return String(value)
     .split("_")
@@ -467,7 +469,11 @@ export function TransactionsOverviewPage() {
   const payoutSeries = overview?.charts?.payout_series || [];
   const methodBreakdown = (overview?.charts?.method_breakdown || []).reduce((acc, item) => {
     const rawMethod = item.method || "unknown";
-    const methodKey = rawMethod === "gcash" || rawMethod === "maya" ? "e_cash" : rawMethod;
+    const methodKey = rawMethod === "gcash" || rawMethod === "maya"
+      ? "e_cash"
+      : rawMethod === "qr"
+      ? "cash"
+      : rawMethod;
     const existing = acc.find((entry) => entry.method === methodKey);
     const value = Number(item.total) || 0;
     if (existing) {
