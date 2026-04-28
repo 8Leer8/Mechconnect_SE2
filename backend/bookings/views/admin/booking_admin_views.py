@@ -628,9 +628,18 @@ def admin_transactions_overview(request):
     method_counts = transaction_qs.values('method').annotate(total=Sum('amount')).order_by('method')
     cash_count = receipt_qs.filter(payment_method='cash').aggregate(total=Sum('booking__amount_fee')).get('total') or Decimal('0')
 
-    method_map = {row['method']: row['total'] for row in method_counts}
+    method_map = {}
+    for row in method_counts:
+        method_key = row['method']
+        if method_key in {'gcash', 'maya'}:
+            method_key = 'e_cash'
+        elif method_key == 'qr':
+            method_key = 'cash'
+
+        method_map[method_key] = method_map.get(method_key, Decimal('0')) + (row['total'] or Decimal('0'))
+
     if cash_count:
-        method_map['cash'] = cash_count
+        method_map['cash'] = method_map.get('cash', Decimal('0')) + cash_count
 
     return Response(
         {
@@ -688,6 +697,10 @@ def admin_transactions_ledger(request):
             actor = None
             if payment.booking and payment.booking.request and payment.booking.request.client:
                 actor = payment.booking.request.client.account.username
+            method_val = payment.method if payment.method is not None else None
+            if method_val == 'qr':
+                method_val = 'cash'
+
             ledger_rows.append(
                 {
                     'date': payment.created_at,
@@ -697,7 +710,7 @@ def admin_transactions_ledger(request):
                     'amount': payment.amount,
                     'status': payment.status,
                     'reference_id': payment.booking_id,
-                    'method': payment.method,
+                    'method': method_val,
                 }
             )
 
@@ -720,6 +733,10 @@ def admin_transactions_ledger(request):
                     actor = booking.request.provider.username
                 elif booking.request.shop:
                     actor = booking.request.shop.shop_name
+            payout_method = payout.payment_method
+            if payout_method == 'qr':
+                payout_method = 'cash'
+
             ledger_rows.append(
                 {
                     'date': payout.paid_at or payout.created_at,
@@ -729,7 +746,7 @@ def admin_transactions_ledger(request):
                     'amount': payout.mechanic_payout,
                     'status': 'paid' if payout.payment_received else 'pending',
                     'reference_id': payout.booking_id,
-                    'method': payout.payment_method,
+                    'method': payout_method,
                 }
             )
 
@@ -793,8 +810,13 @@ def admin_booking_transaction_stats(request, booking_id):
     receipt_info = None
     if isinstance(getattr(booking, 'receipt', None), Receipt):
         receipt = booking.receipt
+        # Normalize payment method: treat 'qr' as 'cash'
+        pm = receipt.payment_method
+        if pm == 'qr':
+            pm = 'cash'
+
         receipt_info = {
-            'payment_method': receipt.payment_method,
+            'payment_method': pm,
             'payment_received': receipt.payment_received,
             'platform_fee': receipt.platform_fee,
             'mechanic_payout': receipt.mechanic_payout,
@@ -820,12 +842,16 @@ def admin_booking_transaction_stats(request, booking_id):
 
     transactions = []
     for transaction in booking.payment_transactions.all():
+        method_val = transaction.method if transaction.method is not None else None
+        if method_val == 'qr':
+            method_val = 'cash'
+
         transactions.append(
             {
                 'id': transaction.id,
                 'installment_id': transaction.installment_id,
                 'amount': transaction.amount,
-                'method': transaction.method,
+                'method': method_val,
                 'status': transaction.status,
                 'reference': transaction.reference,
                 'created_at': transaction.created_at,
