@@ -16,6 +16,7 @@ import {
   Scale,
   ShieldCheck,
   Sun,
+  TrendingUp,
   Users,
   Wallet,
   Wrench,
@@ -66,6 +67,7 @@ const allNavSections = [
       { label: "Trust and Safety", to: "/admin/trust", icon: AlertTriangle, headAdminOnly: true },
       { label: "Dispute Center", to: "/admin/disputes", icon: Scale },
       { label: "Wallet & Token Ledger", to: "/admin/wallet", icon: Wallet, headAdminOnly: true },
+      { label: "Transactions Overview", to: "/admin/transactions", icon: TrendingUp, headAdminOnly: true },
     ],
   },
 ];
@@ -95,6 +97,7 @@ const titleByPath = {
   "/admin/trust": "Trust and Safety",
   "/admin/disputes": "Dispute Center",
   "/admin/wallet": "Wallet & Token Ledger",
+  "/admin/transactions": "Transactions Overview",
 };
 
 const navLinkClassName =

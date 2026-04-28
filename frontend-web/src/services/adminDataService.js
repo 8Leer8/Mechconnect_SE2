@@ -41,6 +41,10 @@ export function fetchAdminBookings(params = {}) {
   return request(withQuery("/admin/bookings/list/", params));
 }
 
+export function fetchAdminBookingDetail(bookingId) {
+  return request(`/admin/bookings/list/${bookingId}/`);
+}
+
 export function fetchAdminRequests(params = {}) {
   return request(withQuery("/admin/bookings/requests/", params));
 }
@@ -62,6 +66,10 @@ export function fetchAdminServices(params = {}) {
 
 export function fetchChatHistory(bookingId) {
   return request(`/admin/bookings/${bookingId}/chat-history/`);
+}
+
+export function fetchAdminBookingTransactionStats(bookingId) {
+  return request(`/admin/bookings/${bookingId}/transaction-stats/`);
 }
 
 export function fetchAdminSpecialties(params = {}) {
@@ -153,4 +161,12 @@ export function updateAdminPricingConfig(payload) {
     method: "PATCH",
     body: payload,
   });
+}
+
+export function fetchAdminTransactionsOverview(params = {}) {
+  return request(withQuery("/admin/bookings/transactions/overview/", params));
+}
+
+export function fetchAdminTransactionsLedger(params = {}) {
+  return request(withQuery("/admin/bookings/transactions/ledger/", params));
 }

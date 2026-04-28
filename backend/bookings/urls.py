@@ -7,8 +7,12 @@ from .views.admin import (
     admin_list_disputes,
     admin_resolve_dispute,
     admin_list_bookings,
+    admin_get_booking,
     admin_list_requests,
     admin_booking_chat_history,
+    admin_booking_transaction_stats,
+    admin_transactions_overview,
+    admin_transactions_ledger,
 )
 
 urlpatterns = [
@@ -144,6 +148,10 @@ admin_urlpatterns = [
     path('disputes/', admin_list_disputes, name='admin-list-disputes'),
     path('disputes/<int:dispute_id>/resolve/', admin_resolve_dispute, name='admin-resolve-dispute'),
     path('list/', admin_list_bookings, name='admin-list-bookings'),
+    path('list/<int:booking_id>/', admin_get_booking, name='admin-get-booking'),
     path('requests/', admin_list_requests, name='admin-list-requests'),
     path('<int:booking_id>/chat-history/', admin_booking_chat_history, name='admin-booking-chat-history'),
+    path('<int:booking_id>/transaction-stats/', admin_booking_transaction_stats, name='admin-booking-transaction-stats'),
+    path('transactions/overview/', admin_transactions_overview, name='admin-transactions-overview'),
+    path('transactions/ledger/', admin_transactions_ledger, name='admin-transactions-ledger'),
 ]

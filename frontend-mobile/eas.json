@@ -11,7 +11,9 @@
     "preview": {
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://mechconnectse2-production-621a.up.railway.app/api"
+        "EXPO_PUBLIC_API_URL": "https://mechconnectse2-production-621a.up.railway.app/api",
+        "EXPO_PUBLIC_ORS_API_KEY": "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImNhNzNkZjk4NDRmODRiNjRhZjE2NmJiMzRjZmI2YTA2IiwiaCI6Im11cm11cjY0In0=",
+        "EXPO_PUBLIC_TOMTOM_API_KEY": "MoLjKrqe0CX5eMXW5JwWWz4clMhPQMCz"
       }
     },
     "production": {

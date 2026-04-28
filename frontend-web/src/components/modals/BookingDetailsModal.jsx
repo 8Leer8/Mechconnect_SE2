@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { ModalShell } from "@/components/modals/ModalShell";
 import { Badge } from "@/components/ui/badge";
 import { API_BASE_URL } from "@/config/env";
+import { fetchAdminBookingTransactionStats } from "@/services/adminDataService";
 
 function formatDateTime(value) {
   if (!value) {
@@ -239,7 +240,7 @@ function VehicleSection({ vehicleInformation }) {
   );
 }
 
-function PaymentDetails({ paymentBreakdown, quotationDetails, baseFee, booking, receiptInfo }) {
+function PaymentDetails({ paymentBreakdown, quotationDetails, baseFee, booking, receiptInfo, onOpenStats }) {
   const [isQuotationOpen, setIsQuotationOpen] = useState(false);
 
   const pb = paymentBreakdown || {};
@@ -281,7 +282,12 @@ function PaymentDetails({ paymentBreakdown, quotationDetails, baseFee, booking, 
 
   return (
     <section className="space-y-4 rounded-lg border border-border/70 bg-card/40 p-4">
-      <h4 className="text-sm font-semibold text-orange-400">Payment Details</h4>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="text-sm font-semibold text-orange-400">Payment Details</h4>
+        <Button type="button" variant="outline" size="sm" className="rounded-full" onClick={onOpenStats}>
+          View Transaction Statistics
+        </Button>
+      </div>
 
       {/* Payment Method Row */}
       {paymentMethod && (
@@ -519,28 +525,51 @@ function RequestPhoto({ photoUrl, requestType }) {
   );
 }
 
-export function BookingDetailsModal({ booking, onClose }) {
-  if (!booking) {
-    return null;
-  }
+function StatPill({ label, value, intent }) {
+  const intentClass = {
+    success: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
+    warning: "border-orange-500/40 bg-orange-500/10 text-orange-300",
+    danger: "border-red-500/40 bg-red-500/10 text-red-300",
+    neutral: "border-border/60 bg-muted/30 text-muted-foreground",
+  };
 
-  const isBroadcast = booking.request_type === "broadcast";
-  const { latitude, longitude } = getBroadcastCoordinates(booking);
-  const hasCoordinates = latitude !== null && longitude !== null;
-  const { embedUrl, openUrl } = buildMapUrls(latitude, longitude);
+  return (
+    <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${intentClass[intent] || intentClass.neutral}`}>
+      {label}: {value}
+    </span>
+  );
+}
+
+function SummaryCard({ label, value, caption, accentClass }) {
+  return (
+    <div className={`rounded-lg border border-border/70 bg-card/60 p-3 ${accentClass || ""}`}>
+      <p className="text-xs font-semibold uppercase tracking-wide text-orange-300/70">{label}</p>
+      <p className="mt-2 text-xl font-semibold text-foreground">{value}</p>
+      {caption ? <p className="mt-1 text-xs text-muted-foreground">{caption}</p> : null}
+    </div>
+  );
+}
+
+function TransactionStatsModal({ isOpen, onClose, stats, isLoading, error }) {
+  const totals = stats?.totals || {};
+  const receiptInfo = stats?.receipt_info || null;
+  const installments = Array.isArray(stats?.payment_installments) ? stats.payment_installments : [];
+  const transactions = Array.isArray(stats?.payment_transactions) ? stats.payment_transactions : [];
+
+  const paymentMethod = receiptInfo?.payment_method ? formatLabel(receiptInfo.payment_method) : "—";
+  const paymentStatus = receiptInfo?.payment_received ? "Paid" : "Not paid";
+
+  const receiptImage = receiptInfo?.receipt_image ? toMediaUrl(receiptInfo.receipt_image) : "";
 
   return (
     <ModalShell
-      isOpen
+      isOpen={isOpen}
       onClose={onClose}
       maxWidth={null}
-      cardClassName={isBroadcast ? "max-w-6xl" : "max-w-3xl"}
-      title="Booking Details"
-      description={
-        isBroadcast
-          ? "Review request location and full booking context before taking action."
-          : "Review full booking and request information in a clean, structured view."
-      }
+      overlayClassName="z-[60]"
+      cardClassName="max-w-5xl"
+      title="Transaction Statistics"
+      description="Detailed breakdown of payments, payouts, and remittances for this booking."
       headerClassName="py-5"
       footer={
         <Button type="button" variant="outline" className="rounded-lg" onClick={onClose}>
@@ -548,177 +577,299 @@ export function BookingDetailsModal({ booking, onClose }) {
         </Button>
       }
     >
-        <div
-          className={
-            isBroadcast
-              ? "max-h-[75vh] overflow-y-auto px-6 py-5 lg:overflow-hidden"
-              : "max-h-[75vh] overflow-y-auto px-6 py-5"
-          }
-        >
-          {isBroadcast ? (
-            <div className="grid grid-cols-1 gap-5 lg:h-[64vh] lg:grid-cols-2">
-              <section className="space-y-3 lg:sticky lg:top-0 lg:self-start">
-                <h4 className="text-sm font-semibold text-orange-400">Request Map</h4>
-                {hasCoordinates ? (
-                  <>
-                    <div className="overflow-hidden rounded-lg border border-border bg-card">
-                      <iframe
-                        title="Broadcast request location"
-                        src={embedUrl}
-                        className="h-[340px] w-full"
-                        loading="lazy"
-                      />
-                    </div>
-                    <a
-                      href={openUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20"
-                    >
-                      <ExternalLink className="size-3.5" />
-                      Open in map
-                    </a>
-                  </>
-                ) : (
-                  <p className="rounded-md border border-border/70 bg-card/60 px-3 py-2 text-sm text-muted-foreground">
-                    No latitude and longitude available for this broadcast request.
-                  </p>
-                )}
-              </section>
+      <div className="max-h-[75vh] overflow-y-auto px-6 py-5">
+        {error ? (
+          <p className="rounded-md border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+            {error}
+          </p>
+        ) : null}
 
-              <section className="space-y-4 lg:h-full lg:overflow-y-auto lg:pr-1">
-                <h4 className="text-sm font-semibold text-orange-400">Details</h4>
-                <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2">
-                  <DetailItem label="Booking ID" value={booking.id} />
-                  <DetailItem label="Request ID" value={booking.request_id} />
-                  <DetailItem label="Client" value={booking.client_username || "—"} />
-                  <DetailItem label="Provider" value={booking.provider_username || booking.shop_name || "—"} />
-                  <DetailItem label="Booked At" value={formatDateTime(booking.booked_at)} />
-                  <DetailItem label="Completed At" value={formatDateTime(booking.completed_at)} />
-                  <DetailItem label="Amount" value={formatCurrency(booking.amount_fee)} />
-                  <DetailItem label="Request Type" value={formatLabel(booking.request_type)} />
-                </div>
+        <section className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <SummaryCard
+            label="Client Paid"
+            value={formatCurrency(totals.client_paid_total)}
+            caption="Sum of confirmed payments"
+          />
+          <SummaryCard
+            label="Mechanic Earned"
+            value={formatCurrency(totals.mechanic_earnings_total)}
+            caption="Net payout amount"
+          />
+          <SummaryCard
+            label="Platform Earned"
+            value={formatCurrency(totals.platform_earnings_total)}
+            caption="Platform fee retained"
+          />
+          <SummaryCard
+            label="Outstanding"
+            value={formatCurrency(totals.outstanding_balance)}
+            caption="Remaining balance"
+            accentClass={totals.outstanding_balance > 0 ? "border-orange-500/40 bg-orange-500/10" : ""}
+          />
+        </section>
 
-                <div className="space-y-2">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-orange-300/80">Booking Status</p>
-                  <Badge variant={statusVariant(booking.status)} className={`capitalize ${getStatusClass(booking.status)}`}>
-                    {formatLabel(booking.status)}
-                  </Badge>
-                </div>
+        <section className="mt-5 space-y-3 rounded-lg border border-border/70 bg-card/40 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h4 className="text-sm font-semibold text-orange-400">Receipt & Payment Method</h4>
+            <div className="flex flex-wrap gap-2">
+              <StatPill label="Status" value={paymentStatus} intent={receiptInfo?.payment_received ? "success" : "warning"} />
+              <StatPill label="Method" value={paymentMethod} intent="neutral" />
+            </div>
+          </div>
 
-                {/* Vehicle Information Section */}
-                <VehicleSection vehicleInformation={booking.vehicle_information} />
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <DetailItem label="Paid At" value={formatDateTime(receiptInfo?.paid_at)} />
+            <DetailItem label="Transaction ID" value={receiptInfo?.transaction_id || "—"} />
+            <DetailItem label="Platform Fee" value={formatCurrency(receiptInfo?.platform_fee)} />
+            <DetailItem label="Mechanic Payout" value={formatCurrency(receiptInfo?.mechanic_payout)} />
+          </div>
 
-                {/* Services Section with Badges */}
-                <ServicesSection servicesList={booking.services_list} />
-
-                <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2">
-                  <DetailItem label="Broadcast Status" value={formatLabel(booking.request_details?.status)} />
-                  <DetailItem label="Expires At" value={formatDateTime(booking.request_details?.expires_at)} />
-                  <DetailItem label="Accepted At" value={formatDateTime(booking.request_details?.accepted_at)} />
-                </div>
-
-                <div className="space-y-2">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-orange-300/80">Request Description</p>
-                  <p className="rounded-md border border-border/70 bg-card/60 px-3 py-2 text-sm text-foreground">
-                    {booking.request_details?.description || "No description provided."}
-                  </p>
-                </div>
-
-                <RequestPhoto
-                  photoUrl={booking.request_details?.photo_url}
-                  requestType={booking.request_type}
-                />
-
-                <section className="space-y-3">
-                  <h4 className="text-sm font-semibold text-orange-400">Service Location</h4>
-                  <LocationDetails location={booking.service_location} />
-                </section>
-
-                {/* Payment Details Section */}
-                <PaymentDetails
-                  paymentBreakdown={booking.payment_breakdown}
-                  quotationDetails={booking.quotation_details}
-                  baseFee={booking.base_fee}
-                  booking={booking}
-                  receiptInfo={booking.receipt_info}
-                />
-              </section>
+          {receiptImage ? (
+            <div className="mt-2 overflow-hidden rounded-md border border-border/60 bg-card/60">
+              <img src={receiptImage} alt="Receipt" className="h-48 w-full object-cover" />
             </div>
           ) : (
-            <div className="space-y-5">
-              <section className="space-y-3">
-                <h4 className="text-sm font-semibold text-orange-400">Booking Overview</h4>
-                <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3">
-                  <DetailItem label="Booking ID" value={booking.id} />
-                  <DetailItem label="Request ID" value={booking.request_id} />
-                  <DetailItem label="Type" value={formatLabel(booking.request_type)} />
-                  <DetailItem label="Client" value={booking.client_username || "—"} />
-                  <DetailItem label="Provider" value={booking.provider_username || booking.shop_name || "—"} />
-                  <DetailItem label="Amount" value={formatCurrency(booking.amount_fee)} />
-                  <DetailItem label="Booked At" value={formatDateTime(booking.booked_at)} />
-                  <DetailItem label="Request Created" value={formatDateTime(booking.request_created_at)} />
-                  <DetailItem label="Completed At" value={formatDateTime(booking.completed_at)} />
-                </div>
-              </section>
+            <p className="text-xs text-muted-foreground">No receipt image uploaded.</p>
+          )}
+        </section>
 
-              <section className="space-y-2">
-                <h4 className="text-sm font-semibold text-orange-400">Status</h4>
+        <section className="mt-5 space-y-3 rounded-lg border border-border/70 bg-card/40 p-4">
+          <h4 className="text-sm font-semibold text-orange-400">Installments</h4>
+          {isLoading ? (
+            <p className="text-sm text-muted-foreground">Loading installments...</p>
+          ) : installments.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No installments recorded.</p>
+          ) : (
+            <div className="space-y-2">
+              {installments.map((item) => (
+                <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/60 bg-card/60 px-3 py-2">
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-foreground">{formatLabel(item.installment_type)}</p>
+                    <p className="text-xs text-muted-foreground">Paid at {formatDateTime(item.paid_at)}</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatPill label="Status" value={formatLabel(item.status)} intent={item.status === "paid" ? "success" : "warning"} />
+                    <StatPill label="Released" value={item.is_released ? "Yes" : "No"} intent={item.is_released ? "success" : "neutral"} />
+                    <span className="text-sm font-semibold text-foreground">{formatCurrency(item.amount)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="mt-5 space-y-3 rounded-lg border border-border/70 bg-card/40 p-4">
+          <h4 className="text-sm font-semibold text-orange-400">Payment Transactions</h4>
+          {isLoading ? (
+            <p className="text-sm text-muted-foreground">Loading transactions...</p>
+          ) : transactions.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No payment transactions found.</p>
+          ) : (
+            <div className="space-y-2">
+              {transactions.map((txn) => (
+                <div key={txn.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/60 bg-card/60 px-3 py-2">
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-foreground">{formatLabel(txn.method)}</p>
+                    <p className="text-xs text-muted-foreground">{formatDateTime(txn.created_at)}</p>
+                    <p className="text-xs text-muted-foreground">Ref: {txn.reference || "—"}</p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <StatPill label="Status" value={formatLabel(txn.status)} intent={txn.status === "success" ? "success" : "danger"} />
+                    <span className="text-sm font-semibold text-foreground">{formatCurrency(txn.amount)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+      </div>
+    </ModalShell>
+  );
+}
+
+export function BookingDetailsModal({ booking, onClose }) {
+  if (!booking) {
+    return null;
+  }
+
+  const [isStatsOpen, setIsStatsOpen] = useState(false);
+  const [statsData, setStatsData] = useState(null);
+  const [statsError, setStatsError] = useState("");
+  const [isStatsLoading, setIsStatsLoading] = useState(false);
+
+  const { latitude, longitude } = getBroadcastCoordinates(booking);
+  const hasCoordinates = latitude !== null && longitude !== null;
+  const { embedUrl, openUrl } = buildMapUrls(latitude, longitude);
+
+  const requestDetailFields = (() => {
+    const details = booking.request_details || {};
+    if (booking.request_type === "custom") {
+      return [
+        { label: "Request Status", value: formatLabel(details.request_status) },
+        { label: "Quoted Price", value: formatCurrency(details.quoted_price) },
+      ];
+    }
+    if (booking.request_type === "direct") {
+      return [
+        { label: "Request Status", value: formatLabel(details.request_status) },
+        { label: "Service", value: details.service_name || "—" },
+      ];
+    }
+    if (booking.request_type === "emergency") {
+      return [{ label: "Request Status", value: formatLabel(details.request_status) }];
+    }
+    if (booking.request_type === "broadcast") {
+      return [
+        { label: "Broadcast Status", value: formatLabel(details.status) },
+        { label: "Expires At", value: formatDateTime(details.expires_at) },
+        { label: "Accepted At", value: formatDateTime(details.accepted_at) },
+      ];
+    }
+    return [];
+  })();
+
+  async function handleOpenStats() {
+    setIsStatsOpen(true);
+    if (statsData || isStatsLoading) {
+      return;
+    }
+    setStatsError("");
+    setIsStatsLoading(true);
+    try {
+      const data = await fetchAdminBookingTransactionStats(booking.id);
+      setStatsData(data);
+    } catch (error) {
+      setStatsError(error?.message || "Failed to load transaction statistics.");
+    } finally {
+      setIsStatsLoading(false);
+    }
+  }
+
+  return (
+    <>
+      <ModalShell
+        isOpen
+        onClose={onClose}
+        maxWidth={null}
+        cardClassName="max-w-6xl"
+        title="Booking Details"
+        description="Review request location and full booking context before taking action."
+        headerClassName="py-5"
+        footer={
+          <Button type="button" variant="outline" className="rounded-lg" onClick={onClose}>
+            Close
+          </Button>
+        }
+      >
+        <div className="max-h-[75vh] overflow-y-auto px-6 py-5 lg:overflow-hidden">
+          <div className="grid grid-cols-1 gap-5 lg:h-[64vh] lg:grid-cols-2">
+            <section className="space-y-3 lg:sticky lg:top-0 lg:self-start">
+              <h4 className="text-sm font-semibold text-orange-400">Request Map</h4>
+              {hasCoordinates ? (
+                <>
+                  <div className="overflow-hidden rounded-lg border border-border bg-card">
+                    <iframe
+                      title="Request location"
+                      src={embedUrl}
+                      className="h-[340px] w-full"
+                      loading="lazy"
+                    />
+                  </div>
+                  <a
+                    href={openUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20"
+                  >
+                    <ExternalLink className="size-3.5" />
+                    Open in map
+                  </a>
+                </>
+              ) : (
+                <p className="rounded-md border border-border/70 bg-card/60 px-3 py-2 text-sm text-muted-foreground">
+                  No location available for this request.
+                </p>
+              )}
+            </section>
+
+            <section className="space-y-4 lg:h-full lg:overflow-y-auto lg:pr-1">
+              <h4 className="text-sm font-semibold text-orange-400">Details</h4>
+              <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2">
+                <DetailItem label="Booking ID" value={booking.id} />
+                <DetailItem label="Request ID" value={booking.request_id} />
+                <DetailItem label="Client" value={booking.client_username || "—"} />
+                <DetailItem label="Provider" value={booking.provider_username || booking.shop_name || "—"} />
+                <DetailItem label="Booked At" value={formatDateTime(booking.booked_at)} />
+                <DetailItem label="Completed At" value={formatDateTime(booking.completed_at)} />
+                <DetailItem label="Amount" value={formatCurrency(booking.amount_fee)} />
+                <DetailItem label="Request Type" value={formatLabel(booking.request_type)} />
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-orange-300/80">Booking Status</p>
                 <Badge variant={statusVariant(booking.status)} className={`capitalize ${getStatusClass(booking.status)}`}>
                   {formatLabel(booking.status)}
                 </Badge>
-              </section>
+              </div>
 
-              <section className="space-y-2">
-                <h4 className="text-sm font-semibold text-orange-400">Request Details</h4>
+              <VehicleSection vehicleInformation={booking.vehicle_information} />
+              <ServicesSection servicesList={booking.services_list} />
 
-                {/* Vehicle Information Section */}
-                <VehicleSection vehicleInformation={booking.vehicle_information} />
-
-                {/* Services Section with Badges */}
-                <ServicesSection servicesList={booking.services_list} />
-
+              {requestDetailFields.length > 0 ? (
                 <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2">
-                  <DetailItem label="Request Status" value={formatLabel(booking.request_details?.request_status)} />
-                  <DetailItem label="Quoted Price" value={formatCurrency(booking.request_details?.quoted_price)} />
+                  {requestDetailFields.map((field) => (
+                    <DetailItem key={field.label} label={field.label} value={field.value} />
+                  ))}
                 </div>
+              ) : null}
 
-                <div className="space-y-2">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-orange-300/80">Description</p>
-                  <p className="rounded-md border border-border/70 bg-card/60 px-3 py-2 text-sm text-foreground">
-                    {booking.request_details?.description || "No description provided."}
-                  </p>
-                </div>
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-orange-300/80">Request Description</p>
+                <p className="rounded-md border border-border/70 bg-card/60 px-3 py-2 text-sm text-foreground">
+                  {booking.request_details?.description || "No description provided."}
+                </p>
+              </div>
 
+              {booking.request_details?.providers_note ? (
                 <div className="space-y-2">
                   <p className="text-xs font-semibold uppercase tracking-wide text-orange-300/80">Provider Note</p>
                   <p className="rounded-md border border-border/70 bg-card/60 px-3 py-2 text-sm text-foreground">
-                    {booking.request_details?.providers_note || "No provider note available."}
+                    {booking.request_details?.providers_note}
                   </p>
                 </div>
+              ) : null}
 
-                <RequestPhoto
-                  photoUrl={booking.request_details?.photo_url}
-                  requestType={booking.request_type}
-                />
-              </section>
+              <RequestPhoto
+                photoUrl={booking.request_details?.photo_url}
+                requestType={booking.request_type}
+              />
 
               <section className="space-y-3">
                 <h4 className="text-sm font-semibold text-orange-400">Service Location</h4>
                 <LocationDetails location={booking.service_location} />
               </section>
 
-              {/* Payment Details Section */}
               <PaymentDetails
                 paymentBreakdown={booking.payment_breakdown}
                 quotationDetails={booking.quotation_details}
                 baseFee={booking.base_fee}
                 booking={booking}
                 receiptInfo={booking.receipt_info}
+                onOpenStats={handleOpenStats}
               />
-            </div>
-          )}
+            </section>
+          </div>
         </div>
-    </ModalShell>
+      </ModalShell>
+
+      <TransactionStatsModal
+        isOpen={isStatsOpen}
+        onClose={() => setIsStatsOpen(false)}
+        stats={statsData}
+        isLoading={isStatsLoading}
+        error={statsError}
+      />
+    </>
   );
 }
