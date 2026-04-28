@@ -81,6 +81,25 @@ function formatMethodLabel(value) {
     .join(" ");
 }
 
+function formatPaymentStatusLabel(value) {
+  if (!value) {
+    return "—";
+  }
+  if (value === "not_paid" || value === "unpaid") {
+    return "Not Paid";
+  }
+  if (value === "initial_paid" || value === "partially_paid") {
+    return "Initial Paid";
+  }
+  if (value === "fully_paid") {
+    return "Fully Paid";
+  }
+  return String(value)
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
 function normalizeSeries(series = []) {
   const map = new Map();
   series.forEach((entry) => {
@@ -400,8 +419,8 @@ export function TransactionsOverviewPage() {
 
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [typeFilter, setTypeFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [ledgerTab, setLedgerTab] = useState("all");
   const [isExporting, setIsExporting] = useState(false);
@@ -409,8 +428,18 @@ export function TransactionsOverviewPage() {
   const [bookingModalError, setBookingModalError] = useState("");
   const [isBookingLoading, setIsBookingLoading] = useState(false);
 
-  const effectiveTypeValue = ledgerTab === "pending" ? "payout" : typeFilter;
-  const effectiveStatusValue = ledgerTab === "pending" ? "pending" : statusFilter;
+  const ledgerTabs = [
+    { key: "all", label: "All Transactions" },
+    { key: "payment", label: "Payments" },
+    { key: "payout", label: "Payouts" },
+    { key: "topup", label: "Top-ups" },
+  ];
+
+  const effectiveTypeValue =
+    ledgerTab === "all"
+      ? undefined
+      : ledgerTab;
+  const effectiveStatusValue = statusFilter;
 
   useEffect(() => {
     async function loadOverview() {
@@ -439,15 +468,13 @@ export function TransactionsOverviewPage() {
       setIsLedgerLoading(true);
       setLoadError("");
 
-      const effectiveType = ledgerTab === "pending" ? "payout" : typeFilter;
-      const effectiveStatus = ledgerTab === "pending" ? "pending" : statusFilter;
-
       try {
         const data = await fetchAdminTransactionsLedger({
           start_date: startDate || undefined,
           end_date: endDate || undefined,
-          type: effectiveType || undefined,
-          status: effectiveStatus || undefined,
+          type: effectiveTypeValue || undefined,
+          status: effectiveStatusValue || undefined,
+          q: searchQuery || undefined,
           page: currentPage,
           page_size: PAGE_SIZE,
         });
@@ -463,7 +490,7 @@ export function TransactionsOverviewPage() {
     }
 
     loadLedger();
-  }, [startDate, endDate, typeFilter, statusFilter, currentPage]);
+  }, [startDate, endDate, ledgerTab, statusFilter, searchQuery, currentPage]);
 
   const revenueSeries = overview?.charts?.revenue_series || [];
   const payoutSeries = overview?.charts?.payout_series || [];
@@ -504,8 +531,6 @@ export function TransactionsOverviewPage() {
     ];
 
     try {
-      const effectiveType = ledgerTab === "pending" ? "payout" : typeFilter;
-      const effectiveStatus = ledgerTab === "pending" ? "pending" : statusFilter;
       const pageSize = 100;
       let page = 1;
       let allRows = [];
@@ -515,8 +540,9 @@ export function TransactionsOverviewPage() {
         const data = await fetchAdminTransactionsLedger({
           start_date: startDate || undefined,
           end_date: endDate || undefined,
-          type: effectiveType || undefined,
-          status: effectiveStatus || undefined,
+          type: effectiveTypeValue || undefined,
+          status: effectiveStatusValue || undefined,
+          q: searchQuery || undefined,
           page,
           page_size: pageSize,
         });
@@ -535,7 +561,7 @@ export function TransactionsOverviewPage() {
         row.type || "—",
         row.actor || "—",
         row.amount ?? "—",
-        row.status || "—",
+        formatPaymentStatusLabel(row.payment_status || row.status),
         row.reference_id || "—",
         formatMethodLabel(row.method),
       ]);
@@ -640,20 +666,14 @@ export function TransactionsOverviewPage() {
             </div>
 
             <div className="flex flex-wrap gap-2">
-              {[
-                { key: "all", label: "All Transactions" },
-                { key: "pending", label: "Pending Payouts" },
-              ].map((tab) => (
+              {ledgerTabs.map((tab) => (
                 <button
                   key={tab.key}
                   type="button"
                   onClick={() => {
                     setLedgerTab(tab.key);
                     setCurrentPage(1);
-                    if (tab.key === "pending") {
-                      setTypeFilter("payout");
-                      setStatusFilter("pending");
-                    }
+                    setStatusFilter("");
                   }}
                   className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
                     ledgerTab === tab.key
@@ -668,6 +688,19 @@ export function TransactionsOverviewPage() {
 
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
               <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+                Search actor or user
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(event) => {
+                    setSearchQuery(event.target.value);
+                    setCurrentPage(1);
+                  }}
+                  placeholder="Search by name"
+                  className="h-10 rounded-md border border-border/70 bg-card/60 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs text-muted-foreground">
                 Start date
                 <input
                   type="date"
@@ -676,7 +709,7 @@ export function TransactionsOverviewPage() {
                     setStartDate(event.target.value);
                     setCurrentPage(1);
                   }}
-                  className="rounded-md border border-border/70 bg-card/60 px-3 py-2 text-sm text-foreground"
+                  className="h-10 rounded-md border border-border/70 bg-card/60 px-3 py-2 text-sm text-foreground"
                 />
               </label>
               <label className="flex flex-col gap-1 text-xs text-muted-foreground">
@@ -688,40 +721,25 @@ export function TransactionsOverviewPage() {
                     setEndDate(event.target.value);
                     setCurrentPage(1);
                   }}
-                  className="rounded-md border border-border/70 bg-card/60 px-3 py-2 text-sm text-foreground"
+                  className="h-10 rounded-md border border-border/70 bg-card/60 px-3 py-2 text-sm text-foreground"
                 />
               </label>
-              <FilterSelect
-                label="Transaction type"
-                value={effectiveTypeValue}
-                options={[
-                  { value: "", label: "All" },
-                  { value: "payment", label: "Payment" },
-                  { value: "payout", label: "Payout" },
-                  { value: "topup", label: "Top-up" },
-                ]}
-                disabled={ledgerTab === "pending"}
-                onChange={(value) => {
-                  setTypeFilter(value);
-                  setCurrentPage(1);
-                }}
-              />
-              <FilterSelect
-                label="Status"
-                value={effectiveStatusValue}
-                options={[
-                  { value: "", label: "All" },
-                  { value: "success", label: "Success" },
-                  { value: "failed", label: "Failed" },
-                  { value: "pending", label: "Pending" },
-                  { value: "paid", label: "Paid" },
-                ]}
-                disabled={ledgerTab === "pending"}
-                onChange={(value) => {
-                  setStatusFilter(value);
-                  setCurrentPage(1);
-                }}
-              />
+              {
+                <FilterSelect
+                  label="Status"
+                  value={effectiveStatusValue}
+                  options={[
+                    { value: "", label: "All" },
+                    { value: "not_paid", label: "Not Paid" },
+                    { value: "initial_paid", label: "Initial Paid" },
+                    { value: "fully_paid", label: "Fully Paid" },
+                  ]}
+                  onChange={(value) => {
+                    setStatusFilter(value);
+                    setCurrentPage(1);
+                  }}
+                />
+              }
             </div>
           </CardHeader>
           <CardContent>
@@ -755,7 +773,9 @@ export function TransactionsOverviewPage() {
                           <span className="capitalize">{row.type}</span>
                           <span>{row.actor || "—"}</span>
                           <span className="font-semibold text-foreground">{formatCurrency(row.amount)}</span>
-                          <span className="capitalize text-muted-foreground">{row.status}</span>
+                          <span className="text-muted-foreground">
+                            {formatPaymentStatusLabel(row.payment_status || row.status)}
+                          </span>
                           <span>
                             {row.reference_id ? (
                               <button

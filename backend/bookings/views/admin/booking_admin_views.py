@@ -678,6 +678,14 @@ def admin_transactions_ledger(request):
     start_dt, end_dt = _parse_date_range(request)
     txn_type = request.GET.get('type')
     status_filter = request.GET.get('status')
+    search_query = str(request.GET.get('q') or '').strip().lower()
+
+    payment_status_map = {
+        'not_paid': Booking.PaymentStatus.UNPAID,
+        'initial_paid': Booking.PaymentStatus.PARTIALLY_PAID,
+        'fully_paid': Booking.PaymentStatus.FULLY_PAID,
+    }
+    payment_status_filter = payment_status_map.get(status_filter)
 
     page = max(1, _to_int(request.GET.get('page'), 1))
     page_size = max(1, min(_to_int(request.GET.get('page_size'), 20), 100))
@@ -692,11 +700,13 @@ def admin_transactions_ledger(request):
             payment_qs = payment_qs.filter(created_at__lte=end_dt)
         if status_filter:
             payment_qs = payment_qs.filter(status=status_filter)
-
+        if payment_status_filter:
+            payment_qs = payment_qs.filter(booking__payment_status=payment_status_filter)
         for payment in payment_qs:
             actor = None
             if payment.booking and payment.booking.request and payment.booking.request.client:
                 actor = payment.booking.request.client.account.username
+            payment_status = getattr(payment.booking, 'payment_status', None) if payment.booking else None
             method_val = payment.method if payment.method is not None else None
             if method_val == 'qr':
                 method_val = 'cash'
@@ -709,6 +719,7 @@ def admin_transactions_ledger(request):
                     'actor': actor,
                     'amount': payment.amount,
                     'status': payment.status,
+                    'payment_status': payment_status,
                     'reference_id': payment.booking_id,
                     'method': method_val,
                 }
@@ -724,7 +735,8 @@ def admin_transactions_ledger(request):
             payout_qs = payout_qs.filter(paid_at__gte=start_dt)
         if end_dt:
             payout_qs = payout_qs.filter(paid_at__lte=end_dt)
-
+        if payment_status_filter:
+            payout_qs = payout_qs.filter(booking__payment_status=payment_status_filter)
         for payout in payout_qs:
             actor = None
             booking = payout.booking
@@ -745,6 +757,7 @@ def admin_transactions_ledger(request):
                     'actor': actor,
                     'amount': payout.mechanic_payout,
                     'status': 'paid' if payout.payment_received else 'pending',
+                    'payment_status': getattr(booking, 'payment_status', None) if booking else None,
                     'reference_id': payout.booking_id,
                     'method': payout_method,
                 }
@@ -758,6 +771,8 @@ def admin_transactions_ledger(request):
             topup_qs = topup_qs.filter(purchased_at__lte=end_dt)
         if status_filter:
             topup_qs = topup_qs.filter(status=status_filter)
+        if payment_status_filter:
+            topup_qs = topup_qs.none()
 
         for topup in topup_qs:
             ledger_rows.append(
@@ -768,10 +783,24 @@ def admin_transactions_ledger(request):
                     'actor': topup.account.username if topup.account else None,
                     'amount': topup.price,
                     'status': topup.status,
+                    'payment_status': None,
                     'reference_id': None,
                     'method': topup.payment_method,
                 }
             )
+
+    if search_query:
+        def _matches_search(row):
+            actor_value = str(row.get('actor') or '').lower()
+            transaction_value = str(row.get('transaction_id') or '').lower()
+            reference_value = str(row.get('reference_id') or '').lower()
+            return (
+                search_query in actor_value
+                or search_query in transaction_value
+                or search_query in reference_value
+            )
+
+        ledger_rows = [row for row in ledger_rows if _matches_search(row)]
 
     ledger_rows.sort(key=lambda row: row['date'] or timezone.now(), reverse=True)
     total_count = len(ledger_rows)
