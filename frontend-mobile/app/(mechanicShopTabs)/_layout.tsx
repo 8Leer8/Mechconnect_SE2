@@ -1,7 +1,7 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
 import { Feather, FontAwesome } from '@expo/vector-icons';
-import { Modal, TouchableOpacity, View } from 'react-native';
+import { Alert, Modal, TouchableOpacity, View } from 'react-native';
 import { useTabsBackToHome } from '@/hooks/use-tabs-back-to-home';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
@@ -43,13 +43,7 @@ export default function MechanicShopTabLayout() {
 
     const isBroadcastFinalize =
       actionText === 'booking_finalized'
-      || (lastMessage.type === 'notification_update' && actionText === 'booking_finalized')
-      || (
-        lastMessage.type === 'booking_update' &&
-        statusLower === 'accepted' &&
-        !isQuotationUpdate &&
-        !isMechanicAcceptedDirect
-      );
+      || (lastMessage.type === 'notification_update' && actionText === 'booking_finalized');
     const isOfferRejected =
       actionText === 'offer_rejected'
       || (lastMessage.type === 'notification_update' && actionText === 'offer_rejected');
@@ -61,7 +55,16 @@ export default function MechanicShopTabLayout() {
     const messageTimestamp = Number(lastMessage._timestamp || 0) || null;
     if (!messageTimestamp) return;
     if (messageTimestamp < mountedAtRef.current) return;
-    const dedupeKey = `${String(lastMessage.action || lastMessage.type || 'unknown')}-${String((lastMessage as any).offer_id || '')}-${String((lastMessage as any).booking_id || '')}-${String(messageTimestamp)}`;
+
+    const bookingIdRaw = (lastMessage as any).booking_id ?? (lastMessage as any).bookingId ?? '';
+    const broadcastIdRaw =
+      (lastMessage as any).broadcast_id ?? (lastMessage as any).broadcastId ?? '';
+    const offerIdRaw = (lastMessage as any).offer_id ?? (lastMessage as any).offerId ?? '';
+
+    let dedupeKey = `${String(lastMessage.action || lastMessage.type || 'unknown')}-${String(offerIdRaw)}-${String(bookingIdRaw)}-${String(messageTimestamp)}`;
+    if (isBroadcastFinalize && !isOfferRejected) {
+      dedupeKey = `booking_finalized-${String(broadcastIdRaw)}-${String(bookingIdRaw)}`;
+    }
     if (lastHandledMessageKeyRef.current === dedupeKey) return;
     lastHandledMessageKeyRef.current = dedupeKey;
 
@@ -110,16 +113,42 @@ export default function MechanicShopTabLayout() {
       return;
     }
 
-    lastModalBookingIdRef.current = safeBookingId;
-    setMechanicGlobalModal({
-      visible: true,
-      title: isOfferRejected
-        ? 'Client has accepted a different mechanic'
-        : 'Client has accepted your request',
-      bookingId,
-      mode: isOfferRejected ? 'rejected' : 'accepted',
-    });
-  }, [lastMessage]);
+    if (isOfferRejected) {
+      lastModalBookingIdRef.current = safeBookingId;
+      setMechanicGlobalModal({
+        visible: true,
+        title: 'Client chose a different mechanic',
+        body: 'You can return to your map or bookings when you are ready.',
+        bookingId,
+        mode: 'rejected',
+      });
+      return;
+    }
+
+    if (isBroadcastFinalize) {
+      lastModalBookingIdRef.current = safeBookingId;
+      Alert.alert(
+        'The client accepted your request',
+        'They chose you for this booking.',
+        [
+          {
+            text: 'View booking',
+            onPress: () => {
+              if (safeBookingId) {
+                router.push({
+                  pathname: '/mechanic/booking/booking_details',
+                  params: { bookingId: String(safeBookingId) },
+                } as any);
+              } else {
+                router.push('/(mechanicShopTabs)/main/jobs' as any);
+              }
+            },
+          },
+          { text: 'Close', style: 'cancel' },
+        ]
+      );
+    }
+  }, [lastMessage, router]);
 
   const closeAcceptModal = React.useCallback(() => {
     setMechanicGlobalModal((current) => ({ ...current, visible: false }));
@@ -146,7 +175,7 @@ export default function MechanicShopTabLayout() {
       ? 'You can return to your map or bookings when you are ready.'
       : mechanicGlobalModal.mode === 'info'
         ? 'Check your bookings for the latest on this quotation.'
-        : 'Open the booking to view details and next steps.');
+        : 'Tap View booking to see details and next steps.');
 
   const modalFeatherIcon =
     mechanicGlobalModal.mode === 'cancelled'

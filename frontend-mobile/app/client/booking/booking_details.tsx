@@ -1285,26 +1285,56 @@ export default function ClientBookingDetailScreen() {
 
   const getStatusLabel = (status: string) => {
     switch (status) {
-      case 'accepted': return 'Booked';
-      case 'booked': return 'Booked';
-      case 'active': return 'In Progress';
-      case 'on_the_way': return 'Mechanic on the Way';
-      case 'completed': return 'Completed';
-      case 'cancelled': return 'Cancelled';
-      case 'pending': return 'Pending';
-      case 'reschedule_proposed': return 'Waiting for Reschedule Response';
-      case 'reworked': return 'Reworked';
-      case 'disputed': return 'Disputed';
-      default: return status.charAt(0).toUpperCase() + status.slice(1);
+      case 'booked':
+      case 'accepted':
+        return 'Booked';
+      case 'active':
+        return 'In progress';
+      case 'on_the_way':
+        return 'Mechanic on the way';
+      case 'at_location':
+        return 'Mechanic arrived';
+      case 'diagnosing':
+        return 'Diagnosis';
+      case 'paused':
+        return 'Paused';
+      case 'finished':
+        return 'Work finished';
+      case 'pending_payment':
+        return 'Payment due';
+      case 'backjob_pending':
+        return 'Backjob pending';
+      case 'completed':
+        return 'Completed';
+      case 'cancelled':
+        return 'Cancelled';
+      case 'pending':
+        return 'Pending';
+      case 'reschedule_proposed':
+        return 'Waiting for reschedule response';
+      case 'reworked':
+        return 'Reworked';
+      case 'disputed':
+        return 'Disputed';
+      default:
+        return status.charAt(0).toUpperCase() + status.slice(1);
     }
   };
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'accepted': return '#00B8D9';
-      case 'booked': return '#00B8D9';
+      case 'accepted':
+      case 'booked':
+        return '#00B8D9';
+      case 'at_location':
+      case 'diagnosing':
+        return '#5AC8FA';
       case 'active': return '#FF8C00';
       case 'on_the_way': return '#007AFF';
+      case 'paused': return '#8E8E93';
+      case 'finished': return '#34C759';
+      case 'pending_payment': return '#FFD60A';
+      case 'backjob_pending': return '#FFD60A';
       case 'reworked': return '#FFD60A';
       case 'completed': return '#34C759';
       case 'cancelled': return '#FF3B30';
@@ -1317,10 +1347,18 @@ export default function ClientBookingDetailScreen() {
 
   const getStatusIcon = (status: string): string => {
     switch (status) {
-      case 'accepted': return 'calendar-check-o';
-      case 'booked': return 'calendar-check-o';
+      case 'accepted':
+      case 'booked':
+        return 'calendar-check-o';
+      case 'at_location':
+        return 'map-marker';
+      case 'diagnosing':
+        return 'search';
       case 'active': return 'play-circle';
       case 'on_the_way': return 'car';
+      case 'paused': return 'pause-circle';
+      case 'finished': return 'check-circle';
+      case 'pending_payment': return 'money';
       case 'completed': return 'check-circle';
       case 'cancelled': return 'times-circle';
       case 'pending': return 'clock-o';
@@ -3062,7 +3100,7 @@ export default function ClientBookingDetailScreen() {
             <View style={styles.timelineItem}>
               <View style={[styles.timelineDot, { backgroundColor: '#007AFF' }]} />
               <View style={styles.timelineContent}>
-                <ThemedText style={styles.timelineLabel}>Booked</ThemedText>
+                <ThemedText style={styles.timelineLabel}>Booking placed</ThemedText>
                 <ThemedText style={styles.timelineDate}>{formatDate(booking.booked_at)}</ThemedText>
               </View>
             </View>

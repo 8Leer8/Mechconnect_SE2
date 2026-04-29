@@ -43,9 +43,23 @@ def home_page(request):
         if hasattr(account, 'client'):
             client = account.client
             print(f"[DEBUG] Account has client role, Client ID: {client.id}")
+            # Include booked / payment-related statuses so jobs stay visible after the client
+            # picks a mechanic (broadcast creates booking as "booked") and through payment.
             current_bookings = Booking.objects.filter(
                 request__client=client,
-                status__in=['accepted', 'on_the_way', 'at_location', 'diagnosing', 'active', 'reworked', 'backjob_pending']
+                status__in=[
+                    'booked',
+                    'accepted',
+                    'on_the_way',
+                    'at_location',
+                    'diagnosing',
+                    'active',
+                    'paused',
+                    'finished',
+                    'pending_payment',
+                    'reworked',
+                    'backjob_pending',
+                ]
             ).select_related(
                 'request',
                 'request__client',

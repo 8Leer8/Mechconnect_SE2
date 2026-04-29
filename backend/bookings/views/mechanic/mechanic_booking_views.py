@@ -370,8 +370,17 @@ def mechanic_start_travel(request, booking_id):
         return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
 
     # Allow refresh when already on_the_way: recompute metrics and relock fee values.
-    if booking.status not in [Booking.Status.ACCEPTED, Booking.Status.ON_THE_WAY]:
-        return Response({"error": "Booking must be in 'accepted' or 'on_the_way' status to start travel."}, status=status.HTTP_400_BAD_REQUEST)
+    # BOOKED = new booking row (e.g. client chose mechanic); ACCEPTED = legacy / post-travel revert —
+    # both mean "job is yours, not on the road yet", so starting travel is allowed from either.
+    if booking.status not in [
+        Booking.Status.BOOKED,
+        Booking.Status.ACCEPTED,
+        Booking.Status.ON_THE_WAY,
+    ]:
+        return Response(
+            {"error": "Booking must be booked or accepted (or already on the way) to start travel."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
     previous_status = booking.status
 

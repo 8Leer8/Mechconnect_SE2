@@ -6,6 +6,7 @@ import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { styles } from '@/style/client/broadcastDetailStyles';
 import { useWebSocketContext } from '@/context/WebSocketContext';
+import { consumeClientBroadcastFinalizeNavKey } from '@/lib/clientBroadcastFinalizeNav';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -32,6 +33,17 @@ async function parseApiJson<T>(response: Response): Promise<T> {
   } catch {
     throw new Error(`Invalid JSON from server (HTTP ${response.status}). Try again in a moment.`);
   }
+}
+
+function resolveBookingIdFromPayload(payload: Record<string, unknown> | null | undefined): number | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const raw =
+    (payload as any).booking_id ??
+    (payload as any).bookingId ??
+    (payload as any).booking?.id ??
+    (payload as any).booking;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 function formatScheduledServiceDisplay(iso: string | null | undefined): string {
@@ -179,17 +191,22 @@ export default function BroadcastDetailScreen() {
         body: JSON.stringify({ offer_id: offerId }),
       });
 
-      const data = await parseApiJson<{ error?: string; booking_id?: number }>(response);
+      const data = await parseApiJson<Record<string, unknown> & { error?: string }>(response);
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to select mechanic');
+        throw new Error((data as any).error || 'Failed to select mechanic');
       }
 
-      const bookingId = Number(data.booking_id ?? 0);
-      if (bookingId > 0) {
-        router.replace({
-          pathname: '/client/booking/booking_details',
-          params: { bookingId: String(bookingId) },
-        });
+      const bookingId = resolveBookingIdFromPayload(data);
+      if (bookingId) {
+        setSelectingOfferId(null);
+        const bcid = Number(broadcastId) || 0;
+        const key = `client-finalize-${bcid}-${bookingId}`;
+        if (consumeClientBroadcastFinalizeNavKey(key)) {
+          router.replace({
+            pathname: '/client/booking/booking_details',
+            params: { bookingId: String(bookingId) },
+          });
+        }
         return;
       }
 
@@ -242,14 +259,34 @@ export default function BroadcastDetailScreen() {
       return;
     }
 
+    const action = String(lastMessage.action || '').toLowerCase();
+
     if (
-      lastMessage.action === 'broadcast_offer_created' ||
-      lastMessage.action === 'offer_rejected' ||
-      lastMessage.action === 'booking_finalized' ||
-      lastMessage.action === 'broadcast_finalized' ||
-      lastMessage.action === 'broadcast_removed'
+      action === 'broadcast_offer_created' ||
+      action === 'offer_rejected' ||
+      action === 'booking_finalized' ||
+      action === 'broadcast_finalized' ||
+      action === 'broadcast_removed'
     ) {
-      fetchBroadcastOffers(true);
+      void fetchBroadcastOffers(true);
+    }
+
+    // If the POST navigation missed (e.g. parse edge case), follow the same booking when the server pushes it.
+    if (
+      broadcastId &&
+      messageBroadcastId === Number(broadcastId) &&
+      (action === 'broadcast_finalized' || action === 'booking_finalized')
+    ) {
+      const bid = resolveBookingIdFromPayload(lastMessage as unknown as Record<string, unknown>);
+      if (bid) {
+        const key = `client-finalize-${messageBroadcastId}-${bid}`;
+        if (consumeClientBroadcastFinalizeNavKey(key)) {
+          router.replace({
+            pathname: '/client/booking/booking_details',
+            params: { bookingId: String(bid) },
+          });
+        }
+      }
     }
   }, [lastMessage, broadcastId]);
 

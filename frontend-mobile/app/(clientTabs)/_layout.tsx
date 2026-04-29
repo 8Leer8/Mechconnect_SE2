@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { useRouter } from 'expo-router';
 import { useWebSocketContext } from '@/context/WebSocketContext';
+import { consumeClientBroadcastFinalizeNavKey } from '@/lib/clientBroadcastFinalizeNav';
 
 export default function ClientTabLayout() {
   const insets = useSafeAreaInsets();
@@ -58,6 +59,32 @@ export default function ClientTabLayout() {
     });
     setOfferModalVisible(true);
   }, [lastMessage]);
+
+  // Broadcast finalized while on tabs (client/ layout may be unmounted) — go to booking.
+  React.useEffect(() => {
+    if (!lastMessage) return;
+    const action = String(lastMessage.action || '').toLowerCase();
+    if (action !== 'broadcast_finalized' && action !== 'booking_finalized') return;
+
+    const ts = Number(lastMessage._timestamp || 0) || null;
+    if (!ts || ts < mountedAtRef.current) return;
+
+    const raw =
+      (lastMessage as any).booking_id ??
+      (lastMessage as any).bookingId ??
+      (lastMessage as any).booking?.id;
+    const bid = Number(raw);
+    if (!Number.isFinite(bid) || bid <= 0) return;
+
+    const bcid = Number((lastMessage as any).broadcast_id ?? (lastMessage as any).broadcastId ?? 0) || 0;
+    const key = `client-finalize-${bcid}-${bid}`;
+    if (!consumeClientBroadcastFinalizeNavKey(key)) return;
+
+    router.replace({
+      pathname: '/client/booking/booking_details',
+      params: { bookingId: String(bid) },
+    } as any);
+  }, [lastMessage, router]);
 
   React.useEffect(() => {
     if (!lastMessage || lastMessage.type !== 'booking_update') return;

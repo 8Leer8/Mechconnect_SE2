@@ -234,11 +234,12 @@ export default function MapScreen() {
   useEffect(() => {
     if (!lastMessage) return;
 
+    const action = String(lastMessage.action || '').toLowerCase();
     const messageBroadcastId = Number(lastMessage.broadcast_id ?? lastMessage.broadcastId ?? 0) || null;
     const messageOfferId = Number(lastMessage.offer_id ?? lastMessage.offerId ?? 0) || null;
     const pendingOffer = messageBroadcastId ? pendingOffersByBroadcastId[messageBroadcastId] : null;
 
-    if (lastMessage.action === 'offer_rejected' && messageBroadcastId && messageOfferId && pendingOffer?.offerId === messageOfferId) {
+    if (action === 'offer_rejected' && messageBroadcastId && messageOfferId && pendingOffer?.offerId === messageOfferId) {
       setOfferNotice({
         broadcastId: messageBroadcastId,
         message: 'Client accepted a different mechanic.',
@@ -256,37 +257,38 @@ export default function MapScreen() {
       return;
     }
 
-    if (lastMessage.action === 'booking_finalized' && messageBroadcastId) {
-      const acceptedBookingId = extractBookingIdFromPayload(lastMessage);
-      setOfferNotice({
-        broadcastId: messageBroadcastId,
-        message: 'Your request was selected by the client.',
-        tone: 'success',
-      });
+    if (action === 'booking_finalized' && messageBroadcastId) {
       setPendingOffersByBroadcastId((current) => {
         const next = { ...current };
         delete next[messageBroadcastId];
         return next;
       });
-      setAwaitingClientSelectionBroadcastId((current) => (
+      setAwaitingClientSelectionBroadcastId((current) =>
         current === messageBroadcastId ? null : current
-      ));
+      );
       setBroadcasts((current) => current.filter((broadcast) => broadcast.id !== messageBroadcastId));
       closeBroadcastModal();
       fetchBroadcasts(true);
       fetchTokensBalance(true);
-      if (acceptedBookingId) {
-        router.push({
-          pathname: '/mechanic/booking/booking_details',
-          params: { bookingId: String(acceptedBookingId) },
-        });
-      } else {
-        router.push('/main/bookings');
-      }
+      // Popup + navigation: handled in (mechanicTabs)/_layout.tsx so it works from any tab
+      // (Map, Bookings, etc.) while you were waiting for client approval.
       return;
     }
 
-    if (lastMessage.action === 'broadcast_removed' || (lastMessage.type === 'booking_update' && lastMessage.status === 'accepted')) {
+    if (action === 'broadcast_removed' && messageBroadcastId) {
+      setPendingOffersByBroadcastId((current) => {
+        const next = { ...current };
+        delete next[messageBroadcastId];
+        return next;
+      });
+      setAwaitingClientSelectionBroadcastId((current) =>
+        current === messageBroadcastId ? null : current
+      );
+      setBroadcasts((current) => current.filter((broadcast) => broadcast.id !== messageBroadcastId));
+      if (broadcastFetchEnabled && userLocationRef.current) {
+        fetchBroadcasts(true);
+      }
+    } else if (lastMessage.type === 'booking_update' && lastMessage.status === 'accepted') {
       if (broadcastFetchEnabled && userLocationRef.current) {
         fetchBroadcasts(true);
       }
@@ -532,16 +534,6 @@ export default function MapScreen() {
       services: Array.isArray(raw.services) ? raw.services : [],
       add_ons: Array.isArray(raw.add_ons) ? raw.add_ons : [],
     } as BroadcastRequest;
-  };
-
-  const extractBookingIdFromPayload = (payload: any): number | null => {
-    const rawBookingId =
-      payload?.booking_id ??
-      payload?.bookingId ??
-      payload?.booking?.id ??
-      payload?.booking;
-    const bookingId = Number(rawBookingId);
-    return Number.isFinite(bookingId) && bookingId > 0 ? bookingId : null;
   };
 
   const setRegionFromCoords = (latitude: number, longitude: number) => {
@@ -845,7 +837,10 @@ export default function MapScreen() {
     if (!broadcast) return false;
     if (broadcast.my_offer_status === 'pending') return true;
     if (pendingOffersByBroadcastId[broadcast.id]?.status === 'pending') return true;
-    return awaitingClientSelectionBroadcastId === broadcast.id;
+    // Do not tie UI to awaitingClientSelectionBroadcastId alone — that flag can lag behind
+    // the server after the client already selected a mechanic, which caused a stuck
+    // "Waiting for client approval" state.
+    return false;
   };
 
   const handleBroadcastMarkerPress = (broadcast: BroadcastRequest) => {
@@ -1008,6 +1003,59 @@ export default function MapScreen() {
     if (activePendingBroadcastId !== null) return;
     setAwaitingClientSelectionBroadcastId(null);
   }, [awaitingClientSelectionBroadcastId, activePendingBroadcastId]);
+
+  // Client finalized the broadcast: it drops off the "searching" list. If WebSocket missed,
+  // the modal could stay on "Waiting for client approval" — close it when the job disappears.
+  useEffect(() => {
+    if (!modalVisible || !selectedBroadcast) return;
+    if (loading && broadcasts.length === 0) return;
+    const sid = selectedBroadcast.id;
+    if (broadcasts.some((b) => b.id === sid)) return;
+
+    setPendingOffersByBroadcastId((current) => {
+      const next = { ...current };
+      delete next[sid];
+      return next;
+    });
+    setAwaitingClientSelectionBroadcastId((current) => (current === sid ? null : current));
+    setModalVisible(false);
+    setSelectedBroadcast(null);
+    setRouteCoords([]);
+    setRouteLoading(false);
+    setRouteError(null);
+    setTrafficData(null);
+    setFeeData(null);
+    setOfferNotice(null);
+    setAccepting(false);
+    cachedRouteData.current = null;
+    lastFetchedBroadcastId.current = null;
+    void fetchBroadcasts(true, { force: true });
+    void fetchTokensBalance(true);
+  }, [modalVisible, selectedBroadcast, broadcasts, loading]);
+
+  // Poll faster while waiting on the client (default map poll is 15s — too slow to clear the UI).
+  useEffect(() => {
+    if (!broadcastFetchEnabled || isShopOwnerMap) return;
+    const waiting =
+      activePendingBroadcastId !== null ||
+      (modalVisible &&
+        !!selectedBroadcast &&
+        (selectedBroadcast.my_offer_status === 'pending' ||
+          pendingOffersByBroadcastId[selectedBroadcast.id]?.status === 'pending'));
+    if (!waiting) return;
+    const t = setInterval(() => {
+      if (userLocationRef.current) void fetchBroadcasts(true, { force: true });
+    }, 3500);
+    return () => clearInterval(t);
+  }, [
+    broadcastFetchEnabled,
+    isShopOwnerMap,
+    activePendingBroadcastId,
+    modalVisible,
+    selectedBroadcast,
+    pendingOffersByBroadcastId,
+  ]);
+
   const activePendingBroadcast = activePendingBroadcastId !== null
     ? broadcasts.find((broadcast) => broadcast.id === activePendingBroadcastId) ?? null
     : null;

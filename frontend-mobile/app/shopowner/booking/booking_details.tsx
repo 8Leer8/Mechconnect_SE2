@@ -446,13 +446,13 @@ export default function ShopOwnerBookingDetailScreen() {
 
   const getStatusLabel = (status: string) => {
     switch (status) {
-      case 'accepted':
       case 'booked':
+      case 'accepted':
         return 'Booked';
       case 'active':
-        return 'On Going';
+        return 'In progress';
       case 'on_the_way':
-        return 'On the Way';
+        return 'On the way';
       case 'at_location':
         return 'At Location';
       case 'diagnosing':
@@ -1630,7 +1630,7 @@ export default function ShopOwnerBookingDetailScreen() {
             <View style={styles.timelineItem}>
               <View style={[styles.timelineDot, { backgroundColor: '#007AFF' }]} />
               <View style={styles.timelineContent}>
-                <ThemedText style={styles.timelineLabel}>Booked</ThemedText>
+                <ThemedText style={styles.timelineLabel}>Booking placed</ThemedText>
                 <ThemedText style={styles.timelineDate}>{formatDate(booking.booked_at)}</ThemedText>
               </View>
             </View>

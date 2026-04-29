@@ -96,8 +96,12 @@ class EmergencyRequestPhoto(models.Model):
 
 class Booking(models.Model):
     class Status(models.TextChoices):
+        # Early lifecycle: both mean "reservation exists and mechanic is assigned / committed"
+        # before ON_THE_WAY. Many flows create BOOKED first (broadcast, direct accept, etc.);
+        # ACCEPTED appears after some actions (e.g. cancel travel) or older paths — treat them
+        # the same for "not started travel yet" in app logic.
         BOOKED = "booked"
-        ACCEPTED = "accepted"         # Mechanic accepted, waiting to start
+        ACCEPTED = "accepted"
         PENDING = "pending"
         RESCHEDULE_PROPOSED = "reschedule_proposed"
         ON_THE_WAY = "on_the_way"    # Mechanic traveling to client

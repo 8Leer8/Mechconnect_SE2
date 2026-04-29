@@ -12,6 +12,7 @@ import { getImageUrl } from '@/lib/imageUtils';
 import { formatStructuredAddress } from '@/lib/locationAddress';
 import { SkeletonDetailPage } from '@/components/skeletons/SkeletonLoaders';
 import { useNotification } from '@/hooks/useNotification';
+import { consumeClientBroadcastFinalizeNavKey } from '@/lib/clientBroadcastFinalizeNav';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -254,17 +255,26 @@ export default function MechanicProfileScreen() {
         body: JSON.stringify({ offer_id: Number(offerId) }),
       });
 
-      const data = await response.json().catch(() => ({})) as { error?: string; booking_id?: number };
+      const data = (await response.json().catch(() => ({}))) as Record<string, unknown> & { error?: string };
       if (!response.ok) {
         throw new Error(data.error || 'Failed to select mechanic');
       }
 
-      const bookingId = Number(data.booking_id ?? 0);
-      if (bookingId > 0) {
-        router.replace({
-          pathname: '/client/booking/booking_details',
-          params: { bookingId: String(bookingId) },
-        });
+      const raw =
+        (data as any).booking_id ??
+        (data as any).bookingId ??
+        (data as any).booking?.id ??
+        (data as any).booking;
+      const bookingId = Number(raw);
+      if (Number.isFinite(bookingId) && bookingId > 0) {
+        const bcid = Number(broadcastId) || 0;
+        const key = `client-finalize-${bcid}-${bookingId}`;
+        if (consumeClientBroadcastFinalizeNavKey(key)) {
+          router.replace({
+            pathname: '/client/booking/booking_details',
+            params: { bookingId: String(bookingId) },
+          });
+        }
         return;
       }
 
