@@ -6,7 +6,7 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.views import APIView
 from django.conf import settings
 from django.utils import timezone
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone as dt_timezone
 from django.db.models import Prefetch, Sum, Q
 from django.db import transaction
 from decimal import Decimal
@@ -2303,6 +2303,38 @@ def _serialize_mechanic_booking_list(bookings_queryset):
     return rows
 
 
+def _parse_iso_datetime_for_sort(value):
+    """Parse API-style ISO timestamps for stable list sorting."""
+    if not value:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s)
+        if timezone.is_naive(dt):
+            dt = timezone.make_aware(dt, dt_timezone.utc)
+        return dt
+    except (ValueError, TypeError):
+        return None
+
+
+def _mechanic_all_row_recency(row):
+    """
+    Sort key for mechanic 'all' tab: most recently updated first, else by booked/created time.
+    Pending request rows use updated_at == created_at from serializers.
+    """
+    if not isinstance(row, dict):
+        return timezone.now()
+    u = _parse_iso_datetime_for_sort(row.get("updated_at"))
+    b = _parse_iso_datetime_for_sort(row.get("booked_at"))
+    if u and b:
+        return max(u, b)
+    return u or b or datetime.min.replace(tzinfo=dt_timezone.utc)
+
+
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def list_mechanic_bookings(request):
@@ -2341,7 +2373,7 @@ def list_mechanic_bookings(request):
             Prefetch("completebooking", queryset=CompleteBooking.objects.all()),
         )
         .distinct()
-        .order_by("-booked_at")
+        .order_by("-updated_at", "-booked_at", "-id")
     )
 
     def serialize_booking_list(rows_queryset):
@@ -2378,25 +2410,16 @@ def list_mechanic_bookings(request):
             start_index = (page - 1) * page_size
             end_index = start_index + page_size
 
-            # Pending items come first (direct requests then backjob bookings), then bookings ordered by -booked_at
-            paginated = []
-            if start_index < pending_count:
-                # Need some pending items on this page
-                direct_pending = _serialize_pending_direct_requests(account)
-                custom_pending = _serialize_pending_custom_requests(account)
-                # Only include backjob bookings that are pending mechanic acceptance.
-                backjob_qs = _mechanic_pending_backjob_queryset(account).order_by("-booked_at")
-                backjob_pending = serialize_booking_list(backjob_qs)
-                all_pending = direct_pending + custom_pending + backjob_pending
-                pending_slice = all_pending[start_index:min(end_index, pending_count)]
-                paginated.extend(pending_slice)
-
-            if end_index > pending_count:
-                # Need some booking items on this page; exclude backjob bookings already shown
-                booking_start = max(0, start_index - pending_count)
-                booking_end = end_index - pending_count
-                bookings_slice = bookings_queryset.exclude(live_backjob_q)[booking_start:booking_end]
-                paginated.extend(serialize_booking_list(bookings_slice))
+            # Merge pending rows with real bookings and sort by recent activity (no pending-first pin).
+            direct_pending = _serialize_pending_direct_requests(account)
+            custom_pending = _serialize_pending_custom_requests(account)
+            backjob_qs = _mechanic_pending_backjob_queryset(account).order_by("-booked_at")
+            backjob_pending = serialize_booking_list(backjob_qs)
+            all_pending = direct_pending + custom_pending + backjob_pending
+            regular_rows = serialize_booking_list(bookings_queryset.exclude(live_backjob_q))
+            combined = list(all_pending) + list(regular_rows)
+            combined.sort(key=_mechanic_all_row_recency, reverse=True)
+            paginated = combined[start_index:end_index]
 
             # Include tab counts so frontend doesn't need a separate request
             accepted_count = bookings_queryset.filter(status__in=["booked", "accepted"]).count()

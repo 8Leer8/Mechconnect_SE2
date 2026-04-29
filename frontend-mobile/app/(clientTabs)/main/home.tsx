@@ -14,6 +14,10 @@ import { useWebSocketContext } from '@/context/WebSocketContext';
 import { getImageUrl } from '@/lib/imageUtils';
 import { fetchProfileDetailsCached } from '@/lib/profileCache';
 import { useLocation } from '@/context/LocationContext';
+import {
+  getClientBookingProviderDisplayName,
+  getClientBookingProviderIconName,
+} from '@/lib/clientBookingProviderDisplay';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const screenWidth = Dimensions.get('window').width;
@@ -26,10 +30,13 @@ interface Booking {
   request: {
     request_type: string;
     service_location: any;
+    shop?: { shop_name?: string | null } | null;
+    provider?: { name?: string | null } | null;
   };
   provider?: {
     name: string;
   } | null;
+  shop?: { shop_name?: string | null } | null;
   service_location?: {
     street_name: string;
     barangay: string;
@@ -587,7 +594,9 @@ export default function HomeScreen() {
               </View>
 
               {data?.current_bookings && data.current_bookings.length > 0 ? (
-                data.current_bookings.slice(0, 3).map((booking) => (
+                data.current_bookings.slice(0, 3).map((booking) => {
+                  const providerLabel = getClientBookingProviderDisplayName(booking);
+                  return (
                   <TouchableOpacity
                     key={booking.id}
                     style={styles.jobCard}
@@ -614,19 +623,24 @@ export default function HomeScreen() {
                           {getStatusLabel(booking.status)}
                         </ThemedText>
                       </View>
-                      {booking.provider && (
+                      {providerLabel ? (
                         <View style={styles.jobInfoRow}>
-                          <FontAwesome name="user-o" size={11} color="#8E8E93" />
-                          <ThemedText style={styles.jobInfoText}>{booking.provider.name}</ThemedText>
+                          <FontAwesome
+                            name={getClientBookingProviderIconName(booking)}
+                            size={11}
+                            color="#8E8E93"
+                          />
+                          <ThemedText style={styles.jobInfoText}>{providerLabel}</ThemedText>
                         </View>
-                      )}
+                      ) : null}
                     </View>
                     <View style={styles.jobCardRight}>
                       <ThemedText style={styles.jobAmount}>₱{parseFloat(String(booking.amount_fee || '0')).toFixed(2)}</ThemedText>
                       <FontAwesome name="chevron-right" size={12} color="#555" />
                     </View>
                   </TouchableOpacity>
-                ))
+                  );
+                })
               ) : (
                 <View style={styles.emptyCard}>
                   <FontAwesome name="calendar-o" size={36} color="#555" />

@@ -417,7 +417,7 @@ def list_client_bookings(request):
             )),
             Prefetch('completebooking', queryset=CompleteBooking.objects.all()),
             Prefetch('request__assignments', queryset=RequestAssignment.objects.select_related('mechanic')),
-        ).order_by('-booked_at')
+        ).order_by('-updated_at', '-booked_at', '-id')
         
         # Apply status filter if provided
         if status_filter:

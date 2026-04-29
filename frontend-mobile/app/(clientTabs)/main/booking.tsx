@@ -9,6 +9,10 @@ import { styles } from '@/style/client/bookingStyles';
 import { SkeletonBookingList } from '@/components/skeletons/SkeletonLoaders';
 import NotificationBell from '@/components/notifications/NotificationBell';
 import { useWebSocketContext } from '@/context/WebSocketContext';
+import {
+  getClientBookingProviderDisplayName,
+  getClientBookingProviderIconName,
+} from '@/lib/clientBookingProviderDisplay';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -28,6 +32,12 @@ interface Booking {
     id: number;
     name: string;
     email: string;
+  } | null;
+  shop?: {
+    id: number;
+    shop_name: string;
+    contact_number?: string | null;
+    email?: string | null;
   } | null;
   service_location: {
     street_name: string;
@@ -310,7 +320,9 @@ export default function BookingScreen() {
           </View>
         ) : (
           <View style={styles.bookingsList}>
-            {bookings.map((booking) => (
+            {bookings.map((booking) => {
+              const providerLabel = getClientBookingProviderDisplayName(booking);
+              return (
               <TouchableOpacity
                 key={booking.id}
                 style={styles.bookingCard}
@@ -347,12 +359,16 @@ export default function BookingScreen() {
 
                 {/* Info Rows */}
                 <View style={styles.cardInfoSection}>
-                  {booking.provider && (
+                  {providerLabel ? (
                     <View style={styles.infoRow}>
-                      <FontAwesome name="user-o" size={13} color="#8E8E93" />
-                      <ThemedText style={styles.infoText}>{booking.provider.name}</ThemedText>
+                      <FontAwesome
+                        name={getClientBookingProviderIconName(booking)}
+                        size={13}
+                        color="#8E8E93"
+                      />
+                      <ThemedText style={styles.infoText}>{providerLabel}</ThemedText>
                     </View>
-                  )}
+                  ) : null}
                   {booking.service_location && (
                     <View style={styles.infoRow}>
                       <FontAwesome name="map-marker" size={14} color="#8E8E93" />
@@ -429,7 +445,8 @@ export default function BookingScreen() {
                   </TouchableOpacity>
                 </View>
               </TouchableOpacity>
-            ))}
+              );
+            })}
           </View>
         )}
 

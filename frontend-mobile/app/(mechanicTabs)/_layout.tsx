@@ -1,6 +1,6 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
-import { Feather, FontAwesome } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import { Alert, Modal, TouchableOpacity, View } from 'react-native';
 import { useTabsBackToHome } from '@/hooks/use-tabs-back-to-home';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -229,35 +229,35 @@ export default function MechanicTabLayout() {
           name="main/bookings"
           options={{
             title: 'Bookings',
-            tabBarIcon: ({ color }) => <FontAwesome size={20} name="calendar-check-o" color={color} />,
+            tabBarIcon: ({ color }) => <Feather size={20} name="calendar" color={color} />,
           }}
         />
         <Tabs.Screen
           name="main/emergency"
           options={{
             title: 'Emergency',
-            tabBarIcon: ({ color }) => <FontAwesome size={20} name="exclamation-triangle" color={color} />,
+            tabBarIcon: ({ color }) => <Feather size={20} name="alert-triangle" color={color} />,
           }}
         />
         <Tabs.Screen
           name="main/home"
           options={{
             title: 'Home',
-            tabBarIcon: ({ color }) => <FontAwesome size={20} name="home" color={color} />,
+            tabBarIcon: ({ color }) => <Feather size={20} name="home" color={color} />,
           }}
         />
         <Tabs.Screen
           name="main/map"
           options={{
             title: 'Map',
-            tabBarIcon: ({ color }) => <FontAwesome size={20} name="map-marker" color={color} />,
+            tabBarIcon: ({ color }) => <Feather size={20} name="map-pin" color={color} />,
           }}
         />
         <Tabs.Screen
           name="main/profile"
           options={{
             title: 'Profile',
-            tabBarIcon: ({ color }) => <FontAwesome size={20} name="user" color={color} />,
+            tabBarIcon: ({ color }) => <Feather size={20} name="user" color={color} />,
           }}
         />
         {/* Hide non-tab routes */}

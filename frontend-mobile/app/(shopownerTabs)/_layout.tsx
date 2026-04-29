@@ -1,7 +1,7 @@
 import { Tabs, useRouter } from 'expo-router';
 import React from 'react';
 import { Modal, TouchableOpacity, View } from 'react-native';
-import { Feather, FontAwesome } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { HapticTab } from '@/components/haptic-tab';
@@ -149,35 +149,35 @@ export default function ShopOwnerTabLayout() {
           name="main/jobs"
           options={{
             title: 'Jobs',
-            tabBarIcon: ({ color }) => <FontAwesome size={20} name="briefcase" color={color} />,
+            tabBarIcon: ({ color }) => <Feather size={20} name="briefcase" color={color} />,
           }}
         />
         <Tabs.Screen
           name="main/mechanics"
           options={{
             title: 'Mechanics',
-            tabBarIcon: ({ color }) => <FontAwesome size={20} name="wrench" color={color} />,
+            tabBarIcon: ({ color }) => <Feather size={20} name="users" color={color} />,
           }}
         />
         <Tabs.Screen
           name="main/home"
           options={{
             title: 'Home',
-            tabBarIcon: ({ color }) => <FontAwesome size={20} name="home" color={color} />,
+            tabBarIcon: ({ color }) => <Feather size={20} name="home" color={color} />,
           }}
         />
         <Tabs.Screen
           name="main/shop"
           options={{
             title: 'Map',
-            tabBarIcon: ({ color }) => <FontAwesome size={20} name="map" color={color} />,
+            tabBarIcon: ({ color }) => <Feather size={20} name="map-pin" color={color} />,
           }}
         />
         <Tabs.Screen
           name="profile"
           options={{
             title: 'Profile',
-            tabBarIcon: ({ color }) => <FontAwesome size={20} name="user" color={color} />,
+            tabBarIcon: ({ color }) => <Feather size={20} name="user" color={color} />,
           }}
         />
         {/* Hide non-tab routes */}

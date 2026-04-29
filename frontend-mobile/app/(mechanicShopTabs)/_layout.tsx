@@ -1,6 +1,6 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
-import { Feather, FontAwesome } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import { Alert, Modal, TouchableOpacity, View } from 'react-native';
 import { useTabsBackToHome } from '@/hooks/use-tabs-back-to-home';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -226,28 +226,28 @@ export default function MechanicShopTabLayout() {
           name="main/home"
           options={{
             title: 'Dashboard',
-            tabBarIcon: ({ color }) => <FontAwesome size={20} name="tachometer" color={color} />,
+            tabBarIcon: ({ color }) => <Feather size={20} name="layout" color={color} />,
           }}
         />
         <Tabs.Screen
           name="main/jobs"
           options={{
             title: 'Jobs',
-            tabBarIcon: ({ color }) => <FontAwesome size={20} name="briefcase" color={color} />,
+            tabBarIcon: ({ color }) => <Feather size={20} name="briefcase" color={color} />,
           }}
         />
         <Tabs.Screen
           name="main/schedule"
           options={{
             title: 'Schedule',
-            tabBarIcon: ({ color }) => <FontAwesome size={20} name="calendar" color={color} />,
+            tabBarIcon: ({ color }) => <Feather size={20} name="calendar" color={color} />,
           }}
         />
         <Tabs.Screen
           name="main/profile"
           options={{
             title: 'Profile',
-            tabBarIcon: ({ color }) => <FontAwesome size={20} name="user" color={color} />,
+            tabBarIcon: ({ color }) => <Feather size={20} name="user" color={color} />,
           }}
         />
         {/* Hide non-tab routes */}

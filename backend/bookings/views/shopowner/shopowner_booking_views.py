@@ -1038,7 +1038,7 @@ def _shopowner_bookings_queryset(account):
             ),
             Prefetch("request__assignments", queryset=RequestAssignment.objects.select_related("mechanic")),
         )
-        .order_by("-booked_at")
+        .order_by("-updated_at", "-booked_at", "-id")
     )
 
 
