@@ -897,15 +897,30 @@ export default function MapScreen() {
       const data = await response.json() as any;
       if (response.ok) {
         if (isShopOwnerMap) {
-          showNotification({ type: 'success', title: 'Booking created', message: 'Broadcast accepted. You can now assign mechanics.' });
-          closeBroadcastModal();
+          const offerId = Number(data.offer_id ?? 0) || null;
+          const nextStatus = String(data.offer_status || 'pending');
+          setPendingOffersByBroadcastId((current) => ({
+            ...current,
+            [selectedBroadcast.id]: {
+              offerId: offerId ?? current[selectedBroadcast.id]?.offerId ?? 0,
+              status: nextStatus,
+            },
+          }));
+          setAwaitingClientSelectionBroadcastId(selectedBroadcast.id);
+          setSelectedBroadcast((current) => (current ? ({
+            ...current,
+            my_offer_id: offerId,
+            my_offer_status: nextStatus,
+          }) : current));
+          setOfferNotice({
+            broadcastId: selectedBroadcast.id,
+            message: 'Waiting for the client to accept.',
+            tone: 'success',
+          });
+          showNotification({ type: 'success', title: 'Request sent', message: 'Waiting for the client to accept.' });
           fetchBroadcasts(true);
           fetchTokensBalance(true);
           try { eventBus.emit('walletChanged'); } catch { }
-          const bookingId = Number(data.booking_id || data.booking?.id || 0);
-          if (bookingId) {
-            router.push({ pathname: '/shopowner/booking/booking_details', params: { bookingId: String(bookingId) } });
-          }
           return;
         }
 

@@ -526,12 +526,27 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
             mechanic=account.mechanic,
         ).order_by('-created_at', '-id').first()
 
+    def _get_my_shop_offer(self, obj):
+        shop = self._get_owned_shop_for_session()
+        if shop is None:
+            return None
+        return BroadcastOffer.objects.filter(
+            broadcast_request=obj,
+            shop=shop,
+        ).order_by('-created_at', '-id').first()
+
     def get_my_offer_id(self, obj):
         offer = self._get_current_mechanic_offer(obj)
+        if offer:
+            return offer.id
+        offer = self._get_my_shop_offer(obj)
         return offer.id if offer else None
 
     def get_my_offer_status(self, obj):
         offer = self._get_current_mechanic_offer(obj)
+        if offer:
+            return offer.status
+        offer = self._get_my_shop_offer(obj)
         return offer.status if offer else None
 
     def _get_current_mechanic(self):
@@ -600,13 +615,24 @@ class BroadcastRequestSerializer(serializers.ModelSerializer):
 
 
 class BroadcastOfferSerializer(serializers.ModelSerializer):
-    """Serializer for broadcast offers"""
-    mechanic = AccountBasicSerializer(source='mechanic.account', read_only=True)
+    """Serializer for broadcast offers (independent mechanic or shop offer)."""
+    mechanic = serializers.SerializerMethodField()
+    shop = serializers.SerializerMethodField()
     mechanic_rating = serializers.SerializerMethodField()
     distance_km = serializers.SerializerMethodField()
     estimated_price = serializers.SerializerMethodField()
     convenience_fee = serializers.SerializerMethodField()
     estimated_eta_minutes = serializers.SerializerMethodField()
+
+    def get_mechanic(self, obj):
+        if obj.mechanic_id:
+            return AccountBasicSerializer(obj.mechanic.account, context=self.context).data
+        return None
+
+    def get_shop(self, obj):
+        if obj.shop_id:
+            return {'id': obj.shop.id, 'shop_name': getattr(obj.shop, 'shop_name', '') or ''}
+        return None
     
     class Meta:
         model = BroadcastOffer
@@ -614,6 +640,7 @@ class BroadcastOfferSerializer(serializers.ModelSerializer):
             'id',
             'broadcast_request',
             'mechanic',
+            'shop',
             'mechanic_rating',
             'status',
             'distance_km',
@@ -626,6 +653,8 @@ class BroadcastOfferSerializer(serializers.ModelSerializer):
 
     def get_mechanic_rating(self, obj):
         try:
+            if not obj.mechanic_id:
+                return None
             rating = getattr(obj.mechanic, 'average_rating', None)
             if rating is None:
                 return None

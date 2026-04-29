@@ -16,10 +16,13 @@ export default function ClientTabLayout() {
   const [offerModalVisible, setOfferModalVisible] = React.useState(false);
   const [offerModalPayload, setOfferModalPayload] = React.useState<{
     broadcastId: number | null;
+    /** Request.id — preferred for opening broadcast detail (matches list / API) */
+    requestId: number | null;
     mechanicName: string;
     message: string;
   }>({
     broadcastId: null,
+    requestId: null,
     mechanicName: '',
     message: 'A mechanic requested to accept your broadcast.',
   });
@@ -43,17 +46,23 @@ export default function ClientTabLayout() {
     const broadcastId = Number(
       (lastMessage as any).broadcast_id ?? (lastMessage as any).broadcastId ?? 0
     ) || null;
+    const requestId = Number(
+      (lastMessage as any).request_id ?? (lastMessage as any).requestId ?? 0
+    ) || null;
     const offerId = Number((lastMessage as any).offer_id ?? (lastMessage as any).offerId ?? 0) || null;
     const dedupeKey = `${String(lastMessage.action || 'unknown')}-${String(broadcastId || '')}-${String(offerId || '')}-${String(messageTimestamp)}`;
     if (lastHandledMessageKeyRef.current === dedupeKey) return;
     lastHandledMessageKeyRef.current = dedupeKey;
 
-    const mechanicName = String((lastMessage as any)?.mechanic?.name || '').trim();
+    const mechanicName = String(
+      (lastMessage as any)?.mechanic?.name || (lastMessage as any)?.shop?.name || ''
+    ).trim();
     const messageText = String(lastMessage.message || '').trim()
       || 'A mechanic requested to accept your broadcast.';
 
     setOfferModalPayload({
       broadcastId,
+      requestId,
       mechanicName,
       message: messageText,
     });
@@ -112,17 +121,17 @@ export default function ClientTabLayout() {
   }, []);
 
   const openOfferDetails = React.useCallback(() => {
-    const broadcastId = offerModalPayload.broadcastId;
+    const navigationId = offerModalPayload.requestId || offerModalPayload.broadcastId;
     setOfferModalVisible(false);
-    if (broadcastId) {
+    if (navigationId) {
       router.push({
         pathname: '/client/request/broadcast/broadcastdetail',
-        params: { id: String(broadcastId) },
+        params: { id: String(navigationId) },
       } as any);
       return;
     }
     router.push('/(clientTabs)/main/request' as any);
-  }, [offerModalPayload.broadcastId, router]);
+  }, [offerModalPayload.broadcastId, offerModalPayload.requestId, router]);
 
   const closeDirectAcceptModal = React.useCallback(() => {
     setDirectAcceptModalVisible(false);

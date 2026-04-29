@@ -1,4 +1,12 @@
-import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { NotificationDropdown, NotificationType } from '@/components/ui/NotificationDropdown';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -30,6 +38,12 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     message: '',
   });
   const showTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Mirrors state.visible so showNotification can stay a stable callback (avoids effect / memo churn). */
+  const visibleRef = useRef(false);
+
+  useEffect(() => {
+    visibleRef.current = state.visible;
+  }, [state.visible]);
 
   useEffect(() => {
     return () => {
@@ -41,8 +55,10 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   }, []);
 
   const showNotification = useCallback((config: NotificationConfig) => {
+    const delayMs = visibleRef.current ? 80 : 0;
+
     // If one is already showing, briefly hide first so the animation re-triggers
-    setState(prev =>
+    setState((prev) =>
       prev.visible
         ? { ...prev, visible: false }
         : prev
@@ -57,15 +73,20 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     showTimerRef.current = setTimeout(() => {
       setState({ ...config, visible: true });
       showTimerRef.current = null;
-    }, state.visible ? 80 : 0);
-  }, [state.visible]);
+    }, delayMs);
+  }, []);
 
   const handleClose = useCallback(() => {
     setState(prev => ({ ...prev, visible: false }));
   }, []);
 
+  const contextValue = useMemo(
+    () => ({ showNotification }),
+    [showNotification]
+  );
+
   return (
-    <NotificationContext.Provider value={{ showNotification }}>
+    <NotificationContext.Provider value={contextValue}>
       {children}
       <NotificationDropdown
         visible={state.visible}

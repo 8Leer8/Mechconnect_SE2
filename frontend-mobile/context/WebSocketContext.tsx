@@ -16,6 +16,9 @@ export interface BookingUpdateMessage {
   booking_id?: number;
   broadcast_id?: number;
   broadcastId?: number;
+  /** Parent Request.id — same id the client list uses as "Broadcast #…" */
+  request_id?: number;
+  requestId?: number;
   status?: string;
   message?: string;
   action?: string;

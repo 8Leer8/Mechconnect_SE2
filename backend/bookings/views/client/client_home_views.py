@@ -266,9 +266,23 @@ def home_page(request):
         elif hasattr(account, 'shopowner'):
             shop_owner = account.shopowner
 
+            # Match client home: include booked / in-progress payment states so shop dashboard
+            # shows jobs after broadcast finalize or early booking lifecycle.
             current_bookings = Booking.objects.filter(
                 request__provider=account,
-                status__in=['accepted', 'on_the_way', 'at_location', 'diagnosing', 'active', 'reworked']
+                status__in=[
+                    'booked',
+                    'accepted',
+                    'on_the_way',
+                    'at_location',
+                    'diagnosing',
+                    'active',
+                    'paused',
+                    'finished',
+                    'pending_payment',
+                    'reworked',
+                    'backjob_pending',
+                ]
             ).select_related(
                 'request',
                 'request__client',

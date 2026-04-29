@@ -46,6 +46,19 @@ function resolveBookingIdFromPayload(payload: Record<string, unknown> | null | u
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+/** DRF often returns `detail` instead of `error`. */
+function apiErrorMessage(data: unknown, fallback: string): string {
+  if (!data || typeof data !== 'object') return fallback;
+  const d = data as Record<string, unknown>;
+  if (typeof d.error === 'string' && d.error.trim()) return d.error.trim();
+  const detail = d.detail;
+  if (typeof detail === 'string' && detail.trim()) return detail.trim();
+  if (Array.isArray(detail) && detail.length > 0 && typeof detail[0] === 'string') {
+    return detail.filter((x) => typeof x === 'string').join(' ');
+  }
+  return fallback;
+}
+
 function formatScheduledServiceDisplay(iso: string | null | undefined): string {
   if (!iso) return 'As soon as possible';
   const d = new Date(iso);
@@ -62,13 +75,15 @@ function formatScheduledServiceDisplay(iso: string | null | undefined): string {
 interface BroadcastOffer {
   id: number;
   status: string;
-  mechanic: {
+  mechanic?: {
     id: number;
     firstname: string;
     lastname: string;
     name: string;
     phone?: string | null;
-  };
+  } | null;
+  /** Present when a shop (not an individual mechanic) submitted the offer */
+  shop?: { id: number; shop_name: string } | null;
   mechanic_rating?: number | null;
   distance_km?: number | null;
   estimated_price?: number | null;
@@ -76,6 +91,24 @@ interface BroadcastOffer {
   estimated_eta_minutes?: number | null;
   created_at?: string;
   responded_at?: string | null;
+}
+
+function isShopBroadcastOffer(offer: BroadcastOffer): boolean {
+  return Boolean(offer.shop?.id);
+}
+
+function getOfferDisplayName(offer: BroadcastOffer): string {
+  const shopName = offer.shop?.shop_name?.trim();
+  if (shopName) return shopName;
+  const mechanicName = offer.mechanic?.name?.trim();
+  if (mechanicName) return mechanicName;
+  return 'Provider';
+}
+
+/** Expo Router may give string | string[] for the same param key */
+function normalizeRouteParam(value: string | string[] | undefined): string {
+  if (value == null) return '';
+  return Array.isArray(value) ? String(value[0] ?? '') : String(value);
 }
 
 interface BroadcastPayload {
@@ -124,7 +157,7 @@ export default function BroadcastDetailScreen() {
   const [loadingAddressById, setLoadingAddressById] = useState<Record<number, boolean>>({});
   const [timeRemaining, setTimeRemaining] = useState<number>(0);
 
-  const broadcastId = params.id;
+  const broadcastId = normalizeRouteParam(params.id);
   const description = params.description || '';
   const status = params.status || 'searching';
   const services = params.services ? JSON.parse(params.services) : [];
@@ -155,8 +188,12 @@ export default function BroadcastDetailScreen() {
   const fetchBroadcastOffers = async (silent = false) => {
     if (!broadcastId) return;
     try {
-      if (!silent) setLoading(true);
-      setSelectionError(null);
+      if (!silent) {
+        setLoading(true);
+        // Do not clear selection errors on silent refresh (poll / after failed select),
+        // or the user never sees why "Choose shop" did not work.
+        setSelectionError(null);
+      }
       const response = await fetch(`${API_URL}/bookings/broadcasts/${broadcastId}/offers/`, {
         method: 'GET',
         credentials: 'include',
@@ -179,21 +216,32 @@ export default function BroadcastDetailScreen() {
   };
 
   const handleSelectMechanic = async (offerId: number) => {
-    if (!broadcastId || selectingOfferId) return;
+    const oid = Number(offerId);
+    if (!broadcastId?.trim()) {
+      setSelectionError('Missing broadcast id. Go back and open this request again.');
+      return;
+    }
+    if (!Number.isFinite(oid) || oid <= 0) {
+      setSelectionError('Invalid offer. Pull down to refresh the list.');
+      return;
+    }
+    if (selectingOfferId !== null && Number.isFinite(selectingOfferId)) {
+      return;
+    }
 
-    setSelectingOfferId(offerId);
+    setSelectingOfferId(oid);
     setSelectionError(null);
     try {
       const response = await fetch(`${API_URL}/bookings/broadcasts/${broadcastId}/select-mechanic/`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ offer_id: offerId }),
+        body: JSON.stringify({ offer_id: oid }),
       });
 
       const data = await parseApiJson<Record<string, unknown> & { error?: string }>(response);
       if (!response.ok) {
-        throw new Error((data as any).error || 'Failed to select mechanic');
+        throw new Error(apiErrorMessage(data, 'Failed to select mechanic'));
       }
 
       const bookingId = resolveBookingIdFromPayload(data);
@@ -201,12 +249,13 @@ export default function BroadcastDetailScreen() {
         setSelectingOfferId(null);
         const bcid = Number(broadcastId) || 0;
         const key = `client-finalize-${bcid}-${bookingId}`;
-        if (consumeClientBroadcastFinalizeNavKey(key)) {
-          router.replace({
-            pathname: '/client/booking/booking_details',
-            params: { bookingId: String(bookingId) },
-          });
-        }
+        // Always go to booking after a successful POST. WS listeners may use a different
+        // bcid (Request id vs broadcast row id); gating only on consume could skip navigation.
+        consumeClientBroadcastFinalizeNavKey(key);
+        router.replace({
+          pathname: '/client/booking/booking_details',
+          params: { bookingId: String(bookingId) },
+        } as any);
         return;
       }
 
@@ -280,12 +329,11 @@ export default function BroadcastDetailScreen() {
       const bid = resolveBookingIdFromPayload(lastMessage as unknown as Record<string, unknown>);
       if (bid) {
         const key = `client-finalize-${messageBroadcastId}-${bid}`;
-        if (consumeClientBroadcastFinalizeNavKey(key)) {
-          router.replace({
-            pathname: '/client/booking/booking_details',
-            params: { bookingId: String(bid) },
-          });
-        }
+        consumeClientBroadcastFinalizeNavKey(key);
+        router.replace({
+          pathname: '/client/booking/booking_details',
+          params: { bookingId: String(bid) },
+        } as any);
       }
     }
   }, [lastMessage, broadcastId]);
@@ -309,6 +357,7 @@ export default function BroadcastDetailScreen() {
 
   const onRefresh = () => {
     setRefreshing(true);
+    setSelectionError(null);
     fetchBroadcastOffers(true);
   };
 
@@ -450,18 +499,25 @@ export default function BroadcastDetailScreen() {
   };
 
   const getAddressLabel = (offer: BroadcastOffer) => {
+    if (isShopBroadcastOffer(offer)) {
+      return 'Shop team (assign mechanics after booking)';
+    }
+    const mid = offer.mechanic?.id;
+    if (!mid) return 'Address not available';
+
     const inlineAddress = getMechanicAddress(offer);
     if (inlineAddress) return inlineAddress;
 
-    const cachedAddress = mechanicAddressById[offer.mechanic.id];
+    const cachedAddress = mechanicAddressById[mid];
     if (cachedAddress) return cachedAddress;
 
-    if (loadingAddressById[offer.mechanic.id]) return 'Loading address...';
+    if (loadingAddressById[mid]) return 'Loading address...';
 
     return 'Address not available';
   };
 
   const openMechanicProfile = (offer: BroadcastOffer) => {
+    if (isShopBroadcastOffer(offer) || !offer.mechanic?.id) return;
     const returnParams = JSON.stringify({
       id: params.id,
       description: params.description,
@@ -524,9 +580,11 @@ export default function BroadcastDetailScreen() {
     });
   };
 
-  const renderMechanicCard = (offer: BroadcastOffer) => (
+  const renderMechanicCard = (offer: BroadcastOffer) => {
+    const offerNumericId = Number(offer.id);
+    return (
     <View
-      key={offer.id}
+      key={offerNumericId}
       style={{
         borderWidth: 1,
         borderColor: '#FFFFFF14',
@@ -538,18 +596,26 @@ export default function BroadcastDetailScreen() {
     >
       <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
         <View style={{ flex: 1 }}>
-          <ThemedText style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>{offer.mechanic.name}</ThemedText>
+          <ThemedText style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>{getOfferDisplayName(offer)}</ThemedText>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 }}>
             <FontAwesome name="star" size={12} color="#FFB000" />
-            <ThemedText style={{ fontSize: 12, color: '#B8B8C0' }}>{getMechanicDisplayRating(offer.mechanic_rating)}</ThemedText>
+            <ThemedText style={{ fontSize: 12, color: '#B8B8C0' }}>
+              {isShopBroadcastOffer(offer) ? 'Shop' : getMechanicDisplayRating(offer.mechanic_rating)}
+            </ThemedText>
           </View>
           <TouchableOpacity
             style={{ marginTop: 8, alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6 }}
             onPress={() => {
               setExpandedOfferId((prev) => {
-                const nextValue = prev === offer.id ? null : offer.id;
-                if (nextValue === offer.id && !getMechanicAddress(offer) && !mechanicAddressById[offer.mechanic.id]) {
-                  fetchMechanicAddress(offer.mechanic.id);
+                const nextValue = prev === offerNumericId ? null : offerNumericId;
+                const mechanicId = offer.mechanic?.id;
+                if (
+                  nextValue === offerNumericId &&
+                  mechanicId &&
+                  !getMechanicAddress(offer) &&
+                  !mechanicAddressById[mechanicId]
+                ) {
+                  fetchMechanicAddress(mechanicId);
                 }
                 return nextValue;
               });
@@ -557,10 +623,10 @@ export default function BroadcastDetailScreen() {
             activeOpacity={0.8}
           >
             <ThemedText style={{ fontSize: 12, fontWeight: '700', color: '#FFB000' }}>
-              {expandedOfferId === offer.id ? 'Hide details' : 'See details'}
+              {expandedOfferId === offerNumericId ? 'Hide details' : 'See details'}
             </ThemedText>
             <FontAwesome
-              name={expandedOfferId === offer.id ? 'chevron-up' : 'chevron-down'}
+              name={expandedOfferId === offerNumericId ? 'chevron-up' : 'chevron-down'}
               size={10}
               color="#FFB000"
             />
@@ -571,7 +637,7 @@ export default function BroadcastDetailScreen() {
         </View>
       </View>
 
-      {expandedOfferId === offer.id && (
+      {expandedOfferId === offerNumericId && (
         <View
           style={{
             marginTop: 12,
@@ -601,8 +667,12 @@ export default function BroadcastDetailScreen() {
               {getAddressLabel(offer)}
             </ThemedText>
           </View>
+        </View>
+      )}
 
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 6 }}>
+      {offer.status === 'pending' && (
+        <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+          {!isShopBroadcastOffer(offer) && offer.mechanic?.id ? (
             <TouchableOpacity
               style={{
                 flex: 1,
@@ -618,36 +688,39 @@ export default function BroadcastDetailScreen() {
             >
               <ThemedText style={{ color: '#FFB45E', fontSize: 12, fontWeight: '700' }}>View Profile</ThemedText>
             </TouchableOpacity>
+          ) : (
+            <View style={{ flex: 1 }} />
+          )}
 
-            <TouchableOpacity
-              style={{
-                flex: 1,
-                borderRadius: 12,
-                backgroundColor: selectingOfferId === offer.id ? '#FF8C00AA' : '#FF8C00',
-                paddingVertical: 11,
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexDirection: 'row',
-                gap: 6,
-              }}
-              onPress={() => handleSelectMechanic(offer.id)}
-              disabled={selectingOfferId !== null}
-              activeOpacity={0.8}
-            >
-              {selectingOfferId === offer.id ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <FontAwesome name="check" size={12} color="#fff" />
-              )}
-              <ThemedText style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
-                Accept Mechanic
-              </ThemedText>
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity
+            style={{
+              flex: 1,
+              borderRadius: 12,
+              backgroundColor: selectingOfferId === offerNumericId ? '#FF8C00AA' : '#FF8C00',
+              paddingVertical: 11,
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexDirection: 'row',
+              gap: 6,
+            }}
+            onPress={() => handleSelectMechanic(offerNumericId)}
+            disabled={typeof selectingOfferId === 'number' && Number.isFinite(selectingOfferId)}
+            activeOpacity={0.8}
+          >
+            {selectingOfferId === offerNumericId ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <FontAwesome name="check" size={12} color="#fff" />
+            )}
+            <ThemedText style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+              {isShopBroadcastOffer(offer) ? 'Choose shop' : 'Accept mechanic'}
+            </ThemedText>
+          </TouchableOpacity>
         </View>
       )}
     </View>
-  );
+    );
+  };
 
   return (
     <ThemedView style={styles.container}>
@@ -739,6 +812,21 @@ export default function BroadcastDetailScreen() {
           </View>
         )}
 
+        {selectionError && (
+          <View
+            style={{
+              marginBottom: 12,
+              borderRadius: 12,
+              padding: 12,
+              backgroundColor: '#FF3B3018',
+              borderWidth: 1,
+              borderColor: '#FF3B3038',
+            }}
+          >
+            <ThemedText style={{ color: '#FFB4AA', fontSize: 13, fontWeight: '600' }}>{selectionError}</ThemedText>
+          </View>
+        )}
+
         {/* Mechanic Offers */}
         {currentStatus === 'searching' && (
           <View style={styles.sectionCard}>
@@ -746,7 +834,7 @@ export default function BroadcastDetailScreen() {
               <View style={[styles.sectionIcon, { backgroundColor: '#34C75915' }]}>
                 <FontAwesome name="users" size={16} color="#34C759" />
               </View>
-              <ThemedText style={styles.sectionTitle}>Mechanics Waiting</ThemedText>
+              <ThemedText style={styles.sectionTitle}>Shops and mechanics</ThemedText>
             </View>
 
             {loading ? (
@@ -755,7 +843,7 @@ export default function BroadcastDetailScreen() {
               </View>
             ) : pendingOffers.length === 0 ? (
               <ThemedText style={{ color: '#A5A5AD', fontSize: 13, lineHeight: 20 }}>
-                No mechanics have requested to accept this broadcast yet.
+                No offers yet. Shops and mechanics can respond while this broadcast is open.
               </ThemedText>
             ) : (
               <View>
@@ -772,16 +860,20 @@ export default function BroadcastDetailScreen() {
               <View style={[styles.sectionIcon, { backgroundColor: '#34C75915' }]}>
                 <FontAwesome name="wrench" size={16} color="#34C759" />
               </View>
-              <ThemedText style={styles.sectionTitle}>Selected Mechanic</ThemedText>
+              <ThemedText style={styles.sectionTitle}>
+                {isShopBroadcastOffer(acceptedOffer) ? 'Selected shop' : 'Selected mechanic'}
+              </ThemedText>
             </View>
             <View style={styles.providerInfo}>
               <View style={styles.providerRow}>
                 <ThemedText style={styles.providerLabel}>Name</ThemedText>
-                <ThemedText style={styles.providerValue}>{acceptedOffer.mechanic.name}</ThemedText>
+                <ThemedText style={styles.providerValue}>{getOfferDisplayName(acceptedOffer)}</ThemedText>
               </View>
               <View style={styles.providerRow}>
                 <ThemedText style={styles.providerLabel}>Rating</ThemedText>
-                <ThemedText style={styles.providerValue}>{getMechanicDisplayRating(acceptedOffer.mechanic_rating)}</ThemedText>
+                <ThemedText style={styles.providerValue}>
+                  {isShopBroadcastOffer(acceptedOffer) ? '—' : getMechanicDisplayRating(acceptedOffer.mechanic_rating)}
+                </ThemedText>
               </View>
               <View style={styles.providerRow}>
                 <ThemedText style={styles.providerLabel}>Distance</ThemedText>
@@ -792,12 +884,6 @@ export default function BroadcastDetailScreen() {
                 <ThemedText style={styles.providerValue}>{formatEta(acceptedOffer.estimated_eta_minutes)}</ThemedText>
               </View>
             </View>
-          </View>
-        )}
-
-        {selectionError && (
-          <View style={{ marginHorizontal: 16, marginBottom: 8, borderRadius: 12, padding: 12, backgroundColor: '#FF3B3018', borderWidth: 1, borderColor: '#FF3B3038' }}>
-            <ThemedText style={{ color: '#FFB4AA', fontSize: 13, fontWeight: '600' }}>{selectionError}</ThemedText>
           </View>
         )}
 

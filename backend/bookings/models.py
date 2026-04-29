@@ -705,8 +705,9 @@ class BroadcastRequestAddOn(models.Model):
 
 class BroadcastOffer(models.Model):
     """
-    Tracks mechanics attempting to accept broadcast requests.
-    Only used for broadcast flow - prevents race conditions.
+    Tracks mechanics or shops submitting an offer on a broadcast.
+    The client picks one pending offer; tokens are charged when the offer wins.
+    Exactly one of mechanic or shop is set.
     """
     class Status(models.TextChoices):
         PENDING = "pending"           # Offer submitted, waiting
@@ -721,7 +722,16 @@ class BroadcastOffer(models.Model):
     mechanic = models.ForeignKey(
         Mechanic, 
         on_delete=models.CASCADE, 
-        related_name='broadcast_offers'
+        related_name='broadcast_offers',
+        null=True,
+        blank=True,
+    )
+    shop = models.ForeignKey(
+        'shops.Shop',
+        on_delete=models.CASCADE,
+        related_name='broadcast_shop_offers',
+        null=True,
+        blank=True,
     )
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     
@@ -764,14 +774,34 @@ class BroadcastOffer(models.Model):
     class Meta:
         db_table = 'bookings_broadcastoffer'
         ordering = ['created_at']  # First-come-first-served
-        unique_together = [['broadcast_request', 'mechanic']]  # One offer per mechanic per broadcast
         indexes = [
             models.Index(fields=['broadcast_request', 'status']),
             models.Index(fields=['mechanic', 'created_at']),
+            models.Index(fields=['shop', 'created_at']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['broadcast_request', 'mechanic'],
+                condition=models.Q(mechanic__isnull=False),
+                name='uniq_broadcastoffer_broadcast_mechanic',
+            ),
+            models.UniqueConstraint(
+                fields=['broadcast_request', 'shop'],
+                condition=models.Q(shop__isnull=False),
+                name='uniq_broadcastoffer_broadcast_shop',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(mechanic__isnull=False, shop__isnull=True)
+                    | models.Q(mechanic__isnull=True, shop__isnull=False)
+                ),
+                name='broadcastoffer_mechanic_xor_shop',
+            ),
         ]
 
     def __str__(self):
-        return f"Offer by Mechanic {self.mechanic_id} for Broadcast {self.broadcast_request_id} - {self.status}"
+        who = f"mechanic={self.mechanic_id}" if self.mechanic_id else f"shop={self.shop_id}"
+        return f"Offer ({who}) for Broadcast {self.broadcast_request_id} - {self.status}"
 
 
 class RequestAssignment(models.Model):

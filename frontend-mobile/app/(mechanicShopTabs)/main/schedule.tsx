@@ -30,6 +30,7 @@ interface BookingsResponse {
 
 const STATUS_COLORS: Record<string, string> = {
   pending: '#8E8E93',
+  booked: '#00B8D9',
   accepted: '#00B8D9',
   on_the_way: '#007AFF',
   at_location: '#5AC8FA',
@@ -44,8 +45,10 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const getStatusLabel = (status: string) => {
+  const key = String(status || '').toLowerCase();
   const map: Record<string, string> = {
     pending: 'Pending',
+    booked: 'Booked',
     accepted: 'Booked',
     on_the_way: 'On the Way',
     at_location: 'At Location',
@@ -58,7 +61,7 @@ const getStatusLabel = (status: string) => {
     reworked: 'Reworked',
     disputed: 'Disputed',
   };
-  return map[status] || status;
+  return map[key] || status;
 };
 
 const formatDayKey = (date: Date) => {
@@ -315,7 +318,10 @@ export default function MechanicShopScheduleScreen() {
                     <View
                       style={[
                         styles.statusBadge,
-                        { backgroundColor: STATUS_COLORS[booking.status] || '#8E8E93' },
+                        {
+                          backgroundColor:
+                            STATUS_COLORS[String(booking.status || '').toLowerCase()] || '#8E8E93',
+                        },
                       ]}
                     >
                       <ThemedText style={styles.statusText}>{getStatusLabel(booking.status)}</ThemedText>

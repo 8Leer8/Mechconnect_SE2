@@ -29,6 +29,7 @@ from ...models import (
     ReworkBooking,
     DisputeBooking,
     BroadcastRequest,
+    BroadcastOffer,
     Quotation,
     QuotationItem,
     Receipt,
@@ -51,7 +52,12 @@ from services.pricing_utils import (
     get_required_tokens,
 )
 from ..client.client_booking_views import _serialize_single_booking, _serialize_bookings
-from ...ws_utils import notify_booking_parties, notify_user, post_quotation_chat_message
+from ...ws_utils import (
+    notify_booking_parties,
+    notify_user,
+    post_quotation_chat_message,
+    upsert_request_thread_notification,
+)
 from ..mechanic.payment_views import _sync_booking_payable_total
 
 EMERGENCY_REQUEST_TTL_MINUTES = 5
@@ -576,7 +582,10 @@ def _calculate_broadcast_total(broadcast_request, distance_km, traffic_level):
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def shopowner_accept_broadcast_request(request, broadcast_id):
-    """Shop owner directly accepts a broadcast and creates an assignable shop booking."""
+    """
+    Shop owner submits a pending broadcast offer (same flow as mechanics).
+    The client must still pick a winner; no booking is created here and no tokens are charged yet.
+    """
     account, err = _get_shopowner_account(request)
     if err:
         return err
@@ -593,8 +602,8 @@ def shopowner_accept_broadcast_request(request, broadcast_id):
     distance_km = _to_float_or_none(request.data.get("distance_km"))
     eta_minutes = _to_int_or_none(request.data.get("estimated_eta_minutes"))
     traffic_level = _normalize_traffic_level(request.data.get("traffic_level"))
-
-    from django.db import transaction
+    mechanic_latitude = request.data.get("mechanic_latitude")
+    mechanic_longitude = request.data.get("mechanic_longitude")
 
     with transaction.atomic():
         try:
@@ -624,90 +633,117 @@ def shopowner_accept_broadcast_request(request, broadcast_id):
             return Response({"error": "Request already has a booking"}, status=status.HTTP_400_BAD_REQUEST)
 
         pricing = _calculate_broadcast_total(broadcast_request, distance_km, traffic_level)
-        required_tokens = pricing["required_tokens"]
+        total_amount = pricing["total_amount"]
+        convenience_fee = pricing["convenience_fee"]
 
-        wallet = account.wallet
-        if wallet.balance < required_tokens:
-            return Response(
-                {
-                    "error": "Not enough credits to accept this broadcast",
-                    "required_tokens": required_tokens,
-                    "current_tokens": int(wallet.balance),
+        offer, created = BroadcastOffer.objects.get_or_create(
+            broadcast_request=broadcast_request,
+            shop=shop,
+            defaults={
+                "status": BroadcastOffer.Status.PENDING,
+                "responded_at": timezone.now(),
+                "mechanic_latitude": mechanic_latitude,
+                "mechanic_longitude": mechanic_longitude,
+                "distance_km": distance_km,
+                "estimated_price": total_amount,
+                "convenience_fee": convenience_fee,
+                "traffic_level": traffic_level,
+                "estimated_eta_minutes": eta_minutes,
+            },
+        )
+
+        if not created:
+            offer.status = BroadcastOffer.Status.PENDING
+            offer.responded_at = timezone.now()
+            offer.mechanic_latitude = mechanic_latitude
+            offer.mechanic_longitude = mechanic_longitude
+            offer.distance_km = distance_km
+            offer.estimated_price = total_amount
+            offer.convenience_fee = convenience_fee
+            offer.traffic_level = traffic_level
+            offer.estimated_eta_minutes = eta_minutes
+            offer.save()
+
+        shop_display = (shop.shop_name or "").strip() or "A shop"
+        client_offer_message = f"{shop_display} requested to accept your broadcast."
+
+        try:
+            upsert_request_thread_notification(
+                base_request.client.account_id,
+                base_request.id,
+                "Shop Offer Received",
+                client_offer_message,
+                payload={
+                    "action": "broadcast_offer_created",
+                    "broadcast_id": broadcast_request.id,
+                    "offer_id": offer.id,
+                    "request_id": base_request.id,
+                    "target_role": "client",
                 },
-                status=status.HTTP_403_FORBIDDEN,
             )
+            upsert_request_thread_notification(
+                account.id,
+                base_request.id,
+                "Offer Submitted",
+                "Waiting for the client to accept your offer.",
+                payload={
+                    "action": "broadcast_offer_pending",
+                    "broadcast_id": broadcast_request.id,
+                    "offer_id": offer.id,
+                    "request_id": base_request.id,
+                    "target_role": "shopowner",
+                },
+            )
+        except Exception:
+            logging.getLogger(__name__).exception("Failed to upsert shop broadcast-offer notifications")
 
-        now = timezone.now()
-        broadcast_request.status = BroadcastRequest.Status.ACCEPTED
-        broadcast_request.accepted_at = now
-        broadcast_request.save(update_fields=["status", "accepted_at"])
+        try:
+            from channels.layers import get_channel_layer
+            from asgiref.sync import async_to_sync
 
-        base_request.provider = account
-        base_request.shop = shop
-        base_request.save(update_fields=["provider", "shop"])
-
-        booking = Booking.objects.create(
-            request=base_request,
-            status=Booking.Status.BOOKED,
-            amount_fee=pricing["total_amount"],
-            booking_date=base_request.scheduled_time or timezone.now(),
-            distance_km=distance_km,
-            convenience_fee=pricing["convenience_fee"],
-            eta_minutes=eta_minutes,
-            traffic_surcharge=pricing["traffic_surcharge"],
-        )
-
-        wallet.balance -= required_tokens
-        wallet.save(update_fields=["balance"])
-        TokenTransaction.objects.create(
-            account=account,
-            tokens=-required_tokens,
-            reason="shop_broadcast_accept",
-            related_booking_id=booking.id,
-        )
-
-    try:
-        from channels.layers import get_channel_layer
-        from asgiref.sync import async_to_sync
-
-        channel_layer = get_channel_layer()
-        if channel_layer is not None:
-            async_to_sync(channel_layer.group_send)("broadcasts", {
-                "type": "booking_update",
-                "action": "broadcast_removed",
-                "broadcast_id": broadcast_request.id,
-                "booking_id": booking.id,
-                "message": "Broadcast accepted by shop",
-            })
-            async_to_sync(channel_layer.group_send)(f"user_{base_request.client.account_id}", {
-                "type": "booking_update",
-                "action": "broadcast_finalized",
-                "broadcast_id": broadcast_request.id,
-                "booking_id": booking.id,
-                "status": booking.status,
-                "message": "A shop accepted your broadcast request",
-            })
-    except Exception:
-        pass
-
-    notify_user(
-        base_request.client.account_id,
-        booking.id,
-        booking.status,
-        "A shop accepted your broadcast request",
-    )
+            channel_layer = get_channel_layer()
+            if channel_layer is not None:
+                async_to_sync(channel_layer.group_send)(
+                    f"user_{base_request.client.account_id}",
+                    {
+                        "type": "booking_update",
+                        "action": "broadcast_offer_created",
+                        "broadcast_id": broadcast_request.id,
+                        "request_id": base_request.id,
+                        "offer_id": offer.id,
+                        "shop": {"id": shop.id, "name": shop_display},
+                        "status": offer.status,
+                        "message": "A shop requested to accept your broadcast",
+                    },
+                )
+                async_to_sync(channel_layer.group_send)(
+                    f"user_{account.id}",
+                    {
+                        "type": "booking_update",
+                        "action": "broadcast_offer_pending",
+                        "broadcast_id": broadcast_request.id,
+                        "offer_id": offer.id,
+                        "status": offer.status,
+                        "message": "Waiting for client to accept",
+                    },
+                )
+        except Exception:
+            pass
 
     return Response(
         {
-            "message": "Broadcast accepted and booking created",
+            "message": "Broadcast request sent to client successfully",
             "broadcast_id": broadcast_request.id,
-            "booking_id": booking.id,
-            "status": booking.status,
-            "tokens_deducted": required_tokens,
-            "tokens_remaining": int(wallet.balance),
-            "booking": _serialize_single_booking(booking),
+            "offer_id": offer.id,
+            "offer_status": offer.status,
+            "amount_fee": float(total_amount) if total_amount is not None else None,
+            "distance_km": distance_km,
+            "convenience_fee": float(convenience_fee) if convenience_fee is not None else None,
+            "traffic_level": traffic_level,
+            "estimated_eta_minutes": eta_minutes,
+            "tokens_remaining": int(account.wallet.balance),
         },
-        status=status.HTTP_201_CREATED,
+        status=status.HTTP_200_OK,
     )
 
 

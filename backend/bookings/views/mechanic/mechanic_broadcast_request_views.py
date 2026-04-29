@@ -305,6 +305,7 @@ def accept_broadcast_request(request, broadcast_id):
                         'type': 'booking_update',
                         'action': 'broadcast_offer_created',
                         'broadcast_id': broadcast_request.id,
+                        'request_id': base_request.id,
                         'offer_id': offer.id,
                         'mechanic': {
                             'id': mechanic.id,
@@ -351,18 +352,27 @@ def accept_broadcast_request(request, broadcast_id):
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def withdraw_broadcast_offer(request, broadcast_id):
-    """Withdraw a mechanic's pending broadcast offer so it disappears from client waiting lists."""
+    """Withdraw a pending broadcast offer (mechanic or shop owner)."""
     account_id = request.session.get('account_id')
 
     if not account_id:
         return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
 
     try:
-        account = Account.objects.get(id=account_id)
-        if not hasattr(account, 'mechanic'):
-            return Response({'error': 'Only mechanics can withdraw offers'}, status=status.HTTP_403_FORBIDDEN)
+        account = Account.objects.select_related('mechanic', 'shopowner__shop').get(id=account_id)
+        mechanic = getattr(account, 'mechanic', None)
+        shop = None
+        if hasattr(account, 'shopowner'):
+            try:
+                shop = account.shopowner.shop
+            except Exception:
+                shop = None
 
-        mechanic = account.mechanic
+        if mechanic is None and shop is None:
+            return Response(
+                {'error': 'Only mechanics or shop owners can withdraw offers'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         with transaction.atomic():
             try:
@@ -370,11 +380,18 @@ def withdraw_broadcast_offer(request, broadcast_id):
             except BroadcastRequest.DoesNotExist:
                 return Response({'error': 'Broadcast request not found'}, status=status.HTTP_404_NOT_FOUND)
 
-            offer = BroadcastOffer.objects.select_for_update().filter(
-                broadcast_request=broadcast_request,
-                mechanic=mechanic,
-                status=BroadcastOffer.Status.PENDING,
-            ).first()
+            if mechanic is not None:
+                offer = BroadcastOffer.objects.select_for_update().filter(
+                    broadcast_request=broadcast_request,
+                    mechanic=mechanic,
+                    status=BroadcastOffer.Status.PENDING,
+                ).first()
+            else:
+                offer = BroadcastOffer.objects.select_for_update().filter(
+                    broadcast_request=broadcast_request,
+                    shop=shop,
+                    status=BroadcastOffer.Status.PENDING,
+                ).first()
 
             if not offer:
                 return Response({
@@ -385,6 +402,10 @@ def withdraw_broadcast_offer(request, broadcast_id):
             offer.responded_at = timezone.now()
             offer.save(update_fields=['status', 'responded_at'])
 
+            withdraw_msg = (
+                'Mechanic withdrew their request' if mechanic is not None else 'Shop withdrew their request'
+            )
+
             try:
                 channel_layer = get_channel_layer()
                 if channel_layer is not None:
@@ -394,7 +415,7 @@ def withdraw_broadcast_offer(request, broadcast_id):
                         'broadcast_id': broadcast_request.id,
                         'offer_id': offer.id,
                         'status': BroadcastOffer.Status.REJECTED,
-                        'message': 'Mechanic withdrew their request',
+                        'message': withdraw_msg,
                     })
                     async_to_sync(channel_layer.group_send)(f'user_{account.id}', {
                         'type': 'booking_update',

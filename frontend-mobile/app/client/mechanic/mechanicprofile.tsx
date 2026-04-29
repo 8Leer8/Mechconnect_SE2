@@ -269,12 +269,11 @@ export default function MechanicProfileScreen() {
       if (Number.isFinite(bookingId) && bookingId > 0) {
         const bcid = Number(broadcastId) || 0;
         const key = `client-finalize-${bcid}-${bookingId}`;
-        if (consumeClientBroadcastFinalizeNavKey(key)) {
-          router.replace({
-            pathname: '/client/booking/booking_details',
-            params: { bookingId: String(bookingId) },
-          });
-        }
+        consumeClientBroadcastFinalizeNavKey(key);
+        router.replace({
+          pathname: '/client/booking/booking_details',
+          params: { bookingId: String(bookingId) },
+        });
         return;
       }
 

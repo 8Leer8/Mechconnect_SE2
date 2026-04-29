@@ -90,8 +90,10 @@ export default function MechanicShopDashboardScreen() {
   const { lastMessage } = useWebSocketContext();
 
   const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'accepted': return '#00B8D9';
+    switch (String(status || '').toLowerCase()) {
+      case 'booked':
+      case 'accepted':
+        return '#00B8D9';
       case 'on_the_way': return '#007AFF';
       case 'active': return '#FF8C00';
       case 'paused': return '#8E8E93';
@@ -103,7 +105,9 @@ export default function MechanicShopDashboardScreen() {
   };
 
   const getStatusLabel = (status: string) => {
+    const key = String(status || '').toLowerCase();
     const map: Record<string, string> = {
+      booked: 'Booked',
       accepted: 'Booked',
       on_the_way: 'On the Way',
       active: 'On Going',
@@ -114,7 +118,7 @@ export default function MechanicShopDashboardScreen() {
       reworked: 'Reworked',
       disputed: 'Disputed',
     };
-    return map[status] || status;
+    return map[key] || status;
   };
 
   const dateKey = (dateString: string) => {

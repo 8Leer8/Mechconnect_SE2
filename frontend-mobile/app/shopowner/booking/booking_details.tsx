@@ -19,6 +19,7 @@ import { useNotification } from '@/hooks/useNotification';
 import { coerceBarangayForDisplay } from '@/lib/locationAddress';
 import { sortQuotationItemsForDisplay } from '@/lib/quotationOrdering';
 import { runDedupedRequest } from '@/lib/requestDedupe';
+import { parseResponseJson } from '@/lib/safeJsonFetch';
 
 export const screenOptions = { headerShown: false } as const;
 
@@ -173,7 +174,7 @@ export default function ShopOwnerBookingDetailScreen() {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
       });
-      const data = await res.json() as { booking?: BookingDetail; error?: string };
+      const data = await parseResponseJson<{ booking?: BookingDetail; error?: string }>(res);
       if (!res.ok) throw new Error(data?.error || 'Failed to fetch booking details');
       const bookingData = data.booking || (data as unknown as BookingDetail);
       setBooking(bookingData);
@@ -233,12 +234,20 @@ export default function ShopOwnerBookingDetailScreen() {
       ]);
 
       if (mechRes.ok) {
-        const md = (await mechRes.json()) as { mechanics?: ShopMechanic[] };
-        setShopMechanics(md.mechanics || []);
+        try {
+          const md = await parseResponseJson<{ mechanics?: ShopMechanic[] }>(mechRes);
+          setShopMechanics(md.mechanics || []);
+        } catch {
+          setShopMechanics([]);
+        }
       }
       if (assignRes.ok) {
-        const ad = (await assignRes.json()) as Assignment[];
-        setAssignments(Array.isArray(ad) ? ad : []);
+        try {
+          const ad = await parseResponseJson<Assignment[] | unknown>(assignRes);
+          setAssignments(Array.isArray(ad) ? ad : []);
+        } catch {
+          setAssignments([]);
+        }
       }
       assignmentFetchCacheRef.current = { requestId, fetchedAt: Date.now() };
     } catch {
@@ -265,7 +274,12 @@ export default function ShopOwnerBookingDetailScreen() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action }),
       });
-      const data = await res.json().catch(() => ({}));
+      let data: Record<string, unknown> = {};
+      try {
+        data = (await parseResponseJson<Record<string, unknown>>(res)) as Record<string, unknown>;
+      } catch {
+        data = {};
+      }
       if (!res.ok) throw new Error((data as any)?.error || 'Failed to respond to reschedule.');
       showNotification({
         type: 'success',
@@ -313,7 +327,7 @@ export default function ShopOwnerBookingDetailScreen() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mechanic_id: accountId, role }),
       });
-      const data = (await res.json()) as { error?: string };
+      const data = await parseResponseJson<{ error?: string }>(res);
       if (!res.ok) {
         showNotification({ type: 'error', message: data?.error || 'Failed to assign mechanic.' });
         return;
@@ -342,7 +356,7 @@ export default function ShopOwnerBookingDetailScreen() {
         `${API_URL}/bookings/requests/${booking.request.id}/assignments/${assignmentId}/remove/`,
         { method: 'DELETE', credentials: 'include', headers: { 'Content-Type': 'application/json' } }
       );
-      const data = (await res.json()) as { error?: string };
+      const data = await parseResponseJson<{ error?: string }>(res);
       if (!res.ok) {
         showNotification({ type: 'error', message: data?.error || 'Failed to remove assignment.' });
         return;
@@ -379,7 +393,7 @@ export default function ShopOwnerBookingDetailScreen() {
           body: JSON.stringify({ role }),
         }
       );
-      const data = (await res.json()) as { error?: string };
+      const data = await parseResponseJson<{ error?: string }>(res);
       if (!res.ok) {
         showNotification({ type: 'error', message: data?.error || 'Failed to update role.' });
         return;
@@ -1058,7 +1072,7 @@ export default function ShopOwnerBookingDetailScreen() {
         body: JSON.stringify({}),
       });
       if (!convRes.ok) return;
-      const conv = await convRes.json();
+      const conv = await parseResponseJson<Record<string, unknown>>(convRes);
       const convId = Number(conv?.id || 0);
       if (!Number.isFinite(convId) || convId <= 0) return;
 
@@ -1068,7 +1082,7 @@ export default function ShopOwnerBookingDetailScreen() {
         headers: { 'Content-Type': 'application/json' },
       });
       if (!msgRes.ok) return;
-      const rows = await msgRes.json();
+      const rows = await parseResponseJson<unknown>(msgRes);
       if (!Array.isArray(rows) || !rows.length) return;
 
       const parsePayload = (raw: any): any | null => {
@@ -1169,7 +1183,7 @@ export default function ShopOwnerBookingDetailScreen() {
         setQuotation(null);
         return;
       }
-      const data = await res.json();
+      const data = await parseResponseJson<unknown>(res);
       setQuotation(data);
     } catch (e) {
       setQuotation(null);

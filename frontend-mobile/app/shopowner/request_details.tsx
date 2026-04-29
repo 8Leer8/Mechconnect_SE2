@@ -54,11 +54,14 @@ function getRequestKind(req: RequestDetailPayload | null): string {
 
 function getRequestStatusLabel(status: string | undefined, kind: string): string {
   const s = (status || '').toLowerCase();
+  const k = (kind || '').toLowerCase();
   if (s === 'pending') return 'Pending';
   if (s === 'searching') return 'Searching';
   if (s === 'quoted') return 'Quoted';
+  // Broadcast "accepted" = client chose a mechanic / booking created (same idea as booked).
+  if (s === 'accepted' && k === 'broadcast') return 'Booked';
   if (s === 'accepted') return 'Accepted';
-  if (!s && kind === 'broadcast') return 'Searching';
+  if (!s && k === 'broadcast') return 'Searching';
   return status ? String(status).charAt(0).toUpperCase() + String(status).slice(1) : 'Pending';
 }
 

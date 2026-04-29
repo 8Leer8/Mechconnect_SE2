@@ -12,7 +12,13 @@ import json
 import logging
 
 from ...models import (
-    Request, BroadcastRequest, BroadcastOffer, Booking, ServiceLocation, BroadcastRequestAddOn
+    Request,
+    BroadcastRequest,
+    BroadcastOffer,
+    Booking,
+    ActiveBooking,
+    ServiceLocation,
+    BroadcastRequestAddOn,
 )
 from ...serializers import BroadcastRequestSerializer, BroadcastOfferSerializer
 from users.models import Account, TokenTransaction
@@ -69,21 +75,50 @@ def _calculate_total_amount(broadcast_request, distance_km, traffic_level):
 
 
 def _resolve_broadcast_request(broadcast_id, account):
-    """Resolve a broadcast request by broadcast id or by parent request id."""
-    try:
-        return BroadcastRequest.objects.select_related('request', 'request__service_location').prefetch_related('services', 'add_ons__service_add_on').get(
-            id=broadcast_id,
-            request__client=account.client,
-        )
-    except BroadcastRequest.DoesNotExist:
-        pass
+    """
+    Resolve a BroadcastRequest for this client.
 
-    req = Request.objects.select_related('service_location', 'client').filter(
-        id=broadcast_id,
-        client=account.client,
-        request_type='broadcast',
-    ).first()
-    if req and hasattr(req, 'broadcast_request'):
+    The mobile app passes either:
+    - Request.id (client list uses this as "Broadcast #<id>"), or
+    - BroadcastRequest.id (notifications / map often use this).
+
+    Try both so offers/select-mechanic always find the same row.
+    """
+    if not hasattr(account, 'client'):
+        raise BroadcastRequest.DoesNotExist()
+
+    try:
+        bid = int(broadcast_id)
+    except (TypeError, ValueError):
+        raise BroadcastRequest.DoesNotExist()
+
+    client = account.client
+    qs = (
+        BroadcastRequest.objects.select_related('request', 'request__service_location', 'request__client')
+        .prefetch_related('services', 'add_ons__service_add_on')
+    )
+
+    # 1) Parent Request PK (matches client list: id = Request.id)
+    br = qs.filter(request_id=bid, request__client=client).first()
+    if br is not None:
+        return br
+
+    # 2) BroadcastRequest PK (matches WS payload broadcast_id)
+    br = qs.filter(id=bid, request__client=client).first()
+    if br is not None:
+        return br
+
+    # 3) Legacy: Request row by id (same as 1 if OneToOne is intact; kept for odd data)
+    req = (
+        Request.objects.select_related('service_location', 'client')
+        .filter(
+            id=bid,
+            client=client,
+            request_type=Request.Type.BROADCAST,
+        )
+        .first()
+    )
+    if req is not None and hasattr(req, 'broadcast_request'):
         return req.broadcast_request
 
     raise BroadcastRequest.DoesNotExist()
@@ -346,7 +381,7 @@ def get_broadcast_offers(request, broadcast_id):
 
         offers = BroadcastOffer.objects.filter(
             broadcast_request=broadcast_request,
-        ).select_related('mechanic__account').order_by('created_at', 'id')
+        ).select_related('mechanic__account', 'shop__shop_owner__account').order_by('created_at', 'id')
 
         return Response({
             'broadcast': BroadcastRequestSerializer(broadcast_request, context={'request': request}).data,
@@ -384,7 +419,12 @@ def select_mechanic(request, broadcast_id):
             return Response({'error': 'Only clients can select mechanics'}, status=status.HTTP_403_FORBIDDEN)
 
         broadcast_request = _resolve_broadcast_request(broadcast_id, account)
-        broadcast_request = BroadcastRequest.objects.select_for_update().select_related('request', 'request__client').prefetch_related('services', 'add_ons__service_add_on').get(id=broadcast_request.id)
+        broadcast_request = (
+            BroadcastRequest.objects.select_for_update(of=('self',))
+            .select_related('request', 'request__client')
+            .prefetch_related('services', 'add_ons__service_add_on')
+            .get(id=broadcast_request.id)
+        )
 
         if not broadcast_request.can_accept_offers():
             return Response({
@@ -392,13 +432,28 @@ def select_mechanic(request, broadcast_id):
                 'reason': 'expired' if broadcast_request.is_expired() else 'already_accepted',
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        winning_offer = BroadcastOffer.objects.select_for_update().select_related('mechanic__account').get(
+        # Lock only offer rows. select_related on nullable mechanic/shop FKs uses outer joins;
+        # PostgreSQL rejects FOR UPDATE on the nullable side unless we use of=('self',).
+        winning_offer = BroadcastOffer.objects.select_for_update(of=('self',)).select_related(
+            'mechanic__account',
+            'mechanic__account__wallet',
+            'shop__shop_owner__account',
+            'shop__shop_owner__account__wallet',
+        ).get(
             id=offer_id,
             broadcast_request=broadcast_request,
         )
 
         if winning_offer.status != BroadcastOffer.Status.PENDING:
             return Response({'error': 'This offer can no longer be selected'}, status=status.HTTP_400_BAD_REQUEST)
+
+        has_mechanic = bool(winning_offer.mechanic_id)
+        has_shop = bool(winning_offer.shop_id)
+        if has_mechanic == has_shop:
+            return Response(
+                {'error': 'This offer is invalid (must be from a mechanic or a shop).'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         distance_km = float(winning_offer.distance_km) if winning_offer.distance_km is not None else None
         traffic_level = winning_offer.traffic_level or 'low'
@@ -412,21 +467,32 @@ def select_mechanic(request, broadcast_id):
             convenience_fee = float(pricing['convenience_fee'])
 
         required_tokens = get_required_tokens(total_amount)
-        mechanic = winning_offer.mechanic
 
-        wallet_balance = mechanic.account.wallet.balance
+        if has_mechanic:
+            winner_account = winning_offer.mechanic.account
+        else:
+            winner_account = winning_offer.shop.shop_owner.account
+
+        wallet_balance = winner_account.wallet.balance
         if wallet_balance < required_tokens:
+            label = 'Selected mechanic' if has_mechanic else 'Selected shop'
             return Response({
-                'error': 'Selected mechanic no longer has enough tokens to complete this booking',
+                'error': f'{label} no longer has enough tokens to complete this booking',
                 'required_tokens': required_tokens,
                 'current_tokens': int(wallet_balance),
             }, status=status.HTTP_403_FORBIDDEN)
 
         other_offers = list(
-            BroadcastOffer.objects.select_for_update().select_related('mechanic__account').filter(
+            BroadcastOffer.objects.select_for_update(of=('self',))
+            .select_related(
+                'mechanic__account',
+                'shop__shop_owner__account',
+            )
+            .filter(
                 broadcast_request=broadcast_request,
                 status=BroadcastOffer.Status.PENDING,
-            ).exclude(id=winning_offer.id)
+            )
+            .exclude(id=winning_offer.id)
         )
 
         now = timezone.now()
@@ -445,8 +511,13 @@ def select_mechanic(request, broadcast_id):
         broadcast_request.save(update_fields=['status', 'accepted_at'])
 
         base_request = broadcast_request.request
-        base_request.provider = mechanic.account
-        base_request.save(update_fields=['provider'])
+        if has_mechanic:
+            base_request.provider = winner_account
+            base_request.save(update_fields=['provider'])
+        else:
+            base_request.provider = winner_account
+            base_request.shop = winning_offer.shop
+            base_request.save(update_fields=['provider', 'shop'])
 
         booking = Booking.objects.create(
             request=base_request,
@@ -458,33 +529,24 @@ def select_mechanic(request, broadcast_id):
             eta_minutes=eta_minutes,
             traffic_surcharge=_calculate_total_amount(broadcast_request, distance_km, traffic_level)['traffic_surcharge'],
         )
+        ActiveBooking.objects.get_or_create(booking=booking)
 
-        # Deduct from unified wallet
-        wallet = mechanic.account.wallet
+        # Deduct from unified wallet (mechanic or shop owner, depending on who won)
+        wallet = winner_account.wallet
         wallet.balance -= required_tokens
         wallet.save(update_fields=['balance'])
 
-        # Log the deduction
         TokenTransaction.objects.create(
-            account=mechanic.account,
-            transaction_type=TokenTransaction.Type.OFFER_ACCEPTED,
-            tokens=-required_tokens,
-            description=f'Tokens deducted for accepting broadcast offer {winning_offer.id}',
-            metadata={
-                'broadcast_request_id': broadcast_request.id,
-                'booking_id': booking.id,
-                'offer_id': winning_offer.id,
-            }
-        )
-        TokenTransaction.objects.create(
-            account=mechanic.account,
+            account=winner_account,
             tokens=-required_tokens,
             reason='booking_tax',
             related_booking_id=booking.id,
         )
 
+        winner_account_id = winner_account.id
+
         # Notify the winner and client that the broadcast has been finalized.
-        _send_user_event(mechanic.account_id, {
+        _send_user_event(winner_account_id, {
             'type': 'booking_update',
             'action': 'booking_finalized',
             'broadcast_id': broadcast_request.id,
@@ -493,7 +555,7 @@ def select_mechanic(request, broadcast_id):
             'status': booking.status,
             'message': 'Client accepted your request.',
         })
-        _send_user_event(mechanic.account_id, {
+        _send_user_event(winner_account_id, {
             'type': 'notification_update',
             'action': 'booking_finalized',
             'broadcast_id': broadcast_request.id,
@@ -506,7 +568,7 @@ def select_mechanic(request, broadcast_id):
         # Guaranteed winner notification row for bell/list, even if helper upsert fails later.
         try:
             upsert_notification(
-                receiver_id=mechanic.account_id,
+                receiver_id=winner_account_id,
                 correlation_key=f'request:{booking.request_id}',
                 title='Client accepted your request',
                 message='Client accepted your request.',
@@ -517,12 +579,12 @@ def select_mechanic(request, broadcast_id):
                     'offer_id': winning_offer.id,
                     'status': booking.status,
                     'action': 'booking_finalized',
-                    'target_role': 'mechanic',
+                    'target_role': 'mechanic' if has_mechanic else 'shopowner',
                 },
                 mark_unread=True,
             )
         except Exception:
-            logger.exception('Failed to upsert direct mechanic winner notification')
+            logger.exception('Failed to upsert broadcast winner notification')
 
         _send_user_event(base_request.client.account_id, {
             'type': 'booking_update',
@@ -534,16 +596,25 @@ def select_mechanic(request, broadcast_id):
             'message': 'You selected a mechanic for your broadcast request',
         })
 
+        def _loser_account_id(offer):
+            if offer.mechanic_id:
+                return offer.mechanic.account_id
+            if offer.shop_id:
+                return offer.shop.shop_owner.account_id
+            return None
+
         for offer in other_offers:
-            _send_user_event(offer.mechanic.account_id, {
-                'type': 'booking_update',
-                'action': 'offer_rejected',
-                'broadcast_id': broadcast_request.id,
-                'offer_id': offer.id,
-                'booking_id': booking.id,
-                'status': BroadcastOffer.Status.REJECTED,
-                'message': 'Client accepted a different mechanic',
-            })
+            loser_id = _loser_account_id(offer)
+            if loser_id:
+                _send_user_event(loser_id, {
+                    'type': 'booking_update',
+                    'action': 'offer_rejected',
+                    'broadcast_id': broadcast_request.id,
+                    'offer_id': offer.id,
+                    'booking_id': booking.id,
+                    'status': BroadcastOffer.Status.REJECTED,
+                    'message': 'Client accepted a different mechanic',
+                })
 
         channel_layer = get_channel_layer()
         if channel_layer is not None:
@@ -557,7 +628,7 @@ def select_mechanic(request, broadcast_id):
 
         try:
             upsert_booking_party_notification(
-                mechanic.account_id,
+                winner_account_id,
                 booking,
                 'Client accepted your request',
                 'Client accepted your request.',
@@ -571,13 +642,15 @@ def select_mechanic(request, broadcast_id):
                 action='broadcast_finalized',
             )
             for offer in other_offers:
-                upsert_booking_party_notification(
-                    offer.mechanic.account_id,
-                    booking,
-                    'Offer not selected',
-                    'The client chose a different mechanic.',
-                    action='offer_rejected',
-                )
+                lid = _loser_account_id(offer)
+                if lid:
+                    upsert_booking_party_notification(
+                        lid,
+                        booking,
+                        'Offer not selected',
+                        'The client chose a different mechanic.',
+                        action='offer_rejected',
+                    )
         except Exception:
             logger.exception('Failed to upsert notifications for broadcast finalize')
 

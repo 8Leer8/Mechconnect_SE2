@@ -108,9 +108,11 @@ export default function NotificationBell({ iconColor = '#FF8C00' }: Notification
     const broadcastId = Number(payload?.broadcast_id ?? 0) || null;
 
     if (broadcastId && payload?.target_role === 'client' && action === 'broadcast_offer_created') {
+      const requestId = Number(payload?.request_id ?? payload?.requestId ?? 0) || null;
+      const idForScreen = requestId || broadcastId;
       router.push({
         pathname: '/client/request/broadcast/broadcastdetail',
-        params: { id: String(broadcastId) },
+        params: { id: String(idForScreen) },
       } as never);
       return;
     }
