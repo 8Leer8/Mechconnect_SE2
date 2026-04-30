@@ -722,7 +722,7 @@ class BroadcastOfferSerializer(serializers.ModelSerializer):
 from . import models as booking_models
 
 
-def _quotation_line_shape(raw, existing_item=None):
+def _quotation_line_shape(raw, existing_item=None, booking=None):
     """Pick line_kind, source, and quantity for a quotation row (service vs item)."""
     QI = booking_models.QuotationItem
     lk = raw.get('line_kind')
@@ -739,6 +739,7 @@ def _quotation_line_shape(raw, existing_item=None):
         src = getattr(existing_item, 'source', None)
     if src not in allowed_src:
         src = QI.ItemSource.ON_HAND
+    src = booking_models.coerce_quotation_item_source_for_booking(booking, src)
     qty = raw.get('quantity')
     if qty is None and existing_item is not None:
         qty = existing_item.quantity
@@ -1019,7 +1020,7 @@ class QuotationSerializer(serializers.Serializer):
                     'source': it.get('source', qitem.source),
                     'quantity': it.get('quantity', qitem.quantity),
                 }
-                lk, src, qty = _quotation_line_shape(merge_for_shape, qitem)
+                lk, src, qty = _quotation_line_shape(merge_for_shape, qitem, booking=booking)
                 qitem.line_kind = lk
                 qitem.source = src
                 qitem.quantity = qty
@@ -1034,7 +1035,7 @@ class QuotationSerializer(serializers.Serializer):
             else:
                 # create new item (defaults to pending)
                 service_id = it.get('service') if it.get('service') else None
-                lk, src, qty = _quotation_line_shape(it, None)
+                lk, src, qty = _quotation_line_shape(it, None, booking=booking)
                 is_booked_service = (
                     lk == QuotationItem.LineKind.SERVICE
                     and service_id
@@ -1138,7 +1139,7 @@ class QuotationSerializer(serializers.Serializer):
                     'source': raw.get('source', qitem.source),
                     'quantity': raw.get('quantity', qitem.quantity),
                 }
-                lk, src, qty = _quotation_line_shape(shape_merge, qitem)
+                lk, src, qty = _quotation_line_shape(shape_merge, qitem, booking=instance.booking)
                 qitem.line_kind = lk
                 qitem.source = src
                 qitem.quantity = qty
@@ -1195,7 +1196,7 @@ class QuotationSerializer(serializers.Serializer):
                 incoming_ids.add(item_id)
             else:
                 service_id = raw.get('service') if raw.get('service') else None
-                lk, src, qty = _quotation_line_shape(raw, None)
+                lk, src, qty = _quotation_line_shape(raw, None, booking=instance.booking)
                 is_booked_service = (
                     lk == QuotationItem.LineKind.SERVICE
                     and service_id

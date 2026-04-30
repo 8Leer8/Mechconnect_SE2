@@ -29,14 +29,17 @@ export const screenOptions = { headerShown: false } as const;
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
 const QUOTATION_ITEM_SOURCE_LABELS: Record<string, string> = {
-  on_hand: 'On-hand (stock)',
+  on_hand: 'Mechanic supplied (from stock)',
+  shop_supplied: 'Shop supplied (from stock)',
   to_be_purchased: 'To be purchased',
   already_purchased: 'Already purchased',
-  mechanic_selling: 'Mechanic selling / owned',
 };
 
-const quotationItemSourceLabel = (v: unknown) =>
-  QUOTATION_ITEM_SOURCE_LABELS[String(v || '')] || (v ? String(v) : '—');
+const quotationItemSourceLabel = (v: unknown) => {
+  const s = String(v || '');
+  if (s === 'mechanic_selling') return QUOTATION_ITEM_SOURCE_LABELS.on_hand;
+  return QUOTATION_ITEM_SOURCE_LABELS[s] || (v ? String(v) : '—');
+};
 
 interface BookingDetail {
   id: number;
@@ -114,6 +117,14 @@ interface BookingDetail {
     mechanic_count: number;
     per_mechanic_amount: number;
   };
+  cash_remittance?: {
+    id: number;
+    amount: number;
+    status: string;
+    reminders_count: number;
+    last_reminded_at?: string | null;
+    received_at?: string | null;
+  } | null;
   payment_summary?: {
     payment_status?: string;
     total_amount?: number;
@@ -987,6 +998,26 @@ export default function ShopOwnerBookingDetailScreen() {
         <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
           <ThemedText style={{ color: '#A0A0A0' }}>Shop owner receives ({paymentSplit.shop_owner_percentage.toFixed(0)}%)</ThemedText>
           <ThemedText style={{ color: '#FF8C00', fontWeight: '800' }}>₱{Number(paymentSplit.shop_owner_amount || 0).toFixed(2)}</ThemedText>
+        </View>
+      </View>
+    );
+  };
+
+  const renderMoneyToRemit = () => {
+    const remitAmount = Number(booking?.cash_remittance?.amount ?? paymentSplit?.shop_owner_amount ?? 0);
+    if (!Number.isFinite(remitAmount) || remitAmount <= 0) return null;
+    const remitStatus = String(booking?.cash_remittance?.status || 'pending').toLowerCase();
+    const remitStatusLabel = remitStatus === 'received' ? 'Received by shop' : 'Pending remittance';
+    const remitColor = remitStatus === 'received' ? '#34C759' : '#FF8C00';
+    return (
+      <View style={{ marginTop: 12, padding: 12, borderRadius: 12, backgroundColor: '#151515', borderWidth: 1, borderColor: '#2A2C2E', gap: 8 }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+          <ThemedText style={{ color: '#ECEDEE', fontWeight: '800' }}>Money to remit</ThemedText>
+          <ThemedText style={{ color: remitColor, fontWeight: '700' }}>{remitStatusLabel}</ThemedText>
+        </View>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+          <ThemedText style={{ color: '#A0A0A0' }}>Shop cash share</ThemedText>
+          <ThemedText style={{ color: '#FF8C00', fontWeight: '800' }}>₱{remitAmount.toFixed(2)}</ThemedText>
         </View>
       </View>
     );
@@ -1932,6 +1963,7 @@ export default function ShopOwnerBookingDetailScreen() {
                         <ThemedText style={{ color: '#ECEDEE', fontWeight: '800' }}>₱{effectiveTotalFee.toFixed(2)}</ThemedText>
                       </View>
                       {renderPaymentSplit()}
+                      {renderMoneyToRemit()}
                     </>
                   );
                 })()}
@@ -2174,6 +2206,7 @@ export default function ShopOwnerBookingDetailScreen() {
                         </ThemedText>
                       </View>
                       {renderPaymentSplit()}
+                      {renderMoneyToRemit()}
                     </>
                   ) : (
                     <>
@@ -2184,6 +2217,7 @@ export default function ShopOwnerBookingDetailScreen() {
                         </ThemedText>
                       </View>
                       {renderPaymentSplit()}
+                      {renderMoneyToRemit()}
                     </>
                   )}
                 </View>

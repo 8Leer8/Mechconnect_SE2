@@ -612,6 +612,50 @@ class ShopBookingSplitPaymentTests(TestCase):
 		self.assertEqual(booking.receipt.platform_fee, Decimal('100.00'))
 		self.assertEqual(booking.receipt.mechanic_payout, Decimal('900.00'))
 
+	def test_shop_supplied_line_total_goes_to_shop_not_mechanics(self):
+		booking = self._shop_booking()
+		quotation = Quotation.objects.create(
+			booking=booking,
+			mechanic=self.lead_account,
+			status=Quotation.Status.ACCEPTED,
+			total_amount=Decimal('1000.00'),
+			is_final=True,
+		)
+		QuotationItem.objects.create(
+			quotation=quotation,
+			line_kind=QuotationItem.LineKind.SERVICE,
+			service=self.service,
+			description='Diagnostic',
+			quantity=1,
+			unit_price=Decimal('800.00'),
+			status=Quotation.Status.ACCEPTED,
+		)
+		QuotationItem.objects.create(
+			quotation=quotation,
+			line_kind=QuotationItem.LineKind.ITEM,
+			source=QuotationItem.ItemSource.SHOP_SUPPLIED,
+			description='Shop part',
+			quantity=1,
+			unit_price=Decimal('200.00'),
+			status=Quotation.Status.ACCEPTED,
+		)
+
+		self._login_as(self.client_account)
+		response = self.http_client.post(
+			'/api/bookings/payments/pay-with-credits/',
+			data=json.dumps({'booking_id': booking.id, 'amount': 1000}),
+			content_type='application/json',
+		)
+
+		self.assertEqual(response.status_code, 200)
+		booking.refresh_from_db()
+		self.assertEqual(Wallet.objects.get(account=self.client_account).balance, Decimal('4000.00'))
+		self.assertEqual(Wallet.objects.get(account=self.shop_owner_account).balance, Decimal('280.00'))
+		self.assertEqual(Wallet.objects.get(account=self.lead_account).balance, Decimal('360.00'))
+		self.assertEqual(Wallet.objects.get(account=self.assist_account).balance, Decimal('360.00'))
+		self.assertEqual(booking.receipt.platform_fee, Decimal('80.00'))
+		self.assertEqual(booking.receipt.mechanic_payout, Decimal('720.00'))
+
 	def test_backjob_credits_payment_only_splits_new_backjob_charges(self):
 		booking = self._shop_booking(amount=Decimal('1000.00'))
 		backjob = Backjob.objects.create(

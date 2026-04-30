@@ -139,24 +139,23 @@ def _build_payment_split_payload(booking, mechanic_count=None):
             'per_mechanic_amount': float(total),
         }
 
-    pricing = PricingConfiguration.get_config()
-    shop_percentage = Decimal(getattr(pricing, 'platform_commission_percentage', 0) or 0)
-    if shop_percentage < 0:
-        shop_percentage = Decimal('0')
-    if shop_percentage > 100:
-        shop_percentage = Decimal('100')
+    # Match mechanic payment_views: shop wallet = platform fee + shop-supplied parts; mechanics split the rest.
+    from bookings.views.mechanic import payment_views as mechanic_payment_views
 
-    shop_amount = _to_money(total * shop_percentage / Decimal('100'))
-    mechanic_amount = _to_money(total - shop_amount)
+    _, platform_fee, _, mechanic_payout = mechanic_payment_views._compute_payment_split(booking)
+    shop_parts = mechanic_payment_views._shop_supplied_payable_parts_total(booking)
+    shop_amount = _to_money(platform_fee + shop_parts)
+    mechanic_amount = _to_money(mechanic_payout)
     if mechanic_count is None:
         mechanic_count = RequestAssignment.objects.filter(request=booking.request).count()
     mechanic_count = mechanic_count or 1
     per_mechanic_amount = _to_money(mechanic_amount / Decimal(mechanic_count))
+    shop_pct = float(_to_money(shop_amount * Decimal('100') / total)) if total > 0 else 0.0
 
     return {
         'total_amount': float(total),
-        'mechanic_percentage': float(Decimal('100') - shop_percentage),
-        'shop_owner_percentage': float(shop_percentage),
+        'mechanic_percentage': float(Decimal('100') - Decimal(str(shop_pct))) if total > 0 else 0.0,
+        'shop_owner_percentage': shop_pct,
         'mechanic_amount': float(mechanic_amount),
         'shop_owner_amount': float(shop_amount),
         'mechanic_count': mechanic_count,
@@ -1391,6 +1390,15 @@ def _serialize_single_booking(booking, viewer_account=None, request=None):
         'location': location_payload,
     }
     booking_data['payment_split'] = _build_payment_split_payload(booking, mechanic_count=len(assignments))
+    cash_remittance = getattr(booking, 'cash_remittance', None)
+    booking_data['cash_remittance'] = {
+        'id': cash_remittance.id,
+        'amount': float(cash_remittance.amount or 0),
+        'status': cash_remittance.status,
+        'reminders_count': int(cash_remittance.reminders_count or 0),
+        'last_reminded_at': cash_remittance.last_reminded_at.isoformat() if cash_remittance.last_reminded_at else None,
+        'received_at': cash_remittance.received_at.isoformat() if cash_remittance.received_at else None,
+    } if cash_remittance is not None else None
     
     # Add active booking runtime details when ActiveBooking exists
     if hasattr(booking, 'activebooking'):

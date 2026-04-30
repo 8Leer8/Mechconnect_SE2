@@ -785,6 +785,15 @@ export default function ShopOwnerJobsScreen() {
   };
 
   const handleRemindRemittance = async (item: CashRemittance) => {
+    const ok = await confirm({
+      type: 'warning',
+      title: 'Send Remittance Reminder',
+      message: `Remind ${getPersonName(item.lead_mechanic)} to remit ${formatMoney(item.amount)} for booking #${item.booking_id}?`,
+      confirmText: 'Send Reminder',
+      cancelText: 'Cancel',
+    });
+    if (!ok) return;
+
     setRemittanceActionId(item.id);
     try {
       const res = await fetch(`${API_URL}/bookings/shopowner/cash-remittances/${item.id}/remind/`, {

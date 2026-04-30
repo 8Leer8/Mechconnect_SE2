@@ -50,7 +50,10 @@ export default function MechanicShopTabLayout() {
     const isClientCancelled =
       lastMessage.type === 'booking_update' &&
       actionText === 'client_cancelled';
-    if (!isBroadcastFinalize && !isOfferRejected && !isQuotationUpdate && !isMechanicAcceptedDirect && !isClientCancelled) return;
+    const isRemittanceReminder =
+      lastMessage.type === 'booking_update' &&
+      (actionText.includes('remit') || messageText.includes('remit') || messageText.includes('remittance'));
+    if (!isBroadcastFinalize && !isOfferRejected && !isQuotationUpdate && !isMechanicAcceptedDirect && !isClientCancelled && !isRemittanceReminder) return;
 
     const messageTimestamp = Number(lastMessage._timestamp || 0) || null;
     if (!messageTimestamp) return;
@@ -121,6 +124,18 @@ export default function MechanicShopTabLayout() {
         body: 'You can return to your map or bookings when you are ready.',
         bookingId,
         mode: 'rejected',
+      });
+      return;
+    }
+
+    if (isRemittanceReminder) {
+      lastModalBookingIdRef.current = safeBookingId;
+      setMechanicGlobalModal({
+        visible: true,
+        title: 'Remittance reminder',
+        body: String((lastMessage as any).message || 'Please remit the shop cash share for this booking.'),
+        bookingId: safeBookingId,
+        mode: 'info',
       });
       return;
     }
@@ -210,13 +225,6 @@ export default function MechanicShopTabLayout() {
           },
         }}>
         <Tabs.Screen
-          name="main/home"
-          options={{
-            title: 'Dashboard',
-            tabBarIcon: ({ color }) => <Feather size={20} name="layout" color={color} />,
-          }}
-        />
-        <Tabs.Screen
           name="main/jobs"
           options={{
             title: 'Jobs',
@@ -228,6 +236,20 @@ export default function MechanicShopTabLayout() {
           options={{
             title: 'Schedule',
             tabBarIcon: ({ color }) => <Feather size={20} name="calendar" color={color} />,
+          }}
+        />
+        <Tabs.Screen
+          name="main/home"
+          options={{
+            title: 'Dashboard',
+            tabBarIcon: ({ color }) => <Feather size={20} name="layout" color={color} />,
+          }}
+        />
+        <Tabs.Screen
+          name="main/remits"
+          options={{
+            title: 'Remits',
+            tabBarIcon: ({ color }) => <Feather size={20} name="credit-card" color={color} />,
           }}
         />
         <Tabs.Screen

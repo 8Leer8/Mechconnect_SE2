@@ -44,14 +44,17 @@ import { fetchPricingConfig as fetchPricingConfigCached } from '@/hooks/usePrici
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
 const QUOTATION_ITEM_SOURCE_LABELS: Record<string, string> = {
-  on_hand: 'On-hand (stock)',
+  on_hand: 'Mechanic supplied (from stock)',
+  shop_supplied: 'Shop supplied (from stock)',
   to_be_purchased: 'To be purchased',
   already_purchased: 'Already purchased',
-  mechanic_selling: 'Mechanic selling / owned',
 };
 
-const quotationItemSourceLabel = (v: unknown) =>
-  QUOTATION_ITEM_SOURCE_LABELS[String(v || '')] || (v ? String(v) : '—');
+const quotationItemSourceLabel = (v: unknown) => {
+  const s = String(v || '');
+  if (s === 'mechanic_selling') return QUOTATION_ITEM_SOURCE_LABELS.on_hand;
+  return QUOTATION_ITEM_SOURCE_LABELS[s] || (v ? String(v) : '—');
+};
 
 const parseApiErrorMessage = (payload: unknown, fallback: string) => {
   if (!payload || typeof payload !== 'object') return fallback;
@@ -277,6 +280,14 @@ interface BookingDetail {
     mechanic_count: number;
     per_mechanic_amount: number;
   };
+  cash_remittance?: {
+    id: number;
+    amount: number;
+    status: string;
+    reminders_count: number;
+    last_reminded_at?: string | null;
+    received_at?: string | null;
+  } | null;
 }
 
 interface PricingConfig {
@@ -2670,6 +2681,29 @@ export default function BookingDetailScreen() {
     );
   };
 
+  const renderMoneyToRemit = () => {
+    const isShopContext = isMechanicShopSource || Boolean((booking as any)?.shop?.id || (booking as any)?.request?.shop?.id);
+    if (!isShopContext) return null;
+    const remitAmount = Number(booking?.cash_remittance?.amount ?? booking?.payment_split?.shop_owner_amount ?? 0);
+    if (!Number.isFinite(remitAmount) || remitAmount <= 0) return null;
+    const remitStatus = String(booking?.cash_remittance?.status || 'pending').toLowerCase();
+    const remitStatusLabel = remitStatus === 'received' ? 'Received by shop' : 'Pending remittance';
+    const remitColor = remitStatus === 'received' ? '#34C759' : '#FF8C00';
+
+    return (
+      <View style={[styles.noteBox, { marginTop: 10, gap: 8 }]}>
+        <View style={styles.receiptRow}>
+          <ThemedText style={[styles.noteLabel, { color: '#ECEDEE' }]}>Money to remit to shop</ThemedText>
+          <ThemedText style={[styles.noteText, { color: remitColor, fontWeight: '700' }]}>{remitStatusLabel}</ThemedText>
+        </View>
+        <View style={styles.receiptRow}>
+          <ThemedText style={styles.receiptItem}>Shop cash share</ThemedText>
+          <ThemedText style={[styles.receiptAmount, { color: '#FF8C00' }]}>₱{remitAmount.toFixed(2)}</ThemedText>
+        </View>
+      </View>
+    );
+  };
+
   const renderQuotationRawRow = (it: any, idx: number) => {
     const desc = it?.description || it?.name || (it.service && `Service #${it.service}`) || 'Item';
     const price = Number(it?.unit_price ?? it?.price ?? 0) || 0;
@@ -3857,6 +3891,7 @@ export default function BookingDetailScreen() {
                 <ThemedText style={styles.receiptTotalValue}>₱{effectiveTotalFee.toFixed(2)}</ThemedText>
               </View>
               {renderPaymentSplit()}
+              {renderMoneyToRemit()}
 
             </View>
           </View>

@@ -188,6 +188,8 @@ export default function MapScreen() {
   const lastBroadcastFetchAtRef = useRef(0);
   const pricingConfigFetchInFlightRef = useRef(false);
   const lastPricingConfigFetchAtRef = useRef(0);
+  /** Read inside WebSocket effect without listing pendingOffers in deps (avoids infinite re-runs). */
+  const pendingOffersByBroadcastIdRef = useRef<Record<number, { offerId: number; status: string }>>({});
   const { showNotification } = useNotification();
   const pathname = usePathname();
   const segments = useSegments() as string[];
@@ -232,12 +234,17 @@ export default function MapScreen() {
   const { lastMessage } = useWebSocketContext();
 
   useEffect(() => {
+    pendingOffersByBroadcastIdRef.current = pendingOffersByBroadcastId;
+  }, [pendingOffersByBroadcastId]);
+
+  useEffect(() => {
     if (!lastMessage) return;
 
     const action = String(lastMessage.action || '').toLowerCase();
     const messageBroadcastId = Number(lastMessage.broadcast_id ?? lastMessage.broadcastId ?? 0) || null;
     const messageOfferId = Number(lastMessage.offer_id ?? lastMessage.offerId ?? 0) || null;
-    const pendingOffer = messageBroadcastId ? pendingOffersByBroadcastId[messageBroadcastId] : null;
+    const pendingMap = pendingOffersByBroadcastIdRef.current;
+    const pendingOffer = messageBroadcastId ? pendingMap[messageBroadcastId] : null;
 
     if (action === 'offer_rejected' && messageBroadcastId && messageOfferId && pendingOffer?.offerId === messageOfferId) {
       setOfferNotice({
@@ -246,6 +253,7 @@ export default function MapScreen() {
         tone: 'warning',
       });
       setPendingOffersByBroadcastId((current) => {
+        if (!(messageBroadcastId in current)) return current;
         const next = { ...current };
         delete next[messageBroadcastId];
         return next;
@@ -259,6 +267,7 @@ export default function MapScreen() {
 
     if (action === 'booking_finalized' && messageBroadcastId) {
       setPendingOffersByBroadcastId((current) => {
+        if (!(messageBroadcastId in current)) return current;
         const next = { ...current };
         delete next[messageBroadcastId];
         return next;
@@ -277,6 +286,7 @@ export default function MapScreen() {
 
     if (action === 'broadcast_removed' && messageBroadcastId) {
       setPendingOffersByBroadcastId((current) => {
+        if (!(messageBroadcastId in current)) return current;
         const next = { ...current };
         delete next[messageBroadcastId];
         return next;
@@ -293,7 +303,7 @@ export default function MapScreen() {
         fetchBroadcasts(true);
       }
     }
-  }, [lastMessage, pendingOffersByBroadcastId]);
+  }, [lastMessage, broadcastFetchEnabled]);
   
   useEffect(() => {
     initializeMap();
@@ -1028,6 +1038,7 @@ export default function MapScreen() {
     if (broadcasts.some((b) => b.id === sid)) return;
 
     setPendingOffersByBroadcastId((current) => {
+      if (!(sid in current)) return current;
       const next = { ...current };
       delete next[sid];
       return next;

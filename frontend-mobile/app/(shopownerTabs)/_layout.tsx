@@ -71,7 +71,7 @@ export default function ShopOwnerTabLayout() {
         visible: true,
         title: 'Client chose someone else',
         body: 'The client picked another shop or mechanic. You can return to the map or Jobs when you are ready.',
-        bookingId,
+        bookingId: safeBookingId,
         mode: 'rejected',
       });
       return;
@@ -81,9 +81,9 @@ export default function ShopOwnerTabLayout() {
       lastModalBookingIdRef.current = safeBookingId;
       setShopOwnerGlobalModal({
         visible: true,
-        title: 'The client accepted your request',
-        body: 'They chose your shop for this booking.',
-        bookingId,
+        title: 'Client accepted your request',
+        body: 'You were chosen as the provider for this job. Open the booking when you are ready, or dismiss for now.',
+        bookingId: safeBookingId,
         mode: 'accepted',
       });
     }
@@ -110,7 +110,7 @@ export default function ShopOwnerTabLayout() {
     shopOwnerGlobalModal.body ||
     (shopOwnerGlobalModal.mode === 'rejected'
       ? 'You can return to the map or Jobs when you are ready.'
-      : 'Tap View booking to see details and next steps.');
+      : 'Use Go to booking to see details and next steps.');
 
   const modalFeatherIcon =
     shopOwnerGlobalModal.mode === 'rejected' ? 'alert-circle' : 'check-circle';
@@ -236,7 +236,7 @@ export default function ShopOwnerTabLayout() {
                 marginBottom: 8,
               }}
             >
-              Update
+              Booking update
             </ThemedText>
 
             <ThemedText
@@ -281,7 +281,9 @@ export default function ShopOwnerTabLayout() {
                 onPress={closeModal}
                 activeOpacity={0.8}
               >
-                <ThemedText style={{ color: '#E5E5EA', fontSize: 16, fontWeight: '400' }}>Close</ThemedText>
+                <ThemedText style={{ color: '#E5E5EA', fontSize: 16, fontWeight: '400' }}>
+                  {shopOwnerGlobalModal.mode === 'accepted' ? 'Not now' : 'OK'}
+                </ThemedText>
               </TouchableOpacity>
 
               {shopOwnerGlobalModal.mode === 'accepted' && (
@@ -297,7 +299,7 @@ export default function ShopOwnerTabLayout() {
                   onPress={viewBooking}
                   activeOpacity={0.85}
                 >
-                  <ThemedText style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>View booking</ThemedText>
+                  <ThemedText style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>Go to booking</ThemedText>
                 </TouchableOpacity>
               )}
             </View>

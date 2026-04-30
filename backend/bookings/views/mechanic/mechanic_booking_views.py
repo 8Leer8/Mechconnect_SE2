@@ -16,6 +16,7 @@ import requests
 from ...models import (
     Backjob,
     Booking,
+    CashRemittance,
     Request,
     DirectRequest,
     CustomRequest,
@@ -1466,7 +1467,7 @@ class SubmitDisputeDefenseView(APIView):
 def mechanic_booking_quotation(request, booking_id):
     """GET returns existing quotation for booking; POST creates/updates quotation and its items.
     Expected POST payload: {"notes": "...", "is_final": true/false, "items": [
-      {"line_kind": "service"|"item", "source": "on_hand"|"to_be_purchased"|"already_purchased"|"mechanic_selling"|null,
+      {"line_kind": "service"|"item", "source": "on_hand"|"shop_supplied"|"to_be_purchased"|"already_purchased"|null,
        "service": <id>|null, "service_add_on": <id>|null, "description": "", "quantity": 1, "unit_price": 100.0}, ...]}"""
     account, err = _get_mechanic_account(request)
     if err:
@@ -1739,6 +1740,66 @@ def _get_mechanic_account(request):
             status=status.HTTP_403_FORBIDDEN,
         )
     return account, None
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def list_mechanic_cash_remittances(request):
+    """
+    List cash remittance rows assigned to the logged-in lead mechanic.
+    Useful for mechanics under shops to track pending/received remits.
+    """
+    account, err = _get_mechanic_account(request)
+    if err:
+        return err
+
+    status_filter = str(request.GET.get("status", "pending")).strip().lower()
+    allowed = {CashRemittance.Status.PENDING, CashRemittance.Status.RECEIVED, "all"}
+    if status_filter not in allowed:
+        status_filter = CashRemittance.Status.PENDING
+
+    queryset = CashRemittance.objects.filter(lead_mechanic=account).select_related(
+        "booking",
+        "booking__request",
+        "booking__request__client__account",
+        "shop",
+    )
+    if status_filter != "all":
+        queryset = queryset.filter(status=status_filter)
+
+    rows = []
+    for remittance in queryset:
+        booking = remittance.booking
+        client_account = getattr(getattr(getattr(booking, "request", None), "client", None), "account", None)
+        rows.append(
+            {
+                "id": remittance.id,
+                "booking_id": remittance.booking_id,
+                "amount": float(remittance.amount or 0),
+                "status": remittance.status,
+                "reminders_count": remittance.reminders_count,
+                "last_reminded_at": remittance.last_reminded_at.isoformat() if remittance.last_reminded_at else None,
+                "received_at": remittance.received_at.isoformat() if remittance.received_at else None,
+                "created_at": remittance.created_at.isoformat() if remittance.created_at else None,
+                "shop": {
+                    "id": remittance.shop_id,
+                    "shop_name": getattr(remittance.shop, "shop_name", "") or "",
+                },
+                "booking": {
+                    "id": booking.id,
+                    "amount_fee": float(booking.amount_fee or 0),
+                    "status": booking.status,
+                    "completed_at": booking.completed_at.isoformat() if booking.completed_at else None,
+                },
+                "client": {
+                    "firstname": getattr(client_account, "firstname", "") if client_account else "",
+                    "lastname": getattr(client_account, "lastname", "") if client_account else "",
+                    "username": getattr(client_account, "username", "") if client_account else "",
+                },
+            }
+        )
+
+    return Response({"remittances": rows, "count": len(rows)}, status=status.HTTP_200_OK)
 
 
 def _reject_if_mechanic_locked(account):

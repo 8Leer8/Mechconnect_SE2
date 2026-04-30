@@ -223,13 +223,17 @@ const solveServiceSubtotalFromAmount = (
 };
 
 const QUOTE_ITEM_SOURCE_LABELS: Record<string, string> = {
-  on_hand: 'On-hand (stock)',
+  on_hand: 'Mechanic supplied (from stock)',
+  shop_supplied: 'Shop supplied (from stock)',
   to_be_purchased: 'To be purchased',
   already_purchased: 'Already purchased',
-  mechanic_selling: 'Mechanic selling / owned',
 };
 
-const quoteItemSourceLabel = (v: any) => QUOTE_ITEM_SOURCE_LABELS[String(v || '')] || (v ? String(v) : '—');
+const quoteItemSourceLabel = (v: any) => {
+  const s = String(v || '');
+  if (s === 'mechanic_selling') return QUOTE_ITEM_SOURCE_LABELS.on_hand;
+  return QUOTE_ITEM_SOURCE_LABELS[s] || (v ? String(v) : '—');
+};
 
 export default function ClientBookingDetailScreen() {
   const { bookingId, id } = useLocalSearchParams<{ bookingId?: string; id?: string }>();

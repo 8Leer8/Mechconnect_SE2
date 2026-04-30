@@ -76,14 +76,41 @@ async function fetchWithAuthRetry(
 /** Prefix logs so you can filter Metro: `npx expo start` terminal. */
 const LOG = '[quotation_edit]';
 
-const ITEM_SOURCES = [
-  { value: 'on_hand', label: 'On-hand (stock)' },
-  { value: 'to_be_purchased', label: 'To be purchased' },
-  { value: 'already_purchased', label: 'Already purchased' },
-  { value: 'mechanic_selling', label: 'Mechanic selling / owned' },
-] as const;
+type ItemSourceValue = 'on_hand' | 'shop_supplied' | 'to_be_purchased' | 'already_purchased';
 
-type ItemSourceValue = (typeof ITEM_SOURCES)[number]['value'];
+function buildItemSourceOptions(isShopJob: boolean): ReadonlyArray<{ value: ItemSourceValue; label: string }> {
+  const tail: ReadonlyArray<{ value: ItemSourceValue; label: string }> = [
+    { value: 'to_be_purchased', label: 'To be purchased' },
+    { value: 'already_purchased', label: 'Already purchased' },
+  ];
+  if (isShopJob) {
+    return [
+      { value: 'shop_supplied', label: 'Shop supplied (from stock)' },
+      { value: 'on_hand', label: 'Mechanic supplied (from stock)' },
+      ...tail,
+    ];
+  }
+  return [{ value: 'on_hand', label: 'Mechanic supplied (from stock)' }, ...tail];
+}
+
+/** Map API/source to a valid value for this booking (shop vs independent mechanic). */
+function normalizeItemSource(raw: string | null | undefined, isShopJob: boolean): ItemSourceValue {
+  const opts = buildItemSourceOptions(isShopJob);
+  const allowed = new Set(opts.map((o) => o.value));
+  const s = String(raw || '');
+  if (s === 'mechanic_selling') return isShopJob ? 'shop_supplied' : 'on_hand';
+  if (s === 'shop_supplied' && !isShopJob) return 'on_hand';
+  if (allowed.has(s as ItemSourceValue)) return s as ItemSourceValue;
+  return isShopJob ? 'shop_supplied' : 'on_hand';
+}
+
+function getSourceLabel(v: string | null | undefined, isShopJob: boolean): string {
+  const s = v === 'mechanic_selling' ? (isShopJob ? 'shop_supplied' : 'on_hand') : String(v || '');
+  const row = buildItemSourceOptions(isShopJob).find((x) => x.value === s);
+  if (row) return row.label;
+  const fallback = buildItemSourceOptions(!isShopJob).find((x) => x.value === s);
+  return fallback?.label || String(v || '');
+}
 
 type QuotationItem = {
   id?: number;
@@ -95,6 +122,7 @@ type QuotationItem = {
   status?: string;
   change_type?: 'added' | 'edited' | 'removed' | null;
   line_kind: 'service' | 'item';
+  /** shop_supplied = shop inventory (payout to shop); on_hand = mechanic inventory */
   source?: ItemSourceValue | null;
   description: string;
   quantity: number;
@@ -130,11 +158,6 @@ type AddonCatalogRow = {
   price: number;
 };
 
-const getSourceLabel = (v: string | null | undefined) => {
-  const row = ITEM_SOURCES.find((s) => s.value === v);
-  return row ? row.label : String(v || '');
-};
-
 const formatMoney = (amount: number) => {
   if (!Number.isFinite(amount)) return '0.00';
   return amount.toFixed(2);
@@ -153,6 +176,28 @@ const buildAddonLineDescription = (serviceName: string, addonName: string) => {
   const base = `${String(serviceName || 'Service').trim()} Addon: ${String(addonName || 'Add-on').trim()}`;
   if (base.length <= MAX_QUOTATION_DESC) return base;
   return `${base.slice(0, MAX_QUOTATION_DESC - 3)}...`;
+};
+
+const hasValidId = (v: unknown) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0;
+};
+
+/**
+ * Mechanic booking payloads are not always shaped the same across endpoints.
+ * Detect "shop job" using multiple known forms.
+ */
+const isShopLinkedBooking = (booking: any): boolean => {
+  const req = booking?.request || {};
+  const shop = req?.shop || booking?.shop || {};
+  return Boolean(
+    hasValidId(req?.shop_id) ||
+      hasValidId(req?.shopId) ||
+      hasValidId(shop?.id) ||
+      hasValidId(shop) ||
+      hasValidId(booking?.shop_id) ||
+      hasValidId(booking?.shopId),
+  );
 };
 
 export default function QuotationEdit() {
@@ -188,6 +233,8 @@ export default function QuotationEdit() {
   const [currentBackjob, setCurrentBackjob] = useState<any | null>(null);
   const [isBookingCompleted, setIsBookingCompleted] = useState(false);
   const [bookingContextLoaded, setBookingContextLoaded] = useState(false);
+  /** Shop-owner route or booking tied to a shop — drives labels and shop_supplied source. */
+  const [isShopQuotationJob, setIsShopQuotationJob] = useState(false);
   const [catalogVisible, setCatalogVisible] = useState(false);
   const [catalogStep, setCatalogStep] = useState<'services' | 'addons'>('services');
   const [catalogLoading, setCatalogLoading] = useState(false);
@@ -318,7 +365,7 @@ export default function QuotationEdit() {
           line_kind,
           quantity,
           unit_price,
-          source: line_kind === 'service' ? null : (it.source || 'on_hand'),
+          source: line_kind === 'service' ? null : normalizeItemSource(it.source, isShopQuotationJob),
         };
       });
   };
@@ -347,11 +394,14 @@ export default function QuotationEdit() {
    * services from `extracted` so this screen matches booking_details (which can show the same
    * rows from request_details before any Quotation row exists in the DB).
    */
+  const itemSourceOptions = useMemo(() => buildItemSourceOptions(isShopQuotationJob), [isShopQuotationJob]);
+
   const buildMappedItemsFromApiData = (
     data: any,
     acceptedBackjob: boolean,
     extracted: BookedServiceInfo[],
-    activeBackjob?: any,
+    activeBackjob: any | undefined,
+    isShopJob: boolean,
   ): { mappedItems: QuotationItem[]; serverHasQuotation: boolean } => {
     const safe = data ?? {};
     const savedQuotationId = Number(safe.id);
@@ -382,7 +432,7 @@ export default function QuotationEdit() {
         service: it.service || null,
         service_add_on: it.service_add_on || null,
         line_kind: lineKind,
-        source: lineKind === 'service' ? null : (it.source as ItemSourceValue) || 'on_hand',
+        source: lineKind === 'service' ? null : normalizeItemSource(it.source, isShopJob),
         purchase_receipt_image: it.purchase_receipt_image || null,
       };
     });
@@ -453,6 +503,7 @@ export default function QuotationEdit() {
       if (!bookingId) return;
 
       setLoading(true);
+      setIsShopQuotationJob(isShopOwnerSource);
       setBookingContextLoaded(false);
       setIsAcceptedBackjob(false);
       setCurrentBackjob(null);
@@ -464,6 +515,7 @@ export default function QuotationEdit() {
 
       let acceptedBackjob = false;
       let extracted: BookedServiceInfo[] = [];
+      let isShopJob = isShopOwnerSource;
 
       const formatLoadFailure = (label: string, res: Response, body: any) => {
         const parts = [label, res.status ? `HTTP ${res.status}` : null, body?.error, body?.detail, body?.details]
@@ -490,6 +542,8 @@ export default function QuotationEdit() {
           const payload = await bookingRes.json();
           const booking = payload.booking || payload;
           bookingPayload = booking;
+          isShopJob = isShopOwnerSource || isShopLinkedBooking(booking);
+          if (!cancelled) setIsShopQuotationJob(isShopJob);
           if (cancelled) return;
           setIsBookingCompleted(String(booking?.status || '').toLowerCase() === 'completed');
           acceptedBackjob = String(booking?.backjob?.status || '').toLowerCase() === 'accepted';
@@ -529,6 +583,7 @@ export default function QuotationEdit() {
               acceptedBackjob,
               extracted,
               bookingPayload?.backjob,
+              isShopJob,
             );
             setHasQuotationOnServer(fromBooking.serverHasQuotation);
             setItems(fromBooking.mappedItems);
@@ -552,7 +607,13 @@ export default function QuotationEdit() {
               });
             }
           } else if (!cancelled) {
-            const fromExtracted = buildMappedItemsFromApiData({}, acceptedBackjob, extracted, bookingPayload?.backjob);
+            const fromExtracted = buildMappedItemsFromApiData(
+              {},
+              acceptedBackjob,
+              extracted,
+              bookingPayload?.backjob,
+              isShopJob,
+            );
             if (fromExtracted.mappedItems.length > 0) {
               setHasQuotationOnServer(fromExtracted.serverHasQuotation);
               setItems(fromExtracted.mappedItems);
@@ -584,7 +645,13 @@ export default function QuotationEdit() {
 
         const data = await quotationRes.json();
         if (cancelled) return;
-        let { mappedItems, serverHasQuotation } = buildMappedItemsFromApiData(data, acceptedBackjob, extracted, bookingPayload?.backjob);
+        let { mappedItems, serverHasQuotation } = buildMappedItemsFromApiData(
+          data,
+          acceptedBackjob,
+          extracted,
+          bookingPayload?.backjob,
+          isShopJob,
+        );
         const bq = bookingPayload?.quotation;
         if (
           mappedItems.length === 0 &&
@@ -597,6 +664,7 @@ export default function QuotationEdit() {
             acceptedBackjob,
             extracted,
             bookingPayload?.backjob,
+            isShopJob,
           );
           if (fromBooking.mappedItems.length > 0) {
             mappedItems = fromBooking.mappedItems;
@@ -776,7 +844,7 @@ export default function QuotationEdit() {
         item: {
           client_key: k,
           line_kind: 'item',
-          source: 'on_hand',
+          source: isShopQuotationJob ? 'shop_supplied' : 'on_hand',
           description: buildAddonLineDescription(serviceRow.name, addon.name),
           quantity: 1,
           unit_price: addon.price,
@@ -887,7 +955,7 @@ export default function QuotationEdit() {
     const newItem: QuotationItem = {
       client_key: makeClientKey(),
       line_kind: 'item',
-      source: 'on_hand',
+      source: isShopQuotationJob ? 'shop_supplied' : 'on_hand',
       description: '',
       quantity: 1,
       unit_price: 0,
@@ -1288,7 +1356,13 @@ export default function QuotationEdit() {
         );
       }
       console.log(LOG, 'quotation POST ok', { bookingId, quotationId: savedId, itemCount: payload.items.length });
-      const fromServer = buildMappedItemsFromApiData(body, isAcceptedBackjob, bookedServices, currentBackjob);
+      const fromServer = buildMappedItemsFromApiData(
+        body,
+        isAcceptedBackjob,
+        bookedServices,
+        currentBackjob,
+        isShopQuotationJob,
+      );
       const preSavePendingReceipts = rowsToSave
         .map((it, i) => ({ it, rowKey: getItemKey(it, i) }))
         .filter(
@@ -1494,7 +1568,7 @@ export default function QuotationEdit() {
                       <Text style={styles.itemAccordionMeta}>
                         {isServiceLine
                           ? `Service${isExpanded ? '' : ` • PHP ${formatMoney(Number(it.unit_price || 0))}`}`
-                          : `${isExpanded ? `Qty ${it.quantity || 1}` : `Qty ${it.quantity || 1} × PHP ${formatMoney(Number(it.unit_price || 0))}`} • ${getSourceLabel(it.source)}`}
+                          : `${isExpanded ? `Qty ${it.quantity || 1}` : `Qty ${it.quantity || 1} × PHP ${formatMoney(Number(it.unit_price || 0))}`} • ${getSourceLabel(it.source, isShopQuotationJob)}`}
                       </Text>
                     </View>
                     <View style={styles.itemAccordionRight}>
@@ -1679,10 +1753,10 @@ export default function QuotationEdit() {
                         <View style={styles.sourceChipsWrap}>
                           <Text style={styles.sourceChipsLabel}>Source</Text>
                           {isReadOnly ? (
-                            <Text style={styles.numericInput}>{getSourceLabel(it.source)}</Text>
+                            <Text style={styles.numericInput}>{getSourceLabel(it.source, isShopQuotationJob)}</Text>
                           ) : (
                             <View style={styles.sourceChipsRow}>
-                              {ITEM_SOURCES.map((opt) => (
+                              {itemSourceOptions.map((opt) => (
                                 <TouchableOpacity
                                   key={opt.value}
                                   onPress={() => {
@@ -2113,11 +2187,11 @@ export default function QuotationEdit() {
                   </View>
                   {previous ? (
                     <>
-                      <Text style={styles.modalChangeSubText}>Before: {previous.description || `Quotation #${idx + 1}`} • Qty {previous.quantity || 1} • PHP {formatMoney(Number(previous.unit_price || 0))}{previous.line_kind === 'item' ? ` • ${getSourceLabel(previous.source)}` : ''}</Text>
-                      <Text style={styles.modalChangeSubText}>After: {it.description || `Quotation #${idx + 1}`} • Qty {it.quantity || 1} • PHP {formatMoney(Number(it.unit_price || 0))}{it.line_kind === 'item' ? ` • ${getSourceLabel(it.source)}` : ''}</Text>
+                      <Text style={styles.modalChangeSubText}>Before: {previous.description || `Quotation #${idx + 1}`} • Qty {previous.quantity || 1} • PHP {formatMoney(Number(previous.unit_price || 0))}{previous.line_kind === 'item' ? ` • ${getSourceLabel(previous.source, isShopQuotationJob)}` : ''}</Text>
+                      <Text style={styles.modalChangeSubText}>After: {it.description || `Quotation #${idx + 1}`} • Qty {it.quantity || 1} • PHP {formatMoney(Number(it.unit_price || 0))}{it.line_kind === 'item' ? ` • ${getSourceLabel(it.source, isShopQuotationJob)}` : ''}</Text>
                     </>
                   ) : (
-                    <Text style={styles.modalChangeSubText}>After: {it.description || `Quotation #${idx + 1}`} • Qty {it.quantity || 1} • PHP {formatMoney(Number(it.unit_price || 0))}{it.line_kind === 'item' ? ` • ${getSourceLabel(it.source)}` : ''}</Text>
+                    <Text style={styles.modalChangeSubText}>After: {it.description || `Quotation #${idx + 1}`} • Qty {it.quantity || 1} • PHP {formatMoney(Number(it.unit_price || 0))}{it.line_kind === 'item' ? ` • ${getSourceLabel(it.source, isShopQuotationJob)}` : ''}</Text>
                   )}
                 </View>
               ))}

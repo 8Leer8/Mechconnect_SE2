@@ -2,7 +2,13 @@ from decimal import Decimal
 
 from django.db import transaction
 
-from bookings.models import AmendmentItem, Quotation, QuotationAmendment, QuotationItem
+from bookings.models import (
+    AmendmentItem,
+    Quotation,
+    QuotationAmendment,
+    QuotationItem,
+    coerce_quotation_item_source_for_booking,
+)
 from bookings.backjob_utils import get_booking_backjob
 from services.models import Service
 
@@ -30,12 +36,14 @@ def _snapshot_item(item: QuotationItem) -> dict:
     }
 
 
-def _normalized_row(raw: dict) -> dict:
+def _normalized_row(raw: dict, quotation: Quotation | None = None) -> dict:
     service_id = raw.get("service")
     line_kind = _normalized_line_kind(raw.get("line_kind", QuotationItem.LineKind.ITEM), service_id)
+    booking = getattr(quotation, "booking", None) if quotation is not None else None
+    source = coerce_quotation_item_source_for_booking(booking, raw.get("source"))
     return {
         "line_kind": line_kind,
-        "source": raw.get("source"),
+        "source": source,
         "service": service_id,
         "service_add_on": raw.get("service_add_on"),
         "description": raw.get("description") or "",
@@ -208,7 +216,7 @@ def create_amendment_request(quotation_id: int, mechanic_id: int, changes: list[
                     )
                     continue
 
-                proposed = _normalized_row(row)
+                proposed = _normalized_row(row, quotation)
                 changed = any(
                     str(snapshot.get(key)) != str(proposed.get(key))
                     for key in (
@@ -237,7 +245,7 @@ def create_amendment_request(quotation_id: int, mechanic_id: int, changes: list[
                 continue
             # Persist a pending placeholder row so receipt multipart upload has a stable item id
             # before the client accepts the amendment (resolve_amendment reuses this row when fields match).
-            proposed_norm = _normalized_row(row)
+            proposed_norm = _normalized_row(row, quotation)
             placeholder = QuotationItem.objects.create(
                 quotation=quotation,
                 line_kind=proposed_norm["line_kind"],
@@ -321,7 +329,9 @@ def resolve_amendment(amendment_id: int, decision: str) -> QuotationAmendment:
                         if k != "_staged_item_id"
                     }
                     proposed_line_kind = proposed.get("line_kind") or QuotationItem.LineKind.ITEM
-                    proposed_source = proposed.get("source")
+                    proposed_source = coerce_quotation_item_source_for_booking(
+                        quotation.booking, proposed.get("source")
+                    )
                     proposed_service_id = proposed.get("service")
                     proposed_add_on_id = proposed.get("service_add_on")
                     proposed_desc = proposed.get("description") or ""
@@ -382,9 +392,12 @@ def resolve_amendment(amendment_id: int, decision: str) -> QuotationAmendment:
                         )
                 elif change.action_type == AmendmentItem.ActionType.EDITED and change.original_item_id:
                     proposed = change.proposed_changes or {}
+                    coerced_src = coerce_quotation_item_source_for_booking(
+                        quotation.booking, proposed.get("source")
+                    )
                     QuotationItem.objects.filter(id=change.original_item_id).update(
                         line_kind=proposed.get("line_kind") or QuotationItem.LineKind.ITEM,
-                        source=proposed.get("source"),
+                        source=coerced_src,
                         service_id=proposed.get("service"),
                         service_add_on_id=proposed.get("service_add_on"),
                         description=proposed.get("description") or "",

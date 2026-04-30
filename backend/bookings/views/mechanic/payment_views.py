@@ -10,6 +10,7 @@ from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.conf import settings
 from django.db import DatabaseError, NotSupportedError, transaction
+from django.db.models import Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -27,6 +28,7 @@ from ...models import (
     PaymentQRToken,
     PaymentTransaction,
     Quotation,
+    QuotationItem,
     Receipt,
     RequestAssignment,
 )
@@ -142,13 +144,64 @@ def _get_wallet_share_percentage(pricing):
     return percentage
 
 
+def _shop_supplied_payable_parts_total(booking):
+    """
+    Sum of client-accepted shop-supplied item lines (parts only). For shop bookings, this
+    amount is credited to the shop owner, not split across mechanics.
+    """
+    if getattr(getattr(booking, "request", None), "shop_id", None) is None:
+        return Decimal("0.00")
+    quotation = getattr(booking, "quotation", None)
+    if quotation is None:
+        return Decimal("0.00")
+
+    src = QuotationItem.ItemSource.SHOP_SUPPLIED
+    item_kind = QuotationItem.LineKind.ITEM
+    accepted = Quotation.Status.ACCEPTED
+
+    if booking_has_backjob(booking):
+        backjob = get_booking_backjob(booking)
+        if backjob is None:
+            return Decimal("0.00")
+        new_line_filter = Q(backjob=backjob)
+        if getattr(backjob, "created_at", None) is not None:
+            new_line_filter = new_line_filter | Q(
+                backjob__isnull=True,
+                is_backjob_line=True,
+                created_at__gte=backjob.created_at,
+            )
+        total = Decimal("0.00")
+        for item in quotation.items.filter(
+            new_line_filter,
+            status=accepted,
+            line_kind=item_kind,
+            source=src,
+        ):
+            total += _money(item.line_total)
+        return total.quantize(Decimal("0.01"))
+
+    total = Decimal("0.00")
+    for item in quotation.items.filter(status=accepted, line_kind=item_kind, source=src):
+        total += _money(item.line_total)
+    return total.quantize(Decimal("0.01"))
+
+
 def _compute_payment_split(booking):
+    """
+    Platform commission is taken only from the commissionable subtotal (labor + every part
+    line that is not shop_supplied). Shop-supplied parts pass through to the shop with no
+    commission applied to that portion of the client total.
+    """
     pricing = PricingConfiguration.get_config()
     total = _money(booking.amount_fee)
     wallet_share_percentage = _get_wallet_share_percentage(pricing)
-    platform_fee = _money(total * wallet_share_percentage / Decimal("100"))
     disbursement_fee = _money(getattr(pricing, "disbursement_fee", Decimal("0")) or 0)
-    mechanic_payout = _money(total - platform_fee)
+    shop_parts = _money(_shop_supplied_payable_parts_total(booking))
+    commissionable = _money(total - shop_parts)
+    if commissionable < 0:
+        commissionable = Decimal("0.00")
+    platform_fee = _money(commissionable * wallet_share_percentage / Decimal("100"))
+    mechanic_payout = _money(commissionable - platform_fee)
     if mechanic_payout < 0:
         mechanic_payout = Decimal("0.00")
     return total, platform_fee, disbursement_fee, mechanic_payout
@@ -224,13 +277,14 @@ def _credit_wallet_once(account, amount, reason, booking_id):
 
 
 def _credit_wallet_payment_split(booking, paid_amount, payment_label="payment"):
-    total, shop_wallet_share, _, mechanic_payout = _compute_payment_split(booking)
+    total, platform_fee, _, mechanic_payout = _compute_payment_split(booking)
     if total <= 0:
         return
 
     paid_amount = _money(paid_amount)
+    shop_parts = _money(_shop_supplied_payable_parts_total(booking))
     mechanic_amount = _money(paid_amount * mechanic_payout / total)
-    shop_amount = _money(paid_amount * shop_wallet_share / total)
+    shop_amount = _money(paid_amount * (platform_fee + shop_parts) / total)
 
     mechanic_accounts = _get_mechanic_payout_accounts(booking)
     for mechanic_account, share in _split_amount_between_accounts(mechanic_amount, mechanic_accounts):
@@ -285,7 +339,8 @@ def _ensure_cash_remittance_for_booking(booking):
     except Exception:
         return None
 
-    amount = _money(receipt.platform_fee or Decimal("0.00"))
+    shop_parts = _shop_supplied_payable_parts_total(booking)
+    amount = _money((receipt.platform_fee or Decimal("0.00")) + shop_parts)
     if amount <= 0:
         return None
 
@@ -1181,26 +1236,30 @@ def trigger_disbursement(booking):
     except Exception:
         return False
 
-    if not receipt.mechanic_payout:
+    mechanic_payout_amt = _money(receipt.mechanic_payout or Decimal("0.00"))
+    shop_parts = _shop_supplied_payable_parts_total(booking)
+    shop_wallet_total = _money((receipt.platform_fee or Decimal("0.00")) + shop_parts)
+
+    if mechanic_payout_amt <= 0 and shop_wallet_total <= 0:
         return False
 
     try:
         mechanic_accounts = _get_mechanic_payout_accounts(booking)
-        mechanic_payout = _money(receipt.mechanic_payout)
-        mechanic_shares = _split_amount_between_accounts(mechanic_payout, mechanic_accounts)
-        if not mechanic_shares:
-            logger.warning("No mechanic payout recipients for booking %s", booking.id)
-            return False
-
-        for mechanic_account, share in mechanic_shares:
-            if not _send_paymongo_disbursement(mechanic_account, share, booking):
+        if mechanic_payout_amt > 0:
+            mechanic_shares = _split_amount_between_accounts(mechanic_payout_amt, mechanic_accounts)
+            if not mechanic_shares:
+                logger.warning("No mechanic payout recipients for booking %s", booking.id)
                 return False
 
+            for mechanic_account, share in mechanic_shares:
+                if not _send_paymongo_disbursement(mechanic_account, share, booking):
+                    return False
+
         shop_owner_account = _get_shop_owner_account(booking)
-        if shop_owner_account:
+        if shop_owner_account and shop_wallet_total > 0:
             _credit_wallet_once(
                 shop_owner_account,
-                receipt.platform_fee or Decimal("0.00"),
+                shop_wallet_total,
                 f"Shop wallet share from booking #{booking.id}",
                 booking.id,
             )

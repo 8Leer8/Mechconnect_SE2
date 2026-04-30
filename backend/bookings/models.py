@@ -541,13 +541,13 @@ class QuotationItem(models.Model):
         ITEM = "item", "Item"
 
     class ItemSource(models.TextChoices):
-        ON_HAND = "on_hand", "On-hand (mechanic stock)"
+        ON_HAND = "on_hand", "Mechanic supplied (from stock)"
+        SHOP_SUPPLIED = "shop_supplied", "Shop supplied (from stock)"
         TO_BE_PURCHASED = "to_be_purchased", "To be purchased"
         ALREADY_PURCHASED = "already_purchased", "Already purchased (have receipt)"
-        MECHANIC_SELLING = "mechanic_selling", "Mechanic selling / owned spare"
 
     line_kind = models.CharField(max_length=20, choices=LineKind.choices, default=LineKind.ITEM)
-    # For line_kind=item: where the part comes from (affects pricing / warranty flows later).
+    # For line_kind=item: where the part comes from. shop_supplied (shop bookings only) is paid out to the shop, not mechanics.
     source = models.CharField(max_length=30, choices=ItemSource.choices, null=True, blank=True)
 
     # one of service or service_add_on may be set, or neither for free-text items
@@ -583,6 +583,19 @@ class QuotationItem(models.Model):
     @property
     def line_total(self):
         return self.quantity * self.unit_price
+
+
+def coerce_quotation_item_source_for_booking(booking, source):
+    """Normalize item source. shop_supplied is only valid when the request is tied to a shop."""
+    src = str(source or "").strip() or QuotationItem.ItemSource.ON_HAND
+    if src == QuotationItem.ItemSource.SHOP_SUPPLIED:
+        req = getattr(booking, "request", None) if booking is not None else None
+        if getattr(req, "shop_id", None) is None:
+            src = QuotationItem.ItemSource.ON_HAND
+    allowed = {c[0] for c in QuotationItem.ItemSource.choices}
+    if src not in allowed:
+        src = QuotationItem.ItemSource.ON_HAND
+    return src
 
 
 class QuotationAmendment(models.Model):

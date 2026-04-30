@@ -52,7 +52,10 @@ export default function MechanicTabLayout() {
     const isClientCancelled =
       lastMessage.type === 'booking_update' &&
       actionText === 'client_cancelled';
-    if (!isBroadcastFinalize && !isOfferRejected && !isQuotationUpdate && !isMechanicAcceptedDirect && !isClientCancelled) return;
+    const isRemittanceReminder =
+      lastMessage.type === 'booking_update' &&
+      (actionText.includes('remit') || messageText.includes('remit') || messageText.includes('remittance'));
+    if (!isBroadcastFinalize && !isOfferRejected && !isQuotationUpdate && !isMechanicAcceptedDirect && !isClientCancelled && !isRemittanceReminder) return;
 
     const messageTimestamp = Number(lastMessage._timestamp || 0) || null;
     if (!messageTimestamp) return;
@@ -123,6 +126,18 @@ export default function MechanicTabLayout() {
         body: 'You can return to your map or bookings when you are ready.',
         bookingId,
         mode: 'rejected',
+      });
+      return;
+    }
+
+    if (isRemittanceReminder) {
+      lastModalBookingIdRef.current = safeBookingId;
+      setMechanicGlobalModal({
+        visible: true,
+        title: 'Remittance reminder',
+        body: String((lastMessage as any).message || 'Please remit the shop cash share for this booking.'),
+        bookingId: safeBookingId,
+        mode: 'info',
       });
       return;
     }
