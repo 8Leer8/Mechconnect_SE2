@@ -6,6 +6,11 @@ from decimal import Decimal, InvalidOperation
 
 from ..models import Account, Mechanic, ShopOwner, TokenPurchase, TokenTransaction, Wallet
 from services.pricing_utils import get_token_pricing
+from decimal import Decimal
+from django.db import transaction
+from ..models import CashOutRequest
+from django.shortcuts import redirect
+from django.http import HttpResponse
 
 
 def get_account_from_session(request):
@@ -413,3 +418,134 @@ def client_wallet_topup(request):
         },
         status=status.HTTP_200_OK,
     )
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def wallet_cashout(request):
+    """Request a cash-out of tokens to GCash/Maya (test flow).
+
+    Body: { tokens: int, payout_method?: 'gcash'|'maya', payout_number?: str, redirect_url?: str }
+    Returns: checkout_url to authorize the cashout (test confirmation page)
+    """
+    account = get_account_from_session(request)
+    if not account:
+        return Response({'error': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    try:
+        tokens = int(request.data.get('tokens', 0))
+    except (TypeError, ValueError):
+        return Response({'error': 'Invalid token amount'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if tokens <= 0:
+        return Response({'error': 'Invalid token amount'}, status=status.HTTP_400_BAD_REQUEST)
+
+    raw_method = str(request.data.get('payout_method') or account.payout_method or '').strip().lower()
+    if raw_method not in {'gcash', 'maya'}:
+        return Response({'error': 'Invalid or missing payout method'}, status=status.HTTP_400_BAD_REQUEST)
+
+    payout_number = (request.data.get('payout_number') or account.payout_number or '').strip()
+    if not payout_number:
+        return Response({'error': 'No payout number configured'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Compute amount in PHP using base token price
+    token_pricing = get_token_pricing()
+    base_price = Decimal(str(token_pricing.get('base_token_price', 1)))
+    amount_php = (Decimal(tokens) * base_price).quantize(Decimal('0.01'))
+
+    # Lock wallet and create cashout request atomically
+    try:
+        with transaction.atomic():
+            wallet = Wallet.objects.select_for_update().get(account=account)
+            if wallet.balance < Decimal(tokens):
+                return Response({'error': 'Insufficient balance'}, status=status.HTTP_400_BAD_REQUEST)
+
+            # create CashOutRequest (pending) — wallet not debited until authorization completes
+            cashout = CashOutRequest.objects.create(
+                account=account,
+                role=request.session.get('active_role') or None,
+                tokens=tokens,
+                amount_php=amount_php,
+                payout_method=raw_method,
+                payout_number=payout_number,
+                status=CashOutRequest.Status.PENDING,
+            )
+    except Wallet.DoesNotExist:
+        return Response({'error': 'Wallet not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    # Build a test authorization URL which the frontend will open. Include redirect_url for returning.
+    redirect_url = request.data.get('redirect_url') or request.query_params.get('redirect_url') or ''
+    # The simple confirm endpoint will mark the cashout completed (test) and then redirect back to provided redirect_url
+    confirm_url = f"/api/users/wallet/cashout/confirm/{cashout.id}/"
+    if redirect_url:
+        confirm_url += f"?redirect_url={redirect_url}"
+
+    # Return full absolute URL relative to request
+    base = request.build_absolute_uri('/')[:-1]
+    return Response({'checkout_url': base + confirm_url, 'cashout_id': cashout.id}, status=status.HTTP_200_OK)
+
+
+@api_view(['GET', 'POST'])
+@permission_classes([AllowAny])
+def wallet_cashout_confirm(request, cashout_id):
+    """A lightweight test confirmation page to simulate external authorization.
+
+    GET: show a simple HTML page with number and amount and an Authorize button.
+    POST: mark cashout completed (debit wallet, ledger entry) and redirect to redirect_url?paymentStatus=success
+    """
+    cashout = CashOutRequest.objects.filter(id=cashout_id).first()
+    if not cashout:
+        return HttpResponse('CashOut request not found', status=404)
+
+    if request.method == 'GET':
+        html = f"""
+        <html>
+        <head><title>Test Cash-out Authorization</title></head>
+        <body style='font-family: system-ui, -apple-system, Roboto, sans-serif; padding:24px;'>
+        <h2>Authorize Test Cash-out</h2>
+        <p>Account: {cashout.account.username}</p>
+        <p>Amount: ₱{cashout.amount_php}</p>
+        <p>Method: {cashout.payout_method.upper()}</p>
+        <p>Number: {cashout.payout_number}</p>
+        <form method='post'>
+          <button type='submit' style='padding:12px 18px;background:#FF8C00;color:#fff;border:none;border-radius:6px'>Authorize (Test)</button>
+        </form>
+        </body>
+        </html>
+        """
+        return HttpResponse(html)
+
+    # POST: perform debit and mark completed
+    try:
+        with transaction.atomic():
+            wallet = Wallet.objects.select_for_update().get(account=cashout.account)
+            if wallet.balance < Decimal(cashout.tokens):
+                cashout.status = CashOutRequest.Status.FAILED
+                cashout.save(update_fields=['status'])
+                return HttpResponse('Insufficient balance to complete cashout', status=400)
+
+            # debit wallet
+            wallet.balance = wallet.balance - Decimal(cashout.tokens)
+            wallet.save(update_fields=['balance'])
+
+            # ledger entry
+            TokenTransaction.objects.create(
+                account=cashout.account,
+                tokens=-int(cashout.tokens),
+                reason=f'Cash-out to {cashout.payout_method} {cashout.payout_number}'
+            )
+
+            cashout.status = CashOutRequest.Status.COMPLETED
+            cashout.processed_at = timezone.now()
+            cashout.external_reference = f'test-{cashout.id}'
+            cashout.save(update_fields=['status', 'processed_at', 'external_reference'])
+    except Wallet.DoesNotExist:
+        return HttpResponse('Wallet not found', status=404)
+
+    # Redirect back to provided redirect_url if present
+    redirect_url = request.GET.get('redirect_url') or request.POST.get('redirect_url') or ''
+    if redirect_url:
+        sep = '&' if '?' in redirect_url else '?'
+        return redirect(redirect_url + sep + 'paymentStatus=success')
+
+    return HttpResponse('Cash-out authorized (test). You can close this page.')

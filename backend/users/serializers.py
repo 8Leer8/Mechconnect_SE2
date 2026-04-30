@@ -119,6 +119,7 @@ class AccountSerializer(serializers.ModelSerializer):
             'id', 'lastname', 'firstname', 'middlename', 'email',
             'date_of_birth', 'gender', 'username', 'is_active',
             'is_verified', 'last_login', 'address', 'roles', 'profile',
+            'payout_method', 'payout_number',
             'is_superadmin'
         ]
         read_only_fields = ['id', 'is_active', 'is_verified', 'last_login']
@@ -161,6 +162,7 @@ class ProfileDetailSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'username', 'email', 'full_name', 'firstname', 'lastname',
             'middlename', 'date_of_birth', 'gender', 'is_verified',
+            'payout_method', 'payout_number',
             'user_type', 'available_roles', 'current_role_profile', 'address', 'addresses'
         ]
     
@@ -280,6 +282,9 @@ class ProfileSettingsSerializer(serializers.Serializer):
     formatted_address = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     label = serializers.CharField(max_length=50, required=False, allow_blank=True)
     is_main = serializers.BooleanField(required=False)
+    # Payout settings (stored on Account)
+    payout_method = serializers.ChoiceField(choices=[('gcash', 'GCash'), ('maya', 'Maya')], required=False, allow_null=True)
+    payout_number = serializers.CharField(max_length=20, required=False, allow_blank=True)
 
 
 class RegisterSerializer(serializers.Serializer):

@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocalSearchParams } from 'expo-router';
-import { View, TouchableOpacity, ScrollView, ActivityIndicator, Linking } from 'react-native';
+import { View, TouchableOpacity, ScrollView, ActivityIndicator, Linking, Modal, TextInput } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { styles } from '@/style/client/walletStyles';
 import CreditsEWalletModal from '@/components/payment/CreditsEWalletModal';
+import PayoutMethodModal from '@/components/PayoutMethodModal';
+import { fetchProfileDetailsCached } from '@/lib/profileCache';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -24,6 +26,18 @@ type WalletTransaction = {
   payment_method: 'gcash' | 'maya' | null;
   status: string;
   time: string;
+};
+
+type ProfilePayoutInfo = {
+  payout_method?: string;
+  payout_number?: string;
+};
+
+const formatPayoutNumber = (value: string) => {
+  const cleaned = String(value || '').replace(/\s+/g, '').replace(/[^\d+]/g, '');
+  const withoutCountry = cleaned.replace(/^\+?63/, '');
+  const normalized = withoutCountry.startsWith('0') ? withoutCountry.slice(1) : withoutCountry;
+  return normalized ? `+63${normalized}` : '';
 };
 
 const DEFAULT_TOKEN_PRICING: TokenPricingData = {
@@ -74,6 +88,18 @@ export default function ClientWalletScreen() {
   const [topUpLoading, setTopUpLoading] = useState<number | null>(null);
   const [selectedPackage, setSelectedPackage] = useState<{ tokens: number; price: number } | null>(null);
   const [paymentModalVisible, setPaymentModalVisible] = useState(false);
+  // Cashout modal state
+  const [cashoutModalVisible, setCashoutModalVisible] = useState(false);
+  const [cashoutTokens, setCashoutTokens] = useState('');
+  const [cashoutPassword, setCashoutPassword] = useState('');
+  const [cashoutLoading, setCashoutLoading] = useState(false);
+  const [cashoutStep, setCashoutStep] = useState<'entry' | 'password'>('entry');
+  const [showPassword, setShowPassword] = useState(false);
+  const [confirmVisible, setConfirmVisible] = useState(false);
+  const [payoutMethod, setPayoutMethod] = useState('');
+  const [payoutNumber, setPayoutNumber] = useState('');
+  const [payoutModalVisible, setPayoutModalVisible] = useState(false);
+  const [cashoutLocked, setCashoutLocked] = useState(false);
 
   // Handle payment status from deep link
   useEffect(() => {
@@ -102,8 +128,35 @@ export default function ClientWalletScreen() {
 
   async function loadWalletData() {
     setLoading(true);
-    await Promise.all([fetchBalance(), fetchTokenPricing(), fetchTransactions()]);
+    await Promise.all([fetchBalance(), fetchTokenPricing(), fetchTransactions(), fetchPayoutInfo()]);
     setLoading(false);
+  }
+
+  async function fetchPayoutInfo() {
+    try {
+      const profile = (await fetchProfileDetailsCached(true)) as ProfilePayoutInfo | null;
+      setPayoutMethod(String(profile?.payout_method || '').toLowerCase());
+      setPayoutNumber(String(profile?.payout_number || ''));
+    } catch (e) {
+      setPayoutMethod('');
+      setPayoutNumber('');
+    }
+  }
+
+  async function savePayoutInfo(method: string, number: string) {
+    const data = new FormData();
+    data.append('payout_method', method);
+    data.append('payout_number', number);
+    const response = await fetch(`${API_URL}/users/profile/settings/`, {
+      method: 'PATCH',
+      credentials: 'include',
+      body: data as any,
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const errorMsg = payload?.error || 'Failed to save payout details';
+      throw new Error(errorMsg);
+    }
   }
 
   async function fetchBalance() {
@@ -197,6 +250,81 @@ export default function ClientWalletScreen() {
     }
   }
 
+  async function verifyPassword(password: string) {
+    const response = await fetch(`${API_URL}/users/profile/verify-password/`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ current_password: password }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const errorMsg = payload?.error || payload?.password?.[0] || 'Password verification failed';
+      throw new Error(errorMsg);
+    }
+  }
+
+  function validateCashoutTokens() {
+    const tokensValue = Number(cashoutTokens);
+    if (!Number.isFinite(tokensValue) || tokensValue <= 0) {
+      alert('Enter a valid cashout amount');
+      return null;
+    }
+    if (balance !== null && tokensValue > balance) {
+      alert('Insufficient balance');
+      return null;
+    }
+    if (!payoutMethod || !payoutNumber) {
+      alert('Please add your payout method and number first.');
+      return null;
+    }
+    return tokensValue;
+  }
+
+  async function handlePasswordSubmit() {
+    if (cashoutLoading) return;
+    if (!cashoutPassword.trim()) {
+      alert('Enter your password to continue');
+      return;
+    }
+    setCashoutLoading(true);
+    try {
+      await verifyPassword(cashoutPassword.trim());
+      setCashoutLocked(true);
+      setConfirmVisible(true);
+    } catch (e: any) {
+      alert(e?.message || 'Password verification failed');
+    } finally {
+      setCashoutLoading(false);
+    }
+  }
+
+  async function handleCashoutConfirm() {
+    if (cashoutLoading) return;
+    const tokensValue = validateCashoutTokens();
+    if (!tokensValue) return;
+    setCashoutLoading(true);
+
+    // Simulate API delay for test mode (no external browser)
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+
+    // Simulate successful cash out - deduct from balance locally
+    const newBalance = (balance ?? 0) - tokensValue;
+    setBalance(newBalance);
+    setConfirmVisible(false);
+    setCashoutModalVisible(false);
+    setCashoutTokens('');
+    setCashoutPassword('');
+    setCashoutStep('entry');
+    setCashoutLoading(false);
+
+    // Show success modal/message
+    setShowCashoutSuccessModal(true);
+  }
+
+  // Success modal state for cashout
+  const [showCashoutSuccessModal, setShowCashoutSuccessModal] = useState(false);
+
   return (
     <ThemedView style={styles.container}>
       {/* Header */}
@@ -246,6 +374,24 @@ export default function ClientWalletScreen() {
               <ThemedText style={styles.sharedWalletNoteText}>
                 Shared across all your roles (Client, Mechanic, Shop Owner)
               </ThemedText>
+            </View>
+
+            {/* Cashout */}
+            <View style={styles.cashoutCard}>
+              <View style={styles.cashoutInfo}>
+                <ThemedText style={styles.cashoutTitle}>Cash Out Credits</ThemedText>
+                <ThemedText style={styles.cashoutSubtitle}>Send credits to your GCash or Maya</ThemedText>
+              </View>
+              <TouchableOpacity
+                style={styles.cashoutBtn}
+                onPress={() => {
+                  setCashoutStep('entry');
+                  setCashoutLocked(false);
+                  setCashoutModalVisible(true);
+                }}
+              >
+                <ThemedText style={styles.cashoutBtnText}>Cash Out</ThemedText>
+              </TouchableOpacity>
             </View>
 
             {/* Available Packages */}
@@ -353,6 +499,192 @@ export default function ClientWalletScreen() {
         onSelectMethod={confirmWalletMethod}
       />
 
+      <PayoutMethodModal
+        visible={payoutModalVisible}
+        initialMethod={(payoutMethod || '') as any}
+        initialNumber={payoutNumber || ''}
+        onClose={() => setPayoutModalVisible(false)}
+        onSave={async (method, number) => {
+          try {
+            await savePayoutInfo(method, number);
+            setPayoutMethod(method);
+            setPayoutNumber(number);
+            setPayoutModalVisible(false);
+            if (cashoutModalVisible) {
+              setCashoutStep('entry');
+              setCashoutLocked(false);
+            }
+          } catch (e: any) {
+            alert(e?.message || 'Failed to save payout details');
+          }
+        }}
+      />
+
+      {/* Cashout Modal */}
+      <Modal transparent visible={cashoutModalVisible} animationType="fade" onRequestClose={() => setCashoutModalVisible(false)}>
+        <View style={styles.cashoutOverlay}>
+          <View style={styles.cashoutModal}>
+            <ThemedText style={styles.cashoutModalTitle}>Cash Out Credits</ThemedText>
+            <ThemedText style={styles.cashoutModalSub}>
+              {cashoutStep === 'entry'
+                ? 'Confirm your payout details and credits.'
+                : 'Enter your password to continue.'}
+            </ThemedText>
+
+            <View style={styles.cashoutDetailRow}>
+              <ThemedText style={styles.cashoutDetailLabel}>Method</ThemedText>
+              <ThemedText style={styles.cashoutDetailValue}>
+                {payoutMethod ? (payoutMethod === 'gcash' ? 'GCash' : 'Maya') : 'No payment method'}
+              </ThemedText>
+            </View>
+            <View style={styles.cashoutDetailRow}>
+              <ThemedText style={styles.cashoutDetailLabel}>Number</ThemedText>
+              <ThemedText style={styles.cashoutDetailValue}>
+                {payoutNumber ? formatPayoutNumber(payoutNumber) : 'No payment number'}
+              </ThemedText>
+            </View>
+
+            <TouchableOpacity
+              style={styles.cashoutChangeBtn}
+              onPress={() => setPayoutModalVisible(true)}
+              disabled={cashoutLocked}
+            >
+              <ThemedText style={[styles.cashoutChangeText, { color: '#FFFFFF' }]}>
+                {payoutMethod && payoutNumber ? 'Edit Method and Number' : 'Add Method and Number'}
+              </ThemedText>
+            </TouchableOpacity>
+
+            <View style={styles.cashoutField}>
+              <ThemedText style={styles.cashoutLabel}>Credits to Cash Out</ThemedText>
+              <TextInput
+                style={styles.cashoutInput}
+                value={cashoutTokens}
+                onChangeText={setCashoutTokens}
+                placeholder="0"
+                placeholderTextColor="#8E8E93"
+                keyboardType="number-pad"
+                editable={!cashoutLocked}
+              />
+              <ThemedText style={styles.cashoutHint}>
+                ₱{(Number(cashoutTokens || 0) * tokenPricing.base_token_price).toFixed(2)} estimated
+              </ThemedText>
+            </View>
+
+            {cashoutStep === 'password' && (
+              <View style={styles.cashoutField}>
+                <ThemedText style={styles.cashoutLabel}>Password</ThemedText>
+                <View style={styles.passwordRow}>
+                  <TextInput
+                    style={[styles.cashoutInput, styles.passwordInput]}
+                    value={cashoutPassword}
+                    onChangeText={setCashoutPassword}
+                    placeholder="Enter your password"
+                    placeholderTextColor="#8E8E93"
+                    secureTextEntry={!showPassword}
+                  />
+                  <TouchableOpacity
+                    style={styles.eyeBtn}
+                    onPress={() => setShowPassword((prev) => !prev)}
+                  >
+                    <FontAwesome name={showPassword ? 'eye-slash' : 'eye'} size={16} color="#C7C7CC" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            <View style={styles.cashoutActions}>
+              <TouchableOpacity
+                style={[styles.cashoutActionBtn, styles.cashoutCancelBtn]}
+                onPress={() => {
+                  if (cashoutLoading) return;
+                  setCashoutModalVisible(false);
+                  setCashoutStep('entry');
+                  setCashoutLocked(false);
+                }}
+              >
+                <ThemedText style={styles.cashoutCancelText}>Cancel</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.cashoutActionBtn, styles.cashoutConfirmBtn]}
+                onPress={() => {
+                  if (cashoutLoading) return;
+                  if (!payoutMethod || !payoutNumber) {
+                    alert('Please add your payout method and number first.');
+                    return;
+                  }
+                  if (cashoutStep === 'entry') {
+                    const tokensValue = validateCashoutTokens();
+                    if (!tokensValue) return;
+                    setCashoutStep('password');
+                    return;
+                  }
+                  handlePasswordSubmit();
+                }}
+                disabled={cashoutLoading}
+              >
+                {cashoutLoading ? (
+                  <ActivityIndicator size="small" color="#121212" />
+                ) : (
+                  <ThemedText style={styles.cashoutConfirmText}>
+                    {cashoutStep === 'entry' ? 'Continue' : 'Verify'}
+                  </ThemedText>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Cashout Confirm Modal */}
+      <Modal transparent visible={confirmVisible} animationType="fade" onRequestClose={() => setConfirmVisible(false)}>
+        <View style={styles.cashoutOverlay}>
+          <View style={styles.cashoutModal}>
+            <ThemedText style={styles.cashoutModalTitle}>Confirm Cash Out</ThemedText>
+            <ThemedText style={styles.cashoutModalSub}>Review your payout details.</ThemedText>
+
+            <View style={styles.cashoutDetailRow}>
+              <ThemedText style={styles.cashoutDetailLabel}>Method</ThemedText>
+              <ThemedText style={styles.cashoutDetailValue}>
+                {payoutMethod ? (payoutMethod === 'gcash' ? 'GCash' : 'Maya') : 'No payment method'}
+              </ThemedText>
+            </View>
+            <View style={styles.cashoutDetailRow}>
+              <ThemedText style={styles.cashoutDetailLabel}>Number</ThemedText>
+              <ThemedText style={styles.cashoutDetailValue}>
+                {payoutNumber ? formatPayoutNumber(payoutNumber) : 'No payment number'}
+              </ThemedText>
+            </View>
+            <View style={styles.cashoutDetailRow}>
+              <ThemedText style={styles.cashoutDetailLabel}>Amount</ThemedText>
+              <ThemedText style={styles.cashoutDetailValue}>
+                ₱{(Number(cashoutTokens || 0) * tokenPricing.base_token_price).toFixed(2)}
+              </ThemedText>
+            </View>
+
+            <View style={styles.cashoutActions}>
+              <TouchableOpacity
+                style={[styles.cashoutActionBtn, styles.cashoutCancelBtn]}
+                onPress={() => setConfirmVisible(false)}
+                disabled={cashoutLoading}
+              >
+                <ThemedText style={styles.cashoutCancelText}>Back</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.cashoutActionBtn, styles.cashoutConfirmBtn]}
+                onPress={handleCashoutConfirm}
+                disabled={cashoutLoading}
+              >
+                {cashoutLoading ? (
+                  <ActivityIndicator size="small" color="#121212" />
+                ) : (
+                  <ThemedText style={styles.cashoutConfirmText}>Confirm</ThemedText>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Payment Success Modal */}
       {showSuccessModal && (
         <View style={styles.modalOverlay}>
@@ -380,6 +712,28 @@ export default function ClientWalletScreen() {
             <TouchableOpacity
               style={[styles.modalButton, { backgroundColor: '#ef4444' }]}
               onPress={() => setShowFailedModal(false)}
+            >
+              <ThemedText style={styles.modalButtonText}>OK</ThemedText>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* Cash Out Success Modal */}
+      {showCashoutSuccessModal && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <FontAwesome name="check-circle" size={64} color="#22c55e" />
+            <ThemedText style={styles.modalTitle}>Cash Out Successful!</ThemedText>
+            <ThemedText style={styles.modalText}>
+              Cash sent out to {formatPayoutNumber(payoutNumber)}
+            </ThemedText>
+            <ThemedText style={[styles.modalText, { marginTop: 8, fontWeight: '600' }]}>
+              Amount: {cashoutTokens} credits
+            </ThemedText>
+            <TouchableOpacity
+              style={styles.modalButton}
+              onPress={() => setShowCashoutSuccessModal(false)}
             >
               <ThemedText style={styles.modalButtonText}>OK</ThemedText>
             </TouchableOpacity>

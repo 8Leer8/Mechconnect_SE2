@@ -22,6 +22,19 @@ class Account(models.Model):
         blank=True,
         help_text="Last role the user was using before logout"
     )
+    # Unified payout contact stored at account-level so any role can cash out
+    payout_method = models.CharField(
+        max_length=10,
+        choices=[('gcash', 'GCash'), ('maya', 'Maya')],
+        null=True,
+        blank=True,
+    )
+    payout_number = models.CharField(
+        max_length=20,
+        null=True,
+        blank=True,
+        help_text="GCash or Maya number for receiving payouts (stored at account level)",
+    )
     
     @property
     def is_authenticated(self):
@@ -379,6 +392,27 @@ class Wallet(models.Model):
 
     def __str__(self):
         return f"Wallet for {self.account.username}: {self.balance}"
+
+
+class CashOutRequest(models.Model):
+    class Status(models.TextChoices):
+        PENDING = 'pending', 'Pending'
+        COMPLETED = 'completed', 'Completed'
+        FAILED = 'failed', 'Failed'
+
+    account = models.ForeignKey(Account, on_delete=models.CASCADE)
+    role = models.CharField(max_length=20, null=True, blank=True)
+    tokens = models.IntegerField()
+    amount_php = models.DecimalField(max_digits=10, decimal_places=2)
+    payout_method = models.CharField(max_length=10)
+    payout_number = models.CharField(max_length=20)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    external_reference = models.CharField(max_length=255, null=True, blank=True)
+    requested_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"CashOut #{self.id} {self.account.username} {self.tokens} tokens -> {self.payout_method} {self.payout_number} ({self.status})"
 
 class ShopEmployee(models.Model):
     account = models.OneToOneField(Account, on_delete=models.CASCADE)

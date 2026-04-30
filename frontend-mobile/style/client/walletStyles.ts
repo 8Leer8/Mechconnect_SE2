@@ -137,6 +137,42 @@ export const styles = StyleSheet.create({
     fontWeight: '500',
     lineHeight: 15,
   },
+  cashoutCard: {
+    backgroundColor: '#17171A',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#2A2A2E',
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 24,
+  },
+  cashoutInfo: {
+    flex: 1,
+    paddingRight: 12,
+  },
+  cashoutTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  cashoutSubtitle: {
+    fontSize: 11,
+    color: '#8E8E93',
+    marginTop: 4,
+  },
+  cashoutBtn: {
+    backgroundColor: '#FF8C00',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  cashoutBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
   // Section
   section: {
     marginBottom: 24,
@@ -344,6 +380,125 @@ export const styles = StyleSheet.create({
     color: '#aaa',
     textAlign: 'center',
     marginBottom: 20,
+  },
+  cashoutOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  cashoutModal: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#1A1C1E',
+    borderRadius: 16,
+    padding: 20,
+  },
+  cashoutModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  cashoutModalSub: {
+    fontSize: 12,
+    color: '#8E8E93',
+    marginTop: 6,
+    marginBottom: 16,
+  },
+  cashoutField: {
+    marginBottom: 14,
+  },
+  cashoutDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  cashoutDetailLabel: {
+    fontSize: 12,
+    color: '#8E8E93',
+  },
+  cashoutDetailValue: {
+    fontSize: 13,
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  cashoutLabel: {
+    fontSize: 12,
+    color: '#C7C7CC',
+    marginBottom: 6,
+    fontWeight: '600',
+  },
+  cashoutChangeBtn: {
+    marginTop: 6,
+    marginBottom: 12,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: '#2A2A2E',
+  },
+  cashoutChangeText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  passwordRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  passwordInput: {
+    flex: 1,
+    paddingRight: 40,
+  },
+  eyeBtn: {
+    position: 'absolute',
+    right: 10,
+    height: 40,
+    width: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cashoutInput: {
+    borderWidth: 1,
+    borderColor: '#2A2A2E',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: '#FFFFFF',
+    backgroundColor: '#151515',
+  },
+  cashoutHint: {
+    fontSize: 11,
+    color: '#8E8E93',
+    marginTop: 6,
+  },
+  cashoutActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginTop: 4,
+  },
+  cashoutActionBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  cashoutCancelBtn: {
+    backgroundColor: '#2A2A2E',
+  },
+  cashoutConfirmBtn: {
+    backgroundColor: '#FF8C00',
+  },
+  cashoutCancelText: {
+    color: '#C7C7CC',
+    fontWeight: '700',
+  },
+  cashoutConfirmText: {
+    color: '#121212',
+    fontWeight: '700',
   },
   modalButton: {
     backgroundColor: '#22c55e',

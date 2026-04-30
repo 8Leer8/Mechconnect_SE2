@@ -300,6 +300,16 @@ def update_profile_settings(request):
                     profile.profile_photo = request.FILES['profile_photo']
                 profile.save()
 
+            # Save payout settings on Account (unified)
+            if 'payout_method' in serializer.validated_data:
+                account.payout_method = serializer.validated_data.get('payout_method') or None
+            if 'payout_number' in serializer.validated_data:
+                # normalize empty string to None
+                account.payout_number = serializer.validated_data.get('payout_number') or None
+            # Save account if payout fields were present
+            if 'payout_method' in serializer.validated_data or 'payout_number' in serializer.validated_data:
+                account.save(update_fields=[f for f in ['payout_method', 'payout_number'] if f in serializer.validated_data])
+
             # Update mechanic-only fields
             if hasattr(account, 'mechanic') and 'bio' in serializer.validated_data:
                 account.mechanic.bio = serializer.validated_data['bio'] or None

@@ -87,6 +87,11 @@ urlpatterns = [
     path('client/wallet/transactions/', views.client_wallet_transactions, name='client_wallet_transactions'),
     path('client/wallet/topup/', views.client_wallet_topup, name='client_wallet_topup'),
     path('client/wallet/token-pricing/', views.get_token_pricing_view, name='client-wallet-token-pricing'),
+    # Cash-out (test flow)
+    path('client/wallet/cashout/', views.wallet_cashout, name='client_wallet_cashout'),
+    path('mechanic/wallet/cashout/', views.wallet_cashout, name='mechanic_wallet_cashout'),
+    path('shop-owner/wallet/cashout/', views.wallet_cashout, name='shop_owner_wallet_cashout'),
+    path('wallet/cashout/confirm/<int:cashout_id>/', views.wallet_cashout_confirm, name='wallet_cashout_confirm'),
     # Token purchase PayMongo payment flow (Mechanic)
     path('wallet/initiate-payment/', initiate_token_purchase, name='initiate_token_purchase'),
     path('wallet/webhook/', token_purchase_webhook, name='token_purchase_webhook'),

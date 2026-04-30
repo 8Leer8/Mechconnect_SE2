@@ -17,6 +17,7 @@ import * as Location from 'expo-location';
 import MapView, { PROVIDER_GOOGLE, type Region } from 'react-native-maps';
 
 import ThemedSelectModal from '@/components/ThemedSelectModal';
+import PayoutMethodModal from '@/components/PayoutMethodModal';
 import { ThemedView } from '@/components/themed-view';
 import { ThemedText } from '@/components/themed-text';
 import { useNotification } from '@/hooks/useNotification';
@@ -117,6 +118,8 @@ interface ProfileData {
   middlename?: string;
   date_of_birth?: string;
   gender?: string;
+  payout_method?: string;
+  payout_number?: string;
   current_role_profile?: {
     client?: RoleProfile;
     mechanic?: RoleProfile;
@@ -138,6 +141,8 @@ interface FormState {
   date_of_birth: string;
   gender: string;
   contact_number: string;
+  payout_method: string;
+  payout_number: string;
   house_building_number: string;
   street_name: string;
   subdivision_village: string;
@@ -166,6 +171,8 @@ const EMPTY_FORM: FormState = {
   date_of_birth: '',
   gender: '',
   contact_number: '',
+  payout_method: '',
+  payout_number: '',
   house_building_number: '',
   street_name: '',
   subdivision_village: '',
@@ -185,6 +192,13 @@ const EMPTY_FORM: FormState = {
 const DEFAULT_PRICING_SPLIT: PricingSplitState = {
   mechanicShare: '90',
   walletShare: '10',
+};
+
+const formatPayoutNumber = (value: string) => {
+  const cleaned = String(value || '').replace(/\s+/g, '').replace(/[^\d+]/g, '');
+  const withoutCountry = cleaned.replace(/^\+?63/, '');
+  const normalized = withoutCountry.startsWith('0') ? withoutCountry.slice(1) : withoutCountry;
+  return normalized ? `+63${normalized}` : '';
 };
 
 export default function EditProfileScreen() {
@@ -218,6 +232,7 @@ export default function EditProfileScreen() {
   const [showMonthModal, setShowMonthModal] = useState(false);
   const [showDayModal, setShowDayModal] = useState(false);
   const [showYearModal, setShowYearModal] = useState(false);
+  const [showPayoutModal, setShowPayoutModal] = useState(false);
   const [showGenderModal, setShowGenderModal] = useState(false);
 
   const [regions, setRegions] = useState<PSGCLocation[]>([]);
@@ -374,6 +389,8 @@ export default function EditProfileScreen() {
         date_of_birth: profileData.date_of_birth || '',
         gender: profileData.gender || '',
         contact_number: currentRoleProfile?.contact_number || '',
+        payout_method: profileData.payout_method || '',
+        payout_number: profileData.payout_number || '',
         house_building_number: address.house_building_number || '',
         street_name: address.street_name || '',
         subdivision_village: address.subdivision_village || '',
@@ -790,6 +807,8 @@ export default function EditProfileScreen() {
       data.append('middlename', form.middlename.trim());
       data.append('gender', form.gender.trim());
       data.append('contact_number', form.contact_number.trim());
+      data.append('payout_method', form.payout_method.trim());
+      data.append('payout_number', form.payout_number.trim());
       data.append('house_building_number', form.house_building_number.trim());
       data.append('street_name', form.street_name.trim());
       data.append('subdivision_village', form.subdivision_village.trim());
@@ -1078,6 +1097,26 @@ export default function EditProfileScreen() {
         />
         <Field label="Contact Number" value={form.contact_number} onChangeText={(v) => setField('contact_number', v)} keyboardType="phone-pad" />
 
+        <SectionTitle title="Payout Settings" />
+        <View style={styles.payoutSummaryCard}>
+          <View style={{ flex: 1 }}>
+            <ThemedText style={styles.payoutSummaryLabel}>Payout Method</ThemedText>
+            <ThemedText style={styles.payoutSummaryValue}>
+              {form.payout_method ? (form.payout_method === 'gcash' ? 'GCash' : 'Maya') : 'No payment method'}
+            </ThemedText>
+            <ThemedText style={styles.payoutSummaryLabel}>Payout Number</ThemedText>
+            <ThemedText style={styles.payoutSummaryValue}>
+              {form.payout_number ? formatPayoutNumber(form.payout_number) : 'No payment number'}
+            </ThemedText>
+          </View>
+          <TouchableOpacity style={styles.payoutActionBtn} onPress={() => setShowPayoutModal(true)}>
+            <ThemedText style={[styles.payoutActionText, { color: '#FFFFFF' }]}
+            >
+              {form.payout_method && form.payout_number ? 'Edit Cashout Number' : 'Add Cashout Number'}
+            </ThemedText>
+          </TouchableOpacity>
+        </View>
+
         {isClientRole ? (
           <>
             <SectionTitle title="Address" />
@@ -1333,6 +1372,18 @@ export default function EditProfileScreen() {
         selectedValue={dobYear}
         onClose={() => setShowYearModal(false)}
         onSelect={(item) => setDobYear(item.value)}
+      />
+
+      <PayoutMethodModal
+        visible={showPayoutModal}
+        initialMethod={(form.payout_method || '') as any}
+        initialNumber={form.payout_number || ''}
+        onClose={() => setShowPayoutModal(false)}
+        onSave={(method, number) => {
+          setField('payout_method', method);
+          setField('payout_number', number);
+          setShowPayoutModal(false);
+        }}
       />
 
       <ThemedSelectModal
@@ -1681,6 +1732,40 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: -4,
     marginBottom: 8,
+  },
+  payoutSummaryCard: {
+    borderWidth: 1,
+    borderColor: '#252525',
+    backgroundColor: '#151515',
+    borderRadius: 12,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 8,
+  },
+  payoutSummaryLabel: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  payoutSummaryValue: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  payoutActionBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: '#FF8C00',
+  },
+  payoutActionText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 12,
   },
   mapBtn: {
     marginTop: 2,

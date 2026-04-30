@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocalSearchParams } from 'expo-router';
-import { View, TouchableOpacity, ScrollView, ActivityIndicator, Alert } from 'react-native';
+import { View, TouchableOpacity, ScrollView, ActivityIndicator, Alert, TextInput, StyleSheet } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { FontAwesome } from '@expo/vector-icons';
@@ -72,6 +72,12 @@ export default function TokensScreen() {
   const [paymentModalVisible, setPaymentModalVisible] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [showFailedModal, setShowFailedModal] = useState(false);
+
+  // Cash out states
+  const [cashOutAmount, setCashOutAmount] = useState('');
+  const [cashOutLoading, setCashOutLoading] = useState(false);
+  const [showCashOutSuccessModal, setShowCashOutSuccessModal] = useState(false);
+  const [cashOutPhoneNumber, setCashOutPhoneNumber] = useState('09XXXXXXXXX');
 
   // Handle payment status from deep link
   useEffect(() => {
@@ -187,6 +193,34 @@ export default function TokensScreen() {
     setSelectedPackage(null);
   }
 
+  // Cash out function (test simulation)
+  async function handleCashOut() {
+    const amount = Number(cashOutAmount);
+    if (!amount || amount <= 0) {
+      Alert.alert('Invalid Amount', 'Please enter a valid amount to withdraw.');
+      return;
+    }
+    if (amount > (balance ?? 0)) {
+      Alert.alert('Insufficient Balance', 'You do not have enough credits to withdraw this amount.');
+      return;
+    }
+
+    setCashOutLoading(true);
+
+    // Simulate API call delay (test mode - no external API)
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+
+    // Simulate successful cash out - deduct from balance
+    const newBalance = (balance ?? 0) - amount;
+    setBalance(newBalance);
+    setCashOutAmount('');
+    setCashOutLoading(false);
+    setShowCashOutSuccessModal(true);
+
+    // Emit wallet change event
+    eventBus.emit('walletChanged', { tokens_balance: newBalance });
+  }
+
   return (
     <ThemedView style={styles.container}>
       {/* Header */}
@@ -226,6 +260,55 @@ export default function TokensScreen() {
           <ThemedText style={styles.sharedWalletNoteText}>
             Shared across all your roles (Client, Mechanic, Shop Owner)
           </ThemedText>
+        </View>
+
+        {/* Cash Out */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <View style={[styles.sectionDot, { backgroundColor: '#EF4444' }]} />
+            <ThemedText style={styles.sectionTitle}>Cash Out</ThemedText>
+          </View>
+          <ThemedText style={styles.balanceSub}>Withdraw credits to your e-wallet</ThemedText>
+
+          <View style={cashOutStyles.container}>
+            <View style={cashOutStyles.inputContainer}>
+              <ThemedText style={cashOutStyles.inputLabel}>Amount to Withdraw</ThemedText>
+              <View style={cashOutStyles.inputWrapper}>
+                <FontAwesome name="database" size={16} color="#FF8C00" style={cashOutStyles.inputIcon} />
+                <TextInput
+                  style={cashOutStyles.input}
+                  placeholder="Enter amount"
+                  placeholderTextColor="#666"
+                  keyboardType="numeric"
+                  value={cashOutAmount}
+                  onChangeText={setCashOutAmount}
+                  editable={!cashOutLoading}
+                />
+              </View>
+              <ThemedText style={cashOutStyles.balanceHint}>
+                Available: {balance ?? 0} credits
+              </ThemedText>
+            </View>
+
+            <TouchableOpacity
+              style={[
+                cashOutStyles.confirmButton,
+                (cashOutLoading || !cashOutAmount || Number(cashOutAmount) <= 0) && cashOutStyles.confirmButtonDisabled,
+              ]}
+              onPress={handleCashOut}
+              disabled={cashOutLoading || !cashOutAmount || Number(cashOutAmount) <= 0}
+              activeOpacity={0.7}
+            >
+              {cashOutLoading ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <FontAwesome name="money" size={16} color="#fff" style={cashOutStyles.buttonIcon} />
+                  <ThemedText style={cashOutStyles.confirmButtonText}>Confirm Cash Out</ThemedText>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Buy Credits */}
@@ -363,6 +446,91 @@ export default function TokensScreen() {
           </View>
         </View>
       )}
+
+      {/* Cash Out Success Modal */}
+      {showCashOutSuccessModal && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <FontAwesome name="check-circle" size={64} color="#22c55e" />
+            <ThemedText style={styles.modalTitle}>Cash Out Successful!</ThemedText>
+            <ThemedText style={styles.modalText}>
+              Cash sent out to {cashOutPhoneNumber}
+            </ThemedText>
+            <ThemedText style={[styles.modalText, { marginTop: 8, fontWeight: '600' }]}>
+              Amount: {cashOutAmount} credits
+            </ThemedText>
+            <TouchableOpacity
+              style={styles.modalButton}
+              onPress={() => setShowCashOutSuccessModal(false)}
+            >
+              <ThemedText style={styles.modalButtonText}>OK</ThemedText>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
     </ThemedView>
   );
 }
+
+const cashOutStyles = StyleSheet.create({
+  container: {
+    backgroundColor: '#1A1C1E',
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#2A2C2E',
+  },
+  inputContainer: {
+    marginBottom: 16,
+  },
+  inputLabel: {
+    fontSize: 14,
+    color: '#8E8E93',
+    marginBottom: 8,
+  },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#252729',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#3A3C3E',
+    paddingHorizontal: 12,
+  },
+  inputIcon: {
+    marginRight: 10,
+  },
+  input: {
+    flex: 1,
+    height: 48,
+    color: '#fff',
+    fontSize: 16,
+  },
+  balanceHint: {
+    fontSize: 12,
+    color: '#8E8E93',
+    marginTop: 6,
+  },
+  confirmButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EF4444',
+    borderRadius: 10,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+  },
+  confirmButtonDisabled: {
+    backgroundColor: '#666',
+    opacity: 0.6,
+  },
+  buttonIcon: {
+    marginRight: 8,
+  },
+  confirmButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+});
