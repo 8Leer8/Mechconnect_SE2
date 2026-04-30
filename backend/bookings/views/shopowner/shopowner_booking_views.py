@@ -1007,17 +1007,15 @@ def _shopowner_bookings_queryset(account):
         shop = None
 
     # Include:
-    # 1) requests directly owned by this shop owner account,
-    # 2) requests linked to this shop,
-    # 3) broadcast-accepted requests where provider is a mechanic in this shop.
-    #
-    # This keeps shop-owner Jobs aligned with mechanic-side visibility while
-    # still scoped to the shop owner context.
+    # 1) requests linked to this shop,
+    # 2) broadcast-accepted requests where provider is a mechanic in this shop,
+    # 3) requests directly owned by this shop owner account when they are not
+    #    "solo mechanic" jobs (see exclude below).
     owner_scope = Q(request__provider=account)
     if shop is not None:
         owner_scope = owner_scope | Q(request__shop=shop) | Q(request__provider__mechanic__shop=shop)
 
-    return (
+    qs = (
         Booking.objects.filter(owner_scope)
         .select_related(
             "request",
@@ -1040,6 +1038,11 @@ def _shopowner_bookings_queryset(account):
         )
         .order_by("-updated_at", "-booked_at", "-id")
     )
+    # Dual shop-owner + mechanic: jobs with no shop on the request are independent
+    # mechanic work — hide them from shop-owner Jobs so they only appear on the mechanic tab.
+    if shop is not None:
+        qs = qs.exclude(Q(request__shop__isnull=True, request__provider=account))
+    return qs
 
 
 def _shopowner_live_backjob_q():

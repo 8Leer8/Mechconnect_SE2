@@ -177,6 +177,8 @@ def home_page(request):
             current_bookings = Booking.objects.filter(
                 request__provider=account,
                 status__in=['accepted', 'on_the_way', 'at_location', 'diagnosing', 'active', 'reworked']
+            ).exclude(
+                Q(request__shop__isnull=False, request__provider=account)
             ).select_related(
                 'request',
                 'request__client',
@@ -265,6 +267,10 @@ def home_page(request):
         
         elif hasattr(account, 'shopowner'):
             shop_owner = account.shopowner
+            try:
+                shop = shop_owner.shop
+            except Exception:
+                shop = None
 
             # Match client home: include booked / in-progress payment states so shop dashboard
             # shows jobs after broadcast finalize or early booking lifecycle.
@@ -292,15 +298,15 @@ def home_page(request):
             ).prefetch_related(
                 Prefetch('activebooking', queryset=ActiveBooking.objects.all())
             ).order_by('-booked_at')
+            if shop is not None:
+                current_bookings = current_bookings.exclude(
+                    Q(request__shop__isnull=True, request__provider=account)
+                )
 
             # Client requests to this shop: by shop or provider (custom, direct, broadcast only; no emergency)
             request_ids_with_booking = set(
                 Booking.objects.values_list('request_id', flat=True)
             )
-            try:
-                shop = shop_owner.shop
-            except Exception:
-                shop = None
             shop_filter = Q(provider=account)
             if shop is not None:
                 shop_filter = Q(shop=shop) | Q(provider=account)

@@ -1793,7 +1793,7 @@ def mechanic_accept_backjob(request, booking_id):
         return err
 
     try:
-        booking = Booking.objects.filter(_mechanic_booking_access_q(account)).distinct().get(id=booking_id)
+        booking = _get_accessible_booking(account, booking_id)
     except Booking.DoesNotExist:
         return Response({"error": "Booking not found or you do not have permission to update it"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -2074,21 +2074,44 @@ def _mechanic_booking_access_q(account):
 
     This avoids over-filtering on request.shop/provider shape (shop-owner
     bookings may be owner-scoped even when assigned to a shop mechanic).
+
+    For mechanic-*role* lists and APIs, combine with
+    :func:`_mechanic_tab_bookings_qs` so jobs accepted as the shop (provider is
+    this account and ``request.shop`` is set) stay on the shop-owner surface only.
     """
     return Q(request__assignments__mechanic=account) | Q(request__provider=account)
+
+
+def _mechanic_shop_owner_channel_q(account):
+    """
+    Jobs finalized as a *shop* offer: ``request.shop`` is set and this account is
+    the nominal ``request.provider`` (shop owner). Same person may also be a
+    mechanic; those bookings must not appear on the independent mechanic tab.
+    """
+    return Q(request__shop__isnull=False, request__provider=account)
+
+
+def _mechanic_tab_bookings_qs(account):
+    """Bookings visible in mechanic-role lists and mechanic-scoped booking APIs."""
+    return Booking.objects.filter(_mechanic_booking_access_q(account)).exclude(
+        _mechanic_shop_owner_channel_q(account)
+    )
 
 
 def _mechanic_pending_backjob_queryset(account):
     if getattr(getattr(account, "mechanic", None), "is_working_for_shop", False):
         return Booking.objects.none()
-    return Booking.objects.filter(
-        _mechanic_booking_access_q(account),
-        backjobs__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
-    ).distinct()
+    return (
+        _mechanic_tab_bookings_qs(account)
+        .filter(
+            backjobs__status__in=[Booking.Status.BACKJOB_PENDING, Booking.Status.REWORKED],
+        )
+        .distinct()
+    )
 
 
 def _get_accessible_booking(account, booking_id):
-    return Booking.objects.filter(_mechanic_booking_access_q(account)).distinct().get(id=booking_id)
+    return _mechanic_tab_bookings_qs(account).distinct().get(id=booking_id)
 
 
 def _serialize_pending_direct_requests(account):
@@ -2358,9 +2381,9 @@ def list_mechanic_bookings(request):
     compact_param = str(request.query_params.get("compact", "1")).strip().lower()
     compact_mode = compact_param not in {"0", "false", "no"}
 
-    # All bookings where this mechanic is the provider
+    # Bookings for mechanic role (excludes shop-channel jobs where this account is shop owner provider)
     bookings_queryset = (
-        Booking.objects.filter(_mechanic_booking_access_q(account))
+        _mechanic_tab_bookings_qs(account)
         .select_related(
             "request",
             "request__client",
@@ -2639,7 +2662,8 @@ def get_mechanic_booking_detail(request, booking_id):
 
     try:
         booking = (
-            Booking.objects.select_related(
+            _mechanic_tab_bookings_qs(account)
+            .select_related(
                 "request",
                 "request__client",
                 "request__client__account",
@@ -2650,7 +2674,6 @@ def get_mechanic_booking_detail(request, booking_id):
                 Prefetch("activebooking", queryset=ActiveBooking.objects.all()),
                 Prefetch("completebooking", queryset=CompleteBooking.objects.all()),
             )
-            .filter(_mechanic_booking_access_q(account))
             .distinct()
             .get(id=booking_id)
         )
@@ -3084,8 +3107,8 @@ def mechanic_complete_booking(request, booking_id):
 
     try:
         booking = (
-            Booking.objects.select_related("request", "request__provider")
-            .filter(_mechanic_booking_access_q(account))
+            _mechanic_tab_bookings_qs(account)
+            .select_related("request", "request__provider")
             .distinct()
             .get(id=booking_id)
         )
