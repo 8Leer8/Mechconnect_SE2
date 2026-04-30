@@ -1,7 +1,7 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
 import { Feather } from '@expo/vector-icons';
-import { Alert, Modal, TouchableOpacity, View } from 'react-native';
+import { Modal, TouchableOpacity, View } from 'react-native';
 import { useTabsBackToHome } from '@/hooks/use-tabs-back-to-home';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
@@ -127,29 +127,15 @@ export default function MechanicTabLayout() {
       return;
     }
 
-    // Native alert so it appears above the map's own Modal ("waiting for client approval").
     if (isBroadcastFinalize) {
       lastModalBookingIdRef.current = safeBookingId;
-      Alert.alert(
-        'The client accepted your request',
-        'They chose you for this booking.',
-        [
-          {
-            text: 'View booking',
-            onPress: () => {
-              if (safeBookingId) {
-                router.push({
-                  pathname: '/mechanic/booking/booking_details',
-                  params: { bookingId: String(safeBookingId) },
-                } as any);
-              } else {
-                router.push('/(mechanicTabs)/main/bookings' as any);
-              }
-            },
-          },
-          { text: 'Close', style: 'cancel' },
-        ]
-      );
+      setMechanicGlobalModal({
+        visible: true,
+        title: 'The client accepted your request',
+        body: 'They chose you for this booking.',
+        bookingId: safeBookingId,
+        mode: 'accepted',
+      });
     }
   }, [lastMessage, router]);
 
@@ -269,6 +255,8 @@ export default function MechanicTabLayout() {
         visible={mechanicGlobalModal.visible}
         transparent
         animationType="fade"
+        presentationStyle="overFullScreen"
+        statusBarTranslucent
         onRequestClose={closeAcceptModal}
       >
         <View
