@@ -60,6 +60,13 @@
         {
           "locationAlwaysAndWhenInUsePermission": "Allow Mechconnect to access your location to show nearby mechanics and service locations."
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Mechconnect to access your photos so you can attach purchase receipts to quotations.",
+          "cameraPermission": "Allow Mechconnect to use the camera so you can photograph purchase receipts for quotations."
+        }
       ]
     ],
     "experiments": {

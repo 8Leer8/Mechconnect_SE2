@@ -8,6 +8,27 @@
  * Usage:
  *   <Image source={{ uri: getImageUrl(profile.profile_photo_url) }} />
  */
+/** If backend returns http://127.0.0.1/... but the app uses LAN IP in EXPO_PUBLIC_API_URL, rewrite so the device can load the image. */
+function rewriteLocalhostToApiHost(resolved: string, apiUrl: string | undefined): string {
+  if (!apiUrl || (!resolved.startsWith('http://') && !resolved.startsWith('https://'))) {
+    return resolved;
+  }
+  try {
+    const u = new URL(resolved);
+    if (u.hostname !== '127.0.0.1' && u.hostname !== 'localhost') return resolved;
+    let base = apiUrl.replace(/\/$/, '');
+    if (!base.includes('://')) base = `http://${base}`;
+    const api = new URL(base);
+    if (api.hostname === '127.0.0.1' || api.hostname === 'localhost') return resolved;
+    u.protocol = api.protocol;
+    u.hostname = api.hostname;
+    if (api.port) u.port = api.port;
+    return u.toString();
+  } catch {
+    return resolved;
+  }
+}
+
 export function getImageUrl(imageUrl: string | null | undefined): string | null {
   if (!imageUrl) return null;
 
@@ -50,13 +71,13 @@ export function getImageUrl(imageUrl: string | null | undefined): string | null 
   
   // If URL is already absolute (starts with http:// or https://), use as-is
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-    return maybeUpgradeToHttps(trimmed);
+    return rewriteLocalhostToApiHost(maybeUpgradeToHttps(trimmed), apiUrl);
   }
 
   // Protocol-relative URL (//host/path)
   if (trimmed.startsWith('//')) {
     const protocol = apiUrl?.startsWith('https://') ? 'https:' : 'http:';
-    return `${protocol}${trimmed}`;
+    return rewriteLocalhostToApiHost(`${protocol}${trimmed}`, apiUrl);
   }
   
   // For relative paths, prepend the API base URL
@@ -76,8 +97,8 @@ export function getImageUrl(imageUrl: string | null | undefined): string | null 
   const baseUrl = imagePath.startsWith('/media/')
     ? normalizedApiUrl.replace(/\/api$/, '')
     : normalizedApiUrl;
-  
-  return `${baseUrl}${imagePath}`;
+
+  return rewriteLocalhostToApiHost(`${baseUrl}${imagePath}`, apiUrl);
 }
 
 /**
@@ -87,4 +108,15 @@ export function getImageUrl(imageUrl: string | null | undefined): string | null 
 export function getImageSource(imageUrl: string | null | undefined): { uri: string } | undefined {
   const url = getImageUrl(imageUrl);
   return url ? { uri: url } : undefined;
+}
+
+/**
+ * Saved quotation receipt paths (/media/...) or full URLs; also passes through
+ * local camera/gallery URIs. Use for quotation lines in chat and booking details.
+ */
+export function quotationReceiptDisplayUri(raw: string | null | undefined): string | null {
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  if (s.startsWith('file:') || s.startsWith('content:') || s.startsWith('blob:')) return s;
+  return getImageUrl(s);
 }

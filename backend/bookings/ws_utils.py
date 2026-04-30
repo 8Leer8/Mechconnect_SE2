@@ -591,6 +591,28 @@ def post_quotation_chat_message(account, booking, quotation, action='created', r
                     row["line_kind"] = "item"
                 row["line_total"] = float(row["quantity"]) * float(row["unit_price"])
 
+                try:
+                    from MainBackend.storage_utils import get_media_url
+                    from .models import QuotationItem as QI
+
+                    staged_id = proposed.get("_staged_item_id")
+                    if str(change.action_type or "").lower() == "added" and staged_id is not None:
+                        ph = QI.objects.filter(id=int(staged_id), quotation=quotation).first()
+                        if ph is not None:
+                            row["id"] = ph.id
+                            if ph.purchase_receipt_image:
+                                row["purchase_receipt_image"] = get_media_url(ph.purchase_receipt_image, request)
+                            if ph.receipt_submitted_at:
+                                row["receipt_submitted_at"] = ph.receipt_submitted_at.isoformat()
+                    elif stable_original_id is not None:
+                        ph = QI.objects.filter(id=int(stable_original_id), quotation=quotation).first()
+                        if ph is not None and ph.purchase_receipt_image:
+                            row["purchase_receipt_image"] = get_media_url(ph.purchase_receipt_image, request)
+                            if ph.receipt_submitted_at:
+                                row["receipt_submitted_at"] = ph.receipt_submitted_at.isoformat()
+                except Exception:
+                    pass
+
                 if change.action_type == "removed" and is_booked_service_row(row):
                     continue
                 if change.action_type == "edited" and rows_are_same(original, proposed):

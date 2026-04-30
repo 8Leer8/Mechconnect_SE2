@@ -228,28 +228,53 @@ class ActiveBookingSerializer(serializers.ModelSerializer):
 
 
 class QuotationItemSerializer(serializers.ModelSerializer):
+    """Used by QuotationDetailSerializer (booking quotation in API) and amendment payloads."""
     id = serializers.IntegerField(required=False)
     line_total = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
     service_name = serializers.SerializerMethodField()
+    is_backjob_new_line = serializers.SerializerMethodField()
+    backjob_id = serializers.SerializerMethodField()
 
     class Meta:
         model = QuotationItem
         fields = [
             'id',
+            'line_kind',
+            'source',
+            'purchase_receipt_image',
+            'receipt_submitted_at',
+            'service',
+            'service_add_on',
             'description',
             'quantity',
             'unit_price',
             'line_total',
             'status',
             'service_name',
+            'change_type',
+            'previous_description',
+            'previous_quantity',
+            'previous_unit_price',
+            'is_backjob_new_line',
+            'backjob_id',
+            'created_at',
+            'updated_at',
         ]
 
     def get_line_total(self, obj):
-        return obj.line_total
+        try:
+            return float(obj.line_total)
+        except Exception:
+            return 0.0
 
     def get_status(self, obj):
-        return obj.status
+        try:
+            if hasattr(obj, 'status') and obj.status is not None:
+                return obj.status
+            return obj.quotation.status if hasattr(obj, 'quotation') and obj.quotation is not None else None
+        except Exception:
+            return None
 
     def get_service_name(self, obj):
         if obj.service:
@@ -257,6 +282,12 @@ class QuotationItemSerializer(serializers.ModelSerializer):
         if obj.service_add_on:
             return obj.service_add_on.name
         return None
+
+    def get_is_backjob_new_line(self, obj):
+        return bool(getattr(obj, 'is_backjob_line', False))
+
+    def get_backjob_id(self, obj):
+        return getattr(obj, 'backjob_id', None)
 
 
 class QuotationDetailSerializer(serializers.ModelSerializer):
@@ -691,60 +722,6 @@ class BroadcastOfferSerializer(serializers.ModelSerializer):
 from . import models as booking_models
 
 
-class QuotationItemSerializer(serializers.ModelSerializer):
-    id = serializers.IntegerField(required=False)
-    line_total = serializers.SerializerMethodField()
-    status = serializers.SerializerMethodField()
-    is_backjob_new_line = serializers.SerializerMethodField()
-    backjob_id = serializers.SerializerMethodField()
-
-    class Meta:
-        model = booking_models.QuotationItem
-        fields = [
-            'id',
-            'line_kind',
-            'source',
-            'purchase_receipt_image',
-            'receipt_submitted_at',
-            'service',
-            'service_add_on',
-            'description',
-            'quantity',
-            'unit_price',
-            'line_total',
-            'status',
-            'change_type',
-            'previous_description',
-            'previous_quantity',
-            'previous_unit_price',
-            'is_backjob_new_line',
-            'backjob_id',
-            'created_at',
-            'updated_at',
-        ]
-
-    def get_line_total(self, obj):
-        try:
-            return float(obj.line_total)
-        except Exception:
-            return 0.0
-
-    def get_status(self, obj):
-        try:
-            # Prefer per-item status if present, otherwise fall back to parent quotation
-            if hasattr(obj, 'status') and obj.status is not None:
-                return obj.status
-            return obj.quotation.status if hasattr(obj, 'quotation') and obj.quotation is not None else None
-        except Exception:
-            return None
-
-    def get_is_backjob_new_line(self, obj):
-        return bool(getattr(obj, 'is_backjob_line', False))
-
-    def get_backjob_id(self, obj):
-        return getattr(obj, 'backjob_id', None)
-
-
 def _quotation_line_shape(raw, existing_item=None):
     """Pick line_kind, source, and quantity for a quotation row (service vs item)."""
     QI = booking_models.QuotationItem
@@ -784,7 +761,7 @@ class QuotationSerializer(serializers.Serializer):
 
     def to_representation(self, instance):
         # instance is a Quotation model
-        from .models import Quotation, QuotationItem, QuotationAmendment
+        from .models import AmendmentItem, Quotation, QuotationItem, QuotationAmendment
 
         pending_amendment = None
         if str(getattr(instance, 'status', '')).lower() == Quotation.Status.PENDING:
@@ -805,7 +782,9 @@ class QuotationSerializer(serializers.Serializer):
         else:
             visible_items_qs = QuotationItem.objects.filter(quotation=instance).exclude(status='rejected')
 
-        items_data = list(QuotationItemSerializer(visible_items_qs, many=True).data)
+        items_data = list(
+            QuotationItemSerializer(visible_items_qs, many=True, context=self.context).data
+        )
         pending_total_amount = None
         pending_quotation_total = None
 
@@ -875,12 +854,28 @@ class QuotationSerializer(serializers.Serializer):
                 except Exception:
                     unit_price = 0.0
 
+                prior_row = {}
+                if original_id is not None and original_id in index_by_id:
+                    pidx = index_by_id[original_id]
+                    if 0 <= pidx < len(items_data):
+                        prior_row = items_data[pidx] or {}
+                receipt_url = (
+                    proposed.get('purchase_receipt_image')
+                    or original.get('purchase_receipt_image')
+                    or prior_row.get('purchase_receipt_image')
+                )
+                receipt_at = proposed.get('receipt_submitted_at')
+                if receipt_at is None:
+                    receipt_at = original.get('receipt_submitted_at')
+                if receipt_at is None:
+                    receipt_at = prior_row.get('receipt_submitted_at')
+
                 row = {
                     'id': original_id,
                     'line_kind': proposed.get('line_kind') or original.get('line_kind') or QuotationItem.LineKind.ITEM,
                     'source': proposed.get('source') if proposed.get('source') is not None else original.get('source'),
-                    'purchase_receipt_image': None,
-                    'receipt_submitted_at': None,
+                    'purchase_receipt_image': receipt_url,
+                    'receipt_submitted_at': receipt_at,
                     'service': proposed.get('service') if proposed.get('service') is not None else original.get('service'),
                     'service_add_on': proposed.get('service_add_on') if proposed.get('service_add_on') is not None else original.get('service_add_on'),
                     'description': proposed.get('description') if proposed.get('description') is not None else original.get('description'),
@@ -899,6 +894,24 @@ class QuotationSerializer(serializers.Serializer):
                 }
                 if str(row['line_kind'] or '').lower() == QuotationItem.LineKind.SERVICE and not row.get('service'):
                     row['line_kind'] = QuotationItem.LineKind.ITEM
+
+                if change.action_type == AmendmentItem.ActionType.ADDED:
+                    staged_raw = (change.proposed_changes or {}).get('_staged_item_id')
+                    if staged_raw is not None:
+                        try:
+                            ph = QuotationItem.objects.get(
+                                id=int(staged_raw),
+                                quotation_id=instance.id,
+                            )
+                            req = self.context.get('request')
+                            row['id'] = ph.id
+                            ru = get_media_url(ph.purchase_receipt_image, req) if ph.purchase_receipt_image else None
+                            if ru:
+                                row['purchase_receipt_image'] = ru
+                            if ph.receipt_submitted_at:
+                                row['receipt_submitted_at'] = ph.receipt_submitted_at.isoformat()
+                        except (QuotationItem.DoesNotExist, ValueError, TypeError):
+                            pass
 
                 if change.action_type == 'removed' and is_booked_service_row(row):
                     continue

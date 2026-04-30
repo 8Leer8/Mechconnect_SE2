@@ -507,7 +507,7 @@ def shopowner_accept_emergency_request(request, request_id):
     )
     ActiveBooking.objects.create(booking=booking)
 
-    data = _serialize_single_booking(booking)
+    data = _serialize_single_booking(booking, request=request)
 
     notify_user(
         req.client_id,
@@ -837,7 +837,7 @@ def shopowner_accept_direct_request(request, request_id):
     )
     ActiveBooking.objects.create(booking=booking)
 
-    data = _serialize_single_booking(booking)
+    data = _serialize_single_booking(booking, request=request)
 
     notify_user(
         req.client_id,
@@ -963,7 +963,7 @@ def shopowner_accept_custom_request(request, request_id):
         )
         ActiveBooking.objects.get_or_create(booking=booking)
 
-    data = _serialize_single_booking(booking)
+    data = _serialize_single_booking(booking, request=request)
 
     return Response(
         {"message": "Custom request accepted and booking created", "booking": data},
@@ -1111,7 +1111,7 @@ def list_shopowner_bookings(request):
         start_index = (page - 1) * page_size
         end_index = start_index + page_size
         paginated = filtered[start_index:end_index]
-        data = _serialize_bookings(paginated)
+        data = _serialize_bookings(paginated, request=request)
 
         payload = {
             "status": sf,
@@ -1159,7 +1159,7 @@ def list_shopowner_bookings(request):
         "pending_payment", "completed", "cancelled", "reworked", "backjob_pending", "disputed",
     ]:
         sub = [booking for booking in all_bookings if booking.status == s]
-        groups[s] = {"bookings": _serialize_bookings(sub), "count": len(sub)}
+        groups[s] = {"bookings": _serialize_bookings(sub, request=request), "count": len(sub)}
 
     groups["total_count"] = len(all_bookings)
     return Response(groups)
@@ -1181,7 +1181,7 @@ def get_shopowner_booking_detail(request, booking_id):
             status=status.HTTP_404_NOT_FOUND,
         )
 
-    return Response({"booking": _serialize_single_booking(booking)})
+    return Response({"booking": _serialize_single_booking(booking, request=request)})
 
 
 @api_view(["GET", "POST"])
@@ -1374,9 +1374,12 @@ def shopowner_upload_quotation_item_receipt(request, booking_id, item_id):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    if qitem.source != QuotationItem.ItemSource.TO_BE_PURCHASED:
+    if qitem.source not in (
+        QuotationItem.ItemSource.TO_BE_PURCHASED,
+        QuotationItem.ItemSource.ALREADY_PURCHASED,
+    ):
         return Response(
-            {"error": "Receipt upload is only required for 'to be purchased' items"},
+            {"error": "Receipt upload is only allowed for 'to be purchased' or 'already purchased' item lines"},
             status=status.HTTP_400_BAD_REQUEST,
         )
 

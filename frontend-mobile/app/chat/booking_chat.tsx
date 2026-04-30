@@ -4,9 +4,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, router, useNavigation } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { FontAwesome } from '@expo/vector-icons';
-import { getImageUrl } from '@/lib/imageUtils';
+import { getImageUrl, quotationReceiptDisplayUri } from '@/lib/imageUtils';
 import { fetchProfileDetailsCached, getCachedAccountId } from '@/lib/profileCache';
 import { shouldMarkAsAdded, runQuotationDiffSelfCheck } from '@/lib/quotationDiff';
+import { isLikelyQuotationLineRename } from '@/lib/quotationTextMatch';
+import { getQuoteRequestKey, mergeResolvedQuotationMessages } from '@/lib/chatQuotationMerge';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -63,11 +65,6 @@ export default function BookingChatScreen() {
   const [visibleMessageKeys, setVisibleMessageKeys] = useState<Record<string, true>>({});
 
   const getQuotationMessageKey = (m: any) => `${m?.id || 'noid'}_${m?.created_at || 'notime'}`;
-  const getQuoteRequestKey = (payload: any) => {
-    const amendmentId = payload?.amendment_id;
-    if (amendmentId != null && amendmentId !== '') return `amendment:${String(amendmentId)}`;
-    return `quotation:${String(payload?.quotation_id ?? '')}`;
-  };
   const getMessageKey = (m: any, fallbackIndex?: number) => {
     if (m && (m.id || m.created_at)) {
       const idPart = m.id ? String(m.id) : 'noid';
@@ -106,49 +103,6 @@ export default function BookingChatScreen() {
     } catch (e) {
       return null;
     }
-  };
-
-  const mergeResolvedQuotationMessages = (rawMessages: any[]) => {
-    const merged: any[] = [];
-    const requestIndexByKey: Record<string, number> = {};
-
-    (rawMessages || []).forEach((message: any) => {
-      const payload = parseStructuredContent(message?.content);
-      if (!payload || payload.type !== 'quotation_request') {
-        merged.push(message);
-        return;
-      }
-
-      const action = String(payload?.action || '').toLowerCase();
-      const requestKey = getQuoteRequestKey(payload);
-      const isDecisionMessage = action === 'accepted' || action === 'rejected';
-
-      if (isDecisionMessage && requestIndexByKey[requestKey] != null) {
-        const originalIndex = requestIndexByKey[requestKey];
-        const originalMessage = merged[originalIndex];
-        const originalPayload = parseStructuredContent(originalMessage?.content) || {};
-        const nextPayload = {
-          ...originalPayload,
-          status: action,
-          action,
-          total_amount: payload?.total_amount ?? originalPayload?.total_amount,
-        };
-
-        merged[originalIndex] = {
-          ...originalMessage,
-          content: JSON.stringify(nextPayload),
-        };
-        return;
-      }
-
-      const nextIndex = merged.length;
-      merged.push(message);
-      if (!isDecisionMessage && requestKey) {
-        requestIndexByKey[requestKey] = nextIndex;
-      }
-    });
-
-    return merged;
   };
 
   // Fetch profile or stored account id
@@ -1142,23 +1096,8 @@ export default function BookingChatScreen() {
         if (Number.isFinite(addOnId) && addOnId > 0) return `addon:${addOnId}`;
         return null;
       };
-      const isLikelyRename = (prevDesc: any, currDesc: any) => {
-        const a = normalizeText(prevDesc);
-        const b = normalizeText(currDesc);
-        if (!a || !b) return false;
-        if (a === b) return true;
-        if (a.includes(b) || b.includes(a)) return true;
-
-        const aTokens = new Set(a.split(/\s+/).filter(Boolean));
-        const bTokens = new Set(b.split(/\s+/).filter(Boolean));
-        if (!aTokens.size || !bTokens.size) return false;
-
-        let overlap = 0;
-        aTokens.forEach(t => { if (bTokens.has(t)) overlap += 1; });
-        const ratioA = overlap / aTokens.size;
-        const ratioB = overlap / bTokens.size;
-        return ratioA >= 0.6 || ratioB >= 0.6;
-      };
+      const isLikelyRename = (prevDesc: any, currDesc: any) =>
+        isLikelyQuotationLineRename(prevDesc, currDesc);
       const bookedServiceCandidates = visibleOrderedPreviousItems.filter((it: any) => (
         String(it?.line_kind || '').toLowerCase() === 'service' ||
         Number(it?.service || 0) > 0
@@ -1451,6 +1390,7 @@ export default function BookingChatScreen() {
                           }
                         : null;
                       const previousDisplay = prevIt || storedPrevious;
+                      const receiptUri = quotationReceiptDisplayUri(it?.purchase_receipt_image);
                       return (
                         <View key={idx}>
                           {!isAdded && isEdited ? (
@@ -1475,6 +1415,16 @@ export default function BookingChatScreen() {
                             </View>
                             <ThemedText style={styles.quoteItemValue}>₱{(Number(it.line_total) || 0).toFixed(2)}</ThemedText>
                           </View>
+                          {String(it?.line_kind || '').toLowerCase() !== 'service' && receiptUri ? (
+                            <View style={styles.quoteReceiptRow}>
+                              <ThemedText style={styles.quoteReceiptLabel}>Receipt</ThemedText>
+                              <Image
+                                source={{ uri: receiptUri }}
+                                style={styles.quoteReceiptThumb}
+                                accessibilityLabel="Purchase receipt"
+                              />
+                            </View>
+                          ) : null}
                         </View>
                       );
                     })}
@@ -2238,6 +2188,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 8,
+  },
+  quoteReceiptRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 6,
+    marginBottom: 2,
+  },
+  quoteReceiptLabel: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    fontWeight: '600',
+  },
+  quoteReceiptThumb: {
+    width: 56,
+    height: 56,
+    borderRadius: 8,
+    backgroundColor: '#1a1d22',
   },
   systemTitle: { fontSize: 13, fontWeight: '700', color: '#FF8C00', marginBottom: 4 },
   systemText: { fontSize: 13, color: '#ECEDEE', textAlign: 'left' },

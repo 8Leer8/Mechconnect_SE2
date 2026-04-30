@@ -18,12 +18,25 @@ import { fetchBookingChatPreview } from '@/lib/bookingChatPreview';
 import { useNotification } from '@/hooks/useNotification';
 import { coerceBarangayForDisplay } from '@/lib/locationAddress';
 import { sortQuotationItemsForDisplay } from '@/lib/quotationOrdering';
+import { isLikelyQuotationLineRename } from '@/lib/quotationTextMatch';
 import { runDedupedRequest } from '@/lib/requestDedupe';
+import { mergeResolvedQuotationMessages } from '@/lib/chatQuotationMerge';
+import { quotationReceiptDisplayUri } from '@/lib/imageUtils';
 import { parseResponseJson } from '@/lib/safeJsonFetch';
 
 export const screenOptions = { headerShown: false } as const;
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
+
+const QUOTATION_ITEM_SOURCE_LABELS: Record<string, string> = {
+  on_hand: 'On-hand (stock)',
+  to_be_purchased: 'To be purchased',
+  already_purchased: 'Already purchased',
+  mechanic_selling: 'Mechanic selling / owned',
+};
+
+const quotationItemSourceLabel = (v: unknown) =>
+  QUOTATION_ITEM_SOURCE_LABELS[String(v || '')] || (v ? String(v) : '—');
 
 interface BookingDetail {
   id: number;
@@ -1011,18 +1024,7 @@ export default function ShopOwnerBookingDetailScreen() {
   };
 
   const inferChangeLabel = (it: any, acceptedByAssoc: Record<string, any>, acceptedRows: any[], removedRows: any[]) => {
-    const isLikelyRename = (aRaw: any, bRaw: any) => {
-      const a = normalizeText(aRaw);
-      const b = normalizeText(bRaw);
-      if (!a || !b) return false;
-      if (a === b || a.includes(b) || b.includes(a)) return true;
-      const aTokens = new Set(a.split(/\s+/).filter(Boolean));
-      const bTokens = new Set(b.split(/\s+/).filter(Boolean));
-      if (!aTokens.size || !bTokens.size) return false;
-      let overlap = 0;
-      aTokens.forEach(t => { if (bTokens.has(t)) overlap += 1; });
-      return (overlap / aTokens.size) >= 0.6 || (overlap / bTokens.size) >= 0.6;
-    };
+    const isLikelyRename = (aRaw: any, bRaw: any) => isLikelyQuotationLineRename(aRaw, bRaw);
 
     const assocKey = getAssocKey(it);
     const editedFromRemoved = (removedRows || []).find((row: any) => {
@@ -1084,6 +1086,7 @@ export default function ShopOwnerBookingDetailScreen() {
       if (!msgRes.ok) return;
       const rows = await parseResponseJson<unknown>(msgRes);
       if (!Array.isArray(rows) || !rows.length) return;
+      const mergedRows = mergeResolvedQuotationMessages(rows as any[]);
 
       const parsePayload = (raw: any): any | null => {
         if (typeof raw !== 'string') return raw && typeof raw === 'object' ? raw : null;
@@ -1100,7 +1103,7 @@ export default function ShopOwnerBookingDetailScreen() {
         return null;
       };
 
-      const quoteMessages = rows
+      const quoteMessages = mergedRows
         .map((m: any) => ({ ...m, __payload: parsePayload(m?.content) }))
         .filter((m: any) => m.__payload && m.__payload.type === 'quotation_request')
         .sort((a: any, b: any) => {
@@ -1800,6 +1803,9 @@ export default function ShopOwnerBookingDetailScreen() {
                       return { pill: {}, text: {} };
                     };
                     const pillStyle = getChangePillStyle(changeLabel);
+                    const lineKind = String(it?.line_kind || '').toLowerCase();
+                    const isServiceQuoteLine = lineKind === 'service';
+                    const receiptUri = !isServiceQuoteLine ? quotationReceiptDisplayUri(it?.purchase_receipt_image) : null;
 
                     return (
                       <View key={key} style={[styles.quotationAccordionRow, isRemoved ? styles.removedItem : (changeLabel ? styles.pendingItem : styles.acceptedItem), isExpanded ? styles.quotationAccordionRowExpanded : null]}>
@@ -1855,6 +1861,27 @@ export default function ShopOwnerBookingDetailScreen() {
                               <ThemedText style={styles.quotationDetailLabel}>Quantity</ThemedText>
                               <ThemedText style={styles.quotationDetailValue}>{qty}</ThemedText>
                             </View>
+                            <View style={styles.receiptRow}>
+                              <ThemedText style={styles.quotationDetailLabel}>Line type</ThemedText>
+                              <ThemedText style={styles.quotationDetailValue}>{isServiceQuoteLine ? 'Service' : 'Item / part'}</ThemedText>
+                            </View>
+                            {!isServiceQuoteLine ? (
+                              <View style={styles.receiptRow}>
+                                <ThemedText style={styles.quotationDetailLabel}>Source</ThemedText>
+                                <ThemedText style={styles.quotationDetailValue}>{quotationItemSourceLabel(it?.source)}</ThemedText>
+                              </View>
+                            ) : null}
+                            {receiptUri ? (
+                              <View style={styles.quotationReceiptPreviewWrap}>
+                                <ThemedText style={styles.quotationDetailLabel}>Purchase receipt</ThemedText>
+                                <Image
+                                  source={{ uri: receiptUri }}
+                                  style={styles.quotationReceiptPreviewImage}
+                                  contentFit="contain"
+                                  accessibilityLabel="Purchase receipt"
+                                />
+                              </View>
+                            ) : null}
                           </View>
                         ) : null}
                       </View>

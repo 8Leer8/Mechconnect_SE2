@@ -453,7 +453,7 @@ def list_client_bookings(request):
             paginated_bookings = bookings_queryset[start_index:end_index]
             
             # Serialize and return filtered bookings
-            bookings_data = _serialize_bookings(paginated_bookings, viewer_account=account)
+            bookings_data = _serialize_bookings(paginated_bookings, viewer_account=account, request=request)
 
             return Response({
                 'status': status_filter.lower(),
@@ -481,23 +481,23 @@ def list_client_bookings(request):
 
             return Response({
                 'active': {
-                    'bookings': _serialize_bookings(active_bookings, viewer_account=account),
+                    'bookings': _serialize_bookings(active_bookings, viewer_account=account, request=request),
                     'count': len(active_bookings)
                 },
                 'completed': {
-                    'bookings': _serialize_bookings(completed_bookings, viewer_account=account),
+                    'bookings': _serialize_bookings(completed_bookings, viewer_account=account, request=request),
                     'count': len(completed_bookings)
                 },
                 'cancelled': {
-                    'bookings': _serialize_bookings(cancelled_bookings, viewer_account=account),
+                    'bookings': _serialize_bookings(cancelled_bookings, viewer_account=account, request=request),
                     'count': len(cancelled_bookings)
                 },
                 'reworked': {
-                    'bookings': _serialize_bookings(reworked_bookings, viewer_account=account),
+                    'bookings': _serialize_bookings(reworked_bookings, viewer_account=account, request=request),
                     'count': len(reworked_bookings)
                 },
                 'disputed': {
-                    'bookings': _serialize_bookings(disputed_bookings, viewer_account=account),
+                    'bookings': _serialize_bookings(disputed_bookings, viewer_account=account, request=request),
                     'count': len(disputed_bookings)
                 },
                 'total_count': len(all_bookings)
@@ -573,7 +573,7 @@ def get_booking_detail(request, booking_id):
                 pass
 
         # Serialize booking
-        booking_data = _serialize_single_booking(booking, viewer_account=account)
+        booking_data = _serialize_single_booking(booking, viewer_account=account, request=request)
         
         return Response({
             'booking': booking_data
@@ -667,7 +667,7 @@ def client_cancel_booking(request, booking_id):
         return Response(
             {
                 'message': 'Booking cancelled.',
-                'booking': _serialize_single_booking(booking, viewer_account=account),
+                'booking': _serialize_single_booking(booking, viewer_account=account, request=request),
             },
             status=status.HTTP_200_OK,
         )
@@ -1228,17 +1228,19 @@ def list_my_disputes(request):
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-def _serialize_bookings(bookings_queryset, viewer_account=None):
+def _serialize_bookings(bookings_queryset, viewer_account=None, request=None):
     """Helper function to serialize a queryset of bookings"""
     bookings_data = []
-    
+
     for booking in bookings_queryset:
-        bookings_data.append(_serialize_single_booking(booking, viewer_account=viewer_account))
-    
+        bookings_data.append(
+            _serialize_single_booking(booking, viewer_account=viewer_account, request=request)
+        )
+
     return bookings_data
 
 
-def _serialize_single_booking(booking, viewer_account=None):
+def _serialize_single_booking(booking, viewer_account=None, request=None):
     """Helper function to serialize a single booking with all details"""
     prefetched_assignments = getattr(booking.request, '_prefetched_objects_cache', {}).get('assignments')
     assignments = list(prefetched_assignments) if prefetched_assignments is not None else list(
@@ -1556,7 +1558,8 @@ def _serialize_single_booking(booking, viewer_account=None):
     try:
         try:
             q = booking.quotation
-            qd = QuotationSerializer(q).data
+            q_ctx = {'request': request} if request is not None else {}
+            qd = QuotationSerializer(q, context=q_ctx).data
             if 'mechanic' in qd and 'mechanic_id' not in qd:
                 try:
                     qd['mechanic_id'] = q.mechanic.id if q.mechanic else None

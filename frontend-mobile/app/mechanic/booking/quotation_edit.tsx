@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Modal, LayoutAnimation, Platform, UIManager } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Modal, LayoutAnimation, Platform, UIManager, FlatList, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { FontAwesome } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Image } from 'expo-image';
 import { styles } from '../../../style/mechanic/quotation_edit';
 import { directRequestServiceUnitPrice } from '@/lib/directRequestDisplay';
+import { quotationReceiptDisplayUri } from '@/lib/imageUtils';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -77,6 +79,7 @@ const LOG = '[quotation_edit]';
 const ITEM_SOURCES = [
   { value: 'on_hand', label: 'On-hand (stock)' },
   { value: 'to_be_purchased', label: 'To be purchased' },
+  { value: 'already_purchased', label: 'Already purchased' },
   { value: 'mechanic_selling', label: 'Mechanic selling / owned' },
 ] as const;
 
@@ -101,10 +104,30 @@ type QuotationItem = {
   purchase_receipt_image?: string | null;
 };
 
+/** Receipt modal: new line picks local URI until save; existing line uploads right after pick. */
+type ReceiptPickModalTarget =
+  | { kind: 'deferred'; rowKey: string }
+  | { kind: 'immediate'; rowKey: string; item: QuotationItem };
+
 type BookedServiceInfo = {
   id: number;
   name: string;
   default_price: number;
+};
+
+/** Row from GET /services/mechanic/my-services/ or /services/shop/my-services/ (`id` is catalog Service id). */
+type OfferedCatalogRow = {
+  id: number;
+  name: string;
+  price: number;
+  category: string | null;
+};
+
+/** Row from GET .../my-addons/?service_id= or .../shop/addons/?service_id= (`id` is ServiceAddOn id). */
+type AddonCatalogRow = {
+  id: number;
+  name: string;
+  price: number;
 };
 
 const getSourceLabel = (v: string | null | undefined) => {
@@ -121,6 +144,15 @@ const clampLabel = (value: string, max = 24) => {
   const text = String(value || '').trim();
   if (text.length <= max) return text;
   return `${text.slice(0, max)}...`;
+};
+
+/** QuotationItem.description max length on server (CharField). */
+const MAX_QUOTATION_DESC = 255;
+
+const buildAddonLineDescription = (serviceName: string, addonName: string) => {
+  const base = `${String(serviceName || 'Service').trim()} Addon: ${String(addonName || 'Add-on').trim()}`;
+  if (base.length <= MAX_QUOTATION_DESC) return base;
+  return `${base.slice(0, MAX_QUOTATION_DESC - 3)}...`;
 };
 
 export default function QuotationEdit() {
@@ -144,6 +176,10 @@ export default function QuotationEdit() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [roleChecked, setRoleChecked] = useState(false);
   const [receiptUploadingKey, setReceiptUploadingKey] = useState<string | null>(null);
+  /** Local image URI for new "already purchased" lines; uploads right after quotation save (when line gets an id). */
+  const [pendingReceiptUriByKey, setPendingReceiptUriByKey] = useState<Record<string, string>>({});
+  /** Camera vs library modal: deferred (new line) or immediate upload (line already has server id). */
+  const [receiptPickModalTarget, setReceiptPickModalTarget] = useState<ReceiptPickModalTarget | null>(null);
   const [hasQuotationOnServer, setHasQuotationOnServer] = useState<boolean | null>(null);
   const [bookedServiceIds, setBookedServiceIds] = useState<number[]>([]);
   const [bookedServices, setBookedServices] = useState<BookedServiceInfo[]>([]);
@@ -152,7 +188,25 @@ export default function QuotationEdit() {
   const [currentBackjob, setCurrentBackjob] = useState<any | null>(null);
   const [isBookingCompleted, setIsBookingCompleted] = useState(false);
   const [bookingContextLoaded, setBookingContextLoaded] = useState(false);
+  const [catalogVisible, setCatalogVisible] = useState(false);
+  const [catalogStep, setCatalogStep] = useState<'services' | 'addons'>('services');
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [catalogList, setCatalogList] = useState<OfferedCatalogRow[]>([]);
+  const [catalogSearch, setCatalogSearch] = useState('');
+  const [catalogAddonsLoading, setCatalogAddonsLoading] = useState(false);
+  const [catalogAddonsError, setCatalogAddonsError] = useState<string | null>(null);
+  const [pendingCatalogService, setPendingCatalogService] = useState<OfferedCatalogRow | null>(null);
+  const [catalogAddonRows, setCatalogAddonRows] = useState<AddonCatalogRow[]>([]);
+  const [catalogSelectedAddonIds, setCatalogSelectedAddonIds] = useState<Record<number, boolean>>({});
+  const [catalogAddonFetchFor, setCatalogAddonFetchFor] = useState<OfferedCatalogRow | null>(null);
   const isReadOnly = isBookingCompleted;
+
+  const catalogFiltered = useMemo(() => {
+    const q = catalogSearch.trim().toLowerCase();
+    if (!q) return catalogList;
+    return catalogList.filter((row) => row.name.toLowerCase().includes(q));
+  }, [catalogList, catalogSearch]);
 
   const extractBookedServices = (booking: any): BookedServiceInfo[] => {
     const details = booking?.request?.request_details;
@@ -308,9 +362,11 @@ export default function QuotationEdit() {
       const lineKind =
         it.line_kind === 'service' || it.line_kind === 'item'
           ? it.line_kind
-          : it.service
-            ? 'service'
-            : 'item';
+          : it.service_add_on
+            ? 'item'
+            : it.service
+              ? 'service'
+              : 'item';
       return {
         id: it.id,
         client_key: `existing-${it.id ?? index}`,
@@ -319,7 +375,7 @@ export default function QuotationEdit() {
         is_backjob_new_line: Boolean(it.is_backjob_new_line),
         backjob_id: it.backjob_id ?? null,
         status: it.status,
-        change_type: null,
+        change_type: it.change_type ?? null,
         description: it.description || '',
         quantity: Number(it.quantity || 1),
         unit_price: Number(it.unit_price || 0),
@@ -482,7 +538,7 @@ export default function QuotationEdit() {
             });
             setInitialItemMap(initialMapFb);
             initializeInputText(fromBooking.mappedItems);
-            setInitialSaveSignature(JSON.stringify(buildSavableItems(fromBooking.mappedItems, {})));
+            setInitialSaveSignature(`${JSON.stringify(buildSavableItems(fromBooking.mappedItems, {}))}|pr:`);
             const nextExpFb: Record<string, boolean> = {};
             fromBooking.mappedItems.forEach((it: QuotationItem, idx: number) => {
               const key = getItemKey(it, idx);
@@ -506,7 +562,7 @@ export default function QuotationEdit() {
               });
               setInitialItemMap(initialMapEx);
               initializeInputText(fromExtracted.mappedItems);
-              setInitialSaveSignature(JSON.stringify(buildSavableItems(fromExtracted.mappedItems, {})));
+              setInitialSaveSignature(`${JSON.stringify(buildSavableItems(fromExtracted.mappedItems, {}))}|pr:`);
               const nextExpEx: Record<string, boolean> = {};
               fromExtracted.mappedItems.forEach((it: QuotationItem, idx: number) => {
                 const key = getItemKey(it, idx);
@@ -520,7 +576,7 @@ export default function QuotationEdit() {
             } else {
               setItems([]);
               setHasQuotationOnServer(false);
-              setInitialSaveSignature(JSON.stringify(buildSavableItems([], {})));
+              setInitialSaveSignature(`${JSON.stringify(buildSavableItems([], {}))}|pr:`);
             }
           }
           return;
@@ -561,7 +617,7 @@ export default function QuotationEdit() {
         });
         setInitialItemMap(initialMap);
         initializeInputText(mappedItems);
-        setInitialSaveSignature(JSON.stringify(buildSavableItems(mappedItems, {})));
+        setInitialSaveSignature(`${JSON.stringify(buildSavableItems(mappedItems, {}))}|pr:`);
         const nextExpanded: Record<string, boolean> = {};
         mappedItems.forEach((it: QuotationItem, idx: number) => {
           const key = getItemKey(it, idx);
@@ -585,7 +641,7 @@ export default function QuotationEdit() {
           console.error(LOG, 'load exception', msg, e);
           setItems([]);
           setHasQuotationOnServer(false);
-          setInitialSaveSignature(JSON.stringify(buildSavableItems([], {})));
+          setInitialSaveSignature(`${JSON.stringify(buildSavableItems([], {}))}|pr:`);
         }
       } finally {
         if (!cancelled) {
@@ -628,6 +684,204 @@ export default function QuotationEdit() {
     setUnitPriceText((prev) => ({ ...prev, [newKey]: '0' }));
   };
 
+  const openServiceCatalog = async () => {
+    if (isReadOnly) return;
+    setCatalogVisible(true);
+    setCatalogStep('services');
+    setCatalogAddonsError(null);
+    setPendingCatalogService(null);
+    setCatalogAddonRows([]);
+    setCatalogSelectedAddonIds({});
+    setCatalogAddonFetchFor(null);
+    setCatalogSearch('');
+    setCatalogError(null);
+    setCatalogLoading(true);
+    const url = isShopOwnerSource
+      ? `${API_URL}/services/shop/my-services/`
+      : `${API_URL}/services/mechanic/my-services/`;
+    try {
+      const res = await fetchWithAuthRetry(url, { method: 'GET', credentials: 'include' }, authJsonHeaders);
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch {
+        data = {};
+      }
+      if (!res.ok) {
+        setCatalogList([]);
+        setCatalogError(String(data?.error || data?.detail || 'Could not load your services.'));
+        return;
+      }
+      const raw = Array.isArray(data.services) ? data.services : [];
+      const rows: OfferedCatalogRow[] = [];
+      raw.forEach((s: any) => {
+        const id = Number(s.id);
+        if (!Number.isFinite(id) || id <= 0) return;
+        const price = Number(s.price);
+        rows.push({
+          id,
+          name: String(s.name || 'Service'),
+          price: Number.isFinite(price) ? price : 0,
+          category: s.category != null && s.category !== '' ? String(s.category) : null,
+        });
+      });
+      setCatalogList(rows);
+    } catch (e: any) {
+      setCatalogList([]);
+      setCatalogError(e?.message ? String(e.message) : 'Network error while loading services.');
+    } finally {
+      setCatalogLoading(false);
+    }
+  };
+
+  const closeServiceCatalog = () => {
+    setCatalogVisible(false);
+    setCatalogError(null);
+    setCatalogStep('services');
+    setCatalogAddonsError(null);
+    setCatalogAddonsLoading(false);
+    setPendingCatalogService(null);
+    setCatalogAddonRows([]);
+    setCatalogSelectedAddonIds({});
+    setCatalogAddonFetchFor(null);
+  };
+
+  /** Adds one service line plus optional add-on lines (add-ons are saved as item rows with `service_add_on`). */
+  const appendServiceAndAddonsFromCatalog = (
+    serviceRow: OfferedCatalogRow,
+    addonsToInclude: AddonCatalogRow[],
+  ) => {
+    if (isReadOnly) return;
+    type Def = { key: string; item: QuotationItem };
+    const defs: Def[] = [];
+    const svcKey = makeClientKey();
+    defs.push({
+      key: svcKey,
+      item: {
+        client_key: svcKey,
+        line_kind: 'service',
+        description: serviceRow.name,
+        quantity: 1,
+        unit_price: serviceRow.price,
+        service: serviceRow.id,
+        service_add_on: null,
+        status: 'pending',
+        change_type: 'added',
+      },
+    });
+    addonsToInclude.forEach((addon) => {
+      const k = makeClientKey();
+      defs.push({
+        key: k,
+        item: {
+          client_key: k,
+          line_kind: 'item',
+          source: 'on_hand',
+          description: buildAddonLineDescription(serviceRow.name, addon.name),
+          quantity: 1,
+          unit_price: addon.price,
+          service: serviceRow.id,
+          service_add_on: addon.id,
+          status: 'pending',
+          change_type: 'added',
+        },
+      });
+    });
+    setItems((prev) => [...prev, ...defs.map((d) => d.item)]);
+    setQuantityText((prev) => {
+      const next = { ...prev };
+      defs.forEach((d) => {
+        next[d.key] = '1';
+      });
+      return next;
+    });
+    setUnitPriceText((prev) => {
+      const next = { ...prev };
+      defs.forEach((d) => {
+        next[d.key] = String(d.item.unit_price);
+      });
+      return next;
+    });
+    setExpandedItems((prev) => {
+      const next = { ...prev };
+      defs.forEach((d) => {
+        next[d.key] = true;
+      });
+      return next;
+    });
+    closeServiceCatalog();
+  };
+
+  const handleCatalogServicePress = async (row: OfferedCatalogRow) => {
+    if (isReadOnly || catalogAddonsLoading) return;
+    setCatalogAddonFetchFor(row);
+    setCatalogAddonsError(null);
+    setCatalogAddonsLoading(true);
+    const base = isShopOwnerSource
+      ? `${API_URL}/services/shop/addons/`
+      : `${API_URL}/services/mechanic/my-addons/`;
+    const url = `${base}?service_id=${row.id}`;
+    try {
+      const res = await fetchWithAuthRetry(url, { method: 'GET', credentials: 'include' }, authJsonHeaders);
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch {
+        data = {};
+      }
+      if (!res.ok) {
+        setCatalogAddonsError(String(data?.error || data?.detail || 'Could not load add-ons.'));
+        return;
+      }
+      const raw = Array.isArray(data.add_ons) ? data.add_ons : [];
+      const mapped: AddonCatalogRow[] = [];
+      raw.forEach((a: any) => {
+        const id = Number(a.id);
+        if (!Number.isFinite(id) || id <= 0) return;
+        const price = Number(a.price);
+        mapped.push({
+          id,
+          name: String(a.name || 'Add-on'),
+          price: Number.isFinite(price) ? price : 0,
+        });
+      });
+      if (mapped.length === 0) {
+        appendServiceAndAddonsFromCatalog(row, []);
+        return;
+      }
+      setPendingCatalogService(row);
+      setCatalogAddonRows(mapped);
+      setCatalogSelectedAddonIds({});
+      setCatalogStep('addons');
+    } catch (e: any) {
+      setCatalogAddonsError(e?.message ? String(e.message) : 'Network error while loading add-ons.');
+    } finally {
+      setCatalogAddonsLoading(false);
+    }
+  };
+
+  const backCatalogToServices = () => {
+    setCatalogStep('services');
+    setPendingCatalogService(null);
+    setCatalogAddonRows([]);
+    setCatalogSelectedAddonIds({});
+    setCatalogAddonsError(null);
+    setCatalogAddonFetchFor(null);
+  };
+
+  const confirmCatalogAddonsToQuotation = () => {
+    if (!pendingCatalogService) return;
+    const chosen = catalogAddonRows.filter((a) => catalogSelectedAddonIds[a.id]);
+    appendServiceAndAddonsFromCatalog(pendingCatalogService, chosen);
+  };
+
+  const skipAddonsAfterFetchError = () => {
+    const row = catalogAddonFetchFor;
+    if (!row) return;
+    setCatalogAddonsError(null);
+    appendServiceAndAddonsFromCatalog(row, []);
+  };
+
   const addItem = () => {
     if (isReadOnly) return;
     const newItem: QuotationItem = {
@@ -652,6 +906,11 @@ export default function QuotationEdit() {
   const removeItem = (index: number) => {
     if (isReadOnly) return;
     const key = getItemKey(items[index], index);
+    setPendingReceiptUriByKey((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
     setItems(prev => prev.filter((_, i) => i !== index));
     setQuantityText(prev => {
       const next = { ...prev };
@@ -858,10 +1117,20 @@ export default function QuotationEdit() {
   }, [items, removedAcceptedItems, quantityText, unitPriceText]);
   const totalAmount = useMemo(() => subtotal, [subtotal]);
 
-  const currentSaveSignature = useMemo(
-    () => JSON.stringify(buildSavableItems(mergeDraftIntoItems(items), removedAcceptedItems)),
-    [items, removedAcceptedItems, quantityText, unitPriceText]
-  );
+  /** Matches `|pr:` suffix on `setInitialSaveSignature` so deferred receipt picks count as unsaved. */
+  const currentSaveSignature = useMemo(() => {
+    const base = JSON.stringify(buildSavableItems(mergeDraftIntoItems(items), removedAcceptedItems));
+    const merged = mergeDraftIntoItems(items);
+    const pr = merged
+      .map((it, i) => {
+        const k = getItemKey(it, i);
+        return it.line_kind === 'item' && it.source === 'already_purchased' && pendingReceiptUriByKey[k] ? k : '';
+      })
+      .filter(Boolean)
+      .sort()
+      .join(',');
+    return `${base}|pr:${pr}`;
+  }, [items, removedAcceptedItems, quantityText, unitPriceText, pendingReceiptUriByKey]);
 
   const hasUnsavedChanges = useMemo(() => {
     if (initialSaveSignature == null) return false;
@@ -876,6 +1145,104 @@ export default function QuotationEdit() {
     if (!hasUnsavedChanges) return;
     setSaveError(null);
     setShowSaveReviewModal(true);
+  };
+
+  const postQuotationItemReceiptMultipart = async (itemId: number, uri: string, unitPrice: number) => {
+    if (!bookingId) return;
+    const fileName = uri.split('/').pop() || `receipt-${itemId}.jpg`;
+    const ext = fileName.split('.').pop()?.toLowerCase();
+    const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+    const formData = new FormData();
+    formData.append('receipt_image', { uri, name: fileName, type: mime } as any);
+    formData.append('actual_unit_price', String(Math.max(0, unitPrice)));
+    const receiptUrl = isShopOwnerSource
+      ? `${API_URL}/bookings/shopowner/bookings/${bookingId}/quotation/items/${itemId}/receipt/`
+      : `${API_URL}/bookings/mechanic/bookings/${bookingId}/quotation/items/${itemId}/receipt/`;
+    const res = await fetchWithAuthRetry(receiptUrl, {
+      method: 'POST',
+      credentials: 'include',
+      body: formData as any,
+    }, authHeadersMultipart);
+    const payload = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(payload?.error || 'Failed to upload receipt');
+  };
+
+  const openDeferredReceiptPickerModal = (rowKey: string) => {
+    if (isReadOnly) return;
+    setReceiptPickModalTarget({ kind: 'deferred', rowKey });
+  };
+
+  /** Saved quotation line: pick camera or gallery, then upload receipt to server immediately. */
+  const openImmediateReceiptPickerModal = (item: QuotationItem, rowKey: string) => {
+    if (isReadOnly) return;
+    if (!bookingId || !item.id) return;
+    setReceiptPickModalTarget({ kind: 'immediate', rowKey, item });
+  };
+
+  const closeReceiptPickModal = () => {
+    setReceiptPickModalTarget(null);
+  };
+
+  const completeReceiptPick = async (mode: 'camera' | 'library') => {
+    const target = receiptPickModalTarget;
+    if (!target) return;
+    closeReceiptPickModal();
+    const rowKey = target.rowKey;
+    try {
+      if (mode === 'library') {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (permission.status !== 'granted') {
+          Alert.alert('Permission needed', 'Allow photo library access to attach a receipt.');
+          return;
+        }
+      } else {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (permission.status !== 'granted') {
+          Alert.alert('Permission needed', 'Allow camera access to take a receipt photo.');
+          return;
+        }
+      }
+      const launchOpts = {
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.9 as const,
+      };
+      const result =
+        mode === 'library'
+          ? await ImagePicker.launchImageLibraryAsync(launchOpts)
+          : await ImagePicker.launchCameraAsync(launchOpts);
+      if (result.canceled || !result.assets?.[0]?.uri) return;
+      const uri = result.assets[0].uri;
+
+      if (target.kind === 'deferred') {
+        setPendingReceiptUriByKey((prev) => ({ ...prev, [rowKey]: uri }));
+        return;
+      }
+
+      setReceiptUploadingKey(rowKey);
+      await postQuotationItemReceiptMultipart(
+        Number(target.item.id),
+        uri,
+        Math.max(0, Number(target.item.unit_price || 0)),
+      );
+      router.replace({
+        pathname: '/mechanic/booking/quotation_edit',
+        params: { bookingId: String(bookingId), ...(isShopOwnerSource ? { source: 'shopowner' } : {}) },
+      });
+    } catch (e: any) {
+      Alert.alert('Receipt', String(e?.message || e || 'Unknown error'));
+      console.error(LOG, 'receipt pick/upload failed', e?.message || e, e);
+    } finally {
+      setReceiptUploadingKey(null);
+    }
+  };
+
+  const clearDeferredReceiptForKey = (rowKey: string) => {
+    setPendingReceiptUriByKey((prev) => {
+      const next = { ...prev };
+      delete next[rowKey];
+      return next;
+    });
   };
 
   const confirmSaveQuotation = async () => {
@@ -922,6 +1289,21 @@ export default function QuotationEdit() {
       }
       console.log(LOG, 'quotation POST ok', { bookingId, quotationId: savedId, itemCount: payload.items.length });
       const fromServer = buildMappedItemsFromApiData(body, isAcceptedBackjob, bookedServices, currentBackjob);
+      const preSavePendingReceipts = rowsToSave
+        .map((it, i) => ({ it, rowKey: getItemKey(it, i) }))
+        .filter(
+          ({ it, rowKey }) =>
+            it.line_kind === 'item' &&
+            it.source === 'already_purchased' &&
+            Boolean(pendingReceiptUriByKey[rowKey]),
+        )
+        .map(({ it, rowKey }) => ({
+          uri: pendingReceiptUriByKey[rowKey],
+          description: String(it.description || ''),
+          quantity: Number(it.quantity || 1),
+          unit_price: Number(it.unit_price || 0),
+        }));
+
       setHasQuotationOnServer(fromServer.serverHasQuotation);
       setItems(fromServer.mappedItems);
       const postSaveMap: Record<string, QuotationItem> = {};
@@ -930,7 +1312,7 @@ export default function QuotationEdit() {
       });
       setInitialItemMap(postSaveMap);
       initializeInputText(fromServer.mappedItems);
-      setInitialSaveSignature(JSON.stringify(buildSavableItems(fromServer.mappedItems, {})));
+      setInitialSaveSignature(`${JSON.stringify(buildSavableItems(fromServer.mappedItems, {}))}|pr:`);
       setRemovedAcceptedItems({});
       const postExpanded: Record<string, boolean> = {};
       fromServer.mappedItems.forEach((it: QuotationItem, idx: number) => {
@@ -940,6 +1322,38 @@ export default function QuotationEdit() {
       });
       setExpandedItems(postExpanded);
       setShowSaveReviewModal(false);
+      setPendingReceiptUriByKey({});
+
+      if (preSavePendingReceipts.length > 0) {
+        const usedServerIds = new Set<number>();
+        const receiptErrors: string[] = [];
+        for (const p of preSavePendingReceipts) {
+          const match = fromServer.mappedItems.find((srv) => {
+            const sid = Number(srv.id || 0);
+            if (!Number.isFinite(sid) || sid <= 0 || usedServerIds.has(sid)) return false;
+            if (srv.line_kind !== 'item' || srv.source !== 'already_purchased') return false;
+            if (String(srv.description || '') !== p.description) return false;
+            if (Number(srv.quantity || 1) !== p.quantity) return false;
+            if (Math.abs(Number(srv.unit_price || 0) - p.unit_price) > 0.0001) return false;
+            return true;
+          });
+          if (match?.id) {
+            usedServerIds.add(Number(match.id));
+            try {
+              await postQuotationItemReceiptMultipart(Number(match.id), p.uri, p.unit_price);
+            } catch (reErr: any) {
+              receiptErrors.push(String(reErr?.message || 'Receipt upload failed'));
+            }
+          }
+        }
+        if (receiptErrors.length > 0) {
+          Alert.alert(
+            'Some receipts did not upload',
+            `${receiptErrors.join('\n')}\n\nYou can open this quotation again and use Upload receipt on each line.`,
+          );
+        }
+      }
+
       try {
         // Ensure chat conversation is created and messages are fetched so chat UI sees the new quotation
         const convRes = await fetchWithAuthRetry(`${API_URL}/chat/booking/${bookingId}/`, {
@@ -967,62 +1381,6 @@ export default function QuotationEdit() {
       console.error(LOG, 'quotation save error', msg, e);
     } finally {
       setSaving(false);
-    }
-  };
-
-  const uploadItemReceipt = async (item: QuotationItem, key: string) => {
-    if (isReadOnly) {
-      console.warn(LOG, 'receipt upload blocked: read-only');
-      return;
-    }
-    if (!bookingId || !item.id) {
-      console.warn(LOG, 'receipt upload blocked: save item first (no id)');
-      return;
-    }
-    try {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (permission.status !== 'granted') {
-        console.warn(LOG, 'receipt upload blocked: gallery permission denied');
-        return;
-      }
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        quality: 0.9,
-      });
-      if (result.canceled || !result.assets?.[0]?.uri) return;
-
-      const uri = result.assets[0].uri;
-      const fileName = uri.split('/').pop() || `receipt-${item.id}.jpg`;
-      const ext = fileName.split('.').pop()?.toLowerCase();
-      const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
-
-      const formData = new FormData();
-      formData.append('receipt_image', { uri, name: fileName, type: mime } as any);
-      formData.append('actual_unit_price', String(Math.max(0, Number(item.unit_price || 0))));
-
-      setReceiptUploadingKey(key);
-      const receiptUrl = isShopOwnerSource
-        ? `${API_URL}/bookings/shopowner/bookings/${bookingId}/quotation/items/${item.id}/receipt/`
-        : `${API_URL}/bookings/mechanic/bookings/${bookingId}/quotation/items/${item.id}/receipt/`;
-      const res = await fetchWithAuthRetry(receiptUrl, {
-        method: 'POST',
-        credentials: 'include',
-        body: formData as any,
-      }, authHeadersMultipart);
-      const payload = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(payload?.error || 'Failed to upload receipt');
-
-      console.log(LOG, 'receipt upload ok', payload?.message || 'Receipt uploaded');
-      router.replace({
-        pathname: '/mechanic/booking/quotation_edit',
-        params: { bookingId: String(bookingId), ...(isShopOwnerSource ? { source: 'shopowner' } : {}) },
-      });
-    } catch (e: any) {
-      console.error(LOG, 'receipt upload failed', e?.message || e, e);
-    } finally {
-      setReceiptUploadingKey(null);
     }
   };
 
@@ -1084,6 +1442,8 @@ export default function QuotationEdit() {
             const isExpanded = expandedItems[key] ?? !isAccepted;
             const isServiceLine = it.line_kind === 'service';
             const sid = Number(it.service || 0);
+            const addOnId = Number(it.service_add_on || 0);
+            const isAddonQuotationLine = !isServiceLine && Number.isFinite(addOnId) && addOnId > 0;
             const isBookedServiceLine = isServiceLine && Number.isFinite(sid) && bookedServiceIds.includes(sid);
             const isPending = String(it.status || '').toLowerCase() === 'pending';
             const canQuickRemove = !it.id && isPending && !isRemovedGhost;
@@ -1116,6 +1476,11 @@ export default function QuotationEdit() {
                         {isBookedServiceLine ? (
                           <View style={[styles.acceptedBadge, { backgroundColor: 'rgba(111,226,157,0.18)', borderColor: 'rgba(111,226,157,0.4)' }]}>
                             <Text style={styles.acceptedBadgeText}>Booked Service</Text>
+                          </View>
+                        ) : null}
+                        {isAddonQuotationLine ? (
+                          <View style={styles.addonLineBadge}>
+                            <Text style={styles.addonLineBadgeText}>Add-on</Text>
                           </View>
                         ) : null}
                         {isRemovedGhost ? (
@@ -1322,6 +1687,14 @@ export default function QuotationEdit() {
                                   key={opt.value}
                                   onPress={() => {
                                     if (!isEditable || isRemovedGhost) return;
+                                    const rowKey = getItemKey(it, idx);
+                                    if (it.source === 'already_purchased' && opt.value !== 'already_purchased') {
+                                      setPendingReceiptUriByKey((prev) => {
+                                        const next = { ...prev };
+                                        delete next[rowKey];
+                                        return next;
+                                      });
+                                    }
                                     updateItem(idx, {
                                       source: opt.value,
                                       change_type: String(it.status || '').toLowerCase() === 'accepted' ? 'edited' : it.change_type,
@@ -1339,28 +1712,100 @@ export default function QuotationEdit() {
                           )}
                         </View>
 
+                        {!isServiceLine &&
+                        (it.source === 'to_be_purchased' || it.source === 'already_purchased') ? (() => {
+                          const receiptUri =
+                            pendingReceiptUriByKey[key] || quotationReceiptDisplayUri(it.purchase_receipt_image);
+                          if (!receiptUri) return null;
+                          return (
+                            <View style={styles.receiptPreviewWrap}>
+                              <Text style={styles.receiptPreviewLabel}>Purchase receipt</Text>
+                              <Image
+                                source={{ uri: receiptUri }}
+                                style={styles.receiptPreviewImage}
+                                contentFit="contain"
+                                accessibilityLabel="Purchase receipt preview"
+                              />
+                              {pendingReceiptUriByKey[key] && !it.purchase_receipt_image ? (
+                                <Text style={styles.receiptPreviewPendingNote}>
+                                  Not on the server yet — save the quotation to upload this receipt.
+                                </Text>
+                              ) : it.purchase_receipt_image && String(it.status || '').toLowerCase() === 'pending' ? (
+                                <Text style={styles.receiptPreviewPendingNote}>
+                                  Sent with your quotation request — the client can review it when they respond.
+                                </Text>
+                              ) : null}
+                            </View>
+                          );
+                        })() : null}
+
                         {it.source === 'to_be_purchased' && !isReadOnly ? (
                           <View style={styles.receiptRowWrap}>
-                            <TouchableOpacity
-                              style={[styles.receiptButton, (!it.id || receiptUploadingKey === key) ? styles.receiptButtonDisabled : null]}
-                              onPress={() => uploadItemReceipt(it, key)}
-                              disabled={!it.id || receiptUploadingKey === key}
-                            >
-                              {receiptUploadingKey === key ? (
-                                <ActivityIndicator color="#fff" size="small" />
-                              ) : (
-                                <>
-                                  <FontAwesome name="upload" size={12} color="#fff" />
-                                  <Text style={styles.receiptButtonText}>Upload receipt & request price update</Text>
-                                </>
-                              )}
-                            </TouchableOpacity>
+                            <Text style={styles.receiptHelpTitle}>After you buy this part</Text>
+                            <Text style={styles.receiptHintText}>
+                              1) Save or update this quotation so the client sees the line.{'\n'}
+                              2) Come back here and use Upload receipt to attach the store receipt and confirm the real unit price.
+                            </Text>
+                            {it.id ? (
+                              <TouchableOpacity
+                                style={[styles.receiptButton, receiptUploadingKey === key ? styles.receiptButtonDisabled : null]}
+                                onPress={() => openImmediateReceiptPickerModal(it, key)}
+                                disabled={receiptUploadingKey === key}
+                              >
+                                {receiptUploadingKey === key ? (
+                                  <ActivityIndicator color="#fff" size="small" />
+                                ) : (
+                                  <>
+                                    <FontAwesome name="upload" size={12} color="#fff" />
+                                    <Text style={styles.receiptButtonText}>Add or replace receipt</Text>
+                                  </>
+                                )}
+                              </TouchableOpacity>
+                            ) : null}
+                          </View>
+                        ) : null}
+
+                        {it.source === 'already_purchased' && !isReadOnly ? (
+                          <View style={styles.receiptRowWrap}>
+                            <Text style={styles.receiptHelpTitle}>You already bought this part</Text>
+                            <Text style={styles.receiptHintText}>
+                              Set the unit price to match the receipt, then attach the receipt. If this line is new, choose the photo first — it uploads automatically right after you save the quotation.
+                            </Text>
                             {!it.id ? (
-                              <Text style={styles.receiptHintText}>Save quotation first before uploading receipt.</Text>
-                            ) : null}
-                            {it.purchase_receipt_image ? (
-                              <Text style={styles.receiptHintText}>Receipt uploaded.</Text>
-                            ) : null}
+                              <>
+                                <TouchableOpacity
+                                  style={[styles.receiptButton, receiptUploadingKey === key ? styles.receiptButtonDisabled : null]}
+                                  onPress={() => openDeferredReceiptPickerModal(key)}
+                                  disabled={receiptUploadingKey === key}
+                                >
+                                  <FontAwesome name="picture-o" size={12} color="#fff" />
+                                  <Text style={styles.receiptButtonText}>Choose purchase receipt</Text>
+                                </TouchableOpacity>
+                                {pendingReceiptUriByKey[key] ? (
+                                  <TouchableOpacity
+                                    style={styles.receiptRemovePhotoBtn}
+                                    onPress={() => clearDeferredReceiptForKey(key)}
+                                  >
+                                    <Text style={styles.receiptClearLink}>Remove receipt photo</Text>
+                                  </TouchableOpacity>
+                                ) : null}
+                              </>
+                            ) : (
+                              <TouchableOpacity
+                                style={[styles.receiptButton, receiptUploadingKey === key ? styles.receiptButtonDisabled : null]}
+                                onPress={() => openImmediateReceiptPickerModal(it, key)}
+                                disabled={receiptUploadingKey === key}
+                              >
+                                {receiptUploadingKey === key ? (
+                                  <ActivityIndicator color="#fff" size="small" />
+                                ) : (
+                                  <>
+                                    <FontAwesome name="upload" size={12} color="#fff" />
+                                    <Text style={styles.receiptButtonText}>Add or replace receipt</Text>
+                                  </>
+                                )}
+                              </TouchableOpacity>
+                            )}
                           </View>
                         ) : null}
                       </>
@@ -1389,16 +1834,24 @@ export default function QuotationEdit() {
         ))}
 
         {!isReadOnly ? (
-          <View style={styles.addLineButtonsRow}>
-            <TouchableOpacity onPress={addServiceLine} style={styles.addServiceButtonSmall}>
-              <FontAwesome name="plus" size={12} color="#9ECFB0" />
-              <Text style={styles.addServiceButtonSmallText}>Add service line</Text>
+          <>
+            <View style={styles.addLineButtonsRow}>
+              <TouchableOpacity onPress={addServiceLine} style={styles.addServiceButtonSmall}>
+                <FontAwesome name="plus" size={12} color="#9ECFB0" />
+                <Text style={styles.addServiceButtonSmallText}>Add service line</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={addItem} style={styles.addItemButtonSmall}>
+                <FontAwesome name="plus" size={12} color="#D6D6D6" />
+                <Text style={styles.addItemButtonSmallText}>Add item / part</Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity onPress={openServiceCatalog} style={styles.addFromCatalogButton} activeOpacity={0.85}>
+              <FontAwesome name="th-list" size={13} color="#9ECFB0" />
+              <Text style={styles.addFromCatalogButtonText}>
+                {isShopOwnerSource ? 'Pick from shop services' : 'Pick from services I offer'}
+              </Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={addItem} style={styles.addItemButtonSmall}>
-              <FontAwesome name="plus" size={12} color="#D6D6D6" />
-              <Text style={styles.addItemButtonSmallText}>Add item / part</Text>
-            </TouchableOpacity>
-          </View>
+          </>
         ) : null}
 
         <View style={styles.summaryCard}>
@@ -1437,6 +1890,191 @@ export default function QuotationEdit() {
           </TouchableOpacity>
         </View>
       ) : null}
+
+      <Modal
+        visible={receiptPickModalTarget != null}
+        animationType="fade"
+        transparent
+        onRequestClose={closeReceiptPickModal}
+      >
+        <View style={styles.receiptSourceModalOverlay}>
+          <View style={styles.receiptSourceModalCard}>
+            <View style={styles.receiptSourceModalHeader}>
+              <Text style={styles.receiptSourceModalTitle}>Add purchase receipt</Text>
+              <TouchableOpacity
+                onPress={closeReceiptPickModal}
+                style={styles.receiptSourceModalCloseHit}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              >
+                <FontAwesome name="times" size={18} color="#9FA5AD" />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.receiptSourceModalSubtitle}>
+              {receiptPickModalTarget?.kind === 'immediate'
+                ? 'Take a new photo or pick from your gallery. It uploads to this line as soon as you confirm.'
+                : 'How do you want to add the receipt photo? It will attach when you save the quotation.'}
+            </Text>
+
+            <TouchableOpacity
+              style={styles.receiptSourceOptionRow}
+              onPress={() => completeReceiptPick('camera')}
+              activeOpacity={0.88}
+            >
+              <View style={[styles.receiptSourceOptionIconWrap, styles.receiptSourceOptionIconWrapCamera]}>
+                <FontAwesome name="camera" size={22} color="#FFB357" />
+              </View>
+              <View style={styles.receiptSourceOptionTextCol}>
+                <Text style={styles.receiptSourceOptionTitle}>Take photo</Text>
+                <Text style={styles.receiptSourceOptionDesc}>Open the camera and snap the store receipt</Text>
+              </View>
+              <FontAwesome name="chevron-right" size={14} color="#5C6168" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.receiptSourceOptionRow}
+              onPress={() => completeReceiptPick('library')}
+              activeOpacity={0.88}
+            >
+              <View style={[styles.receiptSourceOptionIconWrap, styles.receiptSourceOptionIconWrapGallery]}>
+                <FontAwesome name="picture-o" size={22} color="#6FE29D" />
+              </View>
+              <View style={styles.receiptSourceOptionTextCol}>
+                <Text style={styles.receiptSourceOptionTitle}>Photo library</Text>
+                <Text style={styles.receiptSourceOptionDesc}>Choose a saved image or screenshot</Text>
+              </View>
+              <FontAwesome name="chevron-right" size={14} color="#5C6168" />
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.receiptSourceCancelBtn} onPress={closeReceiptPickModal} activeOpacity={0.85}>
+              <Text style={styles.receiptSourceCancelBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={catalogVisible} animationType="fade" transparent onRequestClose={closeServiceCatalog}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.catalogModalBox}>
+            {catalogStep === 'addons' && pendingCatalogService ? (
+              <>
+                <TouchableOpacity style={styles.catalogBackRow} onPress={backCatalogToServices} activeOpacity={0.8}>
+                  <FontAwesome name="chevron-left" size={12} color="#9ECFB0" />
+                  <Text style={styles.catalogBackText}>All services</Text>
+                </TouchableOpacity>
+                <Text style={styles.modalTitle}>{pendingCatalogService.name}</Text>
+                <Text style={styles.modalText}>
+                  Tick any add-on to include it as its own quotation line (same as an item line). Untick everything to add only the service.
+                </Text>
+                <FlatList
+                  data={catalogAddonRows}
+                  keyExtractor={(a) => String(a.id)}
+                  style={styles.catalogList}
+                  keyboardShouldPersistTaps="handled"
+                  renderItem={({ item: addon }) => {
+                    const on = !!catalogSelectedAddonIds[addon.id];
+                    return (
+                      <TouchableOpacity
+                        style={styles.catalogAddonPickRow}
+                        onPress={() => setCatalogSelectedAddonIds((prev) => ({ ...prev, [addon.id]: !on }))}
+                        activeOpacity={0.75}
+                      >
+                        <FontAwesome name={on ? 'check-square' : 'square-o'} size={20} color={on ? '#6FE29D' : '#8E8E93'} />
+                        <View style={styles.catalogAddonPickMid}>
+                          <Text style={styles.catalogRowTitle} numberOfLines={2}>{addon.name}</Text>
+                          <Text style={styles.catalogFormatHint} numberOfLines={2}>
+                            {buildAddonLineDescription(pendingCatalogService.name, addon.name)}
+                          </Text>
+                        </View>
+                        <Text style={styles.catalogRowPrice}>PHP {formatMoney(addon.price)}</Text>
+                      </TouchableOpacity>
+                    );
+                  }}
+                />
+                <View style={styles.catalogAddonActionsRow}>
+                  <TouchableOpacity style={styles.catalogSecondaryButton} onPress={backCatalogToServices}>
+                    <Text style={styles.catalogSecondaryButtonText}>Back</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.catalogConfirmButton} onPress={confirmCatalogAddonsToQuotation}>
+                    <Text style={styles.catalogConfirmButtonText}>Add to quotation</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <>
+                <Text style={styles.modalTitle}>
+                  {isShopOwnerSource ? 'Shop services' : 'Services I offer'}
+                </Text>
+                <Text style={styles.modalText}>
+                  Tap a service to add it with your saved price. If you have add-ons for that service, you can choose which ones to include next.
+                </Text>
+                <TextInput
+                  style={styles.catalogSearchInput}
+                  placeholder="Search by name…"
+                  placeholderTextColor="#8E8E93"
+                  value={catalogSearch}
+                  onChangeText={setCatalogSearch}
+                  editable={!catalogLoading && !catalogAddonsLoading}
+                />
+                {catalogAddonsError && catalogAddonFetchFor ? (
+                  <View style={styles.catalogInlineErrorBox}>
+                    <Text style={styles.catalogErrorText}>{catalogAddonsError}</Text>
+                    <TouchableOpacity style={styles.catalogSkipAddonsButton} onPress={skipAddonsAfterFetchError}>
+                      <Text style={styles.catalogSkipAddonsButtonText}>Add service without add-ons</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+                {catalogLoading ? (
+                  <View style={styles.catalogCenterBlock}>
+                    <ActivityIndicator color="#9ECFB0" size="large" />
+                  </View>
+                ) : catalogError ? (
+                  <View style={styles.catalogCenterBlock}>
+                    <Text style={styles.catalogErrorText}>{catalogError}</Text>
+                  </View>
+                ) : catalogAddonsLoading ? (
+                  <View style={styles.catalogCenterBlock}>
+                    <ActivityIndicator color="#9ECFB0" size="large" />
+                    <Text style={styles.catalogLoadingSub}>Loading add-ons…</Text>
+                  </View>
+                ) : (
+                  <FlatList
+                    data={catalogFiltered}
+                    keyExtractor={(row) => String(row.id)}
+                    style={styles.catalogList}
+                    contentContainerStyle={catalogFiltered.length === 0 ? styles.catalogListEmpty : undefined}
+                    keyboardShouldPersistTaps="handled"
+                    ListEmptyComponent={
+                      <Text style={styles.catalogEmptyHint}>
+                        {catalogList.length === 0
+                          ? 'No services on your profile yet. Add services under your profile first, then come back here.'
+                          : 'No services match your search.'}
+                      </Text>
+                    }
+                    renderItem={({ item: row }) => (
+                      <TouchableOpacity
+                        style={styles.catalogRow}
+                        onPress={() => handleCatalogServicePress(row)}
+                        activeOpacity={0.75}
+                      >
+                        <View style={styles.catalogRowLeft}>
+                          <Text style={styles.catalogRowTitle} numberOfLines={2}>{row.name}</Text>
+                          {row.category ? (
+                            <Text style={styles.catalogRowSub} numberOfLines={1}>{row.category}</Text>
+                          ) : null}
+                        </View>
+                        <Text style={styles.catalogRowPrice}>PHP {formatMoney(row.price)}</Text>
+                      </TouchableOpacity>
+                    )}
+                  />
+                )}
+                <TouchableOpacity style={styles.catalogCloseButton} onPress={closeServiceCatalog}>
+                  <Text style={styles.catalogCloseButtonText}>Close</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={showSaveReviewModal && !isReadOnly} animationType="fade" transparent>
         <View style={styles.modalOverlay}>
