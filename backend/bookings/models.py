@@ -543,6 +543,7 @@ class QuotationItem(models.Model):
     class ItemSource(models.TextChoices):
         ON_HAND = "on_hand", "On-hand (mechanic stock)"
         TO_BE_PURCHASED = "to_be_purchased", "To be purchased"
+        ALREADY_PURCHASED = "already_purchased", "Already purchased (have receipt)"
         MECHANIC_SELLING = "mechanic_selling", "Mechanic selling / owned spare"
 
     line_kind = models.CharField(max_length=20, choices=LineKind.choices, default=LineKind.ITEM)

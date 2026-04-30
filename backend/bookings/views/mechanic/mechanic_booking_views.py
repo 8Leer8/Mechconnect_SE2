@@ -1273,8 +1273,14 @@ def mechanic_upload_quotation_item_receipt(request, booking_id, item_id):
     if qitem.line_kind != QuotationItem.LineKind.ITEM:
         return Response({"error": "Receipt upload is only allowed for item quotations"}, status=status.HTTP_400_BAD_REQUEST)
 
-    if qitem.source != QuotationItem.ItemSource.TO_BE_PURCHASED:
-        return Response({"error": "Receipt upload is only required for 'to be purchased' items"}, status=status.HTTP_400_BAD_REQUEST)
+    if qitem.source not in (
+        QuotationItem.ItemSource.TO_BE_PURCHASED,
+        QuotationItem.ItemSource.ALREADY_PURCHASED,
+    ):
+        return Response(
+            {"error": "Receipt upload is only allowed for 'to be purchased' or 'already purchased' item lines"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
     receipt_image = request.FILES.get("receipt_image")
     if receipt_image is None:
@@ -1460,7 +1466,7 @@ class SubmitDisputeDefenseView(APIView):
 def mechanic_booking_quotation(request, booking_id):
     """GET returns existing quotation for booking; POST creates/updates quotation and its items.
     Expected POST payload: {"notes": "...", "is_final": true/false, "items": [
-      {"line_kind": "service"|"item", "source": "on_hand"|"to_be_purchased"|"mechanic_selling"|null,
+      {"line_kind": "service"|"item", "source": "on_hand"|"to_be_purchased"|"already_purchased"|"mechanic_selling"|null,
        "service": <id>|null, "service_add_on": <id>|null, "description": "", "quantity": 1, "unit_price": 100.0}, ...]}"""
     account, err = _get_mechanic_account(request)
     if err:
@@ -2402,7 +2408,7 @@ def list_mechanic_bookings(request):
     def serialize_booking_list(rows_queryset):
         if compact_mode:
             return _serialize_mechanic_booking_list(rows_queryset)
-        return _serialize_bookings(rows_queryset, viewer_account=account)
+        return _serialize_bookings(rows_queryset, viewer_account=account, request=request)
 
     live_backjob_statuses = [
         Booking.Status.BACKJOB_PENDING,
@@ -2692,7 +2698,7 @@ def get_mechanic_booking_detail(request, booking_id):
         except Exception:
             pass
 
-    data = _serialize_single_booking(booking, viewer_account=account)
+    data = _serialize_single_booking(booking, viewer_account=account, request=request)
     return Response({"booking": data}, status=status.HTTP_200_OK)
 
 
@@ -2787,7 +2793,7 @@ def mechanic_accept_direct_request(request, request_id):
     )
     ActiveBooking.objects.create(booking=booking)
 
-    data = _serialize_single_booking(booking, viewer_account=account)
+    data = _serialize_single_booking(booking, viewer_account=account, request=request)
 
     notify_booking_parties(
         account.id,
@@ -2942,7 +2948,7 @@ def mechanic_accept_custom_request(request, request_id):
         )
         ActiveBooking.objects.get_or_create(booking=booking)
 
-    data = _serialize_single_booking(booking, viewer_account=account)
+    data = _serialize_single_booking(booking, viewer_account=account, request=request)
     notify_booking_parties(
         account.id,
         req.client.account_id,
@@ -3075,7 +3081,7 @@ def mechanic_accept_emergency_request(request, request_id):
     )
     ActiveBooking.objects.create(booking=booking)
 
-    data = _serialize_single_booking(booking, viewer_account=account)
+    data = _serialize_single_booking(booking, viewer_account=account, request=request)
 
     notify_booking_parties(
         account.id,
@@ -3216,7 +3222,7 @@ def mechanic_complete_booking(request, booking_id):
         booking.activebooking.is_job_done = True
         booking.activebooking.save(update_fields=["is_job_done"])
 
-    data = _serialize_single_booking(booking, viewer_account=account)
+    data = _serialize_single_booking(booking, viewer_account=account, request=request)
     completion_message = "Backjob completed" if is_backjob_completion else "Your booking has been completed"
 
     notify_booking_parties(

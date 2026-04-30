@@ -621,6 +621,20 @@ export const styles = StyleSheet.create({
     color: '#B7BDC4',
     fontWeight: '600',
   },
+  quotationReceiptPreviewWrap: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#2D3033',
+  },
+  quotationReceiptPreviewImage: {
+    width: '100%',
+    maxHeight: 220,
+    minHeight: 120,
+    marginTop: 8,
+    borderRadius: 10,
+    backgroundColor: '#121418',
+  },
   pendingPill: {
     backgroundColor: '#3A3020',
     borderColor: '#5D4A26',

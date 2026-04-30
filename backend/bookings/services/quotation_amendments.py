@@ -190,6 +190,9 @@ def create_amendment_request(quotation_id: int, mechanic_id: int, changes: list[
             original = existing_items.get(row_id) if row_id is not None else None
             if original is None:
                 original = existing_by_assoc.get(_assoc_key(row or {}))
+            # UI marks brand-new lines with change_type=added; never treat them as edits of another row by id.
+            if declared_change == AmendmentItem.ActionType.ADDED:
+                original = None
 
             if original is not None:
                 snapshot = _snapshot_item(original)
@@ -232,10 +235,26 @@ def create_amendment_request(quotation_id: int, mechanic_id: int, changes: list[
             if declared_change == AmendmentItem.ActionType.REMOVED:
                 # Ignore invalid remove markers without original IDs.
                 continue
+            # Persist a pending placeholder row so receipt multipart upload has a stable item id
+            # before the client accepts the amendment (resolve_amendment reuses this row when fields match).
+            proposed_norm = _normalized_row(row)
+            placeholder = QuotationItem.objects.create(
+                quotation=quotation,
+                line_kind=proposed_norm["line_kind"],
+                source=proposed_norm.get("source"),
+                service_id=proposed_norm.get("service") if proposed_norm.get("service") else None,
+                service_add_on_id=proposed_norm.get("service_add_on") if proposed_norm.get("service_add_on") else None,
+                description=proposed_norm.get("description") or "",
+                quantity=int(proposed_norm.get("quantity") or 1),
+                unit_price=Decimal(str(proposed_norm.get("unit_price") or 0)),
+                status=Quotation.Status.PENDING,
+                change_type=AmendmentItem.ActionType.ADDED,
+            )
+            proposed_with_staged = {**proposed_norm, "_staged_item_id": placeholder.id}
             AmendmentItem.objects.create(
                 amendment=amendment,
                 action_type=AmendmentItem.ActionType.ADDED,
-                proposed_changes=_normalized_row(row),
+                proposed_changes=proposed_with_staged,
                 original_snapshot={},
             )
 
@@ -296,7 +315,11 @@ def resolve_amendment(amendment_id: int, decision: str) -> QuotationAmendment:
         if decision_norm == "accepted":
             for change in amendment.items.all().order_by("id"):
                 if change.action_type == AmendmentItem.ActionType.ADDED:
-                    proposed = change.proposed_changes or {}
+                    proposed = {
+                        k: v
+                        for k, v in (change.proposed_changes or {}).items()
+                        if k != "_staged_item_id"
+                    }
                     proposed_line_kind = proposed.get("line_kind") or QuotationItem.LineKind.ITEM
                     proposed_source = proposed.get("source")
                     proposed_service_id = proposed.get("service")
